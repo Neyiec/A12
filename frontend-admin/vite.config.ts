@@ -1,0 +1,38 @@
+import { defineConfig, loadEnv } from 'vite'
+import vue from '@vitejs/plugin-vue'
+import tailwindcss from '@tailwindcss/vite'
+import path from 'path'
+
+export default defineConfig(({ mode }) => {
+  // 加载环境变量
+  const env = loadEnv(mode, process.cwd(), '')
+  
+  return {
+    resolve: {
+      alias: {
+        '@': path.resolve(__dirname, 'src'),
+      },
+    },
+    plugins: [vue(), tailwindcss()],
+    server: {
+      port: 8888,
+      proxy: {
+        '/api': {
+          target: env.VITE_API_PROXY_TARGET,
+          changeOrigin: true,
+          rewrite: (path) => {
+            console.log('path', path);
+            let p = path.replace(/^\/api/, '');
+            console.log('path', path);
+            return p;
+          }
+        },
+        // '/content': {
+        //   target: env.VITE_API_PROXY_TARGET || env.VITE_API_BASE_URL,
+        //   changeOrigin: true,
+        //   rewrite: (path) => path
+        // }
+      }
+    }
+  }
+})
