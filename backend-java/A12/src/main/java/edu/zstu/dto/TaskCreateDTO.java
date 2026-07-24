@@ -17,4 +17,5 @@ public class TaskCreateDTO {
     private String status;
     private String uploaded_refs;
     private String plan_json;
+    private String messages;
 }
