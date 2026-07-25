@@ -538,35 +538,33 @@
 # 五、个人资源库
 
 ## API-32 POST /api/v1/resources/uploads
-
-**功能**: 创建上传会话并取得短时签名地址
-
-**请求体 (JSON)**
-| 字段 | 类型 | 必填 | 说明 |
-|---|---|---|---|
-| `file_name` | String | **是** | 文件名（含扩展名） |
-| `file_type` | String | **是** | 文件类型: `word`/`pdf`/`ppt`/`txt`/`image`/`audio`/`video` |
-| `file_size` | Long | **是** | 文件大小（字节） |
-| `replace_target_id` | Integer | 否 | 若替换已有资源，传原资源ID |
-
-**后端 DTO**: `MaterialDTO { file_name, file_type, file_url(后端生成), file_size, ... }`
-
-**响应 VO**: `Result<{upload_id: String, upload_url: String, expires_at: LocalDateTime}>`
-
----
-
-## API-33 POST /api/v1/resources/uploads/{id}/complete
-
-**功能**: 完成上传并校验文件，替换会话通过后原子更新资源，随后触发解析
-
-**路径参数**: `id` — 上传会话ID
-
-**后端参数**: 无请求体
-
-**响应 VO**: `Result<MaterialVO>` — 完成后的资源元数据
-
----
-
+ 
+ **功能**: 上传文件到个人资源库，后端接收文件后存储到阿里云 OSS 并返回资源元数据
+ 
+ **请求体 (Multipart/Form-Data)**
+ | 字段 | 类型 | 必填 | 说明 |
+ |---|---|---|---|
+ | `file` | File | **是** | 要上传的文件（Multipart） |
+ | `file_type` | String | 否 | 文件类型: `word`/`pdf`/`ppt`/`txt`/`image`/`audio`/`video`（不传则根据扩展名自动检测） |
+ 
+ **后端 DTO**: `MultipartFile`
+ 
+ **响应 VO**: `Result<MaterialVO>` — 上传完成后的资源元数据
+ 
+ ---
+ 
+ ~~## API-33 POST /api/v1/resources/uploads/{id}/complete (已弃用)~~
+ 
+ **功能**: ~~已弃用，上传改为一步完成，不再需要创建会话后再完成~~
+ 
+ **路径参数**: ~~`id` — 上传会话ID~~
+ 
+ **后端参数**: ~~无请求体~~
+ 
+ **响应 VO**: ~~`Result<MaterialVO>` — 完成后的资源元数据~~
+ 
+ ---
+ 
 ## API-34 GET /api/v1/resources
 
 **功能**: 按名称、课程、章节、知识点、标签、类型和时间分页检索资源
