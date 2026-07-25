@@ -1,0 +1,19 @@
+<?xml version="1.0" encoding="UTF-8" ?>
+<!DOCTYPE mapper PUBLIC "-//mybatis.org//DTD Mapper 3.0//EN" "http://mybatis.org/dtd/mybatis-3-mapper.dtd">
+<mapper namespace="edu.zstu.mapper.KbRetrievalLogMapper">
+    <resultMap id="BaseResultMap" type="edu.zstu.entity.Kb_Retrieval_Log">
+        <id column="id" property="id"/><result column="user_id" property="user_id"/>
+        <result column="type" property="type"/><result column="task_id" property="task_id"/>
+        <result column="query_text" property="query_text"/><result column="result_chunks" property="result_chunks"/>
+        <result column="prompt_context" property="prompt_context"/><result column="generated_content" property="generated_content"/>
+        <result column="model_name" property="model_name"/><result column="created_at" property="created_at"/>
+    </resultMap>
+    <sql id="Base_Columns">id, user_id, type, task_id, query_text, result_chunks, prompt_context, generated_content, model_name, created_at</sql>
+    <select id="findById" resultMap="BaseResultMap">SELECT <include refid="Base_Columns"/> FROM kb_retrieval_log WHERE id = #{id}</select>
+    <select id="findByUserId" resultMap="BaseResultMap">SELECT <include refid="Base_Columns"/> FROM kb_retrieval_log WHERE user_id = #{userId} ORDER BY created_at DESC</select>
+    <select id="findByTaskId" resultMap="BaseResultMap">SELECT <include refid="Base_Columns"/> FROM kb_retrieval_log WHERE task_id = #{taskId} ORDER BY created_at DESC</select>
+    <insert id="insert" useGeneratedKeys="true" keyProperty="id">
+        INSERT INTO kb_retrieval_log(user_id, type, task_id, query_text, result_chunks, prompt_context, generated_content, model_name, created_at)
+        VALUES(#{user_id}, #{type}, #{task_id}, #{query_text}, #{result_chunks}, #{prompt_context}, #{generated_content}, #{model_name}, NOW())
+    </insert>
+</mapper>

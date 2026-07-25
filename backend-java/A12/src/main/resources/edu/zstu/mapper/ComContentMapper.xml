@@ -1,0 +1,44 @@
+<?xml version="1.0" encoding="UTF-8" ?>
+<!DOCTYPE mapper PUBLIC "-//mybatis.org//DTD Mapper 3.0//EN" "http://mybatis.org/dtd/mybatis-3-mapper.dtd">
+<mapper namespace="edu.zstu.mapper.ComContentMapper">
+    <resultMap id="BaseResultMap" type="edu.zstu.entity.Com_Content">
+        <id column="id" property="id"/><result column="content_type" property="content_type"/>
+        <result column="author_id" property="author_id"/><result column="title" property="title"/>
+        <result column="description" property="description"/><result column="subject" property="subject"/>
+        <result column="grade" property="grade"/><result column="lesson_type" property="lesson_type"/>
+        <result column="content_data" property="content_data"/><result column="input_variables" property="input_variables"/>
+        <result column="example_effect" property="example_effect"/><result column="version" property="version"/>
+        <result column="version_history" property="version_history"/><result column="license" property="license"/>
+        <result column="status" property="status"/><result column="is_top" property="is_top"/>
+        <result column="view_count" property="view_count"/><result column="use_count" property="use_count"/>
+        <result column="created_at" property="created_at"/><result column="updated_at" property="updated_at"/>
+    </resultMap>
+    <sql id="Base_Columns">id, content_type, author_id, title, description, subject, grade, lesson_type, content_data, input_variables, example_effect, version, version_history, license, status, is_top, view_count, use_count, created_at, updated_at</sql>
+    <select id="findById" resultMap="BaseResultMap">SELECT <include refid="Base_Columns"/> FROM com_content WHERE id = #{id}</select>
+    <select id="findByAuthorId" resultMap="BaseResultMap">SELECT <include refid="Base_Columns"/> FROM com_content WHERE author_id = #{authorId} ORDER BY updated_at DESC</select>
+    <select id="findPublic" resultMap="BaseResultMap">SELECT <include refid="Base_Columns"/> FROM com_content WHERE status = 'public' ORDER BY is_top DESC, updated_at DESC</select>
+    <select id="findByType" resultMap="BaseResultMap">SELECT <include refid="Base_Columns"/> FROM com_content WHERE content_type = #{contentType} AND status = 'public' ORDER BY updated_at DESC</select>
+    <select id="findAll" resultMap="BaseResultMap">SELECT <include refid="Base_Columns"/> FROM com_content</select>
+    <insert id="insert" useGeneratedKeys="true" keyProperty="id">
+        INSERT INTO com_content(content_type, author_id, title, description, subject, grade, lesson_type, content_data,
+                                input_variables, example_effect, version, version_history, license,
+                                status, is_top, view_count, use_count, created_at, updated_at)
+        VALUES(#{content_type}, #{author_id}, #{title}, #{description}, #{subject}, #{grade}, #{lesson_type}, #{content_data},
+               #{input_variables}, #{example_effect}, #{version}, #{version_history}, #{license},
+               #{status}, #{is_top}, #{view_count}, #{use_count}, NOW(), NOW())
+    </insert>
+    <update id="update">
+        UPDATE com_content <set>
+        <if test="title != null">title = #{title},</if><if test="description != null">description = #{description},</if>
+        <if test="content_data != null">content_data = #{content_data},</if>
+        <if test="input_variables != null">input_variables = #{input_variables},</if>
+        <if test="example_effect != null">example_effect = #{example_effect},</if>
+        <if test="license != null">license = #{license},</if><if test="status != null">status = #{status},</if>
+        <if test="is_top != null">is_top = #{is_top},</if><if test="version != null">version = #{version},</if>
+        <if test="version_history != null">version_history = #{version_history},</if>
+        <if test="view_count != null">view_count = #{view_count},</if><if test="use_count != null">use_count = #{use_count},</if>
+        updated_at = NOW()</set> WHERE id = #{id}
+    </update>
+    <update id="incrementViewCount">UPDATE com_content SET view_count = view_count + 1 WHERE id = #{id}</update>
+    <update id="incrementUseCount">UPDATE com_content SET use_count = use_count + 1 WHERE id = #{id}</update>
+</mapper>

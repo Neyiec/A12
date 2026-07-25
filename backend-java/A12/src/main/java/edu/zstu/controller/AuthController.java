@@ -124,9 +124,12 @@ public class AuthController {
      * @return 重置结果（无数据体）
      */
     @PostMapping("/password-reset")
-    public Result<Void> passwordReset(@RequestBody PasswordResetDTO dto) {
+    public Result<Void> passwordReset(@RequestBody PasswordResetDTO dto)
+    {
+        authService.passwordReset(dto);
         return Result.success();
     }
+
 
     /**
      * API-08 退出登录
@@ -138,6 +141,11 @@ public class AuthController {
      */
     @PostMapping("/logout")
     public Result<Void> logout(@RequestHeader("Authorization") String authorization) {
-        return Result.success();
+        try {
+            authService.logout(authorization);
+            return Result.success();
+        } catch (RuntimeException e) {
+            return Result.error(400, e.getMessage());
+        }
     }
 }

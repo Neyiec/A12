@@ -1,0 +1,23 @@
+<?xml version="1.0" encoding="UTF-8" ?>
+<!DOCTYPE mapper PUBLIC "-//mybatis.org//DTD Mapper 3.0//EN" "http://mybatis.org/dtd/mybatis-3-mapper.dtd">
+<mapper namespace="edu.zstu.mapper.KbDocumentMapper">
+    <resultMap id="BaseResultMap" type="edu.zstu.entity.Kb_Document">
+        <id column="id" property="id"/><result column="source_type" property="source_type"/>
+        <result column="source_id" property="source_id"/><result column="user_id" property="user_id"/>
+        <result column="title" property="title"/><result column="doc_type" property="doc_type"/>
+        <result column="parse_status" property="parse_status"/><result column="chunks" property="chunks"/>
+        <result column="created_at" property="created_at"/><result column="updated_at" property="updated_at"/>
+    </resultMap>
+    <sql id="Base_Columns">id, source_type, source_id, user_id, title, doc_type, parse_status, chunks, created_at, updated_at</sql>
+    <select id="findById" resultMap="BaseResultMap">SELECT <include refid="Base_Columns"/> FROM kb_document WHERE id = #{id}</select>
+    <select id="findByUserId" resultMap="BaseResultMap">SELECT <include refid="Base_Columns"/> FROM kb_document WHERE user_id = #{userId}</select>
+    <select id="findBySource" resultMap="BaseResultMap">SELECT <include refid="Base_Columns"/> FROM kb_document WHERE source_type = #{sourceType} AND source_id = #{sourceId}</select>
+    <select id="findByParseStatus" resultMap="BaseResultMap">SELECT <include refid="Base_Columns"/> FROM kb_document WHERE parse_status = #{parseStatus}</select>
+    <insert id="insert" useGeneratedKeys="true" keyProperty="id">
+        INSERT INTO kb_document(source_type, source_id, user_id, title, doc_type, parse_status, chunks, created_at, updated_at)
+        VALUES(#{source_type}, #{source_id}, #{user_id}, #{title}, #{doc_type}, #{parse_status}, #{chunks}, NOW(), NOW())
+    </insert>
+    <update id="updateParseResult">
+        UPDATE kb_document SET parse_status = #{parse_status}, chunks = #{chunks}, updated_at = NOW() WHERE id = #{id}
+    </update>
+</mapper>

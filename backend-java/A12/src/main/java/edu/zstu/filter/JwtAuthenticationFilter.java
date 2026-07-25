@@ -1,0 +1,100 @@
+package edu.zstu.filter;
+
+import edu.zstu.utils.CurrentHolder;
+import edu.zstu.utils.JwtUtil;
+import jakarta.servlet.*;
+import jakarta.servlet.http.HttpServletRequest;
+import jakarta.servlet.http.HttpServletResponse;
+import org.springframework.core.Ordered;
+import org.springframework.core.annotation.Order;
+import org.springframework.data.redis.core.StringRedisTemplate;
+import org.springframework.stereotype.Component;
+import org.springframework.util.AntPathMatcher;
+
+import java.io.IOException;
+import java.util.concurrent.TimeUnit;
+
+/**
+ * JWT 认证过滤器
+ * 拦截非 /api/v1/auth/** 的请求：
+ * ① 校验 JWT 签名
+ * ② 检查 Redis 中是否存在该令牌
+ * ③ 续期 Redis TTL → 7 天
+ * ④ 将 userId 放入请求属性，供 Controller 使用
+ */
+@Component
+@Order(Ordered.HIGHEST_PRECEDENCE + 10)
+public class JwtAuthenticationFilter implements Filter {
+
+    private static final AntPathMatcher PATH_MATCHER = new AntPathMatcher();
+    private static final String[] AUTH_PATHS = {"/api/v1/auth/**"};
+
+    private final JwtUtil jwtUtil;
+    private final StringRedisTemplate redisTemplate;
+
+    public JwtAuthenticationFilter(JwtUtil jwtUtil, StringRedisTemplate redisTemplate) {
+        this.jwtUtil = jwtUtil;
+        this.redisTemplate = redisTemplate;
+    }
+
+    @Override
+    public void doFilter(ServletRequest request, ServletResponse response, FilterChain chain)
+            throws IOException, ServletException {
+
+        HttpServletRequest req = (HttpServletRequest) request;
+        HttpServletResponse res = (HttpServletResponse) response;
+
+        // 跳过 OPTIONS 预检和认证相关路径
+        if ("OPTIONS".equals(req.getMethod()) || isAuthPath(req.getRequestURI())) {
+            chain.doFilter(request, response);
+            return;
+        }
+
+        // 提取令牌
+        String authHeader = req.getHeader("Authorization");
+        if (authHeader == null || !authHeader.startsWith("Bearer ")) {
+            writeUnauthorized(res, "请先登录");
+            return;
+        }
+        String token = authHeader.substring(7);
+
+        // 校验 JWT 签名
+        if (jwtUtil.parseToken(token) == null) {
+            writeUnauthorized(res, "令牌无效");
+            return;
+        }
+
+        // 检查 Redis 中是否存在（未过期 / 未撤销）
+        String redisKey = "token:" + token;
+        String Token = redisTemplate.opsForValue().get(redisKey);
+        if (Token == null) {
+            writeUnauthorized(res, "令牌已过期或已撤销");
+            return;
+        }
+
+        // 续期 → 7 天
+        redisTemplate.expire(redisKey, 7, TimeUnit.DAYS);
+
+        //解析令牌把userid取出来
+        String userId = jwtUtil.parseToken(token).get("user_id", String.class);
+
+        CurrentHolder.setCurrentId(Integer.parseInt(userId));
+
+        chain.doFilter(request, response);
+    }
+
+    private boolean isAuthPath(String uri) {
+        for (String pattern : AUTH_PATHS) {
+            if (PATH_MATCHER.match(pattern, uri)) {
+                return true;
+            }
+        }
+        return false;
+    }
+
+    private void writeUnauthorized(HttpServletResponse res, String msg) throws IOException {
+        res.setStatus(401);
+        res.setContentType("application/json;charset=UTF-8");
+        res.getWriter().write("{\"code\":401,\"message\":\"" + msg + "\",\"data\":null}");
+    }
+}
