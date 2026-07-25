@@ -22,8 +22,8 @@ spring:
   mail:
     host: smtp.qq.com
     port: 587
-    username: 3276142066@qq.com
-    password: xxxxxxxx
+    username: your_q_email@qq.com
+    password: your_authorization_code
     properties:
       mail:
         smtp:
@@ -40,6 +40,13 @@ spring:
       hibernate:
         format_sql: true
         dialect: org.hibernate.dialect.MySQLDialect
+
+aliyun:
+  oss:
+    endpoint: oss-cn-hangzhou.aliyuncs.com
+    access-key-id: your_access_key_id
+    access-key-secret: your_access_key_secret
+    bucket-name: a12-teaching
 
 mybatis:
   mapper-locations: classpath:edu/zstu/mapper/*.xml

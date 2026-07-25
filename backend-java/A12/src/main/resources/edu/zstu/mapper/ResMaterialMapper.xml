@@ -32,4 +32,15 @@
         updated_at = NOW()</set> WHERE id = #{id}
     </update>
     <update id="softDelete">UPDATE res_material SET status = 0, updated_at = NOW() WHERE id = #{id}</update>
+    <select id="findByQuery" resultMap="BaseResultMap">
+        SELECT <include refid="Base_Columns"/> FROM res_material
+        <where>
+            status = 1
+            <if test="user_id != null">AND user_id = #{user_id}</if>
+            <if test="file_type != null">AND file_type = #{file_type}</if>
+            <if test="keyword != null">AND (file_name LIKE CONCAT('%', #{keyword}, '%') OR description LIKE CONCAT('%', #{keyword}, '%'))</if>
+        </where>
+        ORDER BY created_at DESC
+    </select>
+
 </mapper>

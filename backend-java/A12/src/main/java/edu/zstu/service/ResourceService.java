@@ -1,20 +1,19 @@
 package edu.zstu.service;
 
-/**
- * 个人资源库 Service 接口<br>提供文件上传、资源检索编辑、权限管理、审计日志等个人资源相关业务方法。
- */
+import edu.zstu.dto.*;
+import edu.zstu.utils.PageResult;
+import edu.zstu.vo.MaterialVO;
+import org.springframework.web.multipart.MultipartFile;
+
+import java.util.Map;
 
 public interface ResourceService {
-    Object createUploadSession();
-    Object completeUpload(String id);
-    Object listResources();
-    Object getResource(String id);
-    Object updateResource(String id);
-    Object deleteResource(String id);
-    Object batchAction();
-    Object getPermission(String id);
-    Object setPermission(String id);
-    Object getAuditLogs(String id);
-    Object getDownloadUrl(String id);
+    MaterialVO uploadFile(MultipartFile file, String fileType, Integer userId);
+    PageResult<MaterialVO> listResources(MaterialQueryDTO dto, Integer userId);
+    MaterialVO getResource(Integer id, Integer userId);
+    MaterialVO updateResource(Integer id, MaterialDTO dto, Integer userId);
+    void deleteResource(Integer id, Integer userId);
+    void batchAction(ResourceBatchActionDTO dto, Integer userId);
+    MaterialVO setPermission(Integer id, MaterialDTO dto, Integer userId);
+    Map<String, Object> getDownloadUrl(Integer id, Integer userId);
 }
-
