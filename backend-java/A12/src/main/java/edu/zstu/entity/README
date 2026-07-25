@@ -1,0 +1,17 @@
+entity/
+├── Sys_User.java          # 用户表
+├── Sys_Config.java        # 系统配置表
+├── Sys_Log.java           # 统一日志表
+├── AI_Conversation.java   # AI对话表
+├── AI_Task.java           # AI教学任务表
+├── Ws_Project.java        # 创作项目表
+├── Ws_Page.java           # 项目页面表
+├── Res_Material.java      # 素材资源表
+├── Kb_Document.java       # 知识文档表
+├── Kb_Retrieval_Log.java  # 检索与生成记录表
+├── Exp_Task.java          # 导出任务表
+├── Com_Content.java       # 社区内容表
+├── Com_Interaction.java   # 社区互动表
+├── Adm_Audit.java         # 审核与举报表
+├── Adm_Resource.java      # 公共资源与组件表
+└── Sys_File.java          # 统一文件存储表

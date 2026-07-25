@@ -1,0 +1,82 @@
+<?xml version="1.0" encoding="UTF-8" ?>
+<!DOCTYPE mapper PUBLIC "-//mybatis.org//DTD Mapper 3.0//EN" "http://mybatis.org/dtd/mybatis-3-mapper.dtd">
+<mapper namespace="edu.zstu.mapper.SysUserMapper">
+
+    <resultMap id="BaseResultMap" type="edu.zstu.entity.Sys_User">
+        <id column="id" property="id"/>
+        <result column="username" property="username"/>
+        <result column="password_hash" property="password_hash"/>
+        <result column="real_name" property="real_name"/>
+        <result column="email" property="email"/>
+        <result column="phone" property="phone"/>
+        <result column="avatar" property="avatar"/>
+        <result column="user_type" property="user_type"/>
+        <result column="roles" property="roles"/>
+        <result column="permissions" property="permissions"/>
+        <result column="is_active" property="is_active"/>
+        <result column="created_at" property="created_at"/>
+        <result column="updated_at" property="updated_at"/>
+    </resultMap>
+
+    <sql id="Base_Columns">
+        id, username, password_hash, real_name, email, phone, avatar,
+        user_type, roles, permissions, is_active, created_at, updated_at
+    </sql>
+
+    <select id="findById" resultMap="BaseResultMap">
+        SELECT <include refid="Base_Columns"/> FROM sys_user WHERE id = #{id}
+    </select>
+
+    <select id="findByUsername" resultMap="BaseResultMap">
+        SELECT <include refid="Base_Columns"/> FROM sys_user WHERE username = #{username}
+    </select>
+
+    <select id="findByEmail" resultMap="BaseResultMap">
+        SELECT <include refid="Base_Columns"/> FROM sys_user WHERE email = #{email}
+    </select>
+
+    <select id="findByUsernameAndPasswordHash" resultMap="BaseResultMap">
+        SELECT <include refid="Base_Columns"/> FROM sys_user WHERE username = #{username} AND password_hash = #{passwordHash}
+    </select>
+
+    <select id="findAll" resultMap="BaseResultMap">
+        SELECT <include refid="Base_Columns"/> FROM sys_user
+    </select>
+
+    <insert id="insert" useGeneratedKeys="true" keyProperty="id">
+        INSERT INTO sys_user(username, password_hash, real_name, email, phone, avatar,
+                             user_type, roles, permissions, is_active, created_at, updated_at)
+        VALUES(#{username}, #{password_hash}, #{real_name}, #{email}, #{phone}, #{avatar},
+               #{user_type}, #{roles}, #{permissions}, #{is_active}, NOW(), NOW())
+    </insert>
+
+    <update id="update">
+        UPDATE sys_user
+        <set>
+            <if test="username != null">username = #{username},</if>
+            <if test="password_hash != null">password_hash = #{password_hash},</if>
+            <if test="real_name != null">real_name = #{real_name},</if>
+            <if test="email != null">email = #{email},</if>
+            <if test="phone != null">phone = #{phone},</if>
+            <if test="avatar != null">avatar = #{avatar},</if>
+            <if test="user_type != null">user_type = #{user_type},</if>
+            <if test="roles != null">roles = #{roles},</if>
+            <if test="permissions != null">permissions = #{permissions},</if>
+            <if test="is_active != null">is_active = #{is_active},</if>
+            updated_at = NOW()
+        </set>
+        WHERE id = #{id}
+    </update>
+
+    <update id="updateActiveStatus">
+        UPDATE sys_user SET is_active = #{isActive}, updated_at = NOW() WHERE id = #{id}
+    </update>
+
+    <update id="changePassword">
+        UPDATE sys_user SET password_hash = #{newPasswordHash} WHERE username = #{username}
+    </update>
+
+    <delete id="deleteById">
+        DELETE FROM sys_user WHERE id = #{id}
+    </delete>
+</mapper>

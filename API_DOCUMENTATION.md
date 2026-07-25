@@ -38,7 +38,6 @@
 | 字段 | 类型 | 必填 | 说明 |
 |---|---|---|---|
 | `username` | String | **是** | 账号（用于确认绑定手机/邮箱） |
-| `scene` | String | **是** | 场景: `register` / `password_reset` |
 | `channel` | String | **是** | 发送渠道: `phone` / `email` |
 
 **后端 DTO**: 暂无独立 DTO
@@ -56,8 +55,6 @@
 |---|---|---|---|
 | `username` | String | **是** | 账号 |
 | `code` | String | **是** | 验证码 |
-| `scene` | String | **是** | 场景: `register` / `password_reset` |
-
 **后端 DTO**: 暂无独立 DTO
 
 **响应 VO**: `Result<Void>`

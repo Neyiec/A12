@@ -1,0 +1,35 @@
+<?xml version="1.0" encoding="UTF-8" ?>
+<!DOCTYPE mapper PUBLIC "-//mybatis.org//DTD Mapper 3.0//EN" "http://mybatis.org/dtd/mybatis-3-mapper.dtd">
+<mapper namespace="edu.zstu.mapper.AiTaskMapper">
+    <resultMap id="BaseResultMap" type="edu.zstu.entity.AI_Task">
+        <id column="id" property="id"/><result column="user_id" property="user_id"/>
+        <result column="conversation_id" property="conversation_id"/><result column="title" property="title"/>
+        <result column="subject" property="subject"/><result column="grade" property="grade"/>
+        <result column="status" property="status"/><result column="uploaded_refs" property="uploaded_refs"/>
+        <result column="plan_json" property="plan_json"/><result column="plan_confirm_status" property="plan_confirm_status"/>
+        <result column="exec_steps" property="exec_steps"/><result column="reflections" property="reflections"/>
+        <result column="created_at" property="created_at"/><result column="updated_at" property="updated_at"/>
+    </resultMap>
+    <sql id="Base_Columns">id, user_id, conversation_id, title, subject, grade, status, uploaded_refs, plan_json, plan_confirm_status, exec_steps, reflections, created_at, updated_at</sql>
+    <select id="findById" resultMap="BaseResultMap">SELECT <include refid="Base_Columns"/> FROM ai_task WHERE id = #{id}</select>
+    <select id="findByUserId" resultMap="BaseResultMap">SELECT <include refid="Base_Columns"/> FROM ai_task WHERE user_id = #{userId} ORDER BY created_at DESC</select>
+    <select id="findByConversationId" resultMap="BaseResultMap">SELECT <include refid="Base_Columns"/> FROM ai_task WHERE conversation_id = #{conversationId}</select>
+    <select id="findAll" resultMap="BaseResultMap">SELECT <include refid="Base_Columns"/> FROM ai_task ORDER BY created_at DESC</select>
+    <insert id="insert" useGeneratedKeys="true" keyProperty="id">
+        INSERT INTO ai_task(user_id, conversation_id, title, subject, grade, status, uploaded_refs,
+                            plan_json, plan_confirm_status, exec_steps, reflections, created_at, updated_at)
+        VALUES(#{user_id}, #{conversation_id}, #{title}, #{subject}, #{grade}, #{status}, #{uploaded_refs},
+               #{plan_json}, #{plan_confirm_status}, #{exec_steps}, #{reflections}, NOW(), NOW())
+    </insert>
+    <update id="update">
+        UPDATE ai_task <set>
+        <if test="title != null">title = #{title},</if><if test="subject != null">subject = #{subject},</if>
+        <if test="grade != null">grade = #{grade},</if><if test="status != null">status = #{status},</if>
+        <if test="uploaded_refs != null">uploaded_refs = #{uploaded_refs},</if>
+        <if test="plan_json != null">plan_json = #{plan_json},</if>
+        <if test="plan_confirm_status != null">plan_confirm_status = #{plan_confirm_status},</if>
+        <if test="exec_steps != null">exec_steps = #{exec_steps},</if>
+        <if test="reflections != null">reflections = #{reflections},</if>
+        updated_at = NOW()</set> WHERE id = #{id}
+    </update>
+</mapper>

@@ -1,0 +1,20 @@
+<?xml version="1.0" encoding="UTF-8" ?>
+<!DOCTYPE mapper PUBLIC "-//mybatis.org//DTD Mapper 3.0//EN" "http://mybatis.org/dtd/mybatis-3-mapper.dtd">
+<mapper namespace="edu.zstu.mapper.SysLogMapper">
+    <resultMap id="BaseResultMap" type="edu.zstu.entity.Sys_Log">
+        <id column="id" property="id"/><result column="user_id" property="user_id"/>
+        <result column="log_type" property="log_type"/><result column="module" property="module"/>
+        <result column="action" property="action"/><result column="target_type" property="target_type"/>
+        <result column="target_id" property="target_id"/><result column="detail" property="detail"/>
+        <result column="ip" property="ip"/><result column="create_at" property="create_at"/>
+    </resultMap>
+    <sql id="Base_Columns">id, user_id, log_type, module, action, target_type, target_id, detail, ip, create_at</sql>
+    <select id="findById" resultMap="BaseResultMap">SELECT <include refid="Base_Columns"/> FROM sys_log WHERE id = #{id}</select>
+    <select id="findAll" resultMap="BaseResultMap">SELECT <include refid="Base_Columns"/> FROM sys_log ORDER BY create_at DESC</select>
+    <select id="findByUserId" resultMap="BaseResultMap">SELECT <include refid="Base_Columns"/> FROM sys_log WHERE user_id = #{userId}</select>
+    <select id="findByTypeAndTime" resultMap="BaseResultMap">SELECT <include refid="Base_Columns"/> FROM sys_log WHERE log_type = #{logType} AND create_at BETWEEN #{startTime} AND #{endTime}</select>
+    <insert id="insert" useGeneratedKeys="true" keyProperty="id">
+        INSERT INTO sys_log(user_id, log_type, module, action, target_type, target_id, detail, ip, create_at)
+        VALUES(#{user_id}, #{log_type}, #{module}, #{action}, #{target_type}, #{target_id}, #{detail}, #{ip}, NOW())
+    </insert>
+</mapper>
