@@ -1,0 +1,22 @@
+<?xml version="1.0" encoding="UTF-8" ?>
+<!DOCTYPE mapper PUBLIC "-//mybatis.org//DTD Mapper 3.0//EN" "http://mybatis.org/dtd/mybatis-3-mapper.dtd">
+<mapper namespace="edu.zstu.mapper.SysFileMapper">
+    <resultMap id="BaseResultMap" type="edu.zstu.entity.Sys_File">
+        <id column="id" property="id"/><result column="file_name" property="file_name"/>
+        <result column="file_path" property="file_path"/><result column="file_type" property="file_type"/>
+        <result column="mime_type" property="mime_type"/><result column="file_size" property="file_size"/>
+        <result column="storage_type" property="storage_type"/><result column="uploader_id" property="uploader_id"/>
+        <result column="biz_type" property="biz_type"/><result column="biz_id" property="biz_id"/>
+        <result column="created_at" property="created_at"/>
+    </resultMap>
+    <sql id="Base_Columns">id, file_name, file_path, file_type, mime_type, file_size, storage_type, uploader_id, biz_type, biz_id, created_at</sql>
+    <select id="findById" resultMap="BaseResultMap">SELECT <include refid="Base_Columns"/> FROM sys_file WHERE id = #{id}</select>
+    <select id="findAll" resultMap="BaseResultMap">SELECT <include refid="Base_Columns"/> FROM sys_file</select>
+    <select id="findByUploaderId" resultMap="BaseResultMap">SELECT <include refid="Base_Columns"/> FROM sys_file WHERE uploader_id = #{uploaderId}</select>
+    <select id="findByBiz" resultMap="BaseResultMap">SELECT <include refid="Base_Columns"/> FROM sys_file WHERE biz_type = #{bizType} AND biz_id = #{bizId}</select>
+    <insert id="insert" useGeneratedKeys="true" keyProperty="id">
+        INSERT INTO sys_file(file_name, file_path, file_type, mime_type, file_size, storage_type, uploader_id, biz_type, biz_id, created_at)
+        VALUES(#{file_name}, #{file_path}, #{file_type}, #{mime_type}, #{file_size}, #{storage_type}, #{uploader_id}, #{biz_type}, #{biz_id}, NOW())
+    </insert>
+    <delete id="deleteById">DELETE FROM sys_file WHERE id = #{id}</delete>
+</mapper>

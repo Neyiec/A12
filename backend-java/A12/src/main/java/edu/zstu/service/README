@@ -1,0 +1,27 @@
+service/
+├── AuthService.java              ── 认证模块（register / login / logout...）
+├── UserService.java              ── 用户模块（个人信息 / 改密）
+├── AIService.java                ── AI 教学引擎（会话 / 计划 / 执行）
+├── ProjectService.java           ── 项目模块（CRUD / 组件 / 版本）
+├── ResourceService.java          ── 个人资源库（上传 / 检索 / 权限）
+├── ExportService.java            ── 成果导出（预检 / 任务 / 文件）
+├── CommunityService.java         ── 社区（内容 / 收藏 / 投稿 / 举报）
+├── AdminUserService.java         ── 后台用户权限
+├── AdminResourceService.java     ── 后台公共资源
+├── AdminModerationService.java   ── 后台内容审核
+├── AdminExportService.java       ── 后台导出模板
+├── AdminConfigService.java       ── 后台AI配置 / 安全策略 / 告警
+│
+└── impl/
+    ├── AuthServiceImpl.java
+    ├── UserServiceImpl.java
+    ├── AIServiceImpl.java
+    ├── ProjectServiceImpl.java
+    ├── ResourceServiceImpl.java
+    ├── ExportServiceImpl.java
+    ├── CommunityServiceImpl.java
+    ├── AdminUserServiceImpl.java
+    ├── AdminResourceServiceImpl.java
+    ├── AdminModerationServiceImpl.java
+    ├── AdminExportServiceImpl.java
+    └── AdminConfigServiceImpl.java

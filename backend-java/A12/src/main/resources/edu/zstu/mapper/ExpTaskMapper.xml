@@ -1,0 +1,36 @@
+<?xml version="1.0" encoding="UTF-8" ?>
+<!DOCTYPE mapper PUBLIC "-//mybatis.org//DTD Mapper 3.0//EN" "http://mybatis.org/dtd/mybatis-3-mapper.dtd">
+<mapper namespace="edu.zstu.mapper.ExpTaskMapper">
+    <resultMap id="BaseResultMap" type="edu.zstu.entity.Exp_Task">
+        <id column="id" property="id"/><result column="user_id" property="user_id"/>
+        <result column="project_id" property="project_id"/><result column="snapshot_version" property="snapshot_version"/>
+        <result column="export_type" property="export_type"/><result column="status" property="status"/>
+        <result column="config" property="config"/><result column="file_name" property="file_name"/>
+        <result column="file_url" property="file_url"/><result column="file_size" property="file_size"/>
+        <result column="download_url" property="download_url"/><result column="url_expire_at" property="url_expire_at"/>
+        <result column="file_status" property="file_status"/><result column="quality_report" property="quality_report"/>
+        <result column="error_msg" property="error_msg"/>
+        <result column="created_at" property="created_at"/><result column="completed_at" property="completed_at"/>
+    </resultMap>
+    <sql id="Base_Columns">id, user_id, project_id, snapshot_version, export_type, status, config, file_name, file_url, file_size, download_url, url_expire_at, file_status, quality_report, error_msg, created_at, completed_at</sql>
+    <select id="findById" resultMap="BaseResultMap">SELECT <include refid="Base_Columns"/> FROM exp_task WHERE id = #{id}</select>
+    <select id="findByUserId" resultMap="BaseResultMap">SELECT <include refid="Base_Columns"/> FROM exp_task WHERE user_id = #{userId} ORDER BY created_at DESC</select>
+    <select id="findByProjectId" resultMap="BaseResultMap">SELECT <include refid="Base_Columns"/> FROM exp_task WHERE project_id = #{projectId} ORDER BY created_at DESC</select>
+    <select id="findAll" resultMap="BaseResultMap">SELECT <include refid="Base_Columns"/> FROM exp_task ORDER BY created_at DESC</select>
+    <insert id="insert" useGeneratedKeys="true" keyProperty="id">
+        INSERT INTO exp_task(user_id, project_id, snapshot_version, export_type, status, config, file_name, file_url,
+                             file_size, download_url, url_expire_at, file_status, quality_report, error_msg, created_at, completed_at)
+        VALUES(#{user_id}, #{project_id}, #{snapshot_version}, #{export_type}, #{status}, #{config}, #{file_name}, #{file_url},
+               #{file_size}, #{download_url}, #{url_expire_at}, #{file_status}, #{quality_report}, #{error_msg}, NOW(), #{completed_at})
+    </insert>
+    <update id="update">
+        UPDATE exp_task <set>
+        <if test="status != null">status = #{status},</if><if test="file_name != null">file_name = #{file_name},</if>
+        <if test="file_url != null">file_url = #{file_url},</if><if test="file_size != null">file_size = #{file_size},</if>
+        <if test="download_url != null">download_url = #{download_url},</if><if test="url_expire_at != null">url_expire_at = #{url_expire_at},</if>
+        <if test="file_status != null">file_status = #{file_status},</if>
+        <if test="quality_report != null">quality_report = #{quality_report},</if>
+        <if test="error_msg != null">error_msg = #{error_msg},</if>
+        completed_at = #{completed_at}</set> WHERE id = #{id}
+    </update>
+</mapper>

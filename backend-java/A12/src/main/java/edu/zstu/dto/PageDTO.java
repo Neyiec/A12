@@ -11,6 +11,7 @@ import lombok.NoArgsConstructor;
 @NoArgsConstructor
 @AllArgsConstructor
 public class PageDTO {
+    private Integer page_id;
     private int page_order;
     private String page_type;
     private String page_title;

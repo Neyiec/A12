@@ -1,0 +1,35 @@
+<?xml version="1.0" encoding="UTF-8" ?>
+<!DOCTYPE mapper PUBLIC "-//mybatis.org//DTD Mapper 3.0//EN" "http://mybatis.org/dtd/mybatis-3-mapper.dtd">
+<mapper namespace="edu.zstu.mapper.ResMaterialMapper">
+    <resultMap id="BaseResultMap" type="edu.zstu.entity.Res_Material">
+        <id column="id" property="id"/><result column="user_id" property="user_id"/>
+        <result column="file_name" property="file_name"/><result column="file_type" property="file_type"/>
+        <result column="file_url" property="file_url"/><result column="file_size" property="file_size"/>
+        <result column="thumbnail" property="thumbnail"/><result column="description" property="description"/>
+        <result column="categories" property="categories"/><result column="tags" property="tags"/>
+        <result column="access_type" property="access_type"/><result column="authorized_users" property="authorized_users"/>
+        <result column="allow_ai" property="allow_ai"/><result column="status" property="status"/>
+        <result column="created_at" property="created_at"/><result column="updated_at" property="updated_at"/>
+    </resultMap>
+    <sql id="Base_Columns">id, user_id, file_name, file_type, file_url, file_size, thumbnail, description, categories, tags, access_type, authorized_users, allow_ai, status, created_at, updated_at</sql>
+    <select id="findById" resultMap="BaseResultMap">SELECT <include refid="Base_Columns"/> FROM res_material WHERE id = #{id}</select>
+    <select id="findByUserId" resultMap="BaseResultMap">SELECT <include refid="Base_Columns"/> FROM res_material WHERE user_id = #{userId} AND status = 1</select>
+    <select id="findAll" resultMap="BaseResultMap">SELECT <include refid="Base_Columns"/> FROM res_material WHERE status = 1 ORDER BY created_at DESC</select>
+    <select id="findByTypeAndUser" resultMap="BaseResultMap">SELECT <include refid="Base_Columns"/> FROM res_material WHERE file_type = #{fileType} AND user_id = #{userId} AND status = 1</select>
+    <insert id="insert" useGeneratedKeys="true" keyProperty="id">
+        INSERT INTO res_material(user_id, file_name, file_type, file_url, file_size, thumbnail, description, categories,
+                                 tags, access_type, authorized_users, allow_ai, status, created_at, updated_at)
+        VALUES(#{user_id}, #{file_name}, #{file_type}, #{file_url}, #{file_size}, #{thumbnail}, #{description}, #{categories},
+               #{tags}, #{access_type}, #{authorized_users}, #{allow_ai}, #{status}, NOW(), NOW())
+    </insert>
+    <update id="update">
+        UPDATE res_material <set>
+        <if test="file_name != null">file_name = #{file_name},</if><if test="description != null">description = #{description},</if>
+        <if test="categories != null">categories = #{categories},</if><if test="tags != null">tags = #{tags},</if>
+        <if test="access_type != null">access_type = #{access_type},</if>
+        <if test="authorized_users != null">authorized_users = #{authorized_users},</if>
+        <if test="allow_ai != null">allow_ai = #{allow_ai},</if>
+        updated_at = NOW()</set> WHERE id = #{id}
+    </update>
+    <update id="softDelete">UPDATE res_material SET status = 0, updated_at = NOW() WHERE id = #{id}</update>
+</mapper>

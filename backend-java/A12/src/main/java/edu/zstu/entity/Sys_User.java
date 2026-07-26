@@ -3,7 +3,7 @@ package edu.zstu.entity;
 import lombok.AllArgsConstructor;
 import lombok.Data;
 import lombok.NoArgsConstructor;
-import org.springframework.boot.jackson.autoconfigure.JacksonProperties;
+
 
 import java.time.LocalDateTime;
 
