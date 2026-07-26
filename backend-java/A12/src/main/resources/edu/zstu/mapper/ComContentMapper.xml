@@ -41,4 +41,19 @@
     </update>
     <update id="incrementViewCount">UPDATE com_content SET view_count = view_count + 1 WHERE id = #{id}</update>
     <update id="incrementUseCount">UPDATE com_content SET use_count = use_count + 1 WHERE id = #{id}</update>
+    <select id="searchPublic" resultMap="BaseResultMap">
+        SELECT <include refid="Base_Columns"/> FROM com_content
+        WHERE status = 'public'
+        <if test="contentType != null and contentType != ''">AND content_type = #{contentType}</if>
+        <if test="subject != null and subject != ''">AND subject = #{subject}</if>
+        <if test="grade != null and grade != ''">AND grade = #{grade}</if>
+        <if test="keyword != null and keyword != ''">AND (title LIKE CONCAT('%',#{keyword},'%') OR description LIKE CONCAT('%',#{keyword},'%'))</if>
+        ORDER BY is_top DESC, updated_at DESC
+    </select>
+    <select id="findByAuthorAndStatus" resultMap="BaseResultMap">
+        SELECT <include refid="Base_Columns"/> FROM com_content
+        WHERE author_id = #{authorId}
+        <if test="status != null and status != ''">AND status = #{status}</if>
+        ORDER BY updated_at DESC
+    </select>
 </mapper>

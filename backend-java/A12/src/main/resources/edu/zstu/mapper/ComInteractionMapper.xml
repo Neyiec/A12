@@ -19,4 +19,13 @@
     <delete id="deleteByUserAndTarget">
         DELETE FROM com_interaction WHERE user_id = #{userId} AND target_type = #{targetType} AND target_id = #{targetId} AND action_type = #{actionType}
     </delete>
+    <select id="findRecentViewsByUser" resultMap="BaseResultMap">
+        SELECT <include refid="Base_Columns"/> FROM com_interaction
+        WHERE user_id = #{userId} AND action_type = 'view'
+        ORDER BY created_at DESC
+    </select>
+    <select id="findByUserAndTarget" resultMap="BaseResultMap">
+        SELECT <include refid="Base_Columns"/> FROM com_interaction
+        WHERE user_id = #{userId} AND action_type = #{actionType} AND target_type = #{targetType} AND target_id = #{targetId}
+    </select>
 </mapper>

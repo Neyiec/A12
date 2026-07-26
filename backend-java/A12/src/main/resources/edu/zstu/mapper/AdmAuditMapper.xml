@@ -22,4 +22,14 @@
     <update id="process">
         UPDATE adm_audit SET handler_id = #{handler_id}, action = #{action}, comment = #{comment}, status = #{status}, processed_at = NOW() WHERE id = #{id}
     </update>
+    <select id="findByReporter" resultMap="BaseResultMap">
+        SELECT <include refid="Base_Columns"/> FROM adm_audit
+        WHERE reporter_id = #{reporterId}
+        ORDER BY created_at DESC
+    </select>
+    <select id="findByReporterAndStatus" resultMap="BaseResultMap">
+        SELECT <include refid="Base_Columns"/> FROM adm_audit
+        WHERE reporter_id = #{reporterId} AND status = #{status}
+        ORDER BY created_at DESC
+    </select>
 </mapper>

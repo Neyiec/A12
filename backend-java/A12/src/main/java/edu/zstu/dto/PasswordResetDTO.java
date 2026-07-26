@@ -13,5 +13,5 @@ import lombok.NoArgsConstructor;
 public class PasswordResetDTO {
     private String username;
     private String code;
-    private String new_password_hash;
+    private String new_password;
 }

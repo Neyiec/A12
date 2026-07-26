@@ -12,19 +12,19 @@
 
 ## API-01 POST /api/v1/auth/register
 
-**功能**: 注册教师账号（服务端强制设置角色为教师，拒绝客户端指定角色）
+**功能**: 注册教师账号。先通过 API-02 发送验证码到邮箱，再将验证码连同注册信息提交至此接口。服务端校验验证码后创建账号（直接激活，is_active=1）
 
 **请求体 (JSON)**
 | 字段 | 类型 | 必填 | 说明 |
 |---|---|---|---|
 | `username` | String | **是** | 登录用户名 |
-| `password_hash` | String | **是** | 密码（前端加密后传输） |
+| `password` | String | **是** | 密码（前端传明文，后端哈希后存储） |
 | `real_name` | String | **是** | 真实姓名 |
 | `phone` | String | **是** | 手机号 |
 | `email` | String | **是** | 邮箱 |
 | `avatar` | String | 否 | 头像 URL |
 
-**后端 DTO**: 暂无独立 DTO（可复用 `UserDTO` 但不接收 user_type/roles）
+**后端 DTO**: ``
 
 **响应 VO**: `Result<UserVO>` — 注册成功返回用户信息
 
@@ -32,13 +32,14 @@
 
 ## API-02 POST /api/v1/auth/verification-codes
 
-**功能**: 向绑定的手机号或邮箱发送验证码
+**功能**: 发送邮箱验证码
 
 **请求体 (JSON)**
 | 字段 | 类型 | 必填 | 说明 |
 |---|---|---|---|
-| `username` | String | **是** | 账号（用于确认绑定手机/邮箱） |
-| `channel` | String | **是** | 发送渠道: `phone` / `email` |
+| `username` | String | **是** | 注册场景填邮箱，密码重置场景填用户名 |
+| `scene` | String | **是** | 场景: `register` / `password_reset` |
+| `channel` | String | **是** | 发送渠道: 仅支持 `email` |
 
 **后端 DTO**: 暂无独立 DTO
 
@@ -48,7 +49,7 @@
 
 ## API-03 POST /api/v1/auth/verify
 
-**功能**: 校验验证码并将账号状态由待验证→正常
+**功能**: 校验验证码（目前仅用于密码重置场景；注册场景的验证码校验在 API-01 中完成）
 
 **请求体 (JSON)**
 | 字段 | 类型 | 必填 | 说明 |
@@ -69,9 +70,9 @@
 | 字段 | 类型 | 必填 | 说明 |
 |---|---|---|---|
 | `username` | String | **是** | 账号 |
-| `password_hash` | String | **是** | 密码（前端加密后传输） |
+| `password` | String | **是** | 密码（前端传明文，后端哈希后存储） |
 
-**后端 DTO**: `LoginDTO { username, password_hash }`
+**后端 DTO**: `LoginDTO { username, password }`
 
 **响应 VO**: `Result<LoginVO>` — 含 token、用户基本信息、角色权限
 
@@ -95,8 +96,8 @@
 | 字段 | 类型 | 必填 | 说明 |
 |---|---|---|---|
 | `username` | String | **是** | 账号 |
-| `initial_password` | String | **是** | 初始密码 |
-| `new_password_hash` | String | **是** | 新密码（前端加密） |
+| `initial_password` | String | **是** | 初始密码（前端传明文，后端哈希后校验） |
+| `new_password` | String | **是** | 新密码（前端传明文，后端哈希后存储） |
 
 **后端 DTO**: 暂无独立 DTO
 
@@ -113,7 +114,7 @@
 |---|---|---|---|
 | `username` | String | **是** | 账号 |
 | `code` | String | **是** | 密码重置验证码 |
-| `new_password_hash` | String | **是** | 新密码 |
+| `new_password` | String | **是** | 新密码（前端传明文，后端哈希后存储） |
 
 **后端 DTO**: 暂无独立 DTO
 
@@ -128,8 +129,8 @@
 **请求体 (JSON)**
 | 字段 | 类型 | 必填 | 说明 |
 |---|---|---|---|
-| `current_password_hash` | String | **是** | 当前密码 |
-| `new_password_hash` | String | **是** | 新密码 |
+| `current_password` | String | **是** | 当前密码（前端传明文，后端哈希后校验） |
+| `new_password` | String | **是** | 新密码（前端传明文，后端哈希后存储） |
 
 **后端 DTO**: 暂无独立 DTO
 
@@ -537,31 +538,47 @@
 
 # 五、个人资源库
 
-## API-32 POST /api/v1/resources/uploads
+## API-32 POST /api/v1/resources/upload-tokens
  
- **功能**: 上传文件到个人资源库，后端接收文件后存储到阿里云 OSS 并返回资源元数据
+ **功能**: 获取 OSS 签名上传 URL。后端生成唯一 objectKey 并返回签名 PUT URL，前端拿到 URL 后直传阿里云 OSS
  
- **请求体 (Multipart/Form-Data)**
+ **请求体 (JSON)**
  | 字段 | 类型 | 必填 | 说明 |
  |---|---|---|---|
- | `file` | File | **是** | 要上传的文件（Multipart） |
+ | `file_name` | String | **是** | 文件名 |
  | `file_type` | String | 否 | 文件类型: `word`/`pdf`/`ppt`/`txt`/`image`/`audio`/`video`（不传则根据扩展名自动检测） |
+ | `description` | String | 否 | 文件描述 |
+ | `replace_target_id` | Integer | 否 | 要替换的资源ID（替换时后端会清理旧文件并软删除旧记录） |
  
- **后端 DTO**: `MultipartFile`
+ **后端 DTO**: `UploadTokenDTO { file_name, file_type, description, replace_target_id }`
  
- **响应 VO**: `Result<MaterialVO>` — 上传完成后的资源元数据
+ **响应 VO**: `Result<UploadTokenVO>`
+ 
+ | UploadTokenVO 字段 | 类型 | 说明 |
+ |---|---|---|
+ | `object_key` | String | OSS 对象键 |
+ | `upload_url` | String | 签名 PUT URL（有效期60分钟） |
+ | `expires_at` | LocalDateTime | URL 过期时间 |
  
  ---
  
- ~~## API-33 POST /api/v1/resources/uploads/{id}/complete (已弃用)~~
+## API-33 POST /api/v1/resources/uploaded-files
  
- **功能**: ~~已弃用，上传改为一步完成，不再需要创建会话后再完成~~
+ **功能**: 前端直传 OSS 成功后通知后端确认。后端验证文件已存在于 OSS，创建资源记录并存入数据库
  
- **路径参数**: ~~`id` — 上传会话ID~~
+ **请求体 (JSON)**
+ | 字段 | 类型 | 必填 | 说明 |
+ |---|---|---|---|
+ | `object_key` | String | **是** | API-32 返回的 object_key |
+ | `file_name` | String | **是** | 文件名 |
+ | `file_size` | long | **是** | 文件大小（字节） |
+ | `file_type` | String | 否 | 文件类型，不传则根据扩展名自动检测 |
+ | `description` | String | 否 | 文件描述 |
+ | `replace_target_id` | Integer | 否 | 要替换的资源ID |
  
- **后端参数**: ~~无请求体~~
+ **后端 DTO**: `ResourceUploadConfirmDTO { object_key, file_name, file_size, file_type, description, replace_target_id }`
  
- **响应 VO**: ~~`Result<MaterialVO>` — 完成后的资源元数据~~
+ **响应 VO**: `Result<MaterialVO>` — 资源元数据
  
  ---
  
@@ -1050,13 +1067,13 @@
 | 字段 | 类型 | 必填 | 说明 |
 |---|---|---|---|
 | `username` | String | **是** | 用户名 |
-| `password_hash` | String | **是** | 密码 |
+| `password` | String | **是** | 密码（前端传明文，后端哈希后存储） |
 | `real_name` | String | **是** | 真实姓名 |
 | `phone` | String | 否 | 手机号 |
 | `email` | String | 否 | 邮箱 |
 | `user_type` | String | **是** | `admin` |
 | `roles` | String(JSON) | **是** | 角色列表 |
-**后端 DTO**: `UserDTO { username, password_hash, real_name, phone, email, avatar, user_type, roles, permissions, is_active }`
+**后端 DTO**: `UserDTO { username, password, real_name, phone, email, avatar, user_type, roles, permissions, is_active }`
 **响应 VO**: `Result<UserVO>`
 
 ---
@@ -1067,7 +1084,7 @@
 | 字段 | 类型 | 必填 | 说明 |
 |---|---|---|---|
 | `idempotent_key` | String | **是** | 幂等键 |
-| `users` | Array | **是** | 用户列表（每个同API-74结构） |
+| `users` | Array | **是** | 用户列表（每个同API-74结构，密码传明文，后端哈希后存储） |
 **响应 VO**: `Result<{results: Array<{username, success, initial_credentials, error}>>}`
 
 ---

@@ -13,5 +13,5 @@ import lombok.NoArgsConstructor;
 public class InitialPasswordChangeDTO {
     private String username;
     private String initial_password;
-    private String new_password_hash;
+    private String new_password;
 }
