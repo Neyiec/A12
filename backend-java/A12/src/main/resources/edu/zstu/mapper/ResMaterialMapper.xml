@@ -38,7 +38,14 @@
             status = 1
             <if test="user_id != null">AND user_id = #{user_id}</if>
             <if test="file_type != null">AND file_type = #{file_type}</if>
-            <if test="keyword != null">AND (file_name LIKE CONCAT('%', #{keyword}, '%') OR description LIKE CONCAT('%', #{keyword}, '%'))</if>
+            <if test="keyword != null">
+                AND (file_name LIKE CONCAT('%', #{keyword}, '%')
+                     OR description LIKE CONCAT('%', #{keyword}, '%')
+                     OR tags LIKE CONCAT('%', #{keyword}, '%')
+                     OR categories LIKE CONCAT('%', #{keyword}, '%'))
+            </if>
+            <if test="start_time != null">AND created_at &gt;= #{start_time}</if>
+            <if test="end_time != null">AND created_at &lt;= #{end_time}</if>
         </where>
         ORDER BY created_at DESC
     </select>

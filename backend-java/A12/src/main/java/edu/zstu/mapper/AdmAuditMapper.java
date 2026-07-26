@@ -13,4 +13,6 @@ public interface AdmAuditMapper {
     List<Adm_Audit> findAll();
     int insert(Adm_Audit audit);
     int process(Adm_Audit audit);
+    List<Adm_Audit> findByReporter(@Param("reporterId") Integer reporterId);
+    List<Adm_Audit> findByReporterAndStatus(@Param("reporterId") Integer reporterId, @Param("status") String status);
 }

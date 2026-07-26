@@ -1,27 +1,31 @@
 package edu.zstu.service;
 
-/**
- * 社区模块 Service 接口<br>提供社区内容检索、收藏关注、投稿审核、举报处理等社区业务方法。
- */
+import edu.zstu.dto.*;
+import edu.zstu.utils.PageResult;
+import edu.zstu.vo.AuditVO;
+import edu.zstu.vo.ContentVO;
+import edu.zstu.vo.ProjectVO;
+import edu.zstu.vo.RecentViewVO;
+
+import java.util.Map;
 
 public interface CommunityService {
-    Object listItems();
-    Object getItem(String id);
-    Object favorite(String id);
-    Object unfavorite(String id);
-    Object recordView(String id);
-    Object listFavorites();
-    Object listRecentViews();
-    Object removeRecentView(String itemId);
-    Object reuseItem(String id);
-    Object createSubmission();
-    Object listSubmissions();
-    Object getSubmission(String id);
-    Object updateSubmission(String id);
-    Object saveSubmissionVersion(String id);
-    Object submitForReview(String id);
-    Object createReport();
-    Object listReports();
-    Object getReport(String id);
+    PageResult<ContentVO> listItems(ContentQueryDTO dto);
+    ContentVO getItem(Integer id);
+    void favorite(Integer itemId, Integer userId);
+    void unfavorite(Integer itemId, Integer userId);
+    void recordView(Integer itemId, Integer userId);
+    PageResult<ContentVO> listFavorites(int page, int size, Integer userId);
+    PageResult<RecentViewVO> listRecentViews(int page, int size, Integer userId);
+    void removeRecentView(Integer itemId, Integer userId);
+    ProjectVO reuseItem(Integer id, InteractionDTO dto, Integer userId);
+    ContentVO createSubmission(ContentDTO dto, Integer userId);
+    PageResult<ContentVO> listSubmissions(ContentQueryDTO dto, Integer userId);
+    ContentVO getSubmission(Integer id, Integer userId);
+    ContentVO updateSubmission(Integer id, ContentDTO dto, Integer userId);
+    Map<String, Object> saveSubmissionVersion(Integer id, String description, Integer userId);
+    void submitForReview(Integer id, ReviewSubmissionDTO dto, Integer userId);
+    int createReport(AuditDTO dto, Integer userId);
+    PageResult<AuditVO> listReports(String status, int page, int size, Integer userId);
+    AuditVO getReport(Integer id, Integer userId);
 }
-

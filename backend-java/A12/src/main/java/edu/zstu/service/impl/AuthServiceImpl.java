@@ -2,7 +2,6 @@ package edu.zstu.service.impl;
 
 import cn.hutool.core.bean.BeanUtil;
 import cn.hutool.core.util.RandomUtil;
-import cn.hutool.json.JSONUtil;
 import edu.zstu.dto.*;
 import edu.zstu.entity.Sys_User;
 import edu.zstu.mapper.SysUserMapper;
@@ -16,8 +15,6 @@ import org.springframework.mail.SimpleMailMessage;
 import org.springframework.mail.javamail.JavaMailSender;
 import org.springframework.stereotype.Service;
 
-import java.time.LocalDateTime;
-import java.util.ArrayList;
 import java.util.HashMap;
 import java.util.Map;
 import java.util.concurrent.TimeUnit;
@@ -43,19 +40,27 @@ public class AuthServiceImpl implements AuthService {
 
     @Override
     public UserVO register(RegisterDTO dto) {
-        Sys_User existing = userMapper.findByUsername(dto.getUsername());
-        if (existing != null) {
+        // 1. 校验验证码（注册场景）
+        String redisKey = "verify:code:register:" + dto.getEmail();
+        String storedCode = redisTemplate.opsForValue().get(redisKey);
+        if (storedCode == null) {
+            throw new RuntimeException("验证码已过期，请重新发送");
+        }
+        if (dto.getCode() == null || !storedCode.equals(dto.getCode())) {
+            throw new RuntimeException("验证码错误");
+        }
+        redisTemplate.delete(redisKey);
+
+        // 2. 校验唯一性
+        if (userMapper.findByUsername(dto.getUsername()) != null) {
             throw new RuntimeException("用户名已存在");
         }
-        //根据邮箱查找
-        existing = userMapper.findByEmail(dto.getEmail());
-        if (existing != null) {
+        if (userMapper.findByEmail(dto.getEmail()) != null) {
             throw new RuntimeException("邮箱已存在");
         }
 
-
+        // 3. 创建用户（直接激活 is_active=1）
         String hashedPassword = passwordUtil.hash(dto.getPassword());
-
         Sys_User user = new Sys_User();
         user.setUsername(dto.getUsername());
         user.setPassword_hash(hashedPassword);
@@ -64,20 +69,25 @@ public class AuthServiceImpl implements AuthService {
         user.setEmail(dto.getEmail());
         user.setAvatar(dto.getAvatar() != null ? dto.getAvatar() : "");
         user.setUser_type("teacher");
-        ArrayList<String> roles= new ArrayList<>();
-        roles.add("teacher");
-        user.setRoles(JSONUtil.toJsonStr(roles));
+        user.setRoles("[\"teacher\"]");
         user.setPermissions("[]");
-        user.setIs_active(0);
-        user.setCreated_at(LocalDateTime.now());
-        user.setUpdated_at(LocalDateTime.now());
+        user.setIs_active(1);
 
         int result = userMapper.insert(user);
         if (result <= 0) {
             throw new RuntimeException("注册失败，请稍后重试");
         }
-
         return toUserVO(user);
+    }
+
+    @Override
+    public boolean checkUsername(String username) {
+        return userMapper.findByUsername(username) != null;
+    }
+
+    @Override
+    public boolean checkEmail(String email) {
+        return userMapper.findByEmail(email) != null;
     }
 
     @Override
@@ -91,7 +101,6 @@ public class AuthServiceImpl implements AuthService {
         Map<String, Object> claims = new HashMap<>();
         claims.put("user_id", user.getId());
         String token = jwtUtil.generateToken(claims);
-        // 令牌存入 Redis，有效期 7 天
         redisTemplate.opsForValue().set("token:" + token, String.valueOf(user.getId()), 7, TimeUnit.DAYS);
 
         LoginVO vo = new LoginVO();
@@ -103,65 +112,70 @@ public class AuthServiceImpl implements AuthService {
 
     @Override
     public void sendVerificationCode(VerificationCodeDTO dto) {
+        if (!"register".equals(dto.getScene()) && !"password_reset".equals(dto.getScene())) {
+            throw new RuntimeException("无效的场景值，仅支持 register / password_reset");
+        }
         if (!"email".equals(dto.getChannel())) {
             throw new RuntimeException("目前仅支持邮箱验证码，不支持手机");
         }
-        Sys_User user = userMapper.findByUsername(dto.getUsername());
-        if (user == null) {
-            throw new RuntimeException("用户不存在");
+
+        String email;
+        if ("register".equals(dto.getScene())) {
+            // 注册场景：用户未创建，username 字段是邮箱
+            email = dto.getUsername();
+        } else {
+            // 密码重置场景：通过用户名查邮箱
+            Sys_User user = userMapper.findByUsername(dto.getUsername());
+            if (user == null) throw new RuntimeException("用户不存在");
+            email = user.getEmail();
         }
 
-        String email = user.getEmail();
         if (email == null || !email.contains("@")) {
             throw new RuntimeException("邮箱地址无效");
         }
 
         String code = RandomUtil.randomNumbers(6);
-        String redisKey = "verify:code:"+ email;
-        redisTemplate.opsForValue().set(redisKey, code, 60, TimeUnit.SECONDS);
+        redisTemplate.opsForValue().set("verify:code:" + dto.getScene() + ":" + email, code, 60, TimeUnit.SECONDS);
 
         SimpleMailMessage message = new SimpleMailMessage();
         message.setTo(email);
-        message.setSubject("A12 教学平台 - " + "验证码");
+        message.setSubject("A12 教学平台 - " + ("register".equals(dto.getScene()) ? "注册" : "密码重置") + "验证码");
         message.setText("您的验证码为：" + code + "\n有效期 60 秒，请勿泄露给他人。");
         mailSender.send(message);
     }
 
     @Override
     public void verify(VerifyDTO dto) {
-        Sys_User user = userMapper.findByUsername(dto.getUsername());
-        if (user == null) {
-            throw new RuntimeException("用户不存在");
+        if (!"register".equals(dto.getScene()) && !"password_reset".equals(dto.getScene())) {
+            throw new RuntimeException("无效的场景值，仅支持 register / password_reset");
         }
 
-        String redisKey = "verify:code:" + user.getEmail();
+        Sys_User user = userMapper.findByUsername(dto.getUsername());
+        if (user == null) throw new RuntimeException("用户不存在");
+
+        String redisKey = "verify:code:" + dto.getScene() + ":" + user.getEmail();
         String storedCode = redisTemplate.opsForValue().get(redisKey);
 
-        if (storedCode == null) {
-            throw new RuntimeException("验证码已过期，请重新发送");
-        }
-        if (!storedCode.equals(dto.getCode())) {
-            throw new RuntimeException("验证码错误");
-        }
+        if (storedCode == null) throw new RuntimeException("验证码已过期，请重新发送");
+        if (!storedCode.equals(dto.getCode())) throw new RuntimeException("验证码错误");
 
         redisTemplate.delete(redisKey);
 
-        userMapper.updateActiveStatus(user.getId(), 1);
+        if ("register".equals(dto.getScene())) {
+            userMapper.updateActiveStatus(user.getId(), 1);
+        }
     }
 
     @Override
     public LoginVO initialPasswordChange(InitialPasswordChangeDTO dto) {
         Sys_User user = userMapper.findByUsername(dto.getUsername());
-        if (user == null) {
-            throw new RuntimeException("用户不存在");
-        }
-        if (user.getIs_active() != 1) {
-            throw new RuntimeException("用户未激活，请先激活");
-        }
+        if (user == null) throw new RuntimeException("用户不存在");
+        if (user.getIs_active() != 1) throw new RuntimeException("用户未激活，请先激活");
         if (!passwordUtil.hash(dto.getInitial_password()).equals(user.getPassword_hash())) {
             throw new RuntimeException("初始密码错误");
         }
-        userMapper.changePassword(passwordUtil.hash(dto.getNew_password_hash()), user.getUsername(),LocalDateTime.now());
+        userMapper.changePassword(passwordUtil.hash(dto.getNew_password()), user.getUsername());
+
         LoginVO vo = new LoginVO();
         BeanUtil.copyProperties(user, vo, "id");
         vo.setUser_id(user.getId());
@@ -173,41 +187,28 @@ public class AuthServiceImpl implements AuthService {
 
     @Override
     public void passwordReset(PasswordResetDTO dto) {
-        //先根据账号查询邮箱
-        Sys_User user=userMapper.findByUsername(dto.getUsername());
+        Sys_User user = userMapper.findByUsername(dto.getUsername());
+        if (user == null) throw new RuntimeException("用户不存在");
+        String redisKey = "verify:code:password_reset:" + user.getEmail();
+        String storedCode = redisTemplate.opsForValue().get(redisKey);
+        if (storedCode == null) throw new RuntimeException("验证码已过期，请重新发送");
+        if (!storedCode.equals(dto.getCode())) throw new RuntimeException("验证码错误");
+        redisTemplate.delete(redisKey);
+        userMapper.changePassword(passwordUtil.hash(dto.getNew_password()), user.getUsername());
+    }
 
-        if(user==null){
-            throw new RuntimeException("用户不存在");
-        }
-        if(user.getIs_active()!=1){
-            throw new RuntimeException("用户未激活，请先激活");
-        }
-        String email=user.getEmail();
-        String redisKey="verify:code:"+email;
-        String storedCode=redisTemplate.opsForValue().get(redisKey);
-        if(storedCode==null){
-            throw new RuntimeException("验证码已过期，请重新发送");
-        }
-        if(!storedCode.equals(dto.getCode())){
-            throw new RuntimeException("验证码错误");
-        }
-        String new_password=passwordUtil.hash(dto.getNew_password_hash());
-        int res=userMapper.changePassword(new_password,user.getUsername(), LocalDateTime.now());
-        if (res<=0){
-            throw new RuntimeException("密码修改失败");
-        }
-        return ; }
     @Override
     public void logout(String authorization) {
         if (authorization == null || !authorization.startsWith("Bearer ")) {
             throw new RuntimeException("无效的令牌格式");
         }
-
-        String token = authorization.substring(7);
-        // 从 Redis 中删除令牌，后续请求视为未登录
-        redisTemplate.delete("token:" + token);
+        redisTemplate.delete("token:" + authorization.substring(7));
     }
 
+    @Override
+    public void passwordChange(String currentPassword, String newPassword) {
+        // 预留：通过 CurrentHolder 获取当前用户 ID 后修改密码
+    }
 
     private UserVO toUserVO(Sys_User user) {
         UserVO vo = new UserVO();

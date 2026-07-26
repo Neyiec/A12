@@ -3,17 +3,22 @@ package edu.zstu.service.impl;
 import cn.hutool.core.bean.BeanUtil;
 import com.github.pagehelper.PageHelper;
 import com.github.pagehelper.PageInfo;
-import edu.zstu.dto.*;
+import edu.zstu.dto.MaterialDTO;
+import edu.zstu.dto.MaterialQueryDTO;
+import edu.zstu.dto.ResourceBatchActionDTO;
+import edu.zstu.dto.ResourceUploadConfirmDTO;
+import edu.zstu.dto.UploadTokenDTO;
 import edu.zstu.entity.Res_Material;
 import edu.zstu.mapper.ResMaterialMapper;
 import edu.zstu.service.ResourceService;
 import edu.zstu.utils.OssUtil;
 import edu.zstu.utils.PageResult;
 import edu.zstu.vo.MaterialVO;
+import edu.zstu.vo.UploadTokenVO;
 import org.springframework.stereotype.Service;
-import org.springframework.web.multipart.MultipartFile;
 
-import java.io.IOException;
+import java.net.URL;
+import java.time.LocalDateTime;
 import java.util.*;
 
 @Service
@@ -27,26 +32,50 @@ public class ResourceServiceImpl implements ResourceService {
         this.ossUtil = ossUtil;
     }
 
+    
     @Override
-    public MaterialVO uploadFile(MultipartFile file, String fileType, Integer userId) {
-        String originalName = file.getOriginalFilename();
-        if (originalName == null || originalName.isBlank()) {
+    public UploadTokenVO createUploadToken(UploadTokenDTO dto, Integer userId) {
+        if (dto.getFile_name() == null || dto.getFile_name().isBlank()) {
             throw new RuntimeException("文件名不能为空");
         }
+        String objectKey = "uploads/" + userId + "/" + UUID.randomUUID() + "/" + dto.getFile_name();
+        URL signedUrl = ossUtil.generateUploadUrl(objectKey, 60);
 
-        String objectKey = "uploads/" + userId + "/" + UUID.randomUUID() + "/" + originalName;
-        try {
-            ossUtil.putObject(objectKey, file.getInputStream());
-        } catch (IOException e) {
-            throw new RuntimeException("文件上传到 OSS 失败", e);
+        UploadTokenVO vo = new UploadTokenVO();
+        vo.setObject_key(objectKey);
+        vo.setUpload_url(signedUrl.toString());
+        vo.setExpires_at(LocalDateTime.now().plusMinutes(60));
+        return vo;
+    }
+
+    @Override
+    public MaterialVO confirmUpload(ResourceUploadConfirmDTO dto, Integer userId) {
+        if (!ossUtil.doesObjectExist(dto.getObject_key())) {
+            throw new RuntimeException("文件上传尚未完成或文件不存在于OSS");
+        }
+
+        if (dto.getReplace_target_id() != null) {
+            Res_Material old = materialMapper.findById(dto.getReplace_target_id());
+            if (old == null || old.getUser_id() != userId) {
+                ossUtil.deleteObject(dto.getObject_key());
+                throw new RuntimeException("要替换的资源不存在或无权操作");
+            }
+            ossUtil.deleteObject(ossUtil.extractObjectKey(old.getFile_url()));
+            materialMapper.softDelete(dto.getReplace_target_id());
+        }
+
+        String fileType = dto.getFile_type();
+        if (fileType == null || fileType.isBlank()) {
+            fileType = detectFileType(dto.getFile_name());
         }
 
         Res_Material material = new Res_Material();
         material.setUser_id(userId);
-        material.setFile_name(originalName);
-        material.setFile_type(fileType != null ? fileType : detectFileType(originalName));
-        material.setFile_url(ossUtil.getObjectUrl(objectKey));
-        material.setFile_size(file.getSize());
+        material.setFile_name(dto.getFile_name());
+        material.setFile_type(fileType);
+        material.setFile_url(ossUtil.getObjectUrl(dto.getObject_key()));
+        material.setFile_size(dto.getFile_size());
+        material.setDescription(dto.getDescription());
         material.setAccess_type("private");
         material.setAllow_ai(0);
         material.setStatus(1);
@@ -54,6 +83,8 @@ public class ResourceServiceImpl implements ResourceService {
         materialMapper.insert(material);
         return toMaterialVO(material);
     }
+
+
 
     @Override
     public PageResult<MaterialVO> listResources(MaterialQueryDTO dto, Integer userId) {
