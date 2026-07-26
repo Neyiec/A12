@@ -5,6 +5,11 @@ import{
 
 import login from '../components/login.vue'
 import TeacherHome from '../components/TeacherHome.vue'
+import TeacherLayout from '../components/TeacherLayout.vue'
+import ResourceLibrary from '../components/ResourceLibrary.vue'
+import CommunityHub from '../components/CommunityHub.vue'
+import ExportCenter from '../components/ExportCenter.vue'
+import CreationWorkspace from '../components/CreationWorkspace.vue'
 import {getRouters} from'../apis/login.js'
 import {isTokenExpired} from '../utils/JWTParser.js'
 
@@ -20,7 +25,14 @@ const routes = [
   {
     path: '/main',
     name: 'M',
-    component: TeacherHome,
+    component: TeacherLayout,
+    children: [
+      { path: '', component: TeacherHome, meta: { menu: 'home', title: '个人工作空间', staticTeacherPage: true } },
+      { path: 'resources', component: ResourceLibrary, meta: { menu: 'resources', title: '个人资源库', staticTeacherPage: true } },
+      { path: 'community', component: CommunityHub, meta: { menu: 'community', title: '技能与案例', staticTeacherPage: true } },
+      { path: 'exports', component: ExportCenter, meta: { menu: 'exports', title: '成果导出中心', staticTeacherPage: true } },
+      { path: 'workspace', component: CreationWorkspace, meta: { menu: 'home', title: '创作工作台', staticTeacherPage: true } },
+    ],
   },
 ]
 
@@ -73,7 +85,7 @@ let menusLoaded = false
 router.beforeEach((to, from, next) => {
   // 本地开发预览入口：便于在外部浏览器检查教师端界面，不影响生产环境鉴权。
   const isDevelopmentPreview =
-    import.meta.env.DEV && to.path === '/main' && to.query.preview === '1'
+    import.meta.env.DEV && to.path.startsWith('/main') && to.query.preview === '1'
 
   if (isDevelopmentPreview) {
     next()
@@ -93,7 +105,7 @@ router.beforeEach((to, from, next) => {
       menusLoaded = false
     }
   // 
-  if (to.path.startsWith('/main/') && !menusLoaded) {
+  if (to.path.startsWith('/main/') && !to.meta.staticTeacherPage && !menusLoaded) {
     getRouters().then(res => {
       // 添加动态路由
       addDynamicRoutes(res.data.menus)

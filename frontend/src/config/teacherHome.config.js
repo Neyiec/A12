@@ -18,7 +18,6 @@ export const TEACHER_HOME = {
   navigation: [
     { index: 'home', label: 'AI 教学助手', icon: 'ChatDotRound' },
     { index: 'resources', label: '个人资源库', icon: 'FolderOpened' },
-    { index: 'knowledge', label: '智能知识库', icon: 'Collection' },
     { index: 'community', label: '技能与案例', icon: 'Grid' },
     { index: 'exports', label: '成果导出中心', icon: 'Download' },
   ],
