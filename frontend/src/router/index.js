@@ -3,13 +3,13 @@ import{
     createWebHashHistory
 } from 'vue-router'
 
-import HelloWorld from '../components/HelloWorld.vue'
+import login from '../components/login.vue'
 import {getRouters} from'../apis/login.js'
 import {isTokenExpired} from '../utils/JWTParser.js'
 
 const routes = [{
     path: '/login',
-    component: HelloWorld
+    component: login
 }
 ]
 
