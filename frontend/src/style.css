@@ -1,14 +1,206 @@
 @import "tailwindcss";
 
-/* 1. 浮动动画 */
-@keyframes float {
-  0% { transform: translateY(0px); }
-  50% { transform: translateY(-15px); }
-  100% { transform: translateY(0px); }
+@theme {
+  --color-primary: var(--zh-theme-primary);
+  --color-primary-hover: var(--zh-background-button-hover);
+  --radius-8: var(--zh-radius8);
+  --radius-12: var(--zh-radius12);
+  --radius-16: var(--zh-radius16);
+  --radius-20: var(--zh-radius20);
+  --shadow-1: var(--zh-shadow1);
+  --shadow-2: var(--zh-shadow2);
+  --shadow-3: var(--zh-shadow3);
 }
 
-html, body, #app {
+:root {
+  color-scheme: light;
+  --zh-theme-primary: #2563eb;
+  --zh-color-primary: #2563eb;
+  --zh-text-theme: #2563eb;
+  --zh-line-theme: #3b82f6;
+  --zh-line-theme50: #2563eb80;
+  --zh-line-theme20: #2563eb33;
+  --zh-gradient-blue: linear-gradient(135deg, #2563eb 0%, #60a5fa 100%);
+  --zh-gradient-dblue: linear-gradient(135deg, #1d4ed8 0%, #3b82f6 100%);
+  --zh-background-primary: #ffffff;
+  --zh-background-base: #ffffff;
+  --zh-background-pc-sidebar: #f7f7f9;
+  --zh-background-pop: #ffffff;
+  --zh-background-capsule: #ffffff;
+  --zh-background-card: #2563eb1a;
+  --zh-background-option: #22222208;
+  --zh-background-option-on: #dbeafe;
+  --zh-background-tag: #2222220f;
+  --zh-background-button: #2563eb;
+  --zh-background-button-hover: #1d4ed8;
+  --zh-background-black-button: #222222;
+  --zh-background-gray-button-hover: #f8f8f8;
+  --zh-background-light: #f7f8fc;
+  --zh-background-light-gray: #f5f6f7;
+  --zh-background-light-grey: #e7e7ea;
+  --zh-background-menu: #f6f6f6;
+  --zh-background-select: #dbeafe;
+  --zh-background-user-query: #eff6ff;
+  --zh-background-answer-card: #ffffff99;
+  --zh-background-area: #2563eb1a;
+  --zh-background-weaken: #2563eb0d;
+  --zh-background-input: #ffffffcc;
+  --zh-text-primary: #222222;
+  --zh-text-secondary: #666666;
+  --zh-text-caption: #999999;
+  --zh-text-disabled: #cccccc;
+  --zh-text-white: #ffffff;
+  --zh-text-link: #1d4ed8;
+  --zh-line-border: #2222220f;
+  --zh-line-heavier: #2222221f;
+  --zh-line-parting: #22222208;
+  --zh-line-capsule: #2563eb1a;
+  --zh-red: #ff4040;
+  --zh-orange: #ff6b3f;
+  --zh-green: #1f993f;
+  --zh-cyan: #29becc;
+  --zh-radius8: 8px;
+  --zh-radius10: 10px;
+  --zh-radius12: 12px;
+  --zh-radius16: 16px;
+  --zh-radius20: 20px;
+  --zh-shadow1: 0 8px 16px -4px rgb(0 0 0 / 5%);
+  --zh-shadow2: 0 12px 24px -2px rgb(0 0 0 / 5%);
+  --zh-shadow3: 0 12px 36px rgb(0 0 0 / 10%);
+  --zh-font-text-windows-zh: "Microsoft YaHei", "Segoe UI", system-ui, Roboto, "Noto Sans SC", Arial, sans-serif;
+  --zh-font-number: "PlusJakartaSans", system-ui, "Segoe UI", Roboto, Arial, sans-serif;
+  --zh-font-size11: 11px;
+  --zh-font-size12: 12px;
+  --zh-font-size13: 13px;
+  --zh-font-size14: 14px;
+  --zh-font-size15: 15px;
+  --zh-font-size16: 16px;
+  --zh-font-size18: 18px;
+  --zh-tracking-tight: -0.025em;
+  --zh-tracking-wide: 0.025em;
+  --el-color-primary: var(--zh-theme-primary);
+  --el-color-primary-light-3: #dbeafe;
+  --el-color-primary-light-5: #eff6ff;
+  --el-color-primary-light-7: #dbeafe;
+  --el-color-primary-light-9: #eff6ff;
+  --el-color-primary-dark-2: #1d4ed8;
+  --el-color-success: var(--zh-green);
+  --el-color-warning: var(--zh-orange);
+  --el-color-danger: var(--zh-red);
+  --el-color-info: var(--zh-cyan);
+  --el-text-color-primary: var(--zh-text-primary);
+  --el-text-color-regular: var(--zh-text-secondary);
+  --el-text-color-secondary: var(--zh-text-caption);
+  --el-text-color-placeholder: var(--zh-text-disabled);
+  --el-border-color: var(--zh-line-border);
+  --el-border-color-light: var(--zh-line-parting);
+  --el-border-color-lighter: var(--zh-line-parting);
+  --el-border-color-dark: var(--zh-line-heavier);
+  --el-border-radius-base: var(--zh-radius8);
+  --el-bg-color: var(--zh-background-primary);
+  --el-bg-color-page: var(--zh-background-light);
+  --el-bg-color-overlay: var(--zh-background-pop);
+}
+
+[data-theme="dark"] {
+  color-scheme: dark;
+  --zh-theme-primary: #60a5fa;
+  --zh-color-primary: #60a5fa;
+  --zh-text-theme: #60a5fa;
+  --zh-line-theme: #60a5fa;
+  --zh-line-theme50: #60a5fa80;
+  --zh-line-theme20: #60a5fa33;
+  --zh-background-primary: #222222;
+  --zh-background-base: #222222;
+  --zh-background-pc-sidebar: #111112;
+  --zh-background-pop: #222222;
+  --zh-background-capsule: #2c2c2c;
+  --zh-background-option: #fafbff0d;
+  --zh-background-option-on: #1e3050;
+  --zh-background-tag: #fafbff1f;
+  --zh-background-button: #60a5fa;
+  --zh-background-button-hover: #3b82f6;
+  --zh-background-light: #141420;
+  --zh-background-light-gray: #111112;
+  --zh-background-light-grey: #262626;
+  --zh-background-menu: #1e1e1e;
+  --zh-background-user-query: #1e3050;
+  --zh-background-answer-card: #2c2c2c;
+  --zh-background-input: #212121;
+  --zh-background-weaken: #60a5fa14;
+  --zh-text-primary: #fafbff;
+  --zh-text-secondary: #fafbffb3;
+  --zh-text-caption: #fafbff80;
+  --zh-text-disabled: #fafbff3d;
+  --zh-text-link: #60a5fa;
+  --zh-line-border: #fafbff1f;
+  --zh-line-heavier: #fafbff33;
+  --zh-line-parting: #fafbff0d;
+  --el-color-primary-light-3: #1e3050;
+  --el-color-primary-light-5: #1a2740;
+  --el-color-primary-dark-2: #3b82f6;
+}
+
+* {
+  box-sizing: border-box;
+}
+
+html {
+  scroll-behavior: smooth;
+}
+
+html,
+body,
+#app {
   height: 100%;
   margin: 0;
   padding: 0;
+}
+
+body {
+  min-width: 320px;
+  background: var(--zh-background-primary);
+  color: var(--zh-text-primary);
+  font-family: var(--zh-font-text-windows-zh);
+  line-height: 1.5715;
+  text-rendering: optimizeLegibility;
+}
+
+button,
+input,
+textarea {
+  font: inherit;
+}
+
+.skip-link {
+  position: fixed;
+  z-index: 2000;
+  top: 8px;
+  left: 8px;
+  padding: 8px 12px;
+  border-radius: var(--zh-radius8);
+  color: var(--zh-text-white);
+  background: var(--zh-background-button);
+  transform: translateY(-150%);
+  transition: transform 150ms ease;
+}
+
+.skip-link:focus {
+  transform: translateY(0);
+}
+
+:focus-visible {
+  outline: 3px solid var(--zh-line-theme20);
+  outline-offset: 2px;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    scroll-behavior: auto !important;
+    transition-duration: 0.01ms !important;
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+  }
 }

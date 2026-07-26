@@ -4,13 +4,24 @@ import{
 } from 'vue-router'
 
 import login from '../components/login.vue'
+import TeacherHome from '../components/TeacherHome.vue'
 import {getRouters} from'../apis/login.js'
 import {isTokenExpired} from '../utils/JWTParser.js'
 
-const routes = [{
+const routes = [
+  {
+    path: '/',
+    redirect: '/main',
+  },
+  {
     path: '/login',
-    component: login
-}
+    component: login,
+  },
+  {
+    path: '/main',
+    name: 'M',
+    component: TeacherHome,
+  },
 ]
 
 const router = createRouter({
@@ -60,6 +71,15 @@ export function addDynamicRoutes(menus) {
 let menusLoaded = false
 
 router.beforeEach((to, from, next) => {
+  // 本地开发预览入口：便于在外部浏览器检查教师端界面，不影响生产环境鉴权。
+  const isDevelopmentPreview =
+    import.meta.env.DEV && to.path === '/main' && to.query.preview === '1'
+
+  if (isDevelopmentPreview) {
+    next()
+    return
+  }
+
   const token = localStorage.getItem('token')
   
   if (to.path !== '/login' && (!token || isTokenExpired(token))) {
@@ -73,7 +93,7 @@ router.beforeEach((to, from, next) => {
       menusLoaded = false
     }
   // 
-  if (to.path.startsWith('/main') && !menusLoaded) {
+  if (to.path.startsWith('/main/') && !menusLoaded) {
     getRouters().then(res => {
       // 添加动态路由
       addDynamicRoutes(res.data.menus)
