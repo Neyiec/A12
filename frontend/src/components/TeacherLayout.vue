@@ -122,6 +122,7 @@ const toggleTheme = () => {
 .status-dot { margin-left: 16px; color: var(--zh-text-caption); font-size: 12px; }
 .status-dot i { width: 7px; height: 7px; display: inline-block; margin-right: 5px; border-radius: 50%; background: var(--zh-green); }
 .topbar-actions { display: flex; align-items: center; gap: 4px; }
+.topbar-actions :deep(.el-button .el-icon), .teacher-profile :deep(.el-button .el-icon) { font-size: 18px; }
 
 @media (max-width: 900px) {
   .teacher-shell { grid-template-columns: 76px minmax(0, 1fr); }

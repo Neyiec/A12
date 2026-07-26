@@ -17,7 +17,7 @@ import {post, get} from '../utils/api'
  * @returns {Promise} 后端返回 { token: string, menus: Array } 等认证信息
  */
 export function login(user) {
-  return post('/api/user/login', user)
+  return post('/api/v1/auth/login', user)
 }
 
 /**
@@ -26,7 +26,7 @@ export function login(user) {
  * @returns {Promise} 后端返回注册结果
  */
 export function register(user) {
-  return post('/api/user/register', user)
+  return post('/api/v1/auth/register', user)
 }
 
 /**

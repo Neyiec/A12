@@ -100,6 +100,19 @@
   --el-bg-color: var(--zh-background-primary);
   --el-bg-color-page: var(--zh-background-light);
   --el-bg-color-overlay: var(--zh-background-pop);
+  --el-fill-color-blank: var(--zh-background-primary);
+  --el-fill-color: var(--zh-background-option);
+  --el-fill-color-light: var(--zh-background-light);
+  --el-fill-color-lighter: var(--zh-background-light-gray);
+  --el-fill-color-extra-light: var(--zh-background-light);
+  --el-fill-color-dark: var(--zh-background-light-grey);
+  --el-fill-color-darker: var(--zh-background-menu);
+  --el-mask-color: rgb(0 0 0 / 50%);
+  --el-table-bg-color: var(--zh-background-primary);
+  --el-table-tr-bg-color: var(--zh-background-primary);
+  --el-table-header-bg-color: var(--zh-background-light);
+  --el-table-row-hover-bg-color: var(--zh-background-option);
+  --el-menu-bg-color: transparent;
 }
 
 [data-theme="dark"] {
@@ -139,6 +152,17 @@
   --el-color-primary-light-3: #1e3050;
   --el-color-primary-light-5: #1a2740;
   --el-color-primary-dark-2: #3b82f6;
+  --el-fill-color-blank: var(--zh-background-primary);
+  --el-fill-color: var(--zh-background-option);
+  --el-fill-color-light: var(--zh-background-light);
+  --el-fill-color-lighter: var(--zh-background-light-gray);
+  --el-fill-color-extra-light: var(--zh-background-light);
+  --el-fill-color-dark: var(--zh-background-light-grey);
+  --el-fill-color-darker: var(--zh-background-menu);
+  --el-table-bg-color: var(--zh-background-primary);
+  --el-table-tr-bg-color: var(--zh-background-primary);
+  --el-table-header-bg-color: var(--zh-background-light);
+  --el-table-row-hover-bg-color: var(--zh-background-option);
 }
 
 * {

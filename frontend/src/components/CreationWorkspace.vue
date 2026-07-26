@@ -33,8 +33,8 @@ const sendRevision = () => {
   <div class="workspace">
     <header class="workspace-toolbar">
       <div class="workspace-title"><el-button text circle aria-label="返回首页" @click="router.push({ path: '/main', query: route.query.preview ? { preview: '1' } : {} })"><el-icon><ArrowLeft /></el-icon></el-button><div><strong>勾股定理互动教学</strong><span><el-icon><CircleCheck /></el-icon> 已保存 · v2.1</span></div></div>
-      <div class="tool-cluster"><el-button text :icon="EditPen">文本</el-button><el-button text :icon="Picture">图片</el-button><el-button text :icon="DataBoard">互动组件</el-button><el-button text :icon="Brush">背景</el-button></div>
-      <div><el-button :icon="Refresh">预览</el-button><el-button type="primary" :icon="Download" @click="router.push({ path: '/main/exports', query: route.query.preview ? { preview: '1' } : {} })">导出</el-button></div>
+      <div class="tool-cluster" title="组件编辑能力将在项目接口接入后开放"><el-button text :icon="EditPen" disabled>文本</el-button><el-button text :icon="Picture" disabled>图片</el-button><el-button text :icon="DataBoard" disabled>互动组件</el-button><el-button text :icon="Brush" disabled>背景</el-button></div>
+      <div><el-button :icon="Refresh" disabled title="项目预览暂未接入">预览</el-button><el-button type="primary" :icon="Download" @click="router.push({ path: '/main/exports', query: route.query.preview ? { preview: '1' } : {} })">导出</el-button></div>
     </header>
 
     <div class="workspace-grid">
@@ -53,7 +53,7 @@ const sendRevision = () => {
           <button v-for="(slide, index) in WORKSPACE_PAGE.slides" :key="slide" :class="{ active: selectedSlide === index }" @click="selectedSlide = index">
             <span>{{ index + 1 }}</span><div class="mini-slide"><i></i><b>{{ slide }}</b></div>
           </button>
-          <el-button text :icon="Plus">添加页面</el-button>
+          <el-button text :icon="Plus" disabled title="页面编辑暂未接入">添加页面</el-button>
         </aside>
 
         <main class="canvas-area">
@@ -67,17 +67,17 @@ const sendRevision = () => {
             </div>
             <footer><span>小组任务</span><p>测量三组直角三角形边长，记录并比较两个较小正方形与最大正方形的面积。</p></footer>
           </article>
-          <div class="zoom-control"><button>−</button><span>86%</span><button>＋</button></div>
+          <div class="zoom-control" title="缩放暂未接入"><button disabled>−</button><span>86%</span><button disabled>＋</button></div>
         </main>
       </section>
 
       <aside class="property-panel">
         <header><strong>属性设置</strong><span>页面 03</span></header>
         <div class="panel-tabs"><button v-for="panel in panels" :key="panel" :class="{ active: activePanel === panel }" @click="activePanel = panel">{{ panel }}</button></div>
-        <section><label>页面布局</label><div class="layout-options"><button class="active"><i></i><i></i></button><button><i></i><i></i></button><button><i></i></button></div></section>
-        <section><label>主题色</label><div class="color-row"><button class="blue"></button><button class="navy"></button><button class="green"></button><button class="orange"></button><button class="custom">+</button></div></section>
-        <section><label>背景</label><el-select model-value="浅色网格"><el-option label="浅色网格" value="浅色网格" /><el-option label="纯色背景" value="纯色背景" /></el-select><el-slider :model-value="18" /></section>
-        <section><label>页面操作</label><div class="action-list"><el-button :icon="CopyDocument">复制页面</el-button><el-button :icon="Delete">删除页面</el-button></div></section>
+        <section><label>页面布局</label><div class="layout-options"><button class="active" disabled><i></i><i></i></button><button disabled><i></i><i></i></button><button disabled><i></i></button></div></section>
+        <section><label>主题色</label><div class="color-row"><button class="blue" disabled></button><button class="navy" disabled></button><button class="green" disabled></button><button class="orange" disabled></button><button class="custom" disabled>+</button></div></section>
+        <section><label>背景</label><el-select model-value="浅色网格" disabled><el-option label="浅色网格" value="浅色网格" /></el-select><el-slider :model-value="18" disabled /></section>
+        <section><label>页面操作</label><div class="action-list"><el-button :icon="CopyDocument" disabled>复制页面</el-button><el-button :icon="Delete" disabled>删除页面</el-button></div></section>
         <div class="property-tip"><el-icon><ChatDotRound /></el-icon><p>你也可以在左侧直接说：<br>“把背景换成更简洁的浅蓝色”</p></div>
       </aside>
     </div>
@@ -98,7 +98,7 @@ const sendRevision = () => {
 .slide-canvas { width: min(780px, 100%); aspect-ratio: 16 / 9; position: relative; overflow: hidden; padding: clamp(28px, 4vw, 52px); color: #102d54; background: #f9fbff; box-shadow: 0 18px 45px rgb(40 57 82 / 18%); }.slide-canvas::after { content: ""; position: absolute; right: -8%; top: -18%; width: 42%; aspect-ratio: 1; border-radius: 50%; background: #dbeafe; opacity: .7; }.slide-label { color: #3772ba; font: 600 10px var(--zh-font-number); letter-spacing: .12em; }.slide-canvas h1 { max-width: 72%; margin: 18px 0 0; font-size: clamp(22px, 3vw, 38px); line-height: 1.28; letter-spacing: -.04em; }
 .theorem-visual { display: grid; grid-template-columns: .8fr 1.2fr; align-items: center; gap: 32px; width: 76%; margin: 34px auto 0; }.triangle { width: 0; height: 0; border-left: 80px solid #4a83c8; border-top: 55px solid transparent; border-bottom: 55px solid transparent; transform: rotate(45deg); filter: drop-shadow(8px 10px 0 #bfdbfe); }.formula { display: grid; grid-template-columns: auto 24px auto; align-items: center; font-family: var(--zh-font-number); }.formula span, .formula strong { font-size: clamp(22px, 3vw, 36px); }.formula i { color: #7c8da4; font-style: normal; }.formula strong { color: #2563eb; }.formula small { grid-column: 1 / -1; margin-top: 8px; color: #7c8da4; font-size: 10px; }
 .slide-canvas footer { position: absolute; inset-inline: 0; bottom: 0; display: grid; grid-template-columns: 110px 1fr; padding: 14px 28px; color: white; background: #173d78; }.slide-canvas footer span { font-weight: 600; }.slide-canvas footer p { margin: 0; font-size: 10px; line-height: 1.5; }
-.zoom-control { position: absolute; right: 18px; bottom: 14px; display: flex; align-items: center; overflow: hidden; border-radius: var(--zh-radius8); background: white; box-shadow: var(--zh-shadow1); }.zoom-control button, .zoom-control span { padding: 6px 9px; border: 0; color: #6b7280; background: white; font-size: 10px; }
+.zoom-control { position: absolute; right: 18px; bottom: 14px; display: flex; align-items: center; overflow: hidden; border-radius: var(--zh-radius8); background: var(--zh-background-capsule); box-shadow: var(--zh-shadow1); }.zoom-control button, .zoom-control span { padding: 6px 9px; border: 0; color: var(--zh-text-secondary); background: var(--zh-background-capsule); font-size: 10px; }
 .property-panel { border-left: 1px solid var(--zh-line-border); overflow-y: auto; }.property-panel > header { display: flex; justify-content: space-between; padding: 16px; border-bottom: 1px solid var(--zh-line-parting); }.property-panel header strong { font-size: 13px; }.property-panel header span { color: var(--zh-text-caption); font-size: 10px; }
 .panel-tabs { display: grid; grid-template-columns: repeat(3, 1fr); padding: 10px 14px 0; border-bottom: 1px solid var(--zh-line-parting); }.panel-tabs button { padding: 8px; border: 0; border-bottom: 2px solid transparent; color: var(--zh-text-caption); background: transparent; cursor: pointer; }.panel-tabs button.active { color: var(--zh-text-theme); border-color: var(--zh-line-theme); }
 .property-panel section { padding: 15px; border-bottom: 1px solid var(--zh-line-parting); }.property-panel label { display: block; margin-bottom: 10px; color: var(--zh-text-secondary); font-size: 11px; font-weight: 600; }.layout-options, .color-row, .action-list { display: flex; gap: 8px; }.layout-options button { width: 54px; height: 36px; display: grid; grid-template-columns: 1fr 1fr; gap: 3px; padding: 6px; border: 1px solid var(--zh-line-border); border-radius: 5px; background: var(--zh-background-light); }.layout-options button.active { border-color: var(--zh-line-theme); }.layout-options i { background: var(--zh-line-theme20); }.color-row button { width: 24px; height: 24px; border: 2px solid var(--zh-background-primary); border-radius: 50%; box-shadow: 0 0 0 1px var(--zh-line-border); }.blue { background: #2563eb; }.navy { background: #173d78; }.green { background: #1f993f; }.orange { background: #ff6b3f; }.custom { color: var(--zh-text-caption); background: var(--zh-background-light); }.property-panel :deep(.el-select) { width: 100%; }.action-list { flex-direction: column; }.action-list :deep(.el-button) { margin: 0; justify-content: start; }

@@ -4,11 +4,12 @@
   - 输出: Skill 与教学案例社区页面
 -->
 <script setup>
-import { computed, ref } from 'vue'
+import { computed, onMounted, ref, watch } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { ElMessage } from 'element-plus'
 import { CollectionTag, Search, Star, User } from '@element-plus/icons-vue'
 import { COMMUNITY_PAGE } from '../config/teacherPages.config.js'
+import { favoriteCommunityItem, listCommunityItems, reuseCommunityItem, unfavoriteCommunityItem } from '../apis/teacher'
 
 const router = useRouter()
 const route = useRoute()
@@ -18,10 +19,30 @@ const activeTab = ref('精选')
 const selectedStage = ref('全部学段')
 const selectedSubject = ref('全部学科')
 const tabs = ['精选', '最新', 'Skill', '教学案例']
+const communityCards = ref(COMMUNITY_PAGE.cards)
+const favoriteIds = ref(new Set())
+const loading = ref(false)
+
+const normalizeCard = (item) => ({
+  id: item.id, type: item.content_type === 'lesson_case' ? '案例' : 'Skill', title: item.title,
+  subject: item.subject || '通用', stage: item.grade || '通用', author: item.author_name || item.author || '社区教师',
+  uses: item.use_count ?? 0, tag: item.lesson_type || '教学设计', updatedAt: item.updated_at || '',
+})
+
+const loadCommunity = async () => {
+  loading.value = true
+  try {
+    const contentType = activeTab.value === 'Skill' ? 'skill' : activeTab.value === '教学案例' ? 'lesson_case' : undefined
+    const result = await listCommunityItems({ content_type: contentType, subject: selectedSubject.value === '全部学科' ? undefined : selectedSubject.value, grade: selectedStage.value === '全部学段' ? undefined : selectedStage.value, keyword: searchQuery.value || undefined, page: 1, size: 50 })
+    const records = result?.data?.records || result?.data?.list || result?.data?.items || result?.records || []
+    if (records.length) communityCards.value = records.map(normalizeCard)
+  } catch { /* 服务未就绪时展示现有示例内容。 */ } finally { loading.value = false }
+}
 
 /** 提交关键词，避免输入过程中频繁改变社区结果。 */
 const submitSearch = () => {
   searchQuery.value = keyword.value.trim().toLowerCase()
+  loadCommunity()
 }
 
 /** 判断内容是否符合关键词、学段和学科条件。 */
@@ -35,7 +56,7 @@ const matchesFilters = (item) => {
 
 /** 根据当前页签和筛选条件生成社区卡片。 */
 const filteredCards = computed(() => {
-  const filtered = COMMUNITY_PAGE.cards.filter((card) => {
+  const filtered = communityCards.value.filter((card) => {
     const matchesTab = activeTab.value === '精选'
       || activeTab.value === 'Skill' && card.type === 'Skill'
       || activeTab.value === '教学案例' && card.type === '案例'
@@ -49,10 +70,28 @@ const filteredCards = computed(() => {
 const showFeatured = computed(() => activeTab.value === '精选' && matchesFilters(COMMUNITY_PAGE.featured))
 
 /** 复制社区内容并进入个人创作工作台。 */
-const reuse = (title) => {
-  ElMessage.success(`已将“${title}”复制到个人空间`)
-  router.push({ path: '/main/workspace', query: route.query.preview ? { preview: '1' } : {} })
+const reuse = async (item) => {
+  if (!item.id) {
+    ElMessage.info('示例内容仅用于预览，连接社区服务后可创建派生项目')
+    return
+  }
+  try {
+    const result = await reuseCommunityItem(item.id, { new_project_name: `${item.title}（副本）` })
+    const projectId = result?.data?.id || result?.id
+    ElMessage.success('已复制到个人空间')
+    router.push({ path: '/main/workspace', query: { ...(route.query.preview ? { preview: '1' } : {}), ...(projectId ? { projectId } : {}) } })
+  } catch { ElMessage.error('无法创建派生项目，请稍后重试') }
 }
+const toggleFavorite = async (item) => {
+  if (!item.id) return ElMessage.info('示例内容暂不支持收藏')
+  const next = !favoriteIds.value.has(item.id)
+  try {
+    if (next) await favoriteCommunityItem(item.id); else await unfavoriteCommunityItem(item.id)
+    const updated = new Set(favoriteIds.value); next ? updated.add(item.id) : updated.delete(item.id); favoriteIds.value = updated
+  } catch { ElMessage.error('收藏状态未能更新') }
+}
+watch([activeTab, selectedStage, selectedSubject], loadCommunity)
+onMounted(loadCommunity)
 </script>
 
 <template>
@@ -84,17 +123,17 @@ const reuse = (title) => {
         <h2>{{ COMMUNITY_PAGE.featured.title }}</h2>
         <p>{{ COMMUNITY_PAGE.featured.description }}</p>
         <dl><div><dt>适用范围</dt><dd>{{ COMMUNITY_PAGE.featured.meta }}</dd></div><div><dt>作者</dt><dd>{{ COMMUNITY_PAGE.featured.author }}</dd></div></dl>
-        <footer><span>{{ COMMUNITY_PAGE.featured.uses }}</span><el-button type="primary" @click="reuse(COMMUNITY_PAGE.featured.title)">基于此创作</el-button></footer>
+        <footer><span>{{ COMMUNITY_PAGE.featured.uses }}</span><el-button type="primary" @click="reuse(COMMUNITY_PAGE.featured)">基于此创作</el-button></footer>
       </div>
     </section>
 
-    <section class="community-grid" aria-label="社区内容">
+    <section v-loading="loading" class="community-grid" aria-label="社区内容">
       <article v-for="card in filteredCards" :key="card.title" class="community-card">
-        <div class="card-top"><span>{{ card.type }}</span><el-button text circle aria-label="收藏"><el-icon><Star /></el-icon></el-button></div>
+        <div class="card-top"><span>{{ card.type }}</span><el-button text circle :type="favoriteIds.has(card.id) ? 'warning' : undefined" aria-label="收藏" @click="toggleFavorite(card)"><el-icon><Star /></el-icon></el-button></div>
         <div class="card-icon"><el-icon><CollectionTag /></el-icon></div>
         <h3>{{ card.title }}</h3>
         <p>{{ card.subject }} · {{ card.tag }}</p>
-        <footer><span><el-icon><User /></el-icon>{{ card.author }}</span><button @click="reuse(card.title)">{{ card.uses }} 次使用 →</button></footer>
+        <footer><span><el-icon><User /></el-icon>{{ card.author }}</span><button @click="reuse(card)">{{ card.uses }} 次使用 →</button></footer>
       </article>
       <el-empty v-if="filteredCards.length === 0" class="community-empty" description="没有符合当前筛选条件的 Skill 或教学案例" />
     </section>
@@ -107,7 +146,7 @@ const reuse = (title) => {
 .community-hero { max-width: 780px; padding: 26px 0 20px; }.community-hero > p { margin: 0 0 10px; color: var(--zh-text-theme); font-size: 12px; font-weight: 600; letter-spacing: .08em; }
 .community-hero h1 { max-width: 680px; margin: 0; font-size: clamp(32px, 4vw, 48px); line-height: 1.18; letter-spacing: var(--zh-tracking-tight); text-wrap: balance; }
 .community-hero > span { display: block; max-width: 650px; margin-top: 16px; color: var(--zh-text-secondary); line-height: 1.7; }
-.community-hero :deep(.el-input) { max-width: 650px; margin-top: 28px; }.community-hero :deep(.el-input__wrapper) { padding-left: 16px; }.community-hero :deep(.el-input-group__append) { padding: 0; background: var(--zh-background-button); box-shadow: none; }.community-hero :deep(.community-search-button) { width: 76px; min-width: 76px; height: 40px; margin: 0; border: 0; border-radius: 0 var(--zh-radius8) var(--zh-radius8) 0; color: var(--zh-text-white); font-weight: 600; letter-spacing: var(--zh-tracking-normal); white-space: nowrap; transition: background 200ms cubic-bezier(.4, 0, .2, 1), transform 200ms cubic-bezier(.4, 0, .2, 1); }.community-hero :deep(.community-search-button:hover) { background: var(--zh-background-button-hover); }.community-hero :deep(.community-search-button:active) { transform: scale(.98); }
+.community-hero :deep(.el-input) { max-width: 650px; margin-top: 28px; }.community-hero :deep(.el-input__wrapper) { padding-left: 16px; }.community-hero :deep(.el-input-group__append) { padding: 0; background: var(--zh-background-button); box-shadow: none; }.community-hero :deep(.community-search-button) { width: 76px; min-width: 76px; height: 40px; margin: 0; border: 0; border-radius: 0 var(--zh-radius8) var(--zh-radius8) 0; color: var(--zh-text-white) !important; font-weight: 600; letter-spacing: var(--zh-tracking-normal); white-space: nowrap; transition: background 200ms cubic-bezier(.4, 0, .2, 1), transform 200ms cubic-bezier(.4, 0, .2, 1); }.community-hero :deep(.community-search-button:hover), .community-hero :deep(.community-search-button:focus-visible) { color: var(--zh-text-white) !important; background: var(--zh-background-button-hover); }.community-hero :deep(.community-search-button:active) { color: var(--zh-text-white) !important; background: var(--zh-background-button-hover); transform: scale(.98); }
 .community-toolbar { display: flex; align-items: center; justify-content: space-between; gap: 16px; margin-top: 24px; border-bottom: 1px solid var(--zh-line-border); }
 .tab-list { display: flex; gap: 20px; }.tab-list button { padding: 14px 2px; border: 0; border-bottom: 2px solid transparent; color: var(--zh-text-caption); background: transparent; cursor: pointer; }.tab-list button.active { color: var(--zh-text-theme); border-color: var(--zh-line-theme); font-weight: 600; }
 .filters { display: flex; gap: 8px; }.filters :deep(.el-select) { width: 120px; }

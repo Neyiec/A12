@@ -75,9 +75,9 @@ const sendPrompt = () => {
       />
       <div class="composer-toolbar">
         <div class="composer-tools">
-          <el-button text :icon="Paperclip">{{ TEACHER_HOME.composer.attach }}</el-button>
-          <el-button text :icon="Collection">{{ TEACHER_HOME.composer.knowledge }}</el-button>
-          <el-button text circle aria-label="语音输入"><el-icon><Microphone /></el-icon></el-button>
+          <el-tooltip content="资料上传将在会话接口接入后开放"><span><el-button text :icon="Paperclip" disabled>{{ TEACHER_HOME.composer.attach }}</el-button></span></el-tooltip>
+          <el-tooltip content="知识库选择将在会话接口接入后开放"><span><el-button text :icon="Collection" disabled>{{ TEACHER_HOME.composer.knowledge }}</el-button></span></el-tooltip>
+          <el-tooltip content="语音输入暂未接入"><span><el-button text circle aria-label="语音输入" disabled><el-icon><Microphone /></el-icon></el-button></span></el-tooltip>
         </div>
         <el-button
           type="primary"

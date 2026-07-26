@@ -4,19 +4,37 @@
   - 输出: 教学成果导出任务与历史文件页面
 -->
 <script setup>
-import { computed, ref } from 'vue'
+import { computed, onMounted, ref, watch } from 'vue'
 import { ElMessage } from 'element-plus'
 import { CircleCheck, Download, Files, Refresh, Search, Warning } from '@element-plus/icons-vue'
 import { EXPORT_PAGE } from '../config/teacherPages.config.js'
+import { downloadExportArtifact, listExportTasks, retryExportTask } from '../apis/teacher'
 
 const keyword = ref('')
 const activeTab = ref('全部任务')
 const tabs = ['全部任务', '进行中', '已完成', '需要处理']
+const tasks = ref(EXPORT_PAGE.tasks)
+const loading = ref(false)
+const normalizeTask = (task) => ({
+  id: task.id, project: task.project_name || task.project?.project_name || task.file_name || '未命名项目',
+  format: (task.export_type || task.format || '成果包').toUpperCase(), version: task.snapshot_version ? `v${task.snapshot_version}` : task.version || '—',
+  time: task.created_at || task.time || '刚刚', status: ({ queued: '排队中', generating: '生成中', checking: '校验中', success: '成功', partial: '部分成功', failed: '失败', cancelled: '已取消' })[task.status] || task.status || '排队中',
+  quality: task.quality_report ? '查看报告' : task.quality || '待校验', size: task.file_size_text || task.size || '—', fileStatus: task.file_status,
+})
+const loadTasks = async () => {
+  loading.value = true
+  try {
+    const status = activeTab.value === '进行中' ? 'generating' : activeTab.value === '已完成' ? 'success' : undefined
+    const result = await listExportTasks({ status, page: 1, size: 50 })
+    const records = result?.data?.records || result?.data?.list || result?.data?.items || result?.records || []
+    if (records.length) tasks.value = records.map(normalizeTask)
+  } catch { /* 服务未就绪时展示现有示例任务。 */ } finally { loading.value = false }
+}
 
 /** 根据当前状态页签和关键词过滤导出任务。 */
 const filteredTasks = computed(() => {
   const normalizedKeyword = keyword.value.trim().toLowerCase()
-  return EXPORT_PAGE.tasks.filter((task) => {
+  return tasks.value.filter((task) => {
     const matchesKeyword = !normalizedKeyword || [task.project, task.format, task.version]
       .some((value) => value.toLowerCase().includes(normalizedKeyword))
     const matchesTab = activeTab.value === '全部任务'
@@ -28,9 +46,18 @@ const filteredTasks = computed(() => {
 })
 
 /** 模拟创建标准格式导出任务。 */
-const createExport = () => ElMessage.success('已读取最新项目快照，可以配置导出格式')
-/** 模拟安全下载操作。 */
-const download = (row) => ElMessage.success(`正在生成“${row.project}”的短时下载链接`)
+const createExport = () => ElMessage.info('请在工作台选择项目快照后发起导出')
+const download = async (row) => {
+  if (!row.id) return ElMessage.info('示例任务暂不支持下载')
+  try {
+    if (row.fileStatus === 'expired' || row.status === '已过期') { await retryExportTask(row.id); ElMessage.success('已重新提交生成任务'); await loadTasks(); return }
+    const result = await downloadExportArtifact(row.id)
+    const url = result?.data?.download_url || result?.download_url
+    if (url) window.open(url, '_blank', 'noopener'); else ElMessage.warning('文件尚未生成完成')
+  } catch { ElMessage.error('操作未成功，请稍后重试') }
+}
+watch(activeTab, loadTasks)
+onMounted(loadTasks)
 </script>
 
 <template>
@@ -63,7 +90,7 @@ const download = (row) => ElMessage.success(`正在生成“${row.project}”的
 
     <section class="history-panel">
       <div class="history-header"><div class="tab-list"><button v-for="tab in tabs" :key="tab" :class="{ active: activeTab === tab }" @click="activeTab = tab">{{ tab }}</button></div><el-input v-model="keyword" :prefix-icon="Search" placeholder="搜索项目或版本" clearable /></div>
-      <el-table :data="filteredTasks">
+      <el-table v-loading="loading" :data="filteredTasks">
         <el-table-column label="项目成果" min-width="240"><template #default="{ row }"><div class="project-cell"><span><el-icon><Files /></el-icon></span><div><strong>{{ row.project }}</strong><small>{{ row.format }} · {{ row.version }}</small></div></div></template></el-table-column>
         <el-table-column prop="time" label="创建时间" min-width="125" />
         <el-table-column label="任务状态" width="120"><template #default="{ row }"><el-tag :type="row.status === '成功' ? 'success' : row.status === '部分成功' ? 'warning' : 'info'">{{ row.status }}</el-tag></template></el-table-column>
@@ -90,6 +117,10 @@ const download = (row) => ElMessage.success(`正在生成“${row.project}”的
 .history-header { display: flex; align-items: center; justify-content: space-between; padding: 0 16px; border-bottom: 1px solid var(--zh-line-parting); }.tab-list { display: flex; gap: 16px; }.tab-list button { padding: 17px 2px 14px; border: 0; border-bottom: 2px solid transparent; color: var(--zh-text-caption); background: transparent; cursor: pointer; }.tab-list button.active { color: var(--zh-text-theme); border-color: var(--zh-line-theme); font-weight: 600; }.history-header :deep(.el-input) { width: 230px; }
 .project-cell { display: flex; align-items: center; gap: 10px; }.project-cell > span { width: 34px; height: 34px; display: grid; place-items: center; border-radius: var(--zh-radius8); color: var(--zh-text-theme); background: var(--zh-background-weaken); }.project-cell > div { display: flex; flex-direction: column; }.project-cell strong { color: var(--zh-text-primary); font-size: 13px; }.project-cell small { margin-top: 3px; color: var(--zh-text-caption); }
 .history-panel :deep(.el-table) { --el-table-border-color: var(--zh-line-parting); border-radius: 0 0 var(--zh-radius12) var(--zh-radius12); }
+/* design.md：文字按钮采用主题链接色；所有交互态必须保持文字可读。 */
+.export-page :deep(.el-button--primary.is-link) { color: var(--zh-text-link); }
+.export-page :deep(.el-button--primary.is-link:hover), .export-page :deep(.el-button--primary.is-link:focus-visible) { color: var(--zh-text-link); background: var(--zh-background-weaken); }
+.export-page :deep(.el-button--primary.is-link:active) { color: var(--zh-text-link); background: var(--zh-line-theme20); }
 @keyframes loadingSpin { to { transform: rotate(360deg); } }
 @media (max-width: 900px) { .active-task { grid-template-columns: auto 1fr; }.task-progress { grid-column: 1 / -1; }.quality-items { grid-template-columns: repeat(2, 1fr); } }
 @media (max-width: 620px) { .export-stats { grid-template-columns: 1fr; }.history-header { align-items: stretch; flex-direction: column; }.history-header :deep(.el-input) { width: 100%; margin-bottom: 12px; }.quality-items { grid-template-columns: 1fr; } }

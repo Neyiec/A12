@@ -4,28 +4,72 @@
   - 输出: 教师个人资源库页面
 -->
 <script setup>
-import { computed, ref } from 'vue'
+import { computed, onMounted, ref } from 'vue'
 import { ElMessage } from 'element-plus'
 import { Delete, Folder, Lock, MoreFilled, Search, Upload } from '@element-plus/icons-vue'
 import { RESOURCE_PAGE } from '../config/teacherPages.config.js'
+import { deleteResource, downloadResource, listResources, uploadResource } from '../apis/teacher'
 
 const keyword = ref('')
 const activeFolder = ref('全部素材')
 const selectedRows = ref([])
-const filteredFiles = computed(() => RESOURCE_PAGE.files.filter((file) => (
+const resources = ref(RESOURCE_PAGE.files)
+const fileInput = ref(null)
+const loading = ref(false)
+const filteredFiles = computed(() => resources.value.filter((file) => (
   (activeFolder.value === '全部素材' || activeFolder.value === '我的课件' && file.type === 'PPT') &&
   file.name.toLowerCase().includes(keyword.value.toLowerCase())
 )))
 
-/** 模拟上传入口反馈。 */
-const startUpload = () => ElMessage.info('请选择 Word、PDF、PPT、图片、音频或视频文件')
+const normalizeResource = (item) => ({
+  id: item.id, name: item.file_name || item.name, type: item.file_type?.toUpperCase() || item.type || '文件',
+  course: item.course || item.categories?.join(' · ') || '未分类', size: item.file_size_text || item.size || '—',
+  date: item.updated_at || item.date || '刚刚', status: item.parse_status || item.status || '待解析',
+  private: item.access_type !== 'shared',
+})
+
+const loadResources = async () => {
+  loading.value = true
+  try {
+    const result = await listResources({ keyword: keyword.value || undefined, page: 1, size: 50 })
+    const records = result?.data?.records || result?.data?.list || result?.data?.items || result?.records || []
+    if (records.length) resources.value = records.map(normalizeResource)
+  } catch { /* 开发环境保留示例数据，接口上线后自动替换。 */ } finally { loading.value = false }
+}
+
+const startUpload = () => fileInput.value?.click()
+const handleUpload = async (event) => {
+  const file = event.target.files?.[0]
+  if (!file) return
+  const formData = new FormData()
+  formData.append('file', file)
+  try {
+    await uploadResource(formData)
+    ElMessage.success('素材已上传，正在解析')
+    await loadResources()
+  } catch { ElMessage.error('上传失败，请检查服务连接后重试') }
+  event.target.value = ''
+}
+const handleAction = async (row, command) => {
+  if (!row.id) return ElMessage.info('示例素材暂不支持此操作')
+  try {
+    if (command === 'download') {
+      const result = await downloadResource(row.id)
+      const url = result?.data?.download_url || result?.download_url
+      if (url) window.open(url, '_blank', 'noopener')
+    }
+    if (command === 'delete') { await deleteResource(row.id); resources.value = resources.value.filter((item) => item.id !== row.id) }
+  } catch { ElMessage.error('操作未成功，请稍后重试') }
+}
+
+onMounted(loadResources)
 </script>
 
 <template>
   <div class="page-wrap">
     <header class="page-heading">
       <div><p class="page-kicker">个人教学资产</p><h1>个人资源库</h1><p>统一管理私有素材，并决定哪些内容可供智能体引用。</p></div>
-      <el-button type="primary" :icon="Upload" @click="startUpload">上传素材</el-button>
+      <el-button type="primary" :icon="Upload" @click="startUpload">上传素材</el-button><input ref="fileInput" class="visually-hidden" type="file" accept=".doc,.docx,.pdf,.ppt,.pptx,.txt,image/*,audio/*,video/*" @change="handleUpload">
     </header>
 
     <section class="stat-strip" aria-label="资源库概览">
@@ -49,7 +93,7 @@ const startUpload = () => ElMessage.info('请选择 Word、PDF、PPT、图片、
           <el-select model-value="全部类型" aria-label="资源类型"><el-option label="全部类型" value="全部类型" /><el-option label="课件" value="课件" /><el-option label="文档" value="文档" /></el-select>
           <el-button :icon="Delete" :disabled="selectedRows.length === 0">批量管理</el-button>
         </div>
-        <el-table :data="filteredFiles" @selection-change="selectedRows = $event">
+        <el-table v-loading="loading" :data="filteredFiles" @selection-change="selectedRows = $event">
           <el-table-column type="selection" width="42" />
           <el-table-column label="素材" min-width="260">
             <template #default="{ row }"><div class="file-cell"><span class="file-mark">{{ row.type.slice(0, 1) }}</span><div><strong>{{ row.name }}</strong><small>{{ row.course }} · {{ row.size }}</small></div></div></template>
@@ -57,7 +101,7 @@ const startUpload = () => ElMessage.info('请选择 Word、PDF、PPT、图片、
           <el-table-column prop="date" label="更新时间" min-width="120" />
           <el-table-column label="解析状态" width="110"><template #default="{ row }"><el-tag :type="row.status === '已解析' ? 'success' : row.status === '解析中' ? 'warning' : 'info'" effect="light">{{ row.status }}</el-tag></template></el-table-column>
           <el-table-column label="权限" width="92"><template #default><span class="private-label"><el-icon><Lock /></el-icon> 私有</span></template></el-table-column>
-          <el-table-column width="54"><template #default><el-button text circle aria-label="更多操作"><el-icon><MoreFilled /></el-icon></el-button></template></el-table-column>
+          <el-table-column width="54"><template #default="{ row }"><el-dropdown trigger="click" @command="handleAction(row, $event)"><el-button text circle aria-label="更多操作"><el-icon><MoreFilled /></el-icon></el-button><template #dropdown><el-dropdown-menu><el-dropdown-item command="download">下载</el-dropdown-item><el-dropdown-item command="delete" divided>删除</el-dropdown-item></el-dropdown-menu></template></el-dropdown></template></el-table-column>
         </el-table>
       </div>
     </section>
@@ -86,6 +130,7 @@ const startUpload = () => ElMessage.info('请选择 Word、PDF、PPT、图片、
 .file-cell { display: flex; align-items: center; gap: 12px; }.file-cell > div { min-width: 0; display: flex; flex-direction: column; }
 .file-cell strong { overflow: hidden; color: var(--zh-text-primary); font-size: 13px; text-overflow: ellipsis; white-space: nowrap; }.file-cell small { margin-top: 3px; color: var(--zh-text-caption); }
 .file-mark { width: 34px; height: 38px; display: grid; place-items: center; border-radius: 6px; color: var(--zh-text-theme); background: var(--zh-background-weaken); font-weight: 700; }
+.visually-hidden { position: absolute; width: 1px; height: 1px; overflow: hidden; clip: rect(0 0 0 0); white-space: nowrap; }
 .private-label { display: inline-flex; align-items: center; gap: 4px; color: var(--zh-text-secondary); font-size: 12px; }
 :deep(.el-table) { --el-table-border-color: var(--zh-line-parting); --el-table-header-bg-color: var(--zh-background-light); border-radius: var(--zh-radius12); }
 @media (max-width: 820px) { .resource-layout { grid-template-columns: 1fr; }.folder-panel { display: none; }.stat-strip { grid-template-columns: 1fr; }.stat-strip article { border-right: 0; }.resource-toolbar { grid-template-columns: 1fr; } }
