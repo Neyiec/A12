@@ -9,7 +9,6 @@ import {getRouters} from'../apis/login.js'
 import {isTokenExpired} from '../utils/JWTParser.js'
 // 全局用户 store — 替代直接操作 localStorage
 import { useUserStore } from '../storage/user.js'
-import path from 'node:path'
 
 const routes = [
   {
@@ -22,7 +21,48 @@ const routes = [
   },
   {
     path: '/main',
-    component: main
+    component: main,
+    name: 'M',
+    redirect: '/main/dashboard',
+    // 静态子路由 — 六个管理模块作为 main 布局的嵌套路由
+    children: [
+      {
+        path: 'dashboard',
+        name: 'Dashboard',
+        component: () => import('../views/admin/Dashboard.vue'),
+        meta: { staticTeacherPage: true },
+      },
+      {
+        path: 'settings',
+        name: 'Settings',
+        component: () => import('../views/admin/SystemSettings.vue'),
+        meta: { staticTeacherPage: true },
+      },
+      {
+        path: 'users',
+        name: 'Users',
+        component: () => import('../views/admin/UserPermission.vue'),
+        meta: { staticTeacherPage: true },
+      },
+      {
+        path: 'roles',
+        name: 'Roles',
+        component: () => import('../views/admin/RoleManagement.vue'),
+        meta: { staticTeacherPage: true },
+      },
+      {
+        path: 'audit',
+        name: 'Audit',
+        component: () => import('../views/admin/ContentAudit.vue'),
+        meta: { staticTeacherPage: true },
+      },
+      {
+        path: 'resources',
+        name: 'Resources',
+        component: () => import('../views/admin/ResourceKnowledge.vue'),
+        meta: { staticTeacherPage: true },
+      },
+    ],
   }
 ]
 
