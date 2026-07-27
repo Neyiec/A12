@@ -13,4 +13,5 @@ public interface AdmResourceMapper {
     int insert(Adm_Resource resource);
     int update(Adm_Resource resource);
     int updateStatus(@Param("id") Integer id, @Param("status") Integer status);
+    List<Adm_Resource> findByQuery(@Param("resourceType") String resourceType, @Param("status") Integer status);
 }

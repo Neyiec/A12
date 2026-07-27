@@ -9,11 +9,13 @@
         <result column="config_value" property="config_value"/>
         <result column="description" property="description"/>
         <result column="updated_by" property="updated_by"/>
-        <result column="updated_at" property="updated_at"/>
+        <result column="updated_at" property="updated_at" javaType="java.time.LocalDateTime"/>
+        <result column="version" property="version"/>
+        <result column="status" property="status"/>
     </resultMap>
 
     <sql id="Base_Columns">
-        id, config_group, config_key, config_value, description, updated_by, updated_at
+        id, config_group, config_key, config_value, description, updated_by, updated_at, version, status
     </sql>
 
     <select id="findById" resultMap="BaseResultMap">
@@ -32,9 +34,13 @@
         SELECT <include refid="Base_Columns"/> FROM sys_config WHERE config_group = #{configGroup} AND config_key = #{configKey}
     </select>
 
+    <select id="findByConfigKey" resultMap="BaseResultMap">
+        SELECT <include refid="Base_Columns"/> FROM sys_config WHERE config_key = #{configKey}
+    </select>
+
     <insert id="insert" useGeneratedKeys="true" keyProperty="id">
-        INSERT INTO sys_config(config_group, config_key, config_value, description, updated_by, updated_at)
-        VALUES(#{config_group}, #{config_key}, #{config_value}, #{description}, #{updated_by}, #{updated_at})
+        INSERT INTO sys_config(config_group, config_key, config_value, description, updated_by, updated_at, version, status)
+        VALUES(#{config_group}, #{config_key}, #{config_value}, #{description}, #{updated_by}, #{updated_at}, #{version}, #{status})
     </insert>
 
     <update id="update">
@@ -45,9 +51,15 @@
             <if test="config_value != null">config_value = #{config_value},</if>
             <if test="description != null">description = #{description},</if>
             <if test="updated_by != null">updated_by = #{updated_by},</if>
+            <if test="version > 0">version = #{version},</if>
+            <if test="status != null">status = #{status},</if>
             updated_at = NOW()
         </set>
         WHERE id = #{id}
+    </update>
+
+    <update id="updateStatus">
+        UPDATE sys_config SET status = #{status}, updated_at = NOW() WHERE id = #{id}
     </update>
 
     <delete id="deleteById">

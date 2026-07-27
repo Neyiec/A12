@@ -16,5 +16,6 @@ public class ProjectCreateDTO {
     private String status;
     private String snapshots;
     private String edit_history;
+    private String permissions;
     private Integer current_version;
 }

@@ -1,14 +1,20 @@
 package edu.zstu.service;
 
-/**
- * 后台 — AI配置、安全策略、监控告警 Service 接口<br>提供AI模型配置管理、安全策略管理、审计日志、数据看板、告警管理等业务方法。
- */
+import edu.zstu.dto.ConfigDTO;
+import edu.zstu.dto.RollbackDTO;
+import edu.zstu.vo.ConfigVO;
 
+import java.util.List;
+import java.util.Map;
+
+/**
+ * 后台 — AI配置、安全策略、监控告警 Service 接口
+ */
 public interface AdminConfigService {
-    Object listAiConfigs();
-    Object createAiConfig();
-    Object publishAiConfig(String id);
-    Object rollbackAiConfig(String id);
+    List<ConfigVO> listAiConfigs(String configGroup);
+    ConfigVO createAiConfig(ConfigDTO dto);
+    Map<String, Object> publishAiConfig(Integer id);
+    ConfigVO rollbackAiConfig(Integer id, RollbackDTO dto);
     Object listSecurityPolicies();
     Object updateSecurityPolicy(String id);
     Object publishSecurityPolicy(String id);
@@ -20,4 +26,3 @@ public interface AdminConfigService {
     Object acknowledgeAlert(String id);
     Object resolveAlert(String id);
 }
-

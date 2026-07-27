@@ -79,4 +79,19 @@
     <delete id="deleteById">
         DELETE FROM sys_user WHERE id = #{id}
     </delete>
+    <select id="findByQuery" resultMap="BaseResultMap">
+        SELECT <include refid="Base_Columns"/> FROM sys_user
+        <where>
+            <if test="keyword != null and keyword != ''">
+                AND (username LIKE CONCAT('%',#{keyword},'%') OR real_name LIKE CONCAT('%',#{keyword},'%'))
+            </if>
+            <if test="user_type != null and user_type != ''">
+                AND user_type = #{user_type}
+            </if>
+            <if test="is_active != null">
+                AND is_active = #{is_active}
+            </if>
+        </where>
+        ORDER BY created_at DESC
+    </select>
 </mapper>

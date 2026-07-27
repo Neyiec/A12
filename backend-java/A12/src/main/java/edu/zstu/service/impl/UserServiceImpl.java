@@ -11,6 +11,9 @@ import edu.zstu.utils.PasswordUtil;
 import edu.zstu.vo.UserVO;
 import org.springframework.stereotype.Service;
 
+import java.util.HashMap;
+import java.util.Map;
+
 
 /**
  * 用户模块 Service 实现
@@ -62,5 +65,31 @@ public class UserServiceImpl implements UserService {
         if(res<=0){
             throw new RuntimeException("密码修改失败");
         }
+    }
+
+    @Override
+    public Map<String, Object> findUserIdByUsername(String username) {
+        if (username == null || username.isBlank()) throw new RuntimeException("用户名不能为空");
+        Sys_User user = userMapper.findByUsername(username);
+        if (user == null) throw new RuntimeException("用户不存在");
+        Map<String, Object> result = new HashMap<>();
+        result.put("id", user.getId());
+        result.put("username", user.getUsername());
+        result.put("real_name", user.getReal_name());
+        result.put("email", user.getEmail());
+        return result;
+    }
+
+    @Override
+    public Map<String, Object> findUserIdByEmail(String email) {
+        if (email == null || email.isBlank()) throw new RuntimeException("邮箱不能为空");
+        Sys_User user = userMapper.findByEmail(email);
+        if (user == null) throw new RuntimeException("用户不存在");
+        Map<String, Object> result = new HashMap<>();
+        result.put("id", user.getId());
+        result.put("username", user.getUsername());
+        result.put("real_name", user.getReal_name());
+        result.put("email", user.getEmail());
+        return result;
     }
 }

@@ -48,7 +48,7 @@ public class PasswordUtil {
             newConfig.setConfig_value(secretKey);
             newConfig.setDescription("密码HMAC-SHA256密钥（自动生成）");
             newConfig.setUpdated_by(0);
-            newConfig.setUpdated_at(LocalDateTime.now().toString());
+            newConfig.setUpdated_at(LocalDateTime.now());
             configMapper.insert(newConfig);
         }
     }

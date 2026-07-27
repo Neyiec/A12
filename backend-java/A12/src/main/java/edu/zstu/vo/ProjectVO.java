@@ -22,6 +22,7 @@ public class ProjectVO {
     private int current_version;
     private String snapshots;
     private String edit_history;
+    private String permissions;
     private LocalDateTime created_at;
     private LocalDateTime updated_at;
 }
