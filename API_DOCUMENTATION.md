@@ -1,1460 +1,1471 @@
-# API 閹恒儱褰涢弬鍥ㄣ€?
+﻿# API 接口文档
 
 
-> 妞ゅ湱娲? A12 閳?閺呴缚鍏樻径鍥嚦娑撳孩鏆€鐎涳附鍨氶弸婊咁吀閻炲棗閽╅崣? 
-> 閸╄櫣顢呯捄顖氱窞: `/api/v1`  
-> 缂佺喍绔撮崫宥呯安閺嶇厧绱? `Result<T>` (code=200 閹存劕濮? message 閹诲繗鍫? data 鐎圭偤妾弫鐗堝祦娴?  
-> 閸掑棝銆夐崫宥呯安: `PageResult<T>` (total 閹粯鏆? page 瑜版挸澧犳い? size 濮ｅ繘銆夐弶鈩冩殶, records 閸掓銆?
+> 项目: A12 — 智能备课与教学成果管理平台  
+> 基础路径: `/api/v1`  
+> 统一响应格式: `Result<T>` (code=200 成功, message 描述, data 实际数据体)  
+> 分页响应: `PageResult<T>` (total 总数, page 当前页, size 每页条数, records 列表)
 
 ---
 
-# 娑撯偓閵嗕浇顓荤拠浣鼓侀崸?
+# 一、认证模块
 
 ## API-01 POST /api/v1/auth/register
 
-**閸旂喕鍏?*: 濞夈劌鍞介弫娆忕瑎鐠愶箑褰块妴鍌氬帥闁俺绻?API-02 閸欐垿鈧線鐛欑拠浣虹垳閸掍即鍋栫粻鎲嬬礉閸愬秴鐨㈡宀冪槈閻浇绻涢崥灞炬暈閸愬奔淇婇幁顖涘絹娴溿倛鍤﹀銈嗗复閸欙絻鈧倹婀囬崝锛勵伂閺嶏繝鐛欐宀冪槈閻礁鎮楅崚娑樼紦鐠愶箑褰块敍鍫㈡纯閹恒儲绺哄ú浼欑礉is_active=1閿?
+**功能**: 注册教师账号。先通过 API-02 发送验证码到邮箱，再将验证码连同注册信息提交至此接口。服务端校验验证码后创建账号（直接激活，is_active=1）
 
-**鐠囬攱鐪版担?(JSON)**
-| 鐎涙顔?| 缁鐎?| 韫囧懎锝?| 鐠囧瓨妲?|
+**请求体 (JSON)**
+| 字段 | 类型 | 必填 | 说明 |
 |---|---|---|---|
-| `username` | String | **閺?* | 閻ц缍嶉悽銊﹀煕閸?|
-| `password` | String | **閺?* | 鐎靛棛鐖滈敍鍫濆缁旑垯绱堕弰搴㈡瀮閿涘苯鎮楃粩顖氭惐鐢苯鎮楃€涙ê鍋嶉敍?|
-| `real_name` | String | **閺?* | 閻喎鐤勬慨鎾虫倳 |
-| `phone` | String | **閺?* | 閹靛婧€閸?|
-| `email` | String | **閺?* | 闁喚顔?|
-| `avatar` | String | 閸?| 婢舵潙鍎?URL |
+| `username` | String | **是** | 登录用户名 |
+| `password` | String | **是** | 密码（前端传明文，后端哈希后存储） |
+| `real_name` | String | **是** | 真实姓名 |
+| `phone` | String | **是** | 手机号 |
+| `email` | String | **是** | 邮箱 |
+| `avatar` | String | 否 | 头像 URL |
+| `code` | String | **是** | 验证码 |
 
-**閸氬海顏?DTO**: ``
 
-**閸濆秴绨?VO**: `Result<UserVO>` 閳?濞夈劌鍞介幋鎰鏉╂柨娲栭悽銊﹀煕娣団剝浼?
+**后端 DTO**: ``
+
+**响应 VO**: `Result<UserVO>` — 注册成功返回用户信息
 
 ---
 
 ## API-02 POST /api/v1/auth/verification-codes
 
-**閸旂喕鍏?*: 閸欐垿鈧線鍋栫粻閬嶇崣鐠囦胶鐖?
+**功能**: 发送邮箱验证码
 
-**鐠囬攱鐪版担?(JSON)**
-| 鐎涙顔?| 缁鐎?| 韫囧懎锝?| 鐠囧瓨妲?|
+**请求体 (JSON)**
+| 字段 | 类型 | 必填 | 说明 |
 |---|---|---|---|
-| `username` | String | **閺?* | 濞夈劌鍞介崷鐑樻珯婵夘偊鍋栫粻鎲嬬礉鐎靛棛鐖滈柌宥囩枂閸︾儤娅欐繅顐ゆ暏閹村嘲鎮?|
-| `scene` | String | **閺?* | 閸︾儤娅? `register` / `password_reset` |
-| `channel` | String | **閺?* | 閸欐垿鈧焦绗柆? 娴犲懏鏁幐?`email` |
+| `username` | String | **是** | 注册场景填邮箱，密码重置场景填用户名 |
+| `scene` | String | **是** | 场景: `register` / `password_reset` |
+| `channel` | String | **是** | 发送渠道: 仅支持 `email` |
 
-**閸氬海顏?DTO**: 閺嗗倹妫ら悪顒傜彌 DTO
+**后端 DTO**: 暂无独立 DTO
 
-**閸濆秴绨?VO**: `Result<Void>` 閳?娴犲懓绻戦崶鐐村灇閸?婢惰精瑙﹂悩鑸碘偓?
+**响应 VO**: `Result<Void>` — 仅返回成功/失败状态
 
 ---
 
 ## API-03 POST /api/v1/auth/verify
 
-**閸旂喕鍏?*: 閺嶏繝鐛欐宀冪槈閻緤绱欓惄顔煎娴犲懐鏁ゆ禍搴＄槕閻線鍣哥純顔兼簚閺咁垽绱卞▔銊ュ斀閸︾儤娅欓惃鍕崣鐠囦胶鐖滈弽锟犵崣閸?API-01 娑擃厼鐣幋鎰剁礆
+**功能**: 校验验证码（目前仅用于密码重置场景；注册场景的验证码校验在 API-01 中完成）
 
-**鐠囬攱鐪版担?(JSON)**
-| 鐎涙顔?| 缁鐎?| 韫囧懎锝?| 鐠囧瓨妲?|
+**请求体 (JSON)**
+| 字段 | 类型 | 必填 | 说明 |
 |---|---|---|---|
-| `username` | String | **閺?* | 鐠愶箑褰?|
-| `code` | String | **閺?* | 妤犲矁鐦夐惍?|
-**閸氬海顏?DTO**: 閺嗗倹妫ら悪顒傜彌 DTO
+| `username` | String | **是** | 账号 |
+| `code` | String | **是** | 验证码 |
+**后端 DTO**: 暂无独立 DTO
 
-**閸濆秴绨?VO**: `Result<Void>`
+**响应 VO**: `Result<Void>`
 
 ---
 
 ## API-04 POST /api/v1/auth/login
 
-**閸旂喕鍏?*: 缂佺喍绔存宀冪槈娑撳琚拹锕€褰块敍鍫熸殌鐢?鐎光剝鐗抽崨?閸氬骸褰寸粻锛勬倞閸涙﹫绱?
+**功能**: 统一验证三类账号（教师/审核员/后台管理员）
 
-**鐠囬攱鐪版担?(JSON)**
-| 鐎涙顔?| 缁鐎?| 韫囧懎锝?| 鐠囧瓨妲?|
+**请求体 (JSON)**
+| 字段 | 类型 | 必填 | 说明 |
 |---|---|---|---|
-| `username` | String | **閺?* | 鐠愶箑褰?|
-| `password` | String | **閺?* | 鐎靛棛鐖滈敍鍫濆缁旑垯绱堕弰搴㈡瀮閿涘苯鎮楃粩顖氭惐鐢苯鎮楃€涙ê鍋嶉敍?|
+| `username` | String | **是** | 账号 |
+| `password` | String | **是** | 密码（前端传明文，后端哈希后存储） |
 
-**閸氬海顏?DTO**: `LoginDTO { username, password }`
+**后端 DTO**: `LoginDTO { username, password }`
 
-**閸濆秴绨?VO**: `Result<LoginVO>` 閳?閸?token閵嗕胶鏁ら幋宄扮唨閺堫兛淇婇幁顖樷偓浣筋潡閼瑰弶娼堥梽?
+**响应 VO**: `Result<LoginVO>` — 含 token、用户基本信息、角色权限
 
-| LoginVO 鐎涙顔?| 缁鐎?| 鐠囧瓨妲?|
+| LoginVO 字段 | 类型 | 说明 |
 |---|---|---|
-| `token` | String | 娴兼俺鐦芥禒銈囧 |
-| `user_id` | int | 閻劍鍩汭D |
-| `username` | String | 閻劍鍩涢崥?|
-| `real_name` | String | 閻喎鐤勬慨鎾虫倳 |
-| `avatar` | String | 婢舵潙鍎歎RL |
-| `user_type` | String | 閻劍鍩涚猾璇茬€? `teacher` / `admin` |
-| `roles` | String(JSON) | 鐟欐帟澹婇崚妤勩€?|
-| `permissions` | String(JSON) | 閺夊啴妾洪崚妤勩€?|
-| `created_at` | LocalDateTime | 閻ц缍嶉弮鍫曟？ |
+| `token` | String | 会话令牌 |
+| `user_id` | int | 用户ID |
+| `username` | String | 用户名 |
+| `real_name` | String | 真实姓名 |
+| `avatar` | String | 头像URL |
+| `user_type` | String | 用户类型: `teacher` / `admin` |
+| `roles` | String(JSON) | 角色列表 |
+| `permissions` | String(JSON) | 权限列表 |
+| `created_at` | LocalDateTime | 登录时间 |
 
 ## API-05 POST /api/v1/auth/initial-password-change
 
-**閸旂喕鍏?*: 閹靛綊鍣洪崚娑樼紦鐠愶箑褰块崥搴浕濞嗭紕娅ヨぐ鏇㈡付瀵搫鍩楅弨鐟扮槕
+**功能**: 批量创建账号后首次登录需强制改密
 
-**鐠囬攱鐪版担?(JSON)**
-| 鐎涙顔?| 缁鐎?| 韫囧懎锝?| 鐠囧瓨妲?|
+**请求体 (JSON)**
+| 字段 | 类型 | 必填 | 说明 |
 |---|---|---|---|
-| `username` | String | **閺?* | 鐠愶箑褰?|
-| `initial_password` | String | **閺?* | 閸掓繂顫愮€靛棛鐖滈敍鍫濆缁旑垯绱堕弰搴㈡瀮閿涘苯鎮楃粩顖氭惐鐢苯鎮楅弽锟犵崣閿?|
-| `new_password` | String | **閺?* | 閺傛澘鐦戦惍渚婄礄閸撳秶顏导鐘虫閺傚浄绱濋崥搴ｎ伂閸濆牆绗囬崥搴＄摠閸岊煉绱?|
+| `username` | String | **是** | 账号 |
+| `initial_password` | String | **是** | 初始密码（前端传明文，后端哈希后校验） |
+| `new_password` | String | **是** | 新密码（前端传明文，后端哈希后存储） |
 
-**閸氬海顏?DTO**: 閺嗗倹妫ら悪顒傜彌 DTO
+**后端 DTO**: 暂无独立 DTO
 
-**閸濆秴绨?VO**: `Result<LoginVO>` 閳?閺€鐟扮槕閹存劕濮涢崥搴ｎ劮閸欐垶顒滅敮闀愮窗鐠?
+**响应 VO**: `Result<LoginVO>` — 改密成功后签发正常会话
 
 ---
 
 ## API-06 POST /api/v1/auth/password-reset
 
-**閸旂喕鍏?*: 闁俺绻冩宀冪槈閻線鍣哥純顔肩槕閻?
+**功能**: 通过验证码重置密码
 
-**鐠囬攱鐪版担?(JSON)**
-| 鐎涙顔?| 缁鐎?| 韫囧懎锝?| 鐠囧瓨妲?|
+**请求体 (JSON)**
+| 字段 | 类型 | 必填 | 说明 |
 |---|---|---|---|
-| `username` | String | **閺?* | 鐠愶箑褰?|
-| `code` | String | **閺?* | 鐎靛棛鐖滈柌宥囩枂妤犲矁鐦夐惍?|
-| `new_password` | String | **閺?* | 閺傛澘鐦戦惍渚婄礄閸撳秶顏导鐘虫閺傚浄绱濋崥搴ｎ伂閸濆牆绗囬崥搴＄摠閸岊煉绱?|
+| `username` | String | **是** | 账号 |
+| `code` | String | **是** | 密码重置验证码 |
+| `new_password` | String | **是** | 新密码（前端传明文，后端哈希后存储） |
 
-**閸氬海顏?DTO**: 閺嗗倹妫ら悪顒傜彌 DTO
+**后端 DTO**: 暂无独立 DTO
 
-**閸濆秴绨?VO**: `Result<Void>` 閳?閹存劕濮涢崥搴㈡寵闁库偓閹碘偓閺堝鍑￠張澶夌窗鐠?
+**响应 VO**: `Result<Void>` — 成功后撤销所有已有会话
 
 ---
 
 ## API-07 POST /api/v1/users/me/password-change
 
-**閸旂喕鍏?*: 瀹歌尙娅ヨぐ鏇犳暏閹磋渹鎱ㄩ弨鐟扮秼閸撳秴鐦戦惍?
+**功能**: 已登录用户修改当前密码
 
-**鐠囬攱鐪版担?(JSON)**
-| 鐎涙顔?| 缁鐎?| 韫囧懎锝?| 鐠囧瓨妲?|
+**请求体 (JSON)**
+| 字段 | 类型 | 必填 | 说明 |
 |---|---|---|---|
-| `current_password` | String | **閺?* | 瑜版挸澧犵€靛棛鐖滈敍鍫濆缁旑垯绱堕弰搴㈡瀮閿涘苯鎮楃粩顖氭惐鐢苯鎮楅弽锟犵崣閿?|
-| `new_password` | String | **閺?* | 閺傛澘鐦戦惍渚婄礄閸撳秶顏导鐘虫閺傚浄绱濋崥搴ｎ伂閸濆牆绗囬崥搴＄摠閸岊煉绱?|
+| `current_password` | String | **是** | 当前密码（前端传明文，后端哈希后校验） |
+| `new_password` | String | **是** | 新密码（前端传明文，后端哈希后存储） |
 
-**閸氬海顏?DTO**: 閺嗗倹妫ら悪顒傜彌 DTO
+**后端 DTO**: 暂无独立 DTO
 
-**閸濆秴绨?VO**: `Result<Void>` 閳?閺囧瓨鏌婄€靛棛鐖滈崥搴㈠瘻缁涙牜鏆愰幘銈夋敘閸忔湹绮导姘崇樈
+**响应 VO**: `Result<Void>` — 更新密码后按策略撤销其他会话
 
 ---
 
 ## API-08 POST /api/v1/auth/logout
 
-**閸旂喕鍏?*: 闁偓閸戣櫣娅ヨぐ鏇礉閹俱倝鏀㈣ぐ鎾冲娴兼俺鐦?
+**功能**: 退出登录，撤销当前会话
 
-**鐠囬攱鐪版径?*: `Authorization: Bearer <token>`
+**请求头**: `Authorization: Bearer <token>`
 
-**閸氬海顏崣鍌涙殶**: 閺冪姾顕Ч鍌欑秼閿涘奔绮犵拠閿嬬湴婢剁骞忛崣鏉ken
+**后端参数**: 无请求体，从请求头获取token
 
-**閸濆秴绨?VO**: `Result<Void>`
+**响应 VO**: `Result<Void>`
 
 ---
 
-# 娴滃被鈧胶鏁ら幋閿嬆侀崸?
+# 二、用户模块
 
 ## API-09 GET /api/v1/users/me
 
-**閸旂喕鍏?*: 閼惧嘲褰囪ぐ鎾冲閻劍鍩涢妴浣筋潡閼瑰眰鈧焦娼堥梽鎰┾偓浣戒粓缁粯鏌熷蹇撴嫲鐠愶箑褰块悩鑸碘偓?
+**功能**: 获取当前用户、角色、权限、联系方式和账号状态
 
-**鐠囬攱鐪版径?*: `Authorization: Bearer <token>`
+**请求头**: `Authorization: Bearer <token>`
 
-**閸氬海顏崣鍌涙殶**: 閺冪媴绱欐禒宥磂curityContext閼惧嘲褰囪ぐ鎾冲閻劍鍩涢敍?
+**后端参数**: 无（从SecurityContext获取当前用户）
 
-**閸濆秴绨?VO**: `Result<UserVO>`
+**响应 VO**: `Result<UserVO>`
 
-| UserVO 鐎涙顔?| 缁鐎?| 鐠囧瓨妲?|
+| UserVO 字段 | 类型 | 说明 |
 |---|---|---|
-| `id` | int | 閻劍鍩汭D |
-| `username` | String | 閻劍鍩涢崥?|
-| `real_name` | String | 閻喎鐤勬慨鎾虫倳 |
-| `phone` | String | 閹靛婧€閸?|
-| `email` | String | 闁喚顔?|
-| `avatar` | String | 婢舵潙鍎歎RL |
-| `user_type` | String | 閻劍鍩涚猾璇茬€?|
-| `roles` | String(JSON) | 鐟欐帟澹婇崚妤勩€?|
-| `permissions` | String(JSON) | 閺夊啴妾洪崚妤勩€?|
-| `is_active` | int | 閺勵垰鎯佸┑鈧ú? 1閺?0閸?|
-| `created_at` | LocalDateTime | 閸掓稑缂撻弮鍫曟？ |
-| `updated_at` | LocalDateTime | 閺囧瓨鏌婇弮鍫曟？ |
+| `id` | int | 用户ID |
+| `username` | String | 用户名 |
+| `real_name` | String | 真实姓名 |
+| `phone` | String | 手机号 |
+| `email` | String | 邮箱 |
+| `avatar` | String | 头像URL |
+| `user_type` | String | 用户类型 |
+| `roles` | String(JSON) | 角色列表 |
+| `permissions` | String(JSON) | 权限列表 |
+| `is_active` | int | 是否激活: 1是/0否 |
+| `created_at` | LocalDateTime | 创建时间 |
+| `updated_at` | LocalDateTime | 更新时间 |
 
 ---
 
 ## API-10 GET /api/v1/users/by-username
 
-**閸旂喕鍏?*: 閺嶈宓侀悽銊﹀煕閸氬秵鐓＄拠銏㈡暏閹寸īD閸滃苯鐔€閺堫兛淇婇幁?
-**閺屻儴顕楅崣鍌涙殶**: username(String, 韫囧懎锝? 閳?閻劍鍩涢崥?
-**閸濆秴绨?VO**: Result<{id: int, username: String, real_name: String, email: String}>
+**功能**: 根据用户名查询用户ID和基本信息
+
+**查询参数**: username(String, 必填) — 用户名
+
+**响应 VO**: Result<{id: int, username: String, real_name: String, email: String}>
 
 ---
 
 ## API-11 GET /api/v1/users/by-email
 
-**閸旂喕鍏?*: 閺嶈宓侀柇顔绢唸閺屻儴顕楅悽銊﹀煕ID閸滃苯鐔€閺堫兛淇婇幁?
-**閺屻儴顕楅崣鍌涙殶**: email(String, 韫囧懎锝? 閳?闁喚顔?
-**閸濆秴绨?VO**: Result<{id: int, username: String, real_name: String, email: String}>
+**功能**: 根据邮箱查询用户ID和基本信息
+
+**查询参数**: email(String, 必填) — 邮箱
+
+**响应 VO**: Result<{id: int, username: String, real_name: String, email: String}>
 
 ---
-# 娑撳鈧竸I 閺佹瑥顒熷鏇熸惛
+# 三、AI 教学引擎
 
 ## API-12 POST /api/v1/ai/sessions
 
-**閸旂喕鍏?*: 閸掓稑缂撴径鍥嚦娴兼俺鐦介敍灞惧絹娴溿倖鏋冪€涙ぜ鈧浇顕㈤棅鐐解偓浣稿棘閼板啳绁弬娆嶁偓涓糼ill閸滃矁顕崇粙瀣╀繆閹?
+**功能**: 创建备课会话，提交文字、语音、参考资料、Skill和课程信息
 
-**鐠囬攱鐪版担?(JSON)**
-| 鐎涙顔?| 缁鐎?| 韫囧懎锝?| 鐠囧瓨妲?|
+**请求体 (JSON)**
+| 字段 | 类型 | 必填 | 说明 |
 |---|---|---|---|
-| `title` | String | **閺?* | 娴兼俺鐦介弽鍥暯 |
-| `subject` | String | **閺?* | 鐎涳妇顫?|
-| `grade` | String | **閺?* | 楠炲楠?|
-| `messages` | String(JSON) | 閸?| 閸掓繂顫愮€电鐦藉☉鍫熶紖 |
-| `uploaded_refs` | String(JSON) | 閸?| 閸欏倽鈧啳绁弬姗閸掓銆?|
-| `status` | String | 閸?| 姒涙顓?`active` |
+| `title` | String | **是** | 会话标题 |
+| `subject` | String | **是** | 学科 |
+| `grade` | String | **是** | 年级 |
+| `messages` | String(JSON) | 否 | 初始对话消息 |
+| `uploaded_refs` | String(JSON) | 否 | 参考资料ID列表 |
+| `status` | String | 否 | 默认 `active` |
 
-**閸氬海顏?DTO**: `TaskCreateDTO { title, subject, grade, status, uploaded_refs, plan_json }`
+**后端 DTO**: `TaskCreateDTO { title, subject, grade, status, uploaded_refs, plan_json }`
 
-**閸濆秴绨?VO**: `Result<TaskVO>` 閳?閸氼偂绱扮拠婊籇
+**响应 VO**: `Result<TaskVO>` — 含会话ID
 
 ---
 
 ## API-13 POST /api/v1/ai/sessions/{id}/messages
 
-**閸旂喕鍏?*: 鐎电鐦芥稉顓∷夐崗鍛存付濮瑰倶鈧礁娲栫粵鏃€绶炲〒鍛存６妫版ɑ鍨ㄩ幓鎰唉閸欏秹顩?
+**功能**: 对话中补充需求、回答澄清问题或提交反馈
 
-**鐠侯垰绶為崣鍌涙殶**: `id` 閳?娴兼俺鐦絀D
+**路径参数**: `id` — 会话ID
 
-**鐠囬攱鐪版担?(JSON)**
-| 鐎涙顔?| 缁鐎?| 韫囧懎锝?| 鐠囧瓨妲?|
+**请求体 (JSON)**
+| 字段 | 类型 | 必填 | 说明 |
 |---|---|---|---|
-| `messages` | String(JSON) | **閺?* | 濞戝牊浼呴崘鍛啇閿涘湏rray of {role, content}閿?|
+| `messages` | String(JSON) | **是** | 消息内容（Array of {role, content}） |
 
-**閸氬海顏?DTO**: `ConversationDTO { title(闁锝?, status(闁锝?, messages, context_summary(闁锝? }`
+**后端 DTO**: `ConversationDTO { title(选填), status(选填), messages, context_summary(选填) }`
 
-**閸濆秴绨?VO**: `Result<ConversationVO>` 閳?閺囧瓨鏌婇崥搴ｆ畱娴兼俺鐦芥穱鈩冧紖
+**响应 VO**: `Result<ConversationVO>` — 更新后的会话信息
 
 ---
 
 ## API-14 GET /api/v1/ai/sessions/{id}/plan
 
-**閸旂喕鍏?*: 閼惧嘲褰囪ぐ鎾冲閺佹瑥顒熺拋鎹愵吀婢堆呯堪閸欏﹦澧楅張?
+**功能**: 获取当前教学设计大纲及版本
 
-**鐠侯垰绶為崣鍌涙殶**: `id` 閳?娴兼俺鐦絀D
+**路径参数**: `id` — 会话ID
 
-**閸氬海顏崣鍌涙殶**: 閺冪姾顕Ч鍌欑秼
+**后端参数**: 无请求体
 
-**閸濆秴绨?VO**: `Result<TaskVO>` 閳?閸忔湹鑵戦惃?`plan_json` 閸?`plan_confirm_status` 鐎涙顔岄崠鍛儓婢堆呯堪閸愬懎顔?
+**响应 VO**: `Result<TaskVO>` — 其中的 `plan_json` 和 `plan_confirm_status` 字段包含大纲内容
 
 ---
 
 ## API-15 POST /api/v1/ai/sessions/{id}/plan-confirmations
 
-**閸旂喕鍏?*: 绾喛顓婚妴渚€鈧偓閸ョ偞鍨ㄧ悰銉ュ帠閺佹瑥顒熺拋鎹愵吀婢堆呯堪
+**功能**: 确认、退回或补充教学设计大纲
 
-**鐠侯垰绶為崣鍌涙殶**: `id` 閳?娴兼俺鐦絀D
+**路径参数**: `id` — 会话ID
 
-**鐠囬攱鐪版担?(JSON)**
-| 鐎涙顔?| 缁鐎?| 韫囧懎锝?| 鐠囧瓨妲?|
+**请求体 (JSON)**
+| 字段 | 类型 | 必填 | 说明 |
 |---|---|---|---|
-| `action` | String | **閺?* | 閹垮秳缍? `confirm` / `reject` / `supplement` |
-| `comment` | String | 閸?| 闁偓閸ョ偞鍨ㄧ悰銉ュ帠鐠囧瓨妲?|
-| `plan_version` | int | **閺?* | 婢堆呯堪閻楀牊婀伴崣鍑ょ礄闂冩彃鑻熼崣鎴濆暱缁愪緤绱?|
+| `action` | String | **是** | 操作: `confirm` / `reject` / `supplement` |
+| `comment` | String | 否 | 退回或补充说明 |
+| `plan_version` | int | **是** | 大纲版本号（防并发冲突） |
 
-**閸氬海顏?DTO**: 閺嗗倹妫ら悪顒傜彌 DTO
+**后端 DTO**: 暂无独立 DTO
 
-**閸濆秴绨?VO**: `Result<Void>`
+**响应 VO**: `Result<Void>`
 
 ---
 
 ## API-16 POST /api/v1/ai/sessions/{id}/runs
 
-**閸旂喕鍏?*: 娓氭繃宓佸鑼€樼拋銈堫吀閸掓帒鍨卞鐑樺⒔鐞涘奔鎹㈤崝?
+**功能**: 依据已确认计划创建执行任务
 
-**鐠侯垰绶為崣鍌涙殶**: `id` 閳?娴兼俺鐦絀D
+**路径参数**: `id` — 会话ID
 
-**閸氬海顏崣鍌涙殶**: 閺冪姾顕Ч鍌欑秼
+**后端参数**: 无请求体
 
-**閸濆秴绨?VO**: `Result<TaskVO>` 閳?閸氼偂鎹㈤崝顡廌閿涘tatus 鏉烆兛璐?`running`
+**响应 VO**: `Result<TaskVO>` — 含任务ID，status 转为 `running`
 
 ---
 
 ## API-17 GET /api/v1/ai/runs/{runId}
 
-**閸旂喕鍏?*: 閺屻儴顕楅悽鐔稿灇閵嗕礁寮介幀婵嗗挤婢惰精瑙﹂悩鑸碘偓?
+**功能**: 查询生成、反思及失败状态
 
-**鐠侯垰绶為崣鍌涙殶**: `runId` 閳?閹笛嗩攽娴犺濮烮D
+**路径参数**: `runId` — 执行任务ID
 
-**閸氬海顏崣鍌涙殶**: 閺冪姾顕Ч鍌欑秼
+**后端参数**: 无请求体
 
-**閸濆秴绨?VO**: `Result<TaskVO>`
+**响应 VO**: `Result<TaskVO>`
 
 ---
 
 ## API-18 GET /api/v1/ai/runs/{runId}/events
 
-**閸旂喕鍏?*: 闁俺绻?SSE 閹恒儲鏁归梼鑸殿唽閵嗕浇绻樻惔锕€鎷版０鍕潔閺囧瓨鏌婇敍灞炬暜閹镐焦鏌囩痪璺ㄧ敾娴?
+**功能**: 通过 SSE 接收阶段、进度和预览更新，支持断线续传
 
-**鐠侯垰绶為崣鍌涙殶**: `runId` 閳?閹笛嗩攽娴犺濮烮D
+**路径参数**: `runId` — 执行任务ID
 
-**閺屻儴顕楅崣鍌涙殶**:
-| 鐎涙顔?| 缁鐎?| 韫囧懎锝?| 鐠囧瓨妲?|
+**查询参数**:
+| 字段 | 类型 | 必填 | 说明 |
 |---|---|---|---|
-| `lastEventId` | String | 閸?| 閺傤厾鍤庣紒顓濈炊閺冭埖鎯＄敮锔芥付閸氬孩鏁归崚鎵畱 eventId |
+| `lastEventId` | String | 否 | 断线续传时携带最后收到的 eventId |
 
-**閸氬海顏?DTO**: 閺冪媴绱濆ù浣哥础鏉╂柨娲?
+**后端 DTO**: 无，流式返回
 
-**閸濆秴绨?*: 鏉╂柨娲?`text/event-stream`閿涘湯SE閿涘绱濋崠鍛儓闂冭埖顔屾潻娑樺閸滃矂顣╃憴鍫熸殶閹?
+**响应**: 返回 `text/event-stream`（SSE），包含阶段进度和预览数据
 
 ---
 
-# 閸ユ稏鈧線銆嶉惄顔侥侀崸?
-> **閺夊啴妾虹拠瀛樻**閿涙碍澧嶉張澶愭付鐟曚礁顕い鍦窗鏉╂稖顢戦崘娆愭惙娴ｆ粎娈戦幒銉ュ經閿涘苯娼庨棁鈧弽锟犵崣瑜版挸澧犻悽銊﹀煕閺勵垰鎯佹稉娲€嶉惄顔藉閺堝鈧拑绱檜ser_id == currentId閿涘鍨ㄧ悮顐ｅ房閺夊啰鏁ら幋鍑ょ礄currentId 鐎涙ê婀禍?permissions JSON 閺佹壆绮嶆稉顓ㄧ礆閵?
+# 四、项目模块
+
+> **权限说明**：所有需要对项目进行写操作的接口，均需校验当前用户是否为项目拥有者（user_id == currentId）或被授权用户（currentId 存在于 permissions JSON 数组中）。
+
 ## API-20 POST /api/v1/projects
 
-**閸旂喕鍏?*: 閸掓稑缂撴稉顏冩眽閺佹瑥顒熸い鍦窗閹存牜銇為崠鐑樻烦閻㈢喖銆嶉惄?
+**功能**: 创建个人教学项目或社区派生项目
 
-**鐠囬攱鐪版担?(JSON)**
-| 鐎涙顔?| 缁鐎?| 韫囧懎锝?| 鐠囧瓨妲?|
+**请求体 (JSON)**
+| 字段 | 类型 | 必填 | 说明 |
 |---|---|---|---|
-| `project_name` | String | **閺?* | 妞ゅ湱娲伴崥宥囆?|
-| `project_type` | String | **閺?* | 缁鐎? `ppt` / `word` / `h5` / `mixed` |
-| `status` | String | 閸?| 姒涙顓?`draft` |
-| `snapshots` | String(JSON) | 閸?| 閻楀牊婀拌箛顐ゅ弾閸掓銆?|
-| `edit_history` | String(JSON) | 閸?| 缂傛牞绶崢鍡楀蕉 |
+| `project_name` | String | **是** | 项目名称 |
+| `project_type` | String | **是** | 类型: `ppt` / `word` / `h5` / `mixed` |
+| `status` | String | 否 | 默认 `draft` |
+| `snapshots` | String(JSON) | 否 | 版本快照列表 |
+| `edit_history` | String(JSON) | 否 | 编辑历史 |
 
-**閸氬海顏?DTO**: `ProjectCreateDTO { project_name, project_type, status, snapshots, edit_history }`
+**后端 DTO**: `ProjectCreateDTO { project_name, project_type, status, snapshots, edit_history }`
 
-**閸濆秴绨?VO**: `Result<ProjectVO>`
+**响应 VO**: `Result<ProjectVO>`
 
 ---
 
 ## API-21 GET /api/v1/projects
 
-**閸旂喕鍏?*: 閹稿鎮曠粔鑸偓浣筋嚦缁嬪鈧焦鍨氶弸婊呰閸ㄥ鈧胶濮搁幀浣告嫲閺囧瓨鏌婇弮鍫曟？閸掑棝銆夐弻銉嚄妞ゅ湱娲?
+**功能**: 按名称、课程、成果类型、状态和更新时间分页查询项目
 
-**閺屻儴顕楅崣鍌涙殶**:
-| 鐎涙顔?| 缁鐎?| 韫囧懎锝?| 鐠囧瓨妲?|
+**查询参数**:
+| 字段 | 类型 | 必填 | 说明 |
 |---|---|---|---|
-| `keyword` | String | 閸?| 閸氬秶袨/鐠囧墽鈻奸崗鎶芥暛鐎涙膩缁﹥鎮崇槐?|
-| `project_type` | String | 閸?| 缁涙盯鈧琚崹? `ppt`/`word`/`h5`/`mixed` |
-| `status` | String | 閸?| 缁涙盯鈧濮搁幀? `draft`/`editing`/`confirmed`/`exported` |
-| `user_id` | Integer | 閸?| 缁涙盯鈧鏁ら幋鍑ょ礄閸氬海顏懛顏勫З鐠佸彞璐熻ぐ鎾冲閻劍鍩涢敍?|
-| `page` | int | 閸?| 姒涙顓? |
-| `size` | int | 閸?| 姒涙顓?0 |
+| `keyword` | String | 否 | 名称/课程关键字模糊搜索 |
+| `project_type` | String | 否 | 筛选类型: `ppt`/`word`/`h5`/`mixed` |
+| `status` | String | 否 | 筛选状态: `draft`/`editing`/`confirmed`/`exported` |
+| `user_id` | Integer | 否 | 筛选用户（后端自动设为当前用户） |
+| `page` | int | 否 | 默认1 |
+| `size` | int | 否 | 默认10 |
 
-**閸氬海顏?DTO**: `ProjectQueryDTO extends PageQuery { user_id, project_type, status, keyword }`
+**后端 DTO**: `ProjectQueryDTO extends PageQuery { user_id, project_type, status, keyword }`
 
-**閸濆秴绨?VO**: `Result<PageResult<ProjectVO>>`
+**响应 VO**: `Result<PageResult<ProjectVO>>`
 
 ---
 
 ## API-22 GET /api/v1/projects/{id}
 
-**閸旂喕鍏?*: 閼惧嘲褰囨い鍦窗閸愬懎顔愰妴浣稿帗閺佺増宓侀妴浣哥秼閸撳秶澧楅張顒€鎷伴弶鍐
+**功能**: 获取项目内容、元数据、当前版本和权限
+**权限**: 仅项目拥有者或被授权用户可以查看
 
-**鐠侯垰绶為崣鍌涙殶**: `id` 閳?妞ゅ湱娲癐D
+**路径参数**: `id` — 项目ID
 
-**閸濆秴绨?VO**: `Result<ProjectVO>`
+**响应 VO**: `Result<ProjectVO>`
 
 ---
 
 ## API-23 PATCH /api/v1/projects/{id}
 
-**閸旂喕鍏?*: 娣囶喗鏁兼い鍦窗閸氬秶袨閵嗕胶琚崹瀣ㄢ偓浣哄Ц閹胶鐡戦崗鍐╂殶閹诡噯绱濇担璺ㄦ暏閻楀牊婀伴崣鐑芥Щ楠炶泛褰傜憰鍡欐磰
+**功能**: 修改项目名称、类型、状态等元数据，使用版本号防并发覆盖
 
-**鐠侯垰绶為崣鍌涙殶**: `id` 閳?妞ゅ湱娲癐D
+**路径参数**: `id` — 项目ID
 
-**鐠囬攱鐪版担?(JSON)**
-| 鐎涙顔?| 缁鐎?| 韫囧懎锝?| 鐠囧瓨妲?|
+**请求体 (JSON)**
+| 字段 | 类型 | 必填 | 说明 |
 |---|---|---|---|
-| `project_name` | String | 閸?| 閺傛澘鎮曠粔?|
-| `project_type` | String | 閸?| 閺傛壆琚崹?|
-| `status` | String | 閸?| 閺傛壆濮搁幀?|
-| `current_version` | int | **閺?* | 瑜版挸澧犻悧鍫熸拱閸欏嚖绱欐稊鎰潎闁夸緤绱濋梼鍙夘剾鐟曞棛娲婇敍?|
+| `project_name` | String | 否 | 新名称 |
+| `project_type` | String | 否 | 新类型 |
+| `status` | String | 否 | 新状态 |
+| `current_version` | int | **是** | 当前版本号（乐观锁，防止覆盖） |
 
-**閸氬海顏?DTO**: `ProjectCreateDTO`
+**后端 DTO**: `ProjectCreateDTO`
 
-**閸濆秴绨?VO**: `Result<ProjectVO>`
+**响应 VO**: `Result<ProjectVO>`
 
 ---
 
 ## API-24 POST /api/v1/projects/{id}/copies
 
-**閸旂喕鍏?*: 婢跺秴鍩楅張澶嬫綀鐠佸潡妫堕惃鍕€嶉惄顔艰嫙閸掓稑缂撻弬鎵畱缁変焦婀佹い鍦窗
+**功能**: 复制有权访问的项目并创建新的私有项目
 
-**鐠侯垰绶為崣鍌涙殶**: `id` 閳?濠ф劙銆嶉惄鐢€D
+**路径参数**: `id` — 源项目ID
 
-**鐠囬攱鐪版担?(JSON)**
-| 鐎涙顔?| 缁鐎?| 韫囧懎锝?| 鐠囧瓨妲?|
+**请求体 (JSON)**
+| 字段 | 类型 | 必填 | 说明 |
 |---|---|---|---|
-| `new_name` | String | 閸?| 閺備即銆嶉惄顔兼倳缁夊府绱欐妯款吇閸樼喎鎮曠粔?閸擃垱婀伴敍?|
+| `new_name` | String | 否 | 新项目名称（默认原名称+副本） |
 
-**閸氬海顏?DTO**: 閺嗗倹妫ら悪顒傜彌 DTO
+**后端 DTO**: 暂无独立 DTO
 
-**閸濆秴绨?VO**: `Result<ProjectVO>` 閳?閺備即銆嶉惄顔炬畱鐎瑰本鏆ｆ穱鈩冧紖
+**响应 VO**: `Result<ProjectVO>` — 新项目的完整信息
 
 ---
 
 ## API-25 POST /api/v1/projects/{id}/archive
 
-**閸旂喕鍏?*: 瑜版帗銆傛い鍦窗閿涘瞼顩﹀銏㈡埛缂侇厾绱潏?
+**功能**: 归档项目，禁止继续编辑
 
-**鐠侯垰绶為崣鍌涙殶**: `id` 閳?妞ゅ湱娲癐D
+**路径参数**: `id` — 项目ID
 
-**閸氬海顏崣鍌涙殶**: 閺冪姾顕Ч鍌欑秼
+**后端参数**: 无请求体
 
-**閸濆秴绨?VO**: `Result<ProjectVO>` 閳?閻樿埖鈧焦娲块弬棰佽礋 `archived`
+**响应 VO**: `Result<ProjectVO>` — 状态更新为 `archived`
 
 ---
 
 ## API-26 POST /api/v1/projects/{id}/restore
 
-**閸旂喕鍏?*: 鐏忓棗缍婂锝嗗灗閸欘垱浠径宥呭灩闂勩倗濮搁幀浣烘畱妞ゅ湱娲伴幁銏狀槻娑撳搫褰查悽?
+**功能**: 将归档或可恢复删除状态的项目恢复为可用
 
-**鐠侯垰绶為崣鍌涙殶**: `id` 閳?妞ゅ湱娲癐D
+**路径参数**: `id` — 项目ID
 
-**閸氬海顏崣鍌涙殶**: 閺冪姾顕Ч鍌欑秼
+**后端参数**: 无请求体
 
-**閸濆秴绨?VO**: `Result<ProjectVO>`
+**响应 VO**: `Result<ProjectVO>`
 
 ---
 
 ## API-27 DELETE /api/v1/projects/{id}
 
-**閸旂喕鍏?*: 閺嶏繝鐛欓弶鍐閵嗕椒绻氶悾娆愭埂閸滃苯鍙ч懕鏂款嚤閸戣桨鎹㈤崝鈥虫倵濮橀晲绠欓崚鐘绘珟
+**功能**: 校验权限、保留期和关联导出任务后永久删除
 
-**鐠侯垰绶為崣鍌涙殶**: `id` 閳?妞ゅ湱娲癐D
+**路径参数**: `id` — 项目ID
 
-**閸氬海顏崣鍌涙殶**: 閺冪姾顕Ч鍌欑秼
+**后端参数**: 无请求体
 
-**閸濆秴绨?VO**: `Result<Void>`
+**响应 VO**: `Result<Void>`
 
 ---
 
 ## API-28 POST /api/v1/projects/{id}/ai-revisions
 
-**閸旂喕鍏?*: 鐎佃瀵氱€规岸銆夐棃銏″灗缂佸嫪娆㈤幍褑顢戦懛顏嗗姧鐠囶叀鈻堟穱顔芥暭
+**功能**: 对指定页面或组件执行自然语言修改
 
-**鐠侯垰绶為崣鍌涙殶**: `id` 閳?妞ゅ湱娲癐D
+**路径参数**: `id` — 项目ID
 
-**鐠囬攱鐪版担?(JSON)**
-| 鐎涙顔?| 缁鐎?| 韫囧懎锝?| 鐠囧瓨妲?|
+**请求体 (JSON)**
+| 字段 | 类型 | 必填 | 说明 |
 |---|---|---|---|
-| `target_type` | String | **閺?* | 娣囶喗鏁奸惄顔界垼: `page` / `component` |
-| `target_id` | String | **閺?* | 閻╊喗鐖ｉ弽鍥槕 |
-| `instruction` | String | **閺?* | 閼奉亞鍔х拠顓♀枅娣囶喗鏁奸幐鍥︽姢 |
-| `context` | String(JSON) | 閸?| 闂勫嫬濮炴稉濠佺瑓閺?|
+| `target_type` | String | **是** | 修改目标: `page` / `component` |
+| `target_id` | String | **是** | 目标标识 |
+| `instruction` | String | **是** | 自然语言修改指令 |
+| `context` | String(JSON) | 否 | 附加上下文 |
 
-**閸氬海顏?DTO**: 閺嗗倹妫ら悪顒傜彌 DTO
+**后端 DTO**: 暂无独立 DTO
 
-**閸濆秴绨?VO**: `Result<PageVO>` 閳?娣囶喗鏁奸崥搴ｆ畱妞ょ敻娼伴崘鍛啇
+**响应 VO**: `Result<PageVO>` — 修改后的页面内容
 
 ---
 
 ## API-29 POST /api/v1/projects/{id}/components
 
-**閸旂喕鍏?*: 閹绘帒鍙嗛弬鍥ㄦ拱閵嗕礁娴橀悧鍥モ偓渚€鐓剁憴鍡涱暥閵嗕浇銆冮弽绗衡偓涓?閹存牕顒熺粔鎴濅紣閸忛绮嶆禒?
+**功能**: 插入文本、图片、音视频、表格、H5或学科工具组件
 
-**鐠侯垰绶為崣鍌涙殶**: `id` 閳?妞ゅ湱娲癐D
+**路径参数**: `id` — 项目ID
 
-**鐠囬攱鐪版担?(JSON)**
-| 鐎涙顔?| 缁鐎?| 韫囧懎锝?| 鐠囧瓨妲?|
+**请求体 (JSON)**
+| 字段 | 类型 | 必填 | 说明 |
 |---|---|---|---|
-| `page_id` | int | **閺?* | 閻╊喗鐖ｆい鐢告桨ID |
-| `page_order` | int | **閺?* | 妞ょ敻娼版い鍝勭碍 |
-| `page_type` | String | **閺?* | 妞ょ敻娼扮猾璇茬€? `cover`/`toc`/`content`/`summary` |
-| `page_title` | String | 閸?| 妞ょ敻娼伴弽鍥暯 |
-| `page_content` | String(JSON) | 閸?| 妞ょ敻娼伴崘鍛啇 |
-| `components` | String(JSON) | 閸?| 缂佸嫪娆㈤崚妤勩€?|
+| `page_id` | int | **是** | 目标页面ID |
+| `page_order` | int | **是** | 页面顺序 |
+| `page_type` | String | **是** | 页面类型: `cover`/`toc`/`content`/`summary` |
+| `page_title` | String | 否 | 页面标题 |
+| `page_content` | String(JSON) | 否 | 页面内容 |
+| `components` | String(JSON) | 否 | 组件列表 |
 
-**閸氬海顏?DTO**: `PageDTO { page_order, page_type, page_title, page_content, components }`
+**后端 DTO**: `PageDTO { page_order, page_type, page_title, page_content, components }`
 
-**閸濆秴绨?VO**: `Result<PageVO>`
+**响应 VO**: `Result<PageVO>`
 
 ---
 
 ## API-30 PATCH /api/v1/projects/{id}/components/{componentId}
 
-**閸旂喕鍏?*: 娣囶喗鏁肩紒鍕閸愬懎顔愰妴浣风秴缂冾喖鎷伴弽宄扮础
+**功能**: 修改组件内容、位置和样式
 
-**鐠侯垰绶為崣鍌涙殶**: `id` 閳?妞ゅ湱娲癐D, `componentId` 閳?缂佸嫪娆D
+**路径参数**: `id` — 项目ID, `componentId` — 组件ID
 
-**鐠囬攱鐪版担?(JSON)**
-| 鐎涙顔?| 缁鐎?| 韫囧懎锝?| 鐠囧瓨妲?|
+**请求体 (JSON)**
+| 字段 | 类型 | 必填 | 说明 |
 |---|---|---|---|
-| `page_content` | String(JSON) | 閸?| 閺囧瓨鏌婇惃鍕€夐棃銏犲敶鐎?|
-| `components` | String(JSON) | 閸?| 閺囧瓨鏌婇惃鍕矋娴犺泛鍨悰?|
+| `page_content` | String(JSON) | 否 | 更新的页面内容 |
+| `components` | String(JSON) | 否 | 更新的组件列表 |
 
-**閸氬海顏?DTO**: `PageDTO`
+**后端 DTO**: `PageDTO`
 
-**閸濆秴绨?VO**: `Result<PageVO>`
+**响应 VO**: `Result<PageVO>`
 
 ---
 
 ## API-31 POST /api/v1/projects/{id}/versions
 
-**閸旂喕鍏?*: 娣囨繂鐡ㄦ稉宥呭讲閸欐﹢銆嶉惄顔惧閺堫剙鑻熸潻鏂挎礀閻楀牊婀扮紓鏍у娇
+**功能**: 保存不可变项目版本并返回版本编号
 
-**鐠侯垰绶為崣鍌涙殶**: `id` 閳?妞ゅ湱娲癐D
+**路径参数**: `id` — 项目ID
 
-**鐠囬攱鐪版担?(JSON)**
-| 鐎涙顔?| 缁鐎?| 韫囧懎锝?| 鐠囧瓨妲?|
+**请求体 (JSON)**
+| 字段 | 类型 | 必填 | 说明 |
 |---|---|---|---|
-| `description` | String | 閸?| 閻楀牊婀扮拠瀛樻 |
+| `description` | String | 否 | 版本说明 |
 
-**閸氬海顏?DTO**: 閺嗗倹妫ら悪顒傜彌 DTO
+**后端 DTO**: 暂无独立 DTO
 
-**閸濆秴绨?VO**: `Result<{version_id: int, version_number: int}>`
+**响应 VO**: `Result<{version_id: int, version_number: int}>`
 
 ---
 
 ## API-32 GET /api/v1/projects/{id}/versions
 
-**閸旂喕鍏?*: 閸掑棝銆夐弻銉嚄妞ゅ湱娲伴崢鍡楀蕉閻楀牊婀伴妴浣稿灡瀵よ桨姹夐妴浣筋嚛閺勫骸鎷伴崚娑樼紦閺冨爼妫?
+**功能**: 分页查询项目历史版本、创建人、说明和创建时间
 
-**鐠侯垰绶為崣鍌涙殶**: `id` 閳?妞ゅ湱娲癐D
+**路径参数**: `id` — 项目ID
 
-**閺屻儴顕楅崣鍌涙殶**:
-| 鐎涙顔?| 缁鐎?| 韫囧懎锝?| 鐠囧瓨妲?|
+**查询参数**:
+| 字段 | 类型 | 必填 | 说明 |
 |---|---|---|---|
-| `page` | int | 閸?| 姒涙顓? |
-| `size` | int | 閸?| 姒涙顓?0 |
+| `page` | int | 否 | 默认1 |
+| `size` | int | 否 | 默认10 |
 
-**閸氬海顏?DTO**: `PageQuery { page, size }`
+**后端 DTO**: `PageQuery { page, size }`
 
-**閸濆秴绨?VO**: `Result<PageResult<{version_id, version_number, description, created_at}>>`
+**响应 VO**: `Result<PageResult<{version_id, version_number, description, created_at}>>`
 
 ---
 
 ## API-33 GET /api/v1/projects/{id}/versions/{versionId}/diff
 
-**閸旂喕鍏?*: 鐏忓棛娲伴弽鍥╁閺堫兛绗岄幐鍥х暰閻楀牊婀伴幋鏍х秼閸撳秶澧楅張顒冪箻鐞涘苯妯婂鍌涚槷鏉?
+**功能**: 将目标版本与指定版本或当前版本进行差异比较
 
-**鐠侯垰绶為崣鍌涙殶**: `id` 閳?妞ゅ湱娲癐D, `versionId` 閳?閻╊喗鐖ｉ悧鍫熸拱ID
+**路径参数**: `id` — 项目ID, `versionId` — 目标版本ID
 
-**閺屻儴顕楅崣鍌涙殶**:
-| 鐎涙顔?| 缁鐎?| 韫囧懎锝?| 鐠囧瓨妲?|
+**查询参数**:
+| 字段 | 类型 | 必填 | 说明 |
 |---|---|---|---|
-| `compare_version_id` | Integer | 閸?| 鐎佃鐦悧鍫熸拱ID閿涘牅绗夋导鐘插灟濮ｆ棁绶濊ぐ鎾冲閻楀牊婀伴敍?|
+| `compare_version_id` | Integer | 否 | 对比版本ID（不传则比较当前版本） |
 
-**閸濆秴绨?VO**: `Result<{differences: Array, summary: String}>`
+**响应 VO**: `Result<{differences: Array, summary: String}>`
 
 ---
 
 ## API-34 POST /api/v1/projects/{id}/versions/{versionId}/restore
 
-**閸旂喕鍏?*: 閸╄桨绨崢鍡楀蕉閻楀牊婀伴崚娑樼紦閺傛壆娈戣ぐ鎾冲閻楀牊婀伴敍灞肩瑝娣囶喗鏁奸崢鐔峰坊閸欒尪顔囪ぐ?
+**功能**: 基于历史版本创建新的当前版本，不修改原历史记录
 
-**鐠侯垰绶為崣鍌涙殶**: `id` 閳?妞ゅ湱娲癐D, `versionId` 閳?濠ф劗澧楅張鐞丏
+**路径参数**: `id` — 项目ID, `versionId` — 源版本ID
 
-**閸氬海顏崣鍌涙殶**: 閺冪姾顕Ч鍌欑秼
+**后端参数**: 无请求体
 
-**閸濆秴绨?VO**: `Result<ProjectVO>` 閳?閹垹顦查崥搴ｆ畱妞ゅ湱娲伴敍鍧坲rrent_version 闁帒顤冮敍?
+**响应 VO**: `Result<ProjectVO>` — 恢复后的项目（current_version 递增）
 
 ---
 
 ## API-35 POST /api/v1/projects/{id}/permissions
 
-**功能**: 添加项目授权用户。仅项目创建者(拥有者)可以调用，将被授权用户的ID加入到项目的 `permissions` JSON 数组中(去重)。
+**功能**: 添加项目授权用户。仅项目创建者（拥有者）可以调用，将被授权用户的ID加入到项目的 `permissions` JSON 数组中（去重）。
 
-**路径参数**: `id` -- 项目ID
+**路径参数**: `id` — 项目ID
 
 **请求体 (JSON)**
 | 字段 | 类型 | 必填 | 说明 |
 |---|---|---|---|
-| `user_id` | Integer | **是** | 要授权的用户ID(需已注册) |
+| `user_id` | Integer | **是** | 要授权的用户ID（需已注册） |
 
 **后端 DTO**: `ProjectPermissionDTO { user_id }`
 
-**响应 VO**: `Result<ProjectVO>` -- 更新后的项目信息(含最新的 `permissions` 列表)
+**响应 VO**: `Result<ProjectVO>` — 更新后的项目信息（含最新的 `permissions` 列表）
 
-# 娴滄柣鈧椒閲滄禍楦跨カ濠ф劕绨?
+---
+
+# 五、个人资源库
 
 ## API-36 POST /api/v1/resources/upload-tokens
  
- **閸旂喕鍏?*: 閼惧嘲褰?OSS 缁涙儳鎮曟稉濠佺炊 URL閵嗗倸鎮楃粩顖滄晸閹存劕鏁稉鈧?objectKey 楠炴儼绻戦崶鐐殿劮閸?PUT URL閿涘苯澧犵粩顖涘瑏閸?URL 閸氬海娲挎导鐘绘▼闁插奔绨?OSS
+ **功能**: 获取 OSS 签名上传 URL。后端生成唯一 objectKey 并返回签名 PUT URL，前端拿到 URL 后直传阿里云 OSS
  
- **鐠囬攱鐪版担?(JSON)**
- | 鐎涙顔?| 缁鐎?| 韫囧懎锝?| 鐠囧瓨妲?|
+ **请求体 (JSON)**
+ | 字段 | 类型 | 必填 | 说明 |
  |---|---|---|---|
- | `file_name` | String | **閺?* | 閺傚洣娆㈤崥?|
- | `file_type` | String | 閸?| 閺傚洣娆㈢猾璇茬€? `word`/`pdf`/`ppt`/`txt`/`image`/`audio`/`video`閿涘牅绗夋导鐘插灟閺嶈宓侀幍鈺佺潔閸氬秷鍤滈崝銊︻梾濞村绱?|
- | `description` | String | 閸?| 閺傚洣娆㈤幓蹇氬牚 |
- | `replace_target_id` | Integer | 閸?| 鐟曚焦娴涢幑銏㈡畱鐠у嫭绨甀D閿涘牊娴涢幑銏℃閸氬海顏导姘閻炲棙妫弬鍥︽楠炴儼钂嬮崚鐘绘珟閺冄嗩唶瑜版洩绱?|
+ | `file_name` | String | **是** | 文件名 |
+ | `file_type` | String | 否 | 文件类型: `word`/`pdf`/`ppt`/`txt`/`image`/`audio`/`video`（不传则根据扩展名自动检测） |
+ | `description` | String | 否 | 文件描述 |
+ | `replace_target_id` | Integer | 否 | 要替换的资源ID（替换时后端会清理旧文件并软删除旧记录） |
  
- **閸氬海顏?DTO**: `UploadTokenDTO { file_name, file_type, description, replace_target_id }`
+ **后端 DTO**: `UploadTokenDTO { file_name, file_type, description, replace_target_id }`
  
- **閸濆秴绨?VO**: `Result<UploadTokenVO>`
+ **响应 VO**: `Result<UploadTokenVO>`
  
- | UploadTokenVO 鐎涙顔?| 缁鐎?| 鐠囧瓨妲?|
+ | UploadTokenVO 字段 | 类型 | 说明 |
  |---|---|---|
- | `object_key` | String | OSS 鐎电钖勯柨?|
- | `upload_url` | String | 缁涙儳鎮?PUT URL閿涘牊婀侀弫鍫熸埂60閸掑棝鎸撻敍?|
- | `expires_at` | LocalDateTime | URL 鏉╁洦婀￠弮鍫曟？ |
+ | `object_key` | String | OSS 对象键 |
+ | `upload_url` | String | 签名 PUT URL（有效期60分钟） |
+ | `expires_at` | LocalDateTime | URL 过期时间 |
  
  ---
  
 ## API-37 POST /api/v1/resources/uploaded-files
  
- **閸旂喕鍏?*: 閸撳秶顏惄缈犵炊 OSS 閹存劕濮涢崥搴ㄢ偓姘辩叀閸氬海顏涵顔款吇閵嗗倸鎮楃粩顖炵崣鐠囦焦鏋冩禒璺哄嚒鐎涙ê婀禍?OSS閿涘苯鍨卞楦跨カ濠ф劘顔囪ぐ鏇炶嫙鐎涙ê鍙嗛弫鐗堝祦鎼?
+ **功能**: 前端直传 OSS 成功后通知后端确认。后端验证文件已存在于 OSS，创建资源记录并存入数据库
  
- **鐠囬攱鐪版担?(JSON)**
- | 鐎涙顔?| 缁鐎?| 韫囧懎锝?| 鐠囧瓨妲?|
+ **请求体 (JSON)**
+ | 字段 | 类型 | 必填 | 说明 |
  |---|---|---|---|
- | `object_key` | String | **閺?* | API-36 鏉╂柨娲栭惃?object_key |
- | `file_name` | String | **閺?* | 閺傚洣娆㈤崥?|
- | `file_size` | long | **閺?* | 閺傚洣娆㈡径褍鐨敍鍫濈摟閼哄偊绱?|
- | `file_type` | String | 閸?| 閺傚洣娆㈢猾璇茬€烽敍灞肩瑝娴肩姴鍨弽瑙勫祦閹碘晛鐫嶉崥宥堝殰閸斻劍顥呭ù?|
- | `description` | String | 閸?| 閺傚洣娆㈤幓蹇氬牚 |
- | `replace_target_id` | Integer | 閸?| 鐟曚焦娴涢幑銏㈡畱鐠у嫭绨甀D |
+ | `object_key` | String | **是** | API-36 返回的 object_key |
+ | `file_name` | String | **是** | 文件名 |
+ | `file_size` | long | **是** | 文件大小（字节） |
+ | `file_type` | String | 否 | 文件类型，不传则根据扩展名自动检测 |
+ | `description` | String | 否 | 文件描述 |
+ | `replace_target_id` | Integer | 否 | 要替换的资源ID |
  
- **閸氬海顏?DTO**: `ResourceUploadConfirmDTO { object_key, file_name, file_size, file_type, description, replace_target_id }`
+ **后端 DTO**: `ResourceUploadConfirmDTO { object_key, file_name, file_size, file_type, description, replace_target_id }`
  
- **閸濆秴绨?VO**: `Result<MaterialVO>` 閳?鐠у嫭绨崗鍐╂殶閹?
+ **响应 VO**: `Result<MaterialVO>` — 资源元数据
  
  ---
  
 ## API-38 GET /api/v1/resources
 
-**閸旂喕鍏?*: 閹稿鎮曠粔鑸偓浣筋嚦缁嬪鈧胶鐝烽懞鍌樷偓浣虹叀鐠囧棛鍋ｉ妴浣圭垼缁涗勘鈧胶琚崹瀣嫲閺冨爼妫块崚鍡涖€夊Λ鈧槐銏ｇカ濠?
+**功能**: 按名称、课程、章节、知识点、标签、类型和时间分页检索资源
 
-**閺屻儴顕楅崣鍌涙殶**:
-| 鐎涙顔?| 缁鐎?| 韫囧懎锝?| 鐠囧瓨妲?|
+**查询参数**:
+| 字段 | 类型 | 必填 | 说明 |
 |---|---|---|---|
-| `keyword` | String | 閸?| 閸氬秶袨閸忔娊鏁€?|
-| `file_type` | String | 閸?| 缁涙盯鈧鏋冩禒鍓佽閸?|
-| `user_id` | Integer | 閸?| 缁涙盯鈧鏁ら幋鍑ょ礄閸氬海顏懛顏勫З鐠佸彞璐熻ぐ鎾冲閻劍鍩涢敍?|
-| `page` | int | 閸?| 姒涙顓? |
-| `size` | int | 閸?| 姒涙顓?0 |
+| `keyword` | String | 否 | 名称关键字 |
+| `file_type` | String | 否 | 筛选文件类型 |
+| `user_id` | Integer | 否 | 筛选用户（后端自动设为当前用户） |
+| `page` | int | 否 | 默认1 |
+| `size` | int | 否 | 默认10 |
 
-**閸氬海顏?DTO**: `MaterialQueryDTO extends PageQuery { user_id, file_type, keyword }`
+**后端 DTO**: `MaterialQueryDTO extends PageQuery { user_id, file_type, keyword }`
 
-**閸濆秴绨?VO**: `Result<PageResult<MaterialVO>>`
+**响应 VO**: `Result<PageResult<MaterialVO>>`
 
 ---
 
 ## API-39 GET /api/v1/resources/{id}
 
-**閸旂喕鍏?*: 閼惧嘲褰囩挧鍕爱閸忓啯鏆熼幑顔衡偓浣稿瀻缁眹鈧浇袙閺嬫劗濮搁幀浣告嫲瑜版挸澧犻弶鍐閹芥顩?
+**功能**: 获取资源元数据、分类、解析状态和当前权限摘要
 
-**鐠侯垰绶為崣鍌涙殶**: `id` 閳?鐠у嫭绨甀D
+**路径参数**: `id` — 资源ID
 
-**閸濆秴绨?VO**: `Result<MaterialVO>`
+**响应 VO**: `Result<MaterialVO>`
 
 ---
 
 ## API-40 PATCH /api/v1/resources/{id}
 
-**閸旂喕鍏?*: 缂傛牞绶挧鍕爱閸氬秶袨閵嗕焦鐖ｇ粵淇扁偓浣筋嚦缁嬪鈧礁鍨庣猾缁樺灗閹碘偓閸︺劎娲拌ぐ?
+**功能**: 编辑资源名称、标签、课程、分类或所在目录
 
-**鐠侯垰绶為崣鍌涙殶**: `id` 閳?鐠у嫭绨甀D
+**路径参数**: `id` — 资源ID
 
-**鐠囬攱鐪版担?(JSON)** 閳?娴犮儰绗呴崸鍥﹁礋闁锝?
-| 鐎涙顔?| 缁鐎?| 韫囧懎锝?| 鐠囧瓨妲?|
+**请求体 (JSON)** — 以下均为选填
+| 字段 | 类型 | 必填 | 说明 |
 |---|---|---|---|
-| `file_name` | String | 閸?| 閺傜増鏋冩禒璺烘倳 |
-| `description` | String | 閸?| 閺傜増寮挎潻?|
-| `categories` | String(JSON) | 閸?| 閺傛澘鍨庣猾?|
-| `tags` | String(JSON) | 閸?| 閺傜増鐖ｇ粵?|
+| `file_name` | String | 否 | 新文件名 |
+| `description` | String | 否 | 新描述 |
+| `categories` | String(JSON) | 否 | 新分类 |
+| `tags` | String(JSON) | 否 | 新标签 |
 
-**閸氬海顏?DTO**: `MaterialDTO`閿涘牅绮庢导鐘烩偓鎺撴纯閺傛壆娈戠€涙顔岄敍?
+**后端 DTO**: `MaterialDTO`（仅传递更新的字段）
 
-**閸濆秴绨?VO**: `Result<MaterialVO>`
+**响应 VO**: `Result<MaterialVO>`
 
 ---
 
 ## API-41 DELETE /api/v1/resources/{id}
 
-**閸旂喕鍏?*: 閸掔娀娅庣挧鍕爱楠炴儼袝閸欐垵鍙ч懕鏃傜叀鐠囧棛鍌ㄥ鏇炰粻閻?
+**功能**: 删除资源并触发关联知识索引停用
 
-**鐠侯垰绶為崣鍌涙殶**: `id` 閳?鐠у嫭绨甀D
+**路径参数**: `id` — 资源ID
 
-**閸氬海顏崣鍌涙殶**: 閺冪姾顕Ч鍌欑秼
+**后端参数**: 无请求体
 
-**閸濆秴绨?VO**: `Result<Void>`
+**响应 VO**: `Result<Void>`
 
 ---
 
 ## API-42 POST /api/v1/resources/batch-actions
 
-**閸旂喕鍏?*: 閹稿绠撶粵澶愭暛閹靛綊鍣虹粔璇插З閵嗕礁鍨庣猾缁樺灗閸掔娀娅庣挧鍕爱
+**功能**: 按幂等键批量移动、分类或删除资源
 
-**鐠囬攱鐪版担?(JSON)**
-| 鐎涙顔?| 缁鐎?| 韫囧懎锝?| 鐠囧瓨妲?|
+**请求体 (JSON)**
+| 字段 | 类型 | 必填 | 说明 |
 |---|---|---|---|
-| `idempotent_key` | String | **閺?* | 楠炲倻鐡戦柨?|
-| `action` | String | **閺?* | 閹垮秳缍? `move` / `categorize` / `delete` |
-| `resource_ids` | Array[int] | **閺?* | 鐠у嫭绨甀D閸掓銆?|
-| `target` | String | 閸?| 缁夎濮?閸掑棛琚惃鍕窗閺嶅洤鈧?|
+| `idempotent_key` | String | **是** | 幂等键 |
+| `action` | String | **是** | 操作: `move` / `categorize` / `delete` |
+| `resource_ids` | Array[int] | **是** | 资源ID列表 |
+| `target` | String | 否 | 移动/分类的目标值 |
 
-**閸氬海顏?DTO**: 閺嗗倹妫ら悪顒傜彌 DTO
+**后端 DTO**: 暂无独立 DTO
 
-**閸濆秴绨?VO**: `Result<{results: Array<{id: int, success: boolean, error: String}>>}`
+**响应 VO**: `Result<{results: Array<{id: int, success: boolean, error: String}>>}`
 
 ---
 
 ## API-43 GET /api/v1/resources/{id}/permission
 
-**閸旂喕鍏?*: 閼惧嘲褰囩挧鍕爱缁変焦婀?閸忓彉闊╅悩鑸碘偓浣碘偓浣稿彙娴滎偄顕挒鈥冲挤鐠佸潡妫堕弶鍐
+**功能**: 获取资源私有/共享状态、共享对象及访问权限
 
-**鐠侯垰绶為崣鍌涙殶**: `id` 閳?鐠у嫭绨甀D
+**路径参数**: `id` — 资源ID
 
-**閸濆秴绨?VO**: `Result<{access_type: String, authorized_users: String(JSON), allow_ai: int}>`
+**响应 VO**: `Result<{access_type: String, authorized_users: String(JSON), allow_ai: int}>`
 
 ---
 
 ## API-44 PUT /api/v1/resources/{id}/permission
 
-**閸旂喕鍏?*: 鐠佸墽鐤嗙挧鍕爱缁変焦婀侀悩鑸碘偓浣碘偓浣稿彙娴滎偄顕挒鈥冲挤鐠佸潡妫堕弶鍐
+**功能**: 设置资源私有状态、共享对象及访问权限
 
-**鐠侯垰绶為崣鍌涙殶**: `id` 閳?鐠у嫭绨甀D
+**路径参数**: `id` — 资源ID
 
-**鐠囬攱鐪版担?(JSON)**
-| 鐎涙顔?| 缁鐎?| 韫囧懎锝?| 鐠囧瓨妲?|
+**请求体 (JSON)**
+| 字段 | 类型 | 必填 | 说明 |
 |---|---|---|---|
-| `access_type` | String | **閺?* | `private` / `shared` / `authorized` |
-| `authorized_users` | String(JSON) | 閸?| 閹哄牊娼堥悽銊﹀煕ID閸掓銆?|
-| `allow_ai` | int | 閸?| 閸忎浇顔廇I鐠佸潡妫? 1/0 |
+| `access_type` | String | **是** | `private` / `shared` / `authorized` |
+| `authorized_users` | String(JSON) | 否 | 授权用户ID列表 |
+| `allow_ai` | int | 否 | 允许AI访问: 1/0 |
 
-**閸氬海顏?DTO**: `MaterialDTO { access_type, authorized_users, allow_ai }`
+**后端 DTO**: `MaterialDTO { access_type, authorized_users, allow_ai }`
 
-**閸濆秴绨?VO**: `Result<MaterialVO>`
+**响应 VO**: `Result<MaterialVO>`
 
 ---
 
 ## API-45 GET /api/v1/resources/{id}/audit-logs
 
-**閸旂喕鍏?*: 閺屻儳婀呴弶鍐閸滃苯鍘撻弫鐗堝祦娣囶喗鏁肩拋鏉跨秿
+**功能**: 查看权限和元数据修改记录
 
-**鐠侯垰绶為崣鍌涙殶**: `id` 閳?鐠у嫭绨甀D
+**路径参数**: `id` — 资源ID
 
-**閺屻儴顕楅崣鍌涙殶**:
-| 鐎涙顔?| 缁鐎?| 韫囧懎锝?| 鐠囧瓨妲?|
+**查询参数**:
+| 字段 | 类型 | 必填 | 说明 |
 |---|---|---|---|
-| `page` | int | 閸?| 姒涙顓? |
-| `size` | int | 閸?| 姒涙顓?0 |
+| `page` | int | 否 | 默认1 |
+| `size` | int | 否 | 默认10 |
 
-**閸濆秴绨?VO**: `Result<PageResult<LogVO>>`
+**响应 VO**: `Result<PageResult<LogVO>>`
 
 ---
 
 ## API-46 POST /api/v1/resources/{id}/download-url
 
-**閸旂喕鍏?*: 閺嶏繝鐛欓弶鍐楠炲墎鏁撻幋鎰叚閺冩湹绗呮潪钘夋勾閸р偓
+**功能**: 校验权限并生成短时下载地址
 
-**鐠侯垰绶為崣鍌涙殶**: `id` 閳?鐠у嫭绨甀D
-**閸氬海顏崣鍌涙殶**: 閺冪姾顕Ч鍌欑秼
-**閸濆秴绨?VO**: `Result<{download_url: String, expires_at: LocalDateTime}>`
+**路径参数**: `id` — 资源ID
+**后端参数**: 无请求体
+**响应 VO**: `Result<{download_url: String, expires_at: LocalDateTime}>`
 
 ---
 
-# 閸忣厹鈧焦鍨氶弸婊冾嚤閸戣桨鑵戣箛?
+# 六、成果导出中心
 
 ## API-47 POST /api/v1/projects/{id}/export-prechecks
 
-**閸旂喕鍏?*: 濡偓閺屻儵銆嶉惄顔兼彥閻撗佲偓浣虹閺夋劑鈧礁鐡ф担鎾扁偓浣稿悑鐎硅鈧佲偓浣哄閺夊啫鎷伴弫蹇斿妳娣団剝浼?
+**功能**: 检查项目快照、素材、字体、兼容性、版权和敏感信息
 
-**鐠侯垰绶為崣鍌涙殶**: `id` 閳?妞ゅ湱娲癐D
-**鐠囬攱鐪版担?(JSON)**
-| 鐎涙顔?| 缁鐎?| 韫囧懎锝?| 鐠囧瓨妲?|
+**路径参数**: `id` — 项目ID
+**请求体 (JSON)**
+| 字段 | 类型 | 必填 | 说明 |
 |---|---|---|---|
-| `snapshot_version` | Integer | **閺?* | 缂佹垵鐣鹃惃鍕彥閻撗呭閺堫剙褰?|
-| `export_type` | String | **閺?* | 鐎电厧鍤猾璇茬€? `pptx` / `word` / `package` |
-**閸濆秴绨?VO**: `Result<{passed: boolean, warnings: Array, errors: Array}>`
+| `snapshot_version` | Integer | **是** | 绑定的快照版本号 |
+| `export_type` | String | **是** | 导出类型: `pptx` / `word` / `package` |
+**响应 VO**: `Result<{passed: boolean, warnings: Array, errors: Array}>`
 
 ---
 
 ## API-48 POST /api/v1/export-tasks
 
-**閸旂喕鍏?*: 缂佹垵鐣炬い鍦窗韫囶偆鍙庨妴浣鼓侀弶璺ㄥ閺堫剙鎷扮€电厧鍤崣鍌涙殶閿涘苯鍨卞鍝勭磽濮濄儱顕遍崙杞版崲閸?
+**功能**: 绑定项目快照、模板版本和导出参数，创建异步导出任务
 
-**鐠囬攱鐪版担?(JSON)**
-| 鐎涙顔?| 缁鐎?| 韫囧懎锝?| 鐠囧瓨妲?|
+**请求体 (JSON)**
+| 字段 | 类型 | 必填 | 说明 |
 |---|---|---|---|
-| `project_id` | int | **閺?* | 妞ゅ湱娲癐D |
-| `snapshot_version` | Integer | **閺?* | 韫囶偆鍙庨悧鍫熸拱 |
-| `export_type` | String | **閺?* | 鐎电厧鍤猾璇茬€? `pptx` / `word` / `package` |
-| `config` | String(JSON) | 閸?| 鐎电厧鍤柊宥囩枂閸欏倹鏆?|
+| `project_id` | int | **是** | 项目ID |
+| `snapshot_version` | Integer | **是** | 快照版本 |
+| `export_type` | String | **是** | 导出类型: `pptx` / `word` / `package` |
+| `config` | String(JSON) | 否 | 导出配置参数 |
 
-**閸氬海顏?DTO**: `ExportTaskDTO { project_id, snapshot_version, export_type, config }`
-**閸濆秴绨?VO**: `Result<ExportTaskVO>`
+**后端 DTO**: `ExportTaskDTO { project_id, snapshot_version, export_type, config }`
+**响应 VO**: `Result<ExportTaskVO>`
 
 ---
 
 ## API-49 GET /api/v1/export-tasks
 
-**閸旂喕鍏?*: 閸掑棝銆夐弻銉嚄閺堫兛姹夐幋鏍箯閹哄牊娼堥惃鍕嚤閸戣桨鎹㈤崝?
+**功能**: 分页查询本人或获授权的导出任务
 
-**閺屻儴顕楅崣鍌涙殶**:
-| 鐎涙顔?| 缁鐎?| 韫囧懎锝?| 鐠囧瓨妲?|
+**查询参数**:
+| 字段 | 类型 | 必填 | 说明 |
 |---|---|---|---|
-| `status` | String | 閸?| 缁涙盯鈧濮搁幀?|
-| `export_type` | String | 閸?| 缁涙盯鈧顕遍崙铏硅閸?|
-| `page` | int | 閸?| 姒涙顓? |
-| `size` | int | 閸?| 姒涙顓?0 |
+| `status` | String | 否 | 筛选状态 |
+| `export_type` | String | 否 | 筛选导出类型 |
+| `page` | int | 否 | 默认1 |
+| `size` | int | 否 | 默认10 |
 
-**閸濆秴绨?VO**: `Result<PageResult<ExportTaskVO>>`
+**响应 VO**: `Result<PageResult<ExportTaskVO>>`
 
 ---
 
 ## API-50 GET /api/v1/export-tasks/{id}
 
-**閸旂喕鍏?*: 閺屻儳婀呮潻娑樺閵嗕礁銇戠拹銉ュ斧閸ョ姰鈧浇宸濋柌蹇曞Ц閹礁鎷伴弬鍥︽閻樿埖鈧?
+**功能**: 查看进度、失败原因、质量状态和文件状态
 
-**鐠侯垰绶為崣鍌涙殶**: `id` 閳?鐎电厧鍤禒璇插ID
-**閸濆秴绨?VO**: `Result<ExportTaskVO>`
+**路径参数**: `id` — 导出任务ID
+**响应 VO**: `Result<ExportTaskVO>`
 
-| ExportTaskVO 鐎涙顔?| 缁鐎?| 鐠囧瓨妲?|
+| ExportTaskVO 字段 | 类型 | 说明 |
 |---|---|---|
-| `id` | int | 娴犺濮烮D |
-| `user_id` | int | 閻劍鍩汭D |
-| `project_id` | int | 妞ゅ湱娲癐D |
-| `snapshot_version` | Integer | 韫囶偆鍙庨悧鍫熸拱 |
-| `export_type` | String | 鐎电厧鍤猾璇茬€?|
-| `status` | String | 閻樿埖鈧? `queued`/`generating`/`checking`/`success`/`partial`/`failed`/`cancelled` |
-| `config` | String(JSON) | 鐎电厧鍤柊宥囩枂 |
-| `file_name` | String | 閺傚洣娆㈤崥?|
-| `file_url` | String | 閺傚洣娆RL |
-| `file_size` | long | 閺傚洣娆㈡径褍鐨?|
-| `download_url` | String | 娑撳娴囬崷鏉挎絻 |
-| `url_expire_at` | LocalDateTime | 闁剧偓甯存潻鍥ㄦ埂閺冨爼妫?|
-| `file_status` | String | 閺傚洣娆㈤悩鑸碘偓? `available`/`expired`/`cleaned` |
-| `quality_report` | String(JSON) | 鐠愩劑鍣洪幎銉ユ啞 |
-| `error_msg` | String | 闁挎瑨顕ゆ穱鈩冧紖 |
-| `created_at` | LocalDateTime | 閸掓稑缂撻弮鍫曟？ |
-| `completed_at` | LocalDateTime | 鐎瑰本鍨氶弮鍫曟？ |
+| `id` | int | 任务ID |
+| `user_id` | int | 用户ID |
+| `project_id` | int | 项目ID |
+| `snapshot_version` | Integer | 快照版本 |
+| `export_type` | String | 导出类型 |
+| `status` | String | 状态: `queued`/`generating`/`checking`/`success`/`partial`/`failed`/`cancelled` |
+| `config` | String(JSON) | 导出配置 |
+| `file_name` | String | 文件名 |
+| `file_url` | String | 文件URL |
+| `file_size` | long | 文件大小 |
+| `download_url` | String | 下载地址 |
+| `url_expire_at` | LocalDateTime | 链接过期时间 |
+| `file_status` | String | 文件状态: `available`/`expired`/`cleaned` |
+| `quality_report` | String(JSON) | 质量报告 |
+| `error_msg` | String | 错误信息 |
+| `created_at` | LocalDateTime | 创建时间 |
+| `completed_at` | LocalDateTime | 完成时间 |
 
 ---
 
 ## API-51 POST /api/v1/export-tasks/{id}/cancel
-**閸旂喕鍏?*: 閸欐牗绉烽幒鎺楁Е娑擃厽鍨ㄩ悽鐔稿灇娑擃厾娈戞禒璇插
-**鐠侯垰绶為崣鍌涙殶**: `id` 閳?鐎电厧鍤禒璇插ID
-**閸濆秴绨?VO**: `Result<ExportTaskVO>`
+**功能**: 取消排队中或生成中的任务
+**路径参数**: `id` — 导出任务ID
+**响应 VO**: `Result<ExportTaskVO>`
 
 ---
 
 ## API-52 POST /api/v1/export-tasks/{id}/retry
-**閸旂喕鍏?*: 閹稿甯箛顐ゅ弾閸滃苯寮弫浼村櫢閺傜増澧界悰?
-**鐠侯垰绶為崣鍌涙殶**: `id` 閳?鐎电厧鍤禒璇插ID
-**閸濆秴绨?VO**: `Result<ExportTaskVO>`
+**功能**: 按原快照和参数重新执行
+**路径参数**: `id` — 导出任务ID
+**响应 VO**: `Result<ExportTaskVO>`
 
 ---
 
 ## API-53 GET /api/v1/export-tasks/{id}/quality-report
-**閸旂喕鍏?*: 閼惧嘲褰囩€电厧鍤拹銊╁櫤閹躲儱鎲￠妴浣筋劅閸涘﹤鎷伴梽宥囬獓妞?
-**鐠侯垰绶為崣鍌涙殶**: `id` 閳?鐎电厧鍤禒璇插ID
-**閸濆秴绨?VO**: `Result<{quality_report: String(JSON)}>`
+**功能**: 获取导出质量报告、警告和降级项
+**路径参数**: `id` — 导出任务ID
+**响应 VO**: `Result<{quality_report: String(JSON)}>`
 
 ---
 
 ## API-54 GET /api/v1/export-artifacts/{id}
-**閸旂喕鍏?*: 閼惧嘲褰囬幋鎰亯閺傚洣娆㈤崗鍐╂殶閹诡喓鈧焦鏋冩禒鍓佸Ц閹降鈧胶缂夐悾銉ユ禈濞撳懎宕熼崪灞藉讲妫板嫯顫嶇猾璇茬€?
-**鐠侯垰绶為崣鍌涙殶**: `id` 閳?閹存劖鐏夐弬鍥︽ID
-**閸濆秴绨?VO**: `Result<ExportTaskVO>`
+**功能**: 获取成果文件元数据、文件状态、缩略图清单和可预览类型
+**路径参数**: `id` — 成果文件ID
+**响应 VO**: `Result<ExportTaskVO>`
 
 ---
 
 ## API-55 POST /api/v1/export-artifacts/{id}/preview-url
-**閸旂喕鍏?*: 閻㈢喐鍨氶幋鎰亯缂傗晝鏆愰崶鐐灗妫板嫯顫嶉弬鍥︽閻ㄥ嫮鐓弮鎯邦問闂傤喖婀撮崸鈧?
-**鐠侯垰绶為崣鍌涙殶**: `id` 閳?閹存劖鐏夐弬鍥︽ID
-**閸濆秴绨?VO**: `Result<{preview_url: String, expires_at: LocalDateTime}>`
+**功能**: 生成成果缩略图或预览文件的短时访问地址
+**路径参数**: `id` — 成果文件ID
+**响应 VO**: `Result<{preview_url: String, expires_at: LocalDateTime}>`
 
 ---
 
 ## API-56 POST /api/v1/export-artifacts/{id}/download-url
-**閸旂喕鍏?*: 閻㈢喐鍨氶幋鎰亯閺傚洣娆㈤惃鍕叚閺冩湹绗呮潪浠嬫懠閹?
-**鐠侯垰绶為崣鍌涙殶**: `id` 閳?閹存劖鐏夐弬鍥︽ID
-**閸濆秴绨?VO**: `Result<{download_url: String, expires_at: LocalDateTime}>`
+**功能**: 生成成果文件的短时下载链接
+**路径参数**: `id` — 成果文件ID
+**响应 VO**: `Result<{download_url: String, expires_at: LocalDateTime}>`
 
 ---
 
-# 娑撳啨鈧胶銇為崠鐑樐侀崸?
+# 七、社区模块
 
 ## API-57 GET /api/v1/community/items
-**閸旂喕鍏?*: 濡偓缁便垹鍙曞鈧崣顖滄暏閻?Skill 閸滃本鏆€鐎涳附顢嶆笟?
+**功能**: 检索公开可用的 Skill 和教学案例
 
-**閺屻儴顕楅崣鍌涙殶**:
-| 鐎涙顔?| 缁鐎?| 韫囧懎锝?| 鐠囧瓨妲?|
+**查询参数**:
+| 字段 | 类型 | 必填 | 说明 |
 |---|---|---|---|
-| `content_type` | String | 閸?| 閸愬懎顔愮猾璇茬€? `skill` / `lesson_case` |
-| `subject` | String | 閸?| 鐎涳妇顫?|
-| `grade` | String | 閸?| 楠炲楠?|
-| `keyword` | String | 閸?| 閸忔娊鏁€涙鎮崇槐?|
-| `page` | int | 閸?| 姒涙顓? |
-| `size` | int | 閸?| 姒涙顓?0 |
+| `content_type` | String | 否 | 内容类型: `skill` / `lesson_case` |
+| `subject` | String | 否 | 学科 |
+| `grade` | String | 否 | 年级 |
+| `keyword` | String | 否 | 关键字搜索 |
+| `page` | int | 否 | 默认1 |
+| `size` | int | 否 | 默认10 |
 
-**閸氬海顏?DTO**: `ContentQueryDTO extends PageQuery { content_type, subject, grade, status, keyword }`
-**閸濆秴绨?VO**: `Result<PageResult<ContentVO>>`
+**后端 DTO**: `ContentQueryDTO extends PageQuery { content_type, subject, grade, status, keyword }`
+**响应 VO**: `Result<PageResult<ContentVO>>`
 
 ---
 
 ## API-58 GET /api/v1/community/items/{id}
-**閸旂喕鍏?*: 閼惧嘲褰囬悽銊┾偓鏂烩偓浣稿綁闁插繈鈧胶銇氭笟瀣ㄢ偓浣风稊閼板懌鈧胶澧楅張顒€鎷伴幒鍫熸綀娣団剝浼?
-**鐠侯垰绶為崣鍌涙殶**: `id` 閳?閸愬懎顔怚D
-**閸濆秴绨?VO**: `Result<ContentVO>`
+**功能**: 获取用途、变量、示例、作者、版本和授权信息
+**路径参数**: `id` — 内容ID
+**响应 VO**: `Result<ContentVO>`
 
-| ContentVO 鐎涙顔?| 缁鐎?| 鐠囧瓨妲?|
+| ContentVO 字段 | 类型 | 说明 |
 |---|---|---|
-| `id` | int | 閸愬懎顔怚D |
-| `content_type` | String | 閸愬懎顔愮猾璇茬€?|
-| `author_id` | int | 娴ｆ粏鈧將D |
-| `title` | String | 閺嶅洭顣?|
-| `description` | String | 閹诲繗鍫?|
-| `subject` | String | 鐎涳妇顫?|
-| `grade` | String | 楠炲楠?|
-| `lesson_type` | String | 鐠囨儳鐎?|
-| `content_data` | String(JSON) | 閸愬懎顔愰弫鐗堝祦 |
-| `input_variables` | String(JSON) | 鏉堟挸鍙嗛崣姗€鍣?|
-| `example_effect` | String | 缁€杞扮伐閺佸牊鐏?|
-| `version` | int | 閻楀牊婀伴崣?|
-| `version_history` | String(JSON) | 閻楀牊婀伴崢鍡楀蕉 |
-| `license` | String | 閹哄牊娼堟穱鈩冧紖 |
-| `status` | String | 閻樿埖鈧?|
-| `is_top` | int | 閺勵垰鎯佺純顕€銆?|
-| `view_count` | int | 濞村繗顫嶉弫?|
-| `use_count` | int | 娴ｈ法鏁ら弫?|
-| `created_at` | LocalDateTime | 閸掓稑缂撻弮鍫曟？ |
-| `updated_at` | LocalDateTime | 閺囧瓨鏌婇弮鍫曟？ |
+| `id` | int | 内容ID |
+| `content_type` | String | 内容类型 |
+| `author_id` | int | 作者ID |
+| `title` | String | 标题 |
+| `description` | String | 描述 |
+| `subject` | String | 学科 |
+| `grade` | String | 年级 |
+| `lesson_type` | String | 课型 |
+| `content_data` | String(JSON) | 内容数据 |
+| `input_variables` | String(JSON) | 输入变量 |
+| `example_effect` | String | 示例效果 |
+| `version` | int | 版本号 |
+| `version_history` | String(JSON) | 版本历史 |
+| `license` | String | 授权信息 |
+| `status` | String | 状态 |
+| `is_top` | int | 是否置顶 |
+| `view_count` | int | 浏览数 |
+| `use_count` | int | 使用数 |
+| `created_at` | LocalDateTime | 创建时间 |
+| `updated_at` | LocalDateTime | 更新时间 |
 
 ---
 
 ## API-59 PUT /api/v1/community/items/{id}/favorite
-**閸旂喕鍏?*: 閺€鎯版閹稿洤鐣剧粈鎯у隘閸愬懎顔?
-**鐠侯垰绶為崣鍌涙殶**: `id` 閳?閸愬懎顔怚D
-**閸濆秴绨?VO**: `Result<Void>`
+**功能**: 收藏指定社区内容
+**路径参数**: `id` — 内容ID
+**响应 VO**: `Result<Void>`
 
 ---
 
 ## API-60 DELETE /api/v1/community/items/{id}/favorite
-**閸旂喕鍏?*: 閸欐牗绉烽弨鎯版
-**鐠侯垰绶為崣鍌涙殶**: `id` 閳?閸愬懎顔怚D
-**閸濆秴绨?VO**: `Result<Void>`
+**功能**: 取消收藏
+**路径参数**: `id` — 内容ID
+**响应 VO**: `Result<Void>`
 
 ---
 
 ## API-61 POST /api/v1/community/items/{id}/view-events
-**閸旂喕鍏?*: 鐠佹澘缍嶅ù蹇氼潔娴滃娆㈤敍鍫熷瘻閻劍鍩涢崪灞藉敶鐎圭懓绠撶粵澶嬫纯閺傚府绱?
-**鐠侯垰绶為崣鍌涙殶**: `id` 閳?閸愬懎顔怚D
-**閸濆秴绨?VO**: `Result<Void>`
+**功能**: 记录浏览事件（按用户和内容幂等更新）
+**路径参数**: `id` — 内容ID
+**响应 VO**: `Result<Void>`
 
 ---
 
 ## API-62 GET /api/v1/community/favorites
-**閸旂喕鍏?*: 閸掑棝銆夐弻銉嚄瑜版挸澧犻悽銊﹀煕閺€鎯版閻ㄥ嫬鍙曞鈧崣顖滄暏閸愬懎顔?
-**閺屻儴顕楅崣鍌涙殶**: page(姒涙顓?), size(姒涙顓?0)
-**閸濆秴绨?VO**: `Result<PageResult<ContentVO>>`
+**功能**: 分页查询当前用户收藏的公开可用内容
+**查询参数**: page(默认1), size(默认10)
+**响应 VO**: `Result<PageResult<ContentVO>>`
 
 ---
 
 ## API-63 GET /api/v1/community/recent-views
-**閸旂喕鍏?*: 閸掑棝銆夐弻銉嚄瑜版挸澧犻悽銊﹀煕閺堚偓鏉╂垶绁荤憴鍫ｎ唶瑜?
-**閺屻儴顕楅崣鍌涙殶**: page(姒涙顓?), size(姒涙顓?0)
-**閸濆秴绨?VO**: `Result<PageResult<{item: ContentVO, viewed_at: LocalDateTime}>>`
+**功能**: 分页查询当前用户最近浏览记录
+**查询参数**: page(默认1), size(默认10)
+**响应 VO**: `Result<PageResult<{item: ContentVO, viewed_at: LocalDateTime}>>`
 
 ---
 
 ## API-64 DELETE /api/v1/community/recent-views/{itemId}
-**閸旂喕鍏?*: 缁夊娅庨幐鍥х暰閺堚偓鏉╂垶绁荤憴鍫ｎ唶瑜?
-**鐠侯垰绶為崣鍌涙殶**: `itemId` 閳?閸愬懎顔怚D
-**閸濆秴绨?VO**: `Result<Void>`
+**功能**: 移除指定最近浏览记录
+**路径参数**: `itemId` — 内容ID
+**响应 VO**: `Result<Void>`
 
 ---
 
 ## API-65 POST /api/v1/community/items/{id}/reuse
-**閸旂喕鍏?*: 閺嶏繝鐛欓崘鍛啇閻樿埖鈧降鈧胶澧楅張顒€鎷伴幒鍫熸綀閿涘苯顦查崚璺哄煂娑擃亙姹夌粚娲？楠炴儼绻戦崶鐐存烦閻㈢喖銆嶉惄?
-**鐠侯垰绶為崣鍌涙殶**: `id` 閳?閸愬懎顔怚D
-**鐠囬攱鐪版担?(JSON)**
-| 鐎涙顔?| 缁鐎?| 韫囧懎锝?| 鐠囧瓨妲?|
+**功能**: 校验内容状态、版本和授权，复制到个人空间并返回派生项目
+**路径参数**: `id` — 内容ID
+**请求体 (JSON)**
+| 字段 | 类型 | 必填 | 说明 |
 |---|---|---|---|
-| `target_version` | Integer | 閸?| 婢跺秶鏁ら幐鍥х暰閻楀牊婀伴敍鍫ョ帛鐠併倖娓堕弬甯礆 |
-| `new_project_name` | String | 閸?| 濞插墽鏁撴い鍦窗閸氬秶袨 |
-**閸氬海顏?DTO**: `InteractionDTO { action_type, target_type, target_id, target_version, bind_materials }`
-**閸濆秴绨?VO**: `Result<ProjectVO>`
+| `target_version` | Integer | 否 | 复用指定版本（默认最新） |
+| `new_project_name` | String | 否 | 派生项目名称 |
+**后端 DTO**: `InteractionDTO { action_type, target_type, target_id, target_version, bind_materials }`
+**响应 VO**: `Result<ProjectVO>`
 
 ---
 
 ## API-66 POST /api/v1/community/submissions
-**閸旂喕鍏?*: 閸掓稑缂撻幎鏇狀焾閼藉顭?
-**鐠囬攱鐪版担?(JSON)**
-| 鐎涙顔?| 缁鐎?| 韫囧懎锝?| 鐠囧瓨妲?|
+**功能**: 创建投稿草稿
+**请求体 (JSON)**
+| 字段 | 类型 | 必填 | 说明 |
 |---|---|---|---|
-| `content_type` | String | **閺?* | `skill` / `lesson_case` |
-| `title` | String | **閺?* | 閺嶅洭顣?|
-| `description` | String | 閸?| 閹诲繗鍫?|
-| `subject` | String | 閸?| 鐎涳妇顫?|
-| `grade` | String | 閸?| 楠炲楠?|
-| `lesson_type` | String | 閸?| 鐠囨儳鐎?|
-| `content_data` | String(JSON) | 閸?| 閸愬懎顔愰弫鐗堝祦 |
-| `input_variables` | String(JSON) | 閸?| 鏉堟挸鍙嗛崣姗€鍣?|
-| `example_effect` | String | 閸?| 缁€杞扮伐閺佸牊鐏?|
-| `license` | String | **閺?* | 閹哄牊娼堥崡蹇氼唴 |
-**閸氬海顏?DTO**: `ContentDTO { content_type, title, description, subject, grade, lesson_type, content_data, input_variables, example_effect, license }`
-**閸濆秴绨?VO**: `Result<ContentVO>`
+| `content_type` | String | **是** | `skill` / `lesson_case` |
+| `title` | String | **是** | 标题 |
+| `description` | String | 否 | 描述 |
+| `subject` | String | 否 | 学科 |
+| `grade` | String | 否 | 年级 |
+| `lesson_type` | String | 否 | 课型 |
+| `content_data` | String(JSON) | 否 | 内容数据 |
+| `input_variables` | String(JSON) | 否 | 输入变量 |
+| `example_effect` | String | 否 | 示例效果 |
+| `license` | String | **是** | 授权协议 |
+**后端 DTO**: `ContentDTO { content_type, title, description, subject, grade, lesson_type, content_data, input_variables, example_effect, license }`
+**响应 VO**: `Result<ContentVO>`
 
 ---
 
 ## API-67 GET /api/v1/community/submissions
-**閸旂喕鍏?*: 閸掑棝銆夐弻銉嚄瑜版挸澧犻弫娆忕瑎閻ㄥ嫭濮囩粙鍨挤鐎光剝鐗抽悩鑸碘偓?
-**閺屻儴顕楅崣鍌涙殶**: status(閸?, page(閸?, size(閸?
-**閸氬海顏?DTO**: `ContentQueryDTO extends PageQuery { status }`
-**閸濆秴绨?VO**: `Result<PageResult<ContentVO>>`
+**功能**: 分页查询当前教师的投稿及审核状态
+**查询参数**: status(否), page(否), size(否)
+**后端 DTO**: `ContentQueryDTO extends PageQuery { status }`
+**响应 VO**: `Result<PageResult<ContentVO>>`
 
 ---
 
 ## API-68 GET /api/v1/community/submissions/{id}
-**閸旂喕鍏?*: 閼惧嘲褰囬幎鏇狀焾閼藉顭堥妴浣哄閺堫兙鈧礁顓搁弽鍝ュЦ閹礁鎷伴柅鈧崶鐐村壈鐟?
-**鐠侯垰绶為崣鍌涙殶**: `id` 閳?閹舵洜顭圛D
-**閸濆秴绨?VO**: `Result<ContentVO>`
+**功能**: 获取投稿草稿、版本、审核状态和退回意见
+**路径参数**: `id` — 投稿ID
+**响应 VO**: `Result<ContentVO>`
 
 ---
 
 ## API-69 PATCH /api/v1/community/submissions/{id}
-**閸旂喕鍏?*: 娣囶喗鏁奸懡澶岊焾閹存牠鈧偓閸ョ偘鎱ㄩ弨鍦Ц閹胶娈戦幎鏇狀焾
-**鐠侯垰绶為崣鍌涙殶**: `id` 閳?閹舵洜顭圛D
-**鐠囬攱鐪版担?*: 娑?API-66 閻╃鎮撶紒鎾寸€敍灞藉弿闁锝?
-**閸氬海顏?DTO**: `ContentDTO`
-**閸濆秴绨?VO**: `Result<ContentVO>`
+**功能**: 修改草稿或退回修改状态的投稿
+**路径参数**: `id` — 投稿ID
+**请求体**: 与 API-66 相同结构，全选填
+**后端 DTO**: `ContentDTO`
+**响应 VO**: `Result<ContentVO>`
 
 ---
 
 ## API-70 POST /api/v1/community/submissions/{id}/versions
-**閸旂喕鍏?*: 娣囨繂鐡ㄩ幎鏇狀焾娑撳秴褰查崣妯煎閺?
-**鐠侯垰绶為崣鍌涙殶**: `id` 閳?閹舵洜顭圛D
-**鐠囬攱鐪版担?*: description(閸?
-**閸濆秴绨?VO**: `Result<{version_id, version_number}>`
+**功能**: 保存投稿不可变版本
+**路径参数**: `id` — 投稿ID
+**请求体**: description(否)
+**响应 VO**: `Result<{version_id, version_number}>`
 
 ---
 
 ## API-71 POST /api/v1/community/submissions/{id}/submit
-**閸旂喕鍏?*: 閹绘劒姘︾€光剝鐗抽敍鍫ヮ浕閺堢兂VP閻㈠崬濮涢懗钘夌磻閸忓磭顩﹂悽顭掔礆
-**鐠侯垰绶為崣鍌涙殶**: `id` 閳?閹舵洜顭圛D
-**鐠囬攱鐪版担?(JSON)**
-| 鐎涙顔?| 缁鐎?| 韫囧懎锝?| 鐠囧瓨妲?|
+**功能**: 提交审核（首期MVP由功能开关禁用）
+**路径参数**: `id` — 投稿ID
+**请求体 (JSON)**
+| 字段 | 类型 | 必填 | 说明 |
 |---|---|---|---|
-| `source_declaration` | String | **閺?* | 閺夈儲绨竟鐗堟 |
-| `notes` | String | 閸?| 鐎光剝鐗虫径鍥ㄦ暈 |
-**閸濆秴绨?VO**: `Result<Void>`
+| `source_declaration` | String | **是** | 来源声明 |
+| `notes` | String | 否 | 审核备注 |
+**响应 VO**: `Result<Void>`
 
 ---
 
 ## API-72 POST /api/v1/community/reports
-**閸旂喕鍏?*: 閸掓稑缂撴稉鐐Г鐠佹澘缍?
-**鐠囬攱鐪版担?(JSON)**
-| 鐎涙顔?| 缁鐎?| 韫囧懎锝?| 鐠囧瓨妲?|
+**功能**: 创建举报记录
+**请求体 (JSON)**
+| 字段 | 类型 | 必填 | 说明 |
 |---|---|---|---|
-| `target_type` | String | **閺?* | 娑撶偓濮ょ€电钖勭猾璇茬€?|
-| `target_id` | int | **閺?* | 娑撶偓濮ょ€电钖処D |
-| `reason` | String | **閺?* | 娑撶偓濮ら崢鐔锋礈 |
-| `description` | String | 閸?| 鐠囷妇绮忛幓蹇氬牚 |
-**閸氬海顏?DTO**: `AuditDTO { audit_type, target_type, target_id, reason, action, comment }`
-**閸濆秴绨?VO**: `Result<{report_id: int}>`
+| `target_type` | String | **是** | 举报对象类型 |
+| `target_id` | int | **是** | 举报对象ID |
+| `reason` | String | **是** | 举报原因 |
+| `description` | String | 否 | 详细描述 |
+**后端 DTO**: `AuditDTO { audit_type, target_type, target_id, reason, action, comment }`
+**响应 VO**: `Result<{report_id: int}>`
 
 ---
 
 ## API-73 GET /api/v1/community/reports
-**閸旂喕鍏?*: 閸掑棝銆夐弻銉嚄閺堫兛姹夋稉鐐Г閸欏﹤顦╅悶鍡欏Ц閹?
-**閺屻儴顕楅崣鍌涙殶**: status(閸?, page(閸?, size(閸?
-**閸濆秴绨?VO**: `Result<PageResult<AuditVO>>`
+**功能**: 分页查询本人举报及处理状态
+**查询参数**: status(否), page(否), size(否)
+**响应 VO**: `Result<PageResult<AuditVO>>`
 
 ---
 
 ## API-74 GET /api/v1/community/reports/{id}
-**閸旂喕鍏?*: 閼惧嘲褰囨稉鐐Г閸欐鎮婇悩鑸碘偓浣稿挤婢跺嫮鎮婄紒鎾寸亯
-**鐠侯垰绶為崣鍌涙殶**: `id` 閳?娑撶偓濮D
-**閸濆秴绨?VO**: `Result<AuditVO>`
+**功能**: 获取举报受理状态及处理结果
+**路径参数**: `id` — 举报ID
+**响应 VO**: `Result<AuditVO>`
 
 ---
 
-# 閸忣偁鈧礁鎮楅崣?閳?閻劍鍩涢弶鍐濡€虫健
+# 八、后台 — 用户权限模块
 
 ## API-75 GET /api/v1/admin/users
-**閸旂喕鍏?*: 閹稿顫楅懝灞傗偓浣藉閸欓濮搁幀浣告嫲閸忔娊鏁拠宥呭瀻妞ゅ灚鐓＄拠銏㈡暏閹?
-**閺屻儴顕楅崣鍌涙殶**: keyword(閸?, user_type(閸?, is_active(閸?, page(姒涙顓?), size(姒涙顓?0)
-**閸氬海顏?DTO**: `UserQueryDTO extends PageQuery { keyword, user_type, is_active }`
-**閸濆秴绨?VO**: `Result<PageResult<UserVO>>`
+**功能**: 按角色、账号状态和关键词分页查询用户
+**查询参数**: keyword(否), user_type(否), is_active(否), page(默认1), size(默认10)
+**后端 DTO**: `UserQueryDTO extends PageQuery { keyword, user_type, is_active }`
+**响应 VO**: `Result<PageResult<UserVO>>`
 
 ---
 
 ## API-76 GET /api/v1/admin/users/{id}
-**閸旂喕鍏?*: 閼惧嘲褰囬悽銊﹀煕閻樿埖鈧降鈧浇顫楅懝灞傗偓浣规綀闂勬劖鎲崇憰浣稿挤鐎瑰鍙忛悩鑸碘偓?
-**鐠侯垰绶為崣鍌涙殶**: `id` 閳?閻劍鍩汭D
-**閸濆秴绨?VO**: `Result<UserVO>`
+**功能**: 获取用户状态、角色、权限摘要及安全状态
+**路径参数**: `id` — 用户ID
+**响应 VO**: `Result<UserVO>`
 
 ---
 
 ## API-77 PATCH /api/v1/admin/users/{id}/status
-**閸旂喕鍏?*: 閸氼垳鏁ら妴浣镐粻閻劍鍨ㄩ柨浣哥暰閻劍鍩涚拹锕€褰?
-**鐠侯垰绶為崣鍌涙殶**: `id` 閳?閻劍鍩汭D
-**鐠囬攱鐪版担?(JSON)**
-| 鐎涙顔?| 缁鐎?| 韫囧懎锝?| 鐠囧瓨妲?|
+**功能**: 启用、停用或锁定用户账号
+**路径参数**: `id` — 用户ID
+**请求体 (JSON)**
+| 字段 | 类型 | 必填 | 说明 |
 |---|---|---|---|
-| `is_active` | int | **閺?* | 0=閸嬫粎鏁? 1=閸氼垳鏁? -1=闁夸礁鐣?|
-**閸濆秴绨?VO**: `Result<UserVO>`
+| `is_active` | int | **是** | 0=停用, 1=启用, -1=锁定 |
+**响应 VO**: `Result<UserVO>`
 
 ---
 
 ## API-78 POST /api/v1/admin/users
-**閸旂喕鍏?*: 閸掓稑缂撻崡鏇氶嚋閸氬骸褰寸拹锕€褰?
-**鐠囬攱鐪版担?(JSON)**
-| 鐎涙顔?| 缁鐎?| 韫囧懎锝?| 鐠囧瓨妲?|
+**功能**: 创建单个后台账号
+**请求体 (JSON)**
+| 字段 | 类型 | 必填 | 说明 |
 |---|---|---|---|
-| `username` | String | **閺?* | 閻劍鍩涢崥?|
-| `password` | String | **閺?* | 鐎靛棛鐖滈敍鍫濆缁旑垯绱堕弰搴㈡瀮閿涘苯鎮楃粩顖氭惐鐢苯鎮楃€涙ê鍋嶉敍?|
-| `real_name` | String | **閺?* | 閻喎鐤勬慨鎾虫倳 |
-| `phone` | String | 閸?| 閹靛婧€閸?|
-| `email` | String | 閸?| 闁喚顔?|
-| `user_type` | String | **閺?* | `admin` |
-| `roles` | String(JSON) | **閺?* | 鐟欐帟澹婇崚妤勩€?|
-**閸氬海顏?DTO**: `UserDTO { username, password, real_name, phone, email, avatar, user_type, roles, permissions, is_active }`
-**閸濆秴绨?VO**: `Result<UserVO>`
+| `username` | String | **是** | 用户名 |
+| `password` | String | **是** | 密码（前端传明文，后端哈希后存储） |
+| `real_name` | String | **是** | 真实姓名 |
+| `phone` | String | 否 | 手机号 |
+| `email` | String | 否 | 邮箱 |
+| `user_type` | String | **是** | `admin` |
+| `roles` | String(JSON) | **是** | 角色列表 |
+**后端 DTO**: `UserDTO { username, password, real_name, phone, email, avatar, user_type, roles, permissions, is_active }`
+**响应 VO**: `Result<UserVO>`
 
 ---
 
 ## API-79 POST /api/v1/admin/users/batch
-**閸旂喕鍏?*: 閹靛綊鍣洪崚娑樼紦閸氬骸褰寸拹锕€褰?
-**鐠囬攱鐪版担?(JSON)**
-| 鐎涙顔?| 缁鐎?| 韫囧懎锝?| 鐠囧瓨妲?|
+**功能**: 批量创建后台账号
+**请求体 (JSON)**
+| 字段 | 类型 | 必填 | 说明 |
 |---|---|---|---|
-| `idempotent_key` | String | **閺?* | 楠炲倻鐡戦柨?|
-| `users` | Array | **閺?* | 閻劍鍩涢崚妤勩€冮敍鍫熺槨娑擃亜鎮揂PI-78缂佹挻鐎敍灞界槕閻椒绱堕弰搴㈡瀮閿涘苯鎮楃粩顖氭惐鐢苯鎮楃€涙ê鍋嶉敍?|
-**閸濆秴绨?VO**: `Result<{results: Array<{username, success, initial_credentials, error}>>}`
+| `idempotent_key` | String | **是** | 幂等键 |
+| `users` | Array | **是** | 用户列表（每个同API-78结构，密码传明文，后端哈希后存储） |
+**响应 VO**: `Result<{results: Array<{username, success, initial_credentials, error}>>}`
 
 ---
 
 ## API-80 GET /api/v1/admin/roles
-**閸旂喕鍏?*: 閺屻儴顕楅崥搴″酱鐟欐帟澹婇妴浣规綀闂勬劙娉﹂崥鍫濆挤鐎光剝鐗抽懠鍐ㄦ纯
-**閸濆秴绨?VO**: `Result<Array<{role_id, role_name, permissions, audit_scope}>>`
+**功能**: 查询后台角色、权限集合及审核范围
+**响应 VO**: `Result<Array<{role_id, role_name, permissions, audit_scope}>>`
 
 ---
 
 ## API-81 PUT /api/v1/admin/users/{id}/roles
-**閸旂喕鍏?*: 閸掑棝鍘ょ化鑽ょ埠缁狅紕鎮婇崨妯诲灗閸愬懎顔愮€光剝鐗抽崨妯款潡閼?
-**鐠侯垰绶為崣鍌涙殶**: `id` 閳?閻劍鍩汭D
-**鐠囬攱鐪版担?(JSON)**: `roles`(String JSON) **閺?*
-**閸濆秴绨?VO**: `Result<UserVO>`
+**功能**: 分配系统管理员或内容审核员角色
+**路径参数**: `id` — 用户ID
+**请求体 (JSON)**: `roles`(String JSON) **是**
+**响应 VO**: `Result<UserVO>`
 
 ---
 
 ## API-82 PUT /api/v1/admin/roles/{id}/permissions
-**閸旂喕鍏?*: 闁板秶鐤嗛崥搴″酱閸旂喕鍏橀弶鍐閸欏﹤顓搁弽姝屽瘱閸?
-**鐠侯垰绶為崣鍌涙殶**: `id` 閳?鐟欐帟澹奍D
-**鐠囬攱鐪版担?(JSON)**: `permissions`(String JSON) **閺?*
-**閸濆秴绨?VO**: `Result<Void>`
+**功能**: 配置后台功能权限及审核范围
+**路径参数**: `id` — 角色ID
+**请求体 (JSON)**: `permissions`(String JSON) **是**
+**响应 VO**: `Result<Void>`
 
 ---
 
-# 娑旀縿鈧礁鎮楅崣?閳?閸忣剙鍙＄挧鍕爱濡€虫健
+# 九、后台 — 公共资源模块
 
 ## API-83 GET /api/v1/admin/public-resources
-**閸旂喕鍏?*: 閸掑棝銆夐弻銉嚄閸忣剙鍙＄挧鍕爱
-**閺屻儴顕楅崣鍌涙殶**: resource_type(閸?, status(閸?, page(姒涙顓?), size(姒涙顓?0)
-**閸濆秴绨?VO**: `Result<PageResult<ResourceVO>>`
+**功能**: 分页查询公共资源
+**查询参数**: resource_type(否), status(否), page(默认1), size(默认10)
+**响应 VO**: `Result<PageResult<ResourceVO>>`
 
-| ResourceVO 鐎涙顔?| 缁鐎?| 鐠囧瓨妲?|
+| ResourceVO 字段 | 类型 | 说明 |
 |---|---|---|
-| `id` | int | 鐠у嫭绨甀D |
-| `resource_type` | String | 鐠у嫭绨猾璇茬€?|
-| `title` | String | 閺嶅洭顣?|
-| `subject` | String | 鐎涳妇顫?|
-| `grade` | String | 楠炲楠?|
-| `file_url` | String | 閺傚洣娆RL |
-| `template_data` | String(JSON) | 濡剝婢橀弫鐗堝祦 |
-| `thumbnail` | String | 缂傗晝鏆愰崶?|
-| `description` | String | 閹诲繗鍫?|
-| `status` | int | 閻樿埖鈧?|
-| `uploaded_by` | Integer | 娑撳﹣绱堕懓鍖 |
-| `created_at` | LocalDateTime | 閸掓稑缂撻弮鍫曟？ |
-| `updated_at` | LocalDateTime | 閺囧瓨鏌婇弮鍫曟？ |
+| `id` | int | 资源ID |
+| `resource_type` | String | 资源类型 |
+| `title` | String | 标题 |
+| `subject` | String | 学科 |
+| `grade` | String | 年级 |
+| `file_url` | String | 文件URL |
+| `template_data` | String(JSON) | 模板数据 |
+| `thumbnail` | String | 缩略图 |
+| `description` | String | 描述 |
+| `status` | int | 状态 |
+| `uploaded_by` | Integer | 上传者ID |
+| `created_at` | LocalDateTime | 创建时间 |
+| `updated_at` | LocalDateTime | 更新时间 |
 
 ---
 
 ## API-84 POST /api/v1/admin/public-resources/uploads
-**閸旂喕鍏?*: 閸掓稑缂撻崗顒€鍙＄挧鍕爱娑撳﹣绱舵导姘崇樈
-**鐠囬攱鐪版担?(JSON)**: resource_type(**閺?*), title(**閺?*), file_url(**閺?*), file_size(**閺?*)
-**閸氬海顏?DTO**: `ResourceDTO { resource_type, title, subject, grade, file_url, template_data, thumbnail, description, status }`
-**閸濆秴绨?VO**: `Result<{upload_id, upload_url, expires_at}>`
+**功能**: 创建公共资源上传会话
+**请求体 (JSON)**: resource_type(**是**), title(**是**), file_url(**是**), file_size(**是**)
+**后端 DTO**: `ResourceDTO { resource_type, title, subject, grade, file_url, template_data, thumbnail, description, status }`
+**响应 VO**: `Result<{upload_id, upload_url, expires_at}>`
 
 ---
 
 ## API-85 POST /api/v1/admin/public-resources/uploads/{id}/complete
-**閸旂喕鍏?*: 鐎瑰本鍨氭稉濠佺炊楠炴儼袝閸欐垵鐣ㄩ崗銊︻梾濞?
-**鐠侯垰绶為崣鍌涙殶**: `id` 閳?娑撳﹣绱舵导姘崇樈ID
-**閸濆秴绨?VO**: `Result<ResourceVO>`
+**功能**: 完成上传并触发安全检测
+**路径参数**: `id` — 上传会话ID
+**响应 VO**: `Result<ResourceVO>`
 
 ---
 
 ## API-86 GET /api/v1/admin/public-resources/{id}
-**閸旂喕鍏?*: 閼惧嘲褰囬崗顒€鍙＄挧鍕爱鐠囷附鍎?
-**鐠侯垰绶為崣鍌涙殶**: `id` 閳?鐠у嫭绨甀D
-**閸濆秴绨?VO**: `Result<ResourceVO>`
+**功能**: 获取公共资源详情
+**路径参数**: `id` — 资源ID
+**响应 VO**: `Result<ResourceVO>`
 
 ---
 
 ## API-87 PATCH /api/v1/admin/public-resources/{id}
-**閸旂喕鍏?*: 閺囧瓨鏌婇崗顒€鍙＄挧鍕爱閸忓啯鏆熼幑?
-**鐠侯垰绶為崣鍌涙殶**: `id` 閳?鐠у嫭绨甀D
-**鐠囬攱鐪版担?*: title(閸?, subject(閸?, grade(閸?, description(閸?
-**閸氬海顏?DTO**: `ResourceDTO`
-**閸濆秴绨?VO**: `Result<ResourceVO>`
+**功能**: 更新公共资源元数据
+**路径参数**: `id` — 资源ID
+**请求体**: title(否), subject(否), grade(否), description(否)
+**后端 DTO**: `ResourceDTO`
+**响应 VO**: `Result<ResourceVO>`
 
 ---
 
 ## API-88 PUT /api/v1/admin/public-resources/{id}/status
-**閸旂喕鍏?*: 閸氼垳鏁?閸嬫粎鏁ら崗顒€鍙＄挧鍕爱
-**鐠侯垰绶為崣鍌涙殶**: `id` 閳?鐠у嫭绨甀D
-**鐠囬攱鐪版担?*: status(int) **閺?* 0=閸嬫粎鏁?1=閸氼垳鏁?
-**閸濆秴绨?VO**: `Result<ResourceVO>`
+**功能**: 启用/停用公共资源
+**路径参数**: `id` — 资源ID
+**请求体**: status(int) **是** 0=停用 1=启用
+**响应 VO**: `Result<ResourceVO>`
 
 ---
 
 ## API-89 GET /api/v1/admin/public-resources/{id}/processing-status
-**閸旂喕鍏?*: 閺屻儴顕楁径鍕倞閻樿埖鈧?
-**鐠侯垰绶為崣鍌涙殶**: `id` 閳?鐠у嫭绨甀D
-**閸濆秴绨?VO**: `Result<{security_check, parse_status, index_status, error_msg}>`
+**功能**: 查询处理状态
+**路径参数**: `id` — 资源ID
+**响应 VO**: `Result<{security_check, parse_status, index_status, error_msg}>`
 
 ---
 
-# 閸椾降鈧礁鎮楅崣?閳?閸愬懎顔愮€光剝鐗虫稉搴濆閹躲儱顦╅悶?
+# 十、后台 — 内容审核与举报处理
 
 ## API-90 GET /api/v1/admin/moderation/tasks
-**閸旂喕鍏?*: 閹稿濮搁幀浣碘偓浣割嚠鐠烇紕琚崹瀣嫲鐎光剝鐗抽崨妯荤叀鐠囥垹顓搁弽闀愭崲閸?
-**閺屻儴顕楅崣鍌涙殶**: status(閸?, target_type(閸?, handler_id(閸?, page(姒涙顓?), size(姒涙顓?0)
-**閸濆秴绨?VO**: `Result<PageResult<AuditVO>>`
+**功能**: 按状态、对象类型和审核员查询审核任务
+**查询参数**: status(否), target_type(否), handler_id(否), page(默认1), size(默认10)
+**响应 VO**: `Result<PageResult<AuditVO>>`
 
 ---
 
 ## API-91 GET /api/v1/admin/moderation/tasks/{id}
-**閸旂喕鍏?*: 閼惧嘲褰囧鍛吀閸愬懎顔愰妴浣瑰缁嬪じ姹夐妴浣规降濠ф劗澧楅張顑锯偓浣瑰房閺夊啩淇婇幁顖氭嫲濡偓濞村绮ㄩ弸?
-**鐠侯垰绶為崣鍌涙殶**: `id` 閳?鐎光剝鐗虫禒璇插ID
-**閸濆秴绨?VO**: `Result<AuditVO>`
+**功能**: 获取待审内容、投稿人、来源版本、授权信息和检测结果
+**路径参数**: `id` — 审核任务ID
+**响应 VO**: `Result<AuditVO>`
 
 ---
 
 ## API-92 POST /api/v1/admin/moderation/tasks/{id}/decisions
-**閸旂喕鍏?*: 閹绘劒姘︾€光剝鐗抽崘鍐茬暰
-**鐠侯垰绶為崣鍌涙殶**: `id` 閳?鐎光剝鐗虫禒璇插ID
-**鐠囬攱鐪版担?(JSON)**
-| 鐎涙顔?| 缁鐎?| 韫囧懎锝?| 鐠囧瓨妲?|
+**功能**: 提交审核决定
+**路径参数**: `id` — 审核任务ID
+**请求体 (JSON)**
+| 字段 | 类型 | 必填 | 说明 |
 |---|---|---|---|
-| `action` | String | **閺?* | `approve` / `reject` / `rework` |
-| `comment` | String | 閸?| 鐎光剝鐗抽幇蹇氼潌 |
-**閸氬海顏?DTO**: `AuditDTO { audit_type, target_type, target_id, reason, action, comment }`
-**閸濆秴绨?VO**: `Result<Void>`
+| `action` | String | **是** | `approve` / `reject` / `rework` |
+| `comment` | String | 否 | 审核意见 |
+**后端 DTO**: `AuditDTO { audit_type, target_type, target_id, reason, action, comment }`
+**响应 VO**: `Result<Void>`
 
 ---
 
 ## API-93 PUT /api/v1/admin/community-items/{id}/status
-**閸旂喕鍏?*: 娑撳﹥鐏?娑撳鐏?閸嬫粎鏁ょ粈鎯у隘閸愬懎顔?
-**鐠侯垰绶為崣鍌涙殶**: `id` 閳?缁€鎯у隘閸愬懎顔怚D
-**鐠囬攱鐪版担?*: status(String) **閺?* `published`/`unpublished`/`disabled`
-**閸濆秴绨?VO**: `Result<ContentVO>`
+**功能**: 上架/下架/停用社区内容
+**路径参数**: `id` — 社区内容ID
+**请求体**: status(String) **是** `published`/`unpublished`/`disabled`
+**响应 VO**: `Result<ContentVO>`
 
 ---
 
 ## API-94 PUT /api/v1/admin/community-items/{id}/recommendation
-**閸旂喕鍏?*: 鐠佸墽鐤嗛幒銊ㄥ礃閹存牜鐤嗘い?
-**鐠侯垰绶為崣鍌涙殶**: `id` 閳?缁€鎯у隘閸愬懎顔怚D
-**鐠囬攱鐪版担?(JSON)**
-| 鐎涙顔?| 缁鐎?| 韫囧懎锝?| 鐠囧瓨妲?|
+**功能**: 设置推荐或置顶
+**路径参数**: `id` — 社区内容ID
+**请求体 (JSON)**
+| 字段 | 类型 | 必填 | 说明 |
 |---|---|---|---|
-| `is_top` | int | **閺?* | 0=閸欐牗绉? 1=閹恒劏宕? 2=缂冾噣銆?|
-| `expires_at` | LocalDateTime | 閸?| 閸掔増婀￠弮鍫曟？ |
-**閸濆秴绨?VO**: `Result<ContentVO>`
+| `is_top` | int | **是** | 0=取消, 1=推荐, 2=置顶 |
+| `expires_at` | LocalDateTime | 否 | 到期时间 |
+**响应 VO**: `Result<ContentVO>`
 
 ---
 
 ## API-95 GET /api/v1/admin/reports
-**閸旂喕鍏?*: 閸掑棝銆夐弻銉嚄娑撶偓濮?
-**閺屻儴顕楅崣鍌涙殶**: status(閸?: `pending`/`processing`/`resolved`, page(閸?, size(閸?
-**閸濆秴绨?VO**: `Result<PageResult<AuditVO>>`
+**功能**: 分页查询举报
+**查询参数**: status(否): `pending`/`processing`/`resolved`, page(否), size(否)
+**响应 VO**: `Result<PageResult<AuditVO>>`
 
 ---
 
 ## API-96 GET /api/v1/admin/reports/{id}
-**閸旂喕鍏?*: 閺屻儳婀呮稉鐐Г鐠囷附鍎?
-**鐠侯垰绶為崣鍌涙殶**: `id` 閳?娑撶偓濮D
-**閸濆秴绨?VO**: `Result<AuditVO>`
+**功能**: 查看举报详情
+**路径参数**: `id` — 举报ID
+**响应 VO**: `Result<AuditVO>`
 
 ---
 
 ## API-97 POST /api/v1/admin/reports/{id}/resolution
-**閸旂喕鍏?*: 閹绘劒姘︽稉鐐Г婢跺嫮鎮婄紒鎾诡啈
-**鐠侯垰绶為崣鍌涙殶**: `id` 閳?娑撶偓濮D
-**鐠囬攱鐪版担?(JSON)**
-| 鐎涙顔?| 缁鐎?| 韫囧懎锝?| 鐠囧瓨妲?|
+**功能**: 提交举报处理结论
+**路径参数**: `id` — 举报ID
+**请求体 (JSON)**
+| 字段 | 类型 | 必填 | 说明 |
 |---|---|---|---|
-| `action` | String | **閺?* | `dismiss`/`warn`/`remove`/`ban` |
-| `comment` | String | 閸?| 婢跺嫮鎮婄拠瀛樻 |
-**閸氬海顏?DTO**: `AuditDTO`
-**閸濆秴绨?VO**: `Result<Void>`
+| `action` | String | **是** | `dismiss`/`warn`/`remove`/`ban` |
+| `comment` | String | 否 | 处理说明 |
+**后端 DTO**: `AuditDTO`
+**响应 VO**: `Result<Void>`
 
 ---
 
-# 閸椾椒绔撮妴浣告倵閸?閳?鐎电厧鍤Ο鈩冩緲濡€虫健
+# 十一、后台 — 导出模板模块
 
 ## API-98 GET /api/v1/admin/export-templates
-**閸旂喕鍏?*: 閸掑棝銆夐弻銉嚄鐎电厧鍤Ο鈩冩緲
-**閺屻儴顕楅崣鍌涙殶**: export_type(閸?, status(閸?, page(閸?, size(閸?
-**閸濆秴绨?VO**: `Result<PageResult<{id, name, export_type, version, status, created_at, updated_at}>>`
+**功能**: 分页查询导出模板
+**查询参数**: export_type(否), status(否), page(否), size(否)
+**响应 VO**: `Result<PageResult<{id, name, export_type, version, status, created_at, updated_at}>>`
 
 ---
 
 ## API-99 POST /api/v1/admin/export-templates
-**閸旂喕鍏?*: 閸掓稑缂撶€电厧鍤Ο鈩冩緲閸欏﹪顩绘稉顏嗗閺?
-**鐠囬攱鐪版担?(JSON)**: name(**閺?*), export_type(**閺?*), template_data(**閺?*), description(閸?
-**閸濆秴绨?VO**: `Result<{id, version}>`
+**功能**: 创建导出模板及首个版本
+**请求体 (JSON)**: name(**是**), export_type(**是**), template_data(**是**), description(否)
+**响应 VO**: `Result<{id, version}>`
 
 ---
 
 ## API-100 PATCH /api/v1/admin/export-templates/{id}
-**閸旂喕鍏?*: 閺囧瓨鏌婂Ο鈩冩緲閸忓啯鏆熼幑顔藉灗閸掓稑缂撻弬鎵閺?
-**鐠侯垰绶為崣鍌涙殶**: `id` 閳?濡剝婢業D
-**鐠囬攱鐪版担?*: name(閸?, template_data(閸?, description(閸?
-**閸濆秴绨?VO**: `Result<{id, version}>`
+**功能**: 更新模板元数据或创建新版本
+**路径参数**: `id` — 模板ID
+**请求体**: name(否), template_data(否), description(否)
+**响应 VO**: `Result<{id, version}>`
 
 ---
 
 ## API-101 PUT /api/v1/admin/export-templates/{id}/status
-**閸旂喕鍏?*: 閸欐垵绔烽幋鏍т粻閻劍膩閺夎法澧楅張?
-**鐠侯垰绶為崣鍌涙殶**: `id` 閳?濡剝婢業D
-**鐠囬攱鐪版担?*: status(String) **閺?* `published`/`unpublished`
-**閸濆秴绨?VO**: `Result<Void>`
+**功能**: 发布或停用模板版本
+**路径参数**: `id` — 模板ID
+**请求体**: status(String) **是** `published`/`unpublished`
+**响应 VO**: `Result<Void>`
 
 ---
 
-# 閸椾椒绨╅妴浣告倵閸?閳?AI闁板秶鐤嗗Ο鈥虫健
+# 十二、后台 — AI配置模块
 
 ## API-102 GET /api/v1/admin/ai-configs
-**閸旂喕鍏?*: 閺屻儴顕楀Ο鈥崇€烽妴浣镐紣閸忓嘲鎷版潻鎰攽閸欏倹鏆熼柊宥囩枂
-**閺屻儴顕楅崣鍌涙殶**: config_group(閸?
-**閸濆秴绨?VO**: `Result<Array<ConfigVO>>`
+**功能**: 查询模型、工具和运行参数配置
+**查询参数**: config_group(否)
+**响应 VO**: `Result<Array<ConfigVO>>`
 
-| ConfigVO 鐎涙顔?| 缁鐎?| 鐠囧瓨妲?|
+| ConfigVO 字段 | 类型 | 说明 |
 |---|---|---|
-| `id` | int | 闁板秶鐤咺D |
-| `config_group` | String | 閸掑棛绮? `ai_model`/`platform`/`security`/`template`/`sensitive_word` |
-| `config_key` | String | 闁板秶鐤嗛柨?|
-| `config_value` | String | 闁板秶鐤嗛崐?|
-| `description` | String | 閹诲繗鍫?|
-| `updated_by` | Integer | 閺囧瓨鏌婃禍?|
-| `updated_at` | LocalDateTime | 閺囧瓨鏌婇弮鍫曟？ |
+| `id` | int | 配置ID |
+| `config_group` | String | 分组: `ai_model`/`platform`/`security`/`template`/`sensitive_word` |
+| `config_key` | String | 配置键 |
+| `config_value` | String | 配置值 |
+| `description` | String | 描述 |
+| `updated_by` | Integer | 更新人 |
+| `updated_at` | LocalDateTime | 更新时间 |
 
 ---
 
 ## API-103 POST /api/v1/admin/ai-configs
-**閸旂喕鍏?*: 閸掓稑缂揂I闁板秶鐤嗛悧鍫熸拱
-**鐠囬攱鐪版担?(JSON)**: config_group(**閺?*), config_key(**閺?*), config_value(**閺?*), description(閸?
-**閸氬海顏?DTO**: `ConfigDTO { config_group, config_key, config_value, description }`
-**閸濆秴绨?VO**: `Result<ConfigVO>`
+**功能**: 创建AI配置版本
+**请求体 (JSON)**: config_group(**是**), config_key(**是**), config_value(**是**), description(否)
+**后端 DTO**: `ConfigDTO { config_group, config_key, config_value, description }`
+**响应 VO**: `Result<ConfigVO>`
 
 ---
 
-## API-120 POST /api/v1/admin/ai-configs/{id}/publish
-**閸旂喕鍏?*: 閸欐垵绔稟I闁板秶鐤嗛悧鍫熸拱
-**鐠侯垰绶為崣鍌涙殶**: `id` 閳?闁板秶鐤咺D
-**閸濆秴绨?VO**: `Result<{node_status: Array<{node, status}>>}`
+## API-121 POST /api/v1/admin/ai-configs/{id}/publish
+**功能**: 发布AI配置版本
+**路径参数**: `id` — 配置ID
+**响应 VO**: `Result<{node_status: Array<{node, status}>>}`
 
 ---
 
-## API-121 POST /api/v1/admin/ai-configs/{id}/rollback
-**閸旂喕鍏?*: 閸ョ偞绮撮崚鐗堝瘹鐎规艾宸婚崣鏌ュ帳缂?
-**鐠侯垰绶為崣鍌涙殶**: `id` 閳?闁板秶鐤咺D
-**鐠囬攱鐪版担?(JSON)**: target_version(int **閺?*), reason(String **閺?*)
-**閸濆秴绨?VO**: `Result<ConfigVO>`
+## API-122 POST /api/v1/admin/ai-configs/{id}/rollback
+**功能**: 回滚到指定历史配置
+**路径参数**: `id` — 配置ID
+**请求体 (JSON)**: target_version(int **是**), reason(String **是**)
+**响应 VO**: `Result<ConfigVO>`
 
 ---
 
-# 閸椾椒绗侀妴浣告倵閸?閳?鐎瑰鍙忕粵鏍殣
+# 十三、后台 — 安全策略
 
-## API-122 GET /api/v1/admin/security-policies
-**閸旂喕鍏?*: 閼惧嘲褰囩€瑰鍙忕粵鏍殣閸欏﹤缍嬮崜宥囨晸閺佸牏澧楅張?
-**閸濆秴绨?VO**: `Result<Array<ConfigVO>>`
-
----
-
-## API-123 PUT /api/v1/admin/security-policies/{id}
-**閸旂喕鍏?*: 閺囧瓨鏌婄€瑰鍙忕粵鏍殣閿涘牏澧楅張顒€褰块梼鎻掕嫙閸欐垼顩惄鏍电礆
-**鐠侯垰绶為崣鍌涙殶**: `id` 閳?缁涙牜鏆怚D
-**鐠囬攱鐪版担?(JSON)**: config_value(**閺?*), version(int **閺?*)
-**閸氬海顏?DTO**: `ConfigDTO`
-**閸濆秴绨?VO**: `Result<ConfigVO>`
+## API-123 GET /api/v1/admin/security-policies
+**功能**: 获取安全策略及当前生效版本
+**响应 VO**: `Result<Array<ConfigVO>>`
 
 ---
 
-## API-124 POST /api/v1/admin/security-policies/{id}/publish
-**閸旂喕鍏?*: 閸欐垵绔风€瑰鍙忕粵鏍殣
-**鐠侯垰绶為崣鍌涙殶**: `id` 閳?缁涙牜鏆怚D
-**閸濆秴绨?VO**: `Result<{published: boolean}>`
+## API-124 PUT /api/v1/admin/security-policies/{id}
+**功能**: 更新安全策略（版本号防并发覆盖）
+**路径参数**: `id` — 策略ID
+**请求体 (JSON)**: config_value(**是**), version(int **是**)
+**后端 DTO**: `ConfigDTO`
+**响应 VO**: `Result<ConfigVO>`
 
 ---
 
-# 閸椾礁娲撻妴浣告倵閸?閳?閺冦儱绻旀稉搴ｆ箙閺?
+## API-125 POST /api/v1/admin/security-policies/{id}/publish
+**功能**: 发布安全策略
+**路径参数**: `id` — 策略ID
+**响应 VO**: `Result<{published: boolean}>`
 
-## API-125 GET /api/v1/admin/audit-logs
-**閸旂喕鍏?*: 閺屻儴顕楅懘杈ㄦ櫛閸氬海娈戞稉姘鐎孤ゎ吀閺冦儱绻?
-**閺屻儴顕楅崣鍌涙殶**: user_id(閸?, log_type(閸?, module(閸?, start_time(閸?, end_time(閸?, page(姒涙顓?), size(姒涙顓?0)
-**閸氬海顏?DTO**: `LogQueryDTO extends PageQuery { user_id, log_type, module, start_time, end_time }`
-**閸濆秴绨?VO**: `Result<PageResult<LogVO>>`
+---
 
-| LogVO 鐎涙顔?| 缁鐎?| 鐠囧瓨妲?|
+# 十四、后台 — 日志与看板
+
+## API-126 GET /api/v1/admin/audit-logs
+**功能**: 查询脱敏后的业务审计日志
+**查询参数**: user_id(否), log_type(否), module(否), start_time(否), end_time(否), page(默认1), size(默认10)
+**后端 DTO**: `LogQueryDTO extends PageQuery { user_id, log_type, module, start_time, end_time }`
+**响应 VO**: `Result<PageResult<LogVO>>`
+
+| LogVO 字段 | 类型 | 说明 |
 |---|---|---|
-| `id` | long | 閺冦儱绻擨D |
-| `user_id` | Integer | 閹垮秳缍旈懓鍖 |
-| `log_type` | String | 閺冦儱绻旂猾璇茬€? `operation`/`download`/`browse`/`audit` |
-| `module` | String | 閹碘偓鐏炵偞膩閸?|
-| `action` | String | 閹垮秳缍旈崝銊ょ稊 |
-| `target_type` | String | 閻╊喗鐖ｇ猾璇茬€?|
-| `target_id` | Integer | 閻╊喗鐖D |
-| `detail` | String(JSON) | 鐠囷妇绮忔穱鈩冧紖 |
-| `ip` | String | IP閸︽澘娼?|
-| `created_at` | LocalDateTime | 閸掓稑缂撻弮鍫曟？ |
+| `id` | long | 日志ID |
+| `user_id` | Integer | 操作者ID |
+| `log_type` | String | 日志类型: `operation`/`download`/`browse`/`audit` |
+| `module` | String | 所属模块 |
+| `action` | String | 操作动作 |
+| `target_type` | String | 目标类型 |
+| `target_id` | Integer | 目标ID |
+| `detail` | String(JSON) | 详细信息 |
+| `ip` | String | IP地址 |
+| `created_at` | LocalDateTime | 创建时间 |
 
 ---
 
-## API-126 GET /api/v1/admin/system-logs
-**閸旂喕鍏?*: 閺屻儴顕楅懘杈ㄦ櫛閸氬海娈戠化鑽ょ埠鏉╂劘顢戦崣濠傜磽鐢憡妫╄箛?
-**閺屻儴顕楅崣鍌涙殶**: log_type(閸?, module(閸?, start_time(閸?, end_time(閸?, page(姒涙顓?), size(姒涙顓?0)
-**閸氬海顏?DTO**: `LogQueryDTO`
-**閸濆秴绨?VO**: `Result<PageResult<LogVO>>`
+## API-127 GET /api/v1/admin/system-logs
+**功能**: 查询脱敏后的系统运行及异常日志
+**查询参数**: log_type(否), module(否), start_time(否), end_time(否), page(默认1), size(默认10)
+**后端 DTO**: `LogQueryDTO`
+**响应 VO**: `Result<PageResult<LogVO>>`
 
 ---
 
-## API-127 GET /api/v1/admin/dashboard
-**閸旂喕鍏?*: 閺屻儴顕楁稉姘閹稿洦鐖?
-**閸濆秴绨?VO**: `Result<{user_count, resource_count, ai_task_count, export_task_count, moderation_pending_count}>`
+## API-128 GET /api/v1/admin/dashboard
+**功能**: 查询业务指标
+**响应 VO**: `Result<{user_count, resource_count, ai_task_count, export_task_count, moderation_pending_count}>`
 
 ---
 
-## API-128 GET /api/v1/admin/alerts
-**閸旂喕鍏?*: 閸掑棝銆夐弻銉嚄閸涘﹨顒?
-**閺屻儴顕楅崣鍌涙殶**: level(閸?, source(閸?, status(閸?, page(姒涙顓?), size(姒涙顓?0)
-**閸濆秴绨?VO**: `Result<PageResult<{id, level, source, title, status, created_at, resolved_at}>>`
+## API-129 GET /api/v1/admin/alerts
+**功能**: 分页查询告警
+**查询参数**: level(否), source(否), status(否), page(默认1), size(默认10)
+**响应 VO**: `Result<PageResult<{id, level, source, title, status, created_at, resolved_at}>>`
 
 ---
 
-## API-129 GET /api/v1/admin/alerts/{id}
-**閸旂喕鍏?*: 閼惧嘲褰囬崨濠咁劅鐠囷附鍎?
-**鐠侯垰绶為崣鍌涙殶**: `id` 閳?閸涘﹨顒烮D
-**閸濆秴绨?VO**: `Result<{id, level, source, title, detail, status, acknowledged_by, resolved_by, created_at, acknowledged_at, resolved_at}>`
+## API-130 GET /api/v1/admin/alerts/{id}
+**功能**: 获取告警详情
+**路径参数**: `id` — 告警ID
+**响应 VO**: `Result<{id, level, source, title, detail, status, acknowledged_by, resolved_by, created_at, acknowledged_at, resolved_at}>`
 
 ---
 
-## API-130 POST /api/v1/admin/alerts/{id}/acknowledge
-**閸旂喕鍏?*: 绾喛顓婚崨濠咁劅
-**鐠侯垰绶為崣鍌涙殶**: `id` 閳?閸涘﹨顒烮D
-**閸濆秴绨?VO**: `Result<Void>`
+## API-131 POST /api/v1/admin/alerts/{id}/acknowledge
+**功能**: 确认告警
+**路径参数**: `id` — 告警ID
+**响应 VO**: `Result<Void>`
 
 ---
 
-## API-131 POST /api/v1/admin/alerts/{id}/resolve
-**閸旂喕鍏?*: 鐟欙絽鍠呴崨濠咁劅
-**鐠侯垰绶為崣鍌涙殶**: `id` 閳?閸涘﹨顒烮D
-**鐠囬攱鐪版担?*: resolution(String **閺?*)
-**閸濆秴绨?VO**: `Result<Void>`
+## API-132 POST /api/v1/admin/alerts/{id}/resolve
+**功能**: 解决告警
+**路径参数**: `id` — 告警ID
+**请求体**: resolution(String **是**)
+**响应 VO**: `Result<Void>`
 
 ---
 
-# 闂勫嫬缍? 缂佺喍绔撮崫宥呯安缂佹挻鐎?
+# 附录: 统一响应结构
 
-### Result閿涘牓鈧氨鏁ら崫宥呯安閿?
+### Result（通用响应）
 ```json
 {
   "code": 200,
@@ -1462,13 +1473,13 @@
   "data": { ... }
 }
 ```
-| 鐎涙顔?| 缁鐎?| 鐠囧瓨妲?|
+| 字段 | 类型 | 说明 |
 |---|---|---|
-| `code` | int | 200閹存劕濮涢敍灞藉従娴犳牔璐熼柨娆掝嚖閻?|
-| `message` | String | 閹诲繗鍫穱鈩冧紖 |
-| `data` | T | 閺佺増宓佹担鎿勭礄缁鐎风憴浣告倗API鐠囧瓨妲戦敍?|
+| `code` | int | 200成功，其他为错误码 |
+| `message` | String | 描述信息 |
+| `data` | T | 数据体（类型见各API说明） |
 
-### PageResult閿涘牆鍨庢い闈涙惙鎼存棑绱?
+### PageResult（分页响应）
 ```json
 {
   "total": 100,
@@ -1477,35 +1488,35 @@
   "records": [ ... ]
 }
 ```
-| 鐎涙顔?| 缁鐎?| 鐠囧瓨妲?|
+| 字段 | 类型 | 说明 |
 |---|---|---|
-| `total` | long | 閹槒顔囪ぐ鏇熸殶 |
-| `page` | int | 瑜版挸澧犳い鐢电垳 |
-| `size` | int | 濮ｅ繘銆夐弶鈩冩殶 |
-| `records` | List<T> | 瑜版挸澧犳い鍨殶閹诡喖鍨悰?|
+| `total` | long | 总记录数 |
+| `page` | int | 当前页码 |
+| `size` | int | 每页条数 |
+| `records` | List<T> | 当前页数据列表 |
 
 ---
 
-# 闂勫嫬缍? 鐢瓕顫?HTTP 閻樿埖鈧胶鐖?
+# 附录: 常见 HTTP 状态码
 
-| 閻樿埖鈧胶鐖?| 鐠囧瓨妲?|
+| 状态码 | 说明 |
 |---|---|
-| 200 | 鐠囬攱鐪伴幋鎰 |
-| 400 | 鐠囬攱鐪伴崣鍌涙殶闁挎瑨顕?|
-| 401 | 閺堫亣顓荤拠?/ Token 閺冪姵鏅?|
-| 403 | 閺冪姵娼堥梽鎰問闂?|
-| 404 | 鐠у嫭绨稉宥呯摠閸?|
-| 409 | 閻楀牊婀伴崘鑼崐閿涘牅绠扮憴鍌炴敚閿?|
-| 422 | 娑撴艾濮熼弽锟犵崣娑撳秹鈧俺绻?|
-| 429 | 鐠囬攱鐪版０鎴犲芳闂勬劕鍩?|
-| 500 | 閺堝秴濮熼崳銊ュ敶闁劑鏁婄拠?|
+| 200 | 请求成功 |
+| 400 | 请求参数错误 |
+| 401 | 未认证 / Token 无效 |
+| 403 | 无权限访问 |
+| 404 | 资源不存在 |
+| 409 | 版本冲突（乐观锁） |
+| 422 | 业务校验不通过 |
+| 429 | 请求频率限制 |
+| 500 | 服务器内部错误 |
 
 ---
 
-# 闂勫嫬缍? 閸忋劌鐪拠閿嬬湴婢?
+# 附录: 全局请求头
 
-| 鐠囬攱鐪版径?| 韫囧懎锝?| 鐠囧瓨妲?|
+| 请求头 | 必填 | 说明 |
 |---|---|---|
-| `Authorization` | 闂団偓鐠併倛鐦夐惃鍕复閸欙絽绻€婵?| `Bearer <token>` |
-| `Content-Type` | POST/PATCH/PUT 韫囧懎锝?| `application/json` |
-| `Idempotent-Key` | 楠炲倻鐡戦弫蹇斿妳閹垮秳缍旈崣顖炩偓?| 闂冩煡鍣告径宥嗗絹娴?|
+| `Authorization` | 需认证的接口必填 | `Bearer <token>` |
+| `Content-Type` | POST/PATCH/PUT 必填 | `application/json` |
+| `Idempotent-Key` | 幂等敏感操作可选 | 防重复提交 |
