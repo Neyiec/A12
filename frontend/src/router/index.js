@@ -12,6 +12,8 @@ import ExportCenter from '../components/ExportCenter.vue'
 import CreationWorkspace from '../components/CreationWorkspace.vue'
 import {getRouters} from'../apis/login.js'
 import {isTokenExpired} from '../utils/JWTParser.js'
+// 全局用户 store — 替代直接操作 localStorage
+import { useUserStore } from '../storage/user.js'
 
 const routes = [
   {
@@ -92,29 +94,32 @@ router.beforeEach((to, from, next) => {
     return
   }
 
-  const token = localStorage.getItem('token')
-  
+  // 从 Pinia store 获取 token（自动从持久化的 localStorage 恢复）
+  const userStore = useUserStore()
+  const token = userStore.token
+
   if (to.path !== '/login' && (!token || isTokenExpired(token))) {
     next('/login')
     return
   }
 
-  if(!token || isTokenExpired(token)){
-      localStorage.removeItem('token')
-      localStorage.removeItem('menus')
-      menusLoaded = false
-    }
-  // 
+  // 清除过期或缺失 token 的用户状态
+  if (!token || isTokenExpired(token)) {
+    userStore.clearUser()
+    menusLoaded = false
+  }
+
+  // 动态路由加载：非静态教师页面且菜单未加载时，请求后端获取菜单
   if (to.path.startsWith('/main/') && !to.meta.staticTeacherPage && !menusLoaded) {
     getRouters().then(res => {
       // 添加动态路由
       addDynamicRoutes(res.data.menus)
       // 标记菜单已加载
       menusLoaded = true
-      // 存储菜单数据
-      localStorage.setItem('menus', JSON.stringify(res.data.menus));
+      // 将菜单数据存入 Pinia store（自动持久化）
+      userStore.setMenus(res.data.menus)
 
-      next(to.fullPath);
+      next(to.fullPath)
     })
   } else {
     next()
