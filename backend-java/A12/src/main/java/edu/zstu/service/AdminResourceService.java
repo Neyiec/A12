@@ -1,16 +1,18 @@
 package edu.zstu.service;
 
-/**
- * 后台 — 公共资源模块 Service 接口<br>提供公共资源上传、管理、状态控制等后台资源业务方法。
- */
+import edu.zstu.dto.ItemStatusDTO;
+import edu.zstu.dto.ResourceDTO;
+import edu.zstu.utils.PageResult;
+import edu.zstu.vo.ResourceVO;
+
+import java.util.Map;
 
 public interface AdminResourceService {
-    Object listResources();
-    Object createUploadSession();
-    Object completeUpload(String id);
-    Object getResource(String id);
-    Object updateResource(String id);
-    Object updateStatus(String id);
-    Object getProcessingStatus(String id);
+    PageResult<ResourceVO> listResources(String resourceType, Integer status, int page, int size);
+    Map<String, Object> createUploadSession(ResourceDTO dto, Integer adminId);
+    ResourceVO completeUpload(Integer id, Integer adminId);
+    ResourceVO getResource(Integer id);
+    ResourceVO updateResource(Integer id, ResourceDTO dto, Integer adminId);
+    ResourceVO updateStatus(Integer id, ItemStatusDTO dto, Integer adminId);
+    Map<String, Object> getProcessingStatus(Integer id);
 }
-

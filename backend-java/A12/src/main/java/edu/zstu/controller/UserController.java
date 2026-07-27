@@ -6,6 +6,8 @@ import edu.zstu.utils.Result;
 import edu.zstu.vo.UserVO;
 import org.springframework.web.bind.annotation.*;
 
+import java.util.Map;
+
 /**
  * 用户模块 Controller
  * API-09：个人信息；API-07 的改密放在此处（/users/me/password-change）
@@ -48,5 +50,25 @@ public class UserController {
     {
         userService.changePassword(dto);
         return Result.success();
+    }
+
+    /**
+     * 根据用户名查询用户ID
+     */
+    @GetMapping("/by-username")
+    public Result<Map<String, Object>> findByUsername(@RequestParam String username) {
+        try {
+            return Result.success(userService.findUserIdByUsername(username));
+        } catch (RuntimeException e) { return Result.error(400, e.getMessage()); }
+    }
+
+    /**
+     * 根据邮箱查询用户ID
+     */
+    @GetMapping("/by-email")
+    public Result<Map<String, Object>> findByEmail(@RequestParam String email) {
+        try {
+            return Result.success(userService.findUserIdByEmail(email));
+        } catch (RuntimeException e) { return Result.error(400, e.getMessage()); }
     }
 }

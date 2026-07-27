@@ -16,7 +16,7 @@ import java.util.Map;
  * 项目模块 Controller
  * API-17~31：项目管理、组件、版本
  *
- * <p>负责个人教学项目的创建、查询、编辑、复制、归档、删除，页面与组件管理（插入、修改、AI修改），以及版本保存、差异对比、版本回滚等操作。</p>
+ * <p>负责个人教学项目的创建、查询、编辑、复制、归档、删除，页面与组件管理（插入、修改、AI修改），以及版本保存、差异对比、版本回滚等操作。
  */
 @RestController
 @RequestMapping("/api/v1/projects")
@@ -60,7 +60,7 @@ public class ProjectController {
         try {
             Integer userId = CurrentHolder.getCurrentId();
             if (userId == null) return Result.error(401, "未登录");
-            return Result.success(projectService.getProject(id));
+            return Result.success(projectService.getProject(id, userId));
         } catch (RuntimeException e) { return Result.error(400, e.getMessage()); }
     }
 
@@ -74,6 +74,19 @@ public class ProjectController {
             Integer userId = CurrentHolder.getCurrentId();
             if (userId == null) return Result.error(401, "未登录");
             return Result.success(projectService.updateProject(id, dto, userId));
+        } catch (RuntimeException e) { return Result.error(400, e.getMessage()); }
+    }
+
+    /**
+     * API-32 添加项目授权用户
+     */
+    @PostMapping("/{id}/permissions")
+    public Result<ProjectVO> addPermission(@PathVariable String id,
+                                           @RequestBody ProjectPermissionDTO dto) {
+        try {
+            Integer userId = CurrentHolder.getCurrentId();
+            if (userId == null) return Result.error(401, "未登录");
+            return Result.success(projectService.addPermission(id, dto, userId));
         } catch (RuntimeException e) { return Result.error(400, e.getMessage()); }
     }
 

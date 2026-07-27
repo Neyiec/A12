@@ -1,17 +1,20 @@
 package edu.zstu.service;
 
-/**
- * 后台 — 内容审核与举报处理 Service 接口<br>提供审核任务分配、审核决策、内容状态管理、举报处理等业务方法。
- */
+import edu.zstu.dto.AuditDTO;
+import edu.zstu.dto.RecommendationDTO;
+import edu.zstu.utils.PageResult;
+import edu.zstu.vo.AuditVO;
+import edu.zstu.vo.ContentVO;
+
+import java.util.Map;
 
 public interface AdminModerationService {
-    Object listModerationTasks();
-    Object getModerationTask(String id);
-    Object makeDecision(String id);
-    Object updateItemStatus(String id);
-    Object updateRecommendation(String id);
-    Object listReports();
-    Object getReport(String id);
-    Object resolveReport(String id);
+    PageResult<AuditVO> listModerationTasks(String status, String targetType, Integer handlerId, int page, int size);
+    AuditVO getModerationTask(Integer id);
+    void makeDecision(Integer id, AuditDTO dto, Integer adminId);
+    ContentVO updateItemStatus(Integer id, String status);
+    ContentVO updateRecommendation(Integer id, RecommendationDTO dto);
+    PageResult<AuditVO> listReports(String status, int page, int size);
+    AuditVO getReport(Integer id);
+    void resolveReport(Integer id, AuditDTO dto, Integer adminId);
 }
-
