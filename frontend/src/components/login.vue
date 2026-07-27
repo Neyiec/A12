@@ -16,6 +16,7 @@ import { ElMessage } from 'element-plus'
 import { User, Lock } from '@element-plus/icons-vue'
 import { login, register } from '../apis/login.js'
 import { LOGIN_TEXT, VALIDATION_RULES } from '../config/login.config.js'
+import { startPageTransition } from '../utils/pageTransition.js'
 
 const router = useRouter()
 
@@ -136,7 +137,7 @@ const toggleMode = () => {
  * 处理登录提交
  * 校验表单 → 调用登录 API → 存储 token 并跳转
  */
-const handleLogin = async () => {
+const handleLogin = async (event) => {
   // 表单校验
   if (!loginFormRef.value) return
   try {
@@ -154,10 +155,10 @@ const handleLogin = async () => {
     // 存储认证信息
     localStorage.setItem('token', res.data.token)
     ElMessage.success(LOGIN_TEXT.message.loginSuccess)
-    // 短暂延迟后跳转，让用户看到成功提示
-    setTimeout(() => {
-      router.push('/main')
-    }, 200)
+    await startPageTransition({
+      sourceEvent: event,
+      onCovered: () => router.push('/main'),
+    })
   } catch (err) {
     // 根据错误类型给出对应提示
     const status = err?.response?.status
@@ -330,7 +331,7 @@ const handleRegister = async () => {
                   round
                   class="w-full !h-[48px] !text-base !font-semibold"
                   :loading="loginLoading"
-                  @click="handleLogin"
+                  @click="handleLogin($event)"
                 >
                   {{ loginLoading ? LOGIN_TEXT.button.loginLoading : LOGIN_TEXT.button.login }}
                 </el-button>

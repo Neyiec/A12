@@ -218,6 +218,36 @@ textarea {
   outline-offset: 2px;
 }
 
+/* 登录成功转场：从操作原点扩散，路由更新后向上收回。 */
+.ui-page-transition {
+  position: fixed;
+  z-index: 99999;
+  inset: 0;
+  pointer-events: none;
+  background: var(--transition-color, var(--zh-background-button));
+  clip-path: circle(0 at 50% 50%);
+  will-change: clip-path, transform;
+}
+
+.ui-page-transition.is-expanding {
+  pointer-events: auto;
+  animation: page-transition-expand 400ms cubic-bezier(.77, 0, .175, 1) forwards;
+}
+
+.ui-page-transition.is-retracting-slide-up {
+  animation: page-transition-retract-up 450ms cubic-bezier(.25, 1, .5, 1) forwards;
+}
+
+@keyframes page-transition-expand {
+  from { clip-path: circle(0 at var(--click-x, 50%) var(--click-y, 50%)); }
+  to { clip-path: circle(150vmax at var(--click-x, 50%) var(--click-y, 50%)); }
+}
+
+@keyframes page-transition-retract-up {
+  from { clip-path: circle(150vmax at 50% 50%); transform: translateY(0); }
+  to { clip-path: circle(150vmax at 50% 50%); transform: translateY(-100%); }
+}
+
 @media (prefers-reduced-motion: reduce) {
   *,
   *::before,
@@ -226,5 +256,9 @@ textarea {
     transition-duration: 0.01ms !important;
     animation-duration: 0.01ms !important;
     animation-iteration-count: 1 !important;
+  }
+
+  .ui-page-transition {
+    display: none;
   }
 }
