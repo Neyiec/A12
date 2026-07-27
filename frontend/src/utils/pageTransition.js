@@ -2,8 +2,8 @@
  * 登录成功后的原点扩散转场。
  * 由点击位置扩散覆盖，在路由更新完成后收回至同一视觉锚点。
  */
-const EXPAND_DURATION = 400
-const RETRACT_DURATION = 450
+const EXPAND_DURATION = 550
+const RETRACT_DURATION = 600
 
 const prefersReducedMotion = () => window.matchMedia?.('(prefers-reduced-motion: reduce)').matches
 

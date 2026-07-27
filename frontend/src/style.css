@@ -231,11 +231,11 @@ textarea {
 
 .ui-page-transition.is-expanding {
   pointer-events: auto;
-  animation: page-transition-expand 400ms cubic-bezier(.77, 0, .175, 1) forwards;
+  animation: page-transition-expand 550ms cubic-bezier(.77, 0, .175, 1) forwards;
 }
 
 .ui-page-transition.is-retracting-to-anchor {
-  animation: page-transition-retract-to-anchor 450ms cubic-bezier(.65, 0, .35, 1) forwards;
+  animation: page-transition-retract-to-anchor 600ms cubic-bezier(.65, 0, .35, 1) forwards;
 }
 
 @keyframes page-transition-expand {

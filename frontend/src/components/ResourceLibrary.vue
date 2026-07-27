@@ -8,7 +8,7 @@ import { computed, onMounted, ref } from 'vue'
 import { ElMessage } from 'element-plus'
 import { Delete, Folder, Lock, MoreFilled, Search, Upload } from '@element-plus/icons-vue'
 import { RESOURCE_PAGE } from '../config/teacherPages.config.js'
-import { deleteResource, downloadResource, listResources, uploadResource } from '../apis/teacher'
+import { completeResourceUpload, createResourceUpload, deleteResource, downloadResource, listResources } from '../apis/teacher'
 
 const keyword = ref('')
 const activeFolder = ref('全部素材')
@@ -41,10 +41,21 @@ const startUpload = () => fileInput.value?.click()
 const handleUpload = async (event) => {
   const file = event.target.files?.[0]
   if (!file) return
-  const formData = new FormData()
-  formData.append('file', file)
   try {
-    await uploadResource(formData)
+    // 后端采用“创建上传会话 → 直传签名地址 → 确认上传”的三段式流程。
+    const sessionResult = await createResourceUpload({
+      file_name: file.name,
+      file_type: file.name.split('.').pop()?.toLowerCase() || file.type || 'unknown',
+      file_size: file.size,
+    })
+    const session = sessionResult?.data || sessionResult || {}
+    const uploadId = session.upload_id || session.id
+    if (!uploadId) throw new Error('上传会话创建失败')
+    if (session.upload_url) {
+      const response = await fetch(session.upload_url, { method: 'PUT', body: file, headers: file.type ? { 'Content-Type': file.type } : undefined })
+      if (!response.ok) throw new Error('文件上传失败')
+    }
+    await completeResourceUpload(uploadId)
     ElMessage.success('素材已上传，正在解析')
     await loadResources()
   } catch { ElMessage.error('上传失败，请检查服务连接后重试') }

@@ -13,16 +13,16 @@ export const LOGIN_TEXT = {
   brand: {
     name: '智核',
     /** 左侧面板主标语 */
-    slogan: 'AI赋能教育\n让每一节课都精彩',
+    slogan: 'AI 赋能教育\n让每一节课都精彩',
     /** 左侧面板副标语 */
-    subtitle: '多模态AI互动式教学智能体',
+    subtitle: '多模态 AI 互动式教学智能体',
   },
 
   // ========== 表单标题 ==========
   form: {
     loginTitle: '欢迎回来',
     registerTitle: '创建您的账号',
-    loginSubtitle: '登录您的智核账号以继续使用AI教学助手',
+    loginSubtitle: '登录后继续使用智核 AI 教学助手',
     registerSubtitle: '创建账号以开启您的AI教学之旅',
   },
 

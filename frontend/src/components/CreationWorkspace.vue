@@ -4,7 +4,7 @@
   - 输出: 对话驱动的课件创作工作台
 -->
 <script setup>
-import { computed, ref } from 'vue'
+import { computed, onMounted, ref } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { ElMessage } from 'element-plus'
 import {
@@ -12,6 +12,7 @@ import {
   Delete, Download, EditPen, Picture, Plus, Promotion, Refresh,
 } from '@element-plus/icons-vue'
 import { WORKSPACE_PAGE } from '../config/teacherPages.config.js'
+import { getProject, reviseProject, sendAiMessage } from '../apis/teacher'
 
 const router = useRouter()
 const route = useRoute()
@@ -20,28 +21,52 @@ const prompt = ref('')
 const activePanel = ref('样式')
 const panels = ['样式', '布局', '动画']
 const slideTitle = computed(() => WORKSPACE_PAGE.slides[selectedSlide.value])
+const project = ref(null)
+const messages = ref([...WORKSPACE_PAGE.messages])
+const projectId = computed(() => route.query.projectId)
+const projectName = computed(() => project.value?.project_name || '教学创作项目')
+
+const loadProject = async () => {
+  if (!projectId.value) return
+  try {
+    const result = await getProject(projectId.value)
+    project.value = result?.data || result
+  } catch { ElMessage.error('项目加载失败，请稍后重试') }
+}
 
 /** 模拟自然语言修改当前课件页。 */
-const sendRevision = () => {
+const sendRevision = async () => {
   if (!prompt.value.trim()) return
-  ElMessage.success(`已将修改应用到“${slideTitle.value}”`)
-  prompt.value = ''
+  if (!projectId.value) return ElMessage.warning('请先从首页创建或打开一个项目')
+  const instruction = prompt.value.trim()
+  try {
+    messages.value.push({ role: 'user', text: instruction })
+    await reviseProject(projectId.value, { target_type: 'page', target_id: String(selectedSlide.value + 1), instruction, context: JSON.stringify({ page_title: slideTitle.value }) })
+    if (route.query.sessionId) await sendAiMessage(route.query.sessionId, { messages: JSON.stringify([{ role: 'user', text: instruction }]) })
+    messages.value.push({ role: 'assistant', text: `已提交对“${slideTitle.value}”的修改请求。` })
+    ElMessage.success('修改请求已提交')
+    prompt.value = ''
+  } catch {
+    messages.value.pop()
+    ElMessage.error('修改未能保存，请稍后重试')
+  }
 }
+onMounted(loadProject)
 </script>
 
 <template>
   <div class="workspace">
     <header class="workspace-toolbar">
-      <div class="workspace-title"><el-button text circle aria-label="返回首页" @click="router.push({ path: '/main', query: route.query.preview ? { preview: '1' } : {} })"><el-icon><ArrowLeft /></el-icon></el-button><div><strong>勾股定理互动教学</strong><span><el-icon><CircleCheck /></el-icon> 已保存 · v2.1</span></div></div>
+      <div class="workspace-title"><el-button text circle aria-label="返回首页" @click="router.push({ path: '/main', query: route.query.preview ? { preview: '1' } : {} })"><el-icon><ArrowLeft /></el-icon></el-button><div><strong>{{ projectName }}</strong><span><el-icon><CircleCheck /></el-icon> {{ project ? `已保存 · v${project.current_version || 1}` : '正在加载项目' }}</span></div></div>
       <div class="tool-cluster" title="组件编辑能力将在项目接口接入后开放"><el-button text :icon="EditPen" disabled>文本</el-button><el-button text :icon="Picture" disabled>图片</el-button><el-button text :icon="DataBoard" disabled>互动组件</el-button><el-button text :icon="Brush" disabled>背景</el-button></div>
-      <div><el-button :icon="Refresh" disabled title="项目预览暂未接入">预览</el-button><el-button type="primary" :icon="Download" @click="router.push({ path: '/main/exports', query: route.query.preview ? { preview: '1' } : {} })">导出</el-button></div>
+      <div><el-button :icon="Refresh" disabled title="项目预览暂未接入">预览</el-button><el-button type="primary" :icon="Download" :disabled="!projectId" @click="router.push({ path: '/main/exports', query: { ...(route.query.preview ? { preview: '1' } : {}), projectId } })">导出</el-button></div>
     </header>
 
     <div class="workspace-grid">
       <aside class="ai-panel">
         <header><div class="ai-mark">智</div><div><strong>AI 教学助手</strong><span>正在编辑第 {{ selectedSlide + 1 }} 页</span></div></header>
         <section class="messages">
-          <article v-for="(message, index) in WORKSPACE_PAGE.messages" :key="index" :class="['message', message.role]">
+          <article v-for="(message, index) in messages" :key="index" :class="['message', message.role]">
             <span v-if="message.role === 'assistant'">智</span><p>{{ message.text }}</p>
           </article>
         </section>

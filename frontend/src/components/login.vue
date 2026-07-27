@@ -335,7 +335,7 @@ const startFluidBackground = () => {
 
   const glyphAt = (column, row, phase) => {
     // 变化沿斜向波带传播，避免整屏字符在同一帧机械切换。
-    const cycle = Math.floor(phase * 1.3 + row * .14 - column * .07)
+    const cycle = Math.floor(phase * 1.55 + row * .14 - column * .07)
     return glyphs[(column * 7 + row * 11 + cycle) % glyphs.length]
   }
 
@@ -362,10 +362,10 @@ const startFluidBackground = () => {
 
     const ambientX = pointer.active
       ? pointer.x
-      : width * (.72 + Math.sin(phase * .24) * .09)
+      : width * (.72 + Math.sin(phase * .28) * .12)
     const ambientY = pointer.active
       ? pointer.y
-      : height * (.5 + Math.cos(phase * .19) * .12)
+      : height * (.5 + Math.cos(phase * .22) * .15)
     const ambient = context.createRadialGradient(
       ambientX,
       ambientY,
@@ -374,7 +374,7 @@ const startFluidBackground = () => {
       ambientY,
       Math.max(width, height) * .38,
     )
-    ambient.addColorStop(0, `rgba(96, 165, 250, ${pointer.active ? .045 : .085})`)
+    ambient.addColorStop(0, `rgba(96, 165, 250, ${pointer.active ? .045 : .11})`)
     ambient.addColorStop(.52, 'rgba(37, 99, 235, .02)')
     ambient.addColorStop(1, 'rgba(247, 248, 252, 0)')
     context.fillStyle = ambient
@@ -401,31 +401,34 @@ const startFluidBackground = () => {
         const directionY = dy / distance
         const idleWave = prefersReducedMotion
           ? 0
-          : (Math.sin(phase * 1.28 - row * .2 + column * .09) + 1) / 2
+          : (Math.sin(phase * 1.5 - row * .2 + column * .09) + 1) / 2
         const crossWave = prefersReducedMotion
           ? 0
-          : Math.sin(phase * .9 + row * .11 + column * .17)
+          : Math.sin(phase * 1.08 + row * .11 + column * .17)
         const signalBand = prefersReducedMotion
           ? 0
-          : Math.max(0, Math.sin(phase * 1.02 - row * .15 + column * .045) - .68) / .32
+          : Math.max(0, Math.sin(phase * 1.18 - row * .15 + column * .045) - .62) / .38
         const shimmerSeed = (column * 13 + row * 17) % 37
         const shimmer = prefersReducedMotion
           ? 0
-          : Math.max(0, Math.sin(phase * 1.34 + shimmerSeed) - .88) / .12
+          : Math.max(0, Math.sin(phase * 1.55 + shimmerSeed) - .84) / .16
         const wave = prefersReducedMotion
           ? 0
           : Math.sin(distance * .052 - phase * 3.1) * easedProximity
         const displacement = easedProximity * (4 + wake * 5) + wave * 1.2
-        const offsetX = directionX * displacement + crossWave * .65
-        const offsetY = directionY * displacement + (idleWave - .5) * 3.4
-        const baseAlpha = .08 + idleWave * .1 + signalBand * .13 + shimmer * .09
+        const offsetX = directionX * displacement + crossWave * .9
+        const offsetY = directionY * displacement + (idleWave - .5) * 4.6
+        const baseAlpha = .07 + idleWave * .14 + signalBand * .16 + shimmer * .11
         const blueMix = easedProximity * (.07 + wake * .03)
-          + signalBand * .14
-        const finalAlpha = Math.min(baseAlpha + blueMix, .58)
+          + signalBand * .18
+        const finalAlpha = Math.min(baseAlpha + blueMix, .66)
+        const lowerAreaOpacity = y > height * .68 ? .8 : 1
+        const visibleAlpha = finalAlpha * lowerAreaOpacity
+        const visibleBaseAlpha = baseAlpha * lowerAreaOpacity
 
         context.fillStyle = blueMix > .06
-          ? `rgba(37, 99, 235, ${finalAlpha})`
-          : `rgba(102, 102, 102, ${baseAlpha})`
+          ? `rgba(37, 99, 235, ${visibleAlpha})`
+          : `rgba(102, 102, 102, ${visibleBaseAlpha})`
         context.fillText(glyphAt(column, row, phase), x + offsetX, y + offsetY)
       }
     }
@@ -484,7 +487,7 @@ onUnmounted(() => {
     </div>
 
     <!-- ========== 左侧：品牌展示区 (lg:w-5/12) ========== -->
-    <aside class="login-brand-panel hidden lg:flex lg:w-5/12 relative overflow-hidden">
+    <aside class="login-brand-panel hidden lg:flex lg:w-5/12 relative">
       <!--
         [此处需填写：AI生成的品牌插图]
         提示词: A futuristic digital classroom scene with a glowing holographic brain at the center
@@ -495,23 +498,26 @@ onUnmounted(() => {
       -->
       <img
         class="login-brand-image absolute inset-0 w-full h-full object-cover"
-        src="/image_384866672794550.png"
+        src="/login-knowledge-network-portrait.png"
         alt="智核品牌插图"
       />
       <!-- 底部渐变遮罩，确保文字可读性 -->
       <div class="login-brand-scrim absolute inset-0"></div>
       <!-- 品牌文字叠加层 -->
-      <div class="login-brand-copy relative z-10 flex flex-col justify-end h-full p-12">
+      <div class="login-brand-copy relative z-10 flex flex-col justify-end h-full px-14 py-16">
         <!-- 品牌名 -->
-        <h1 class="text-white text-[32px] font-bold mb-3 tracking-wide">
+        <h1 class="brand-name text-white font-bold tracking-wide">
           {{ LOGIN_TEXT.brand.name }}
         </h1>
         <!-- 主标语 -->
-        <p class="text-white text-[30px] font-semibold leading-relaxed whitespace-pre-line">
-          {{ LOGIN_TEXT.brand.slogan }}
+        <p class="brand-subtitle text-white font-semibold">
+          {{ LOGIN_TEXT.brand.slogan.split('\n')[0] }}
+        </p>
+        <p class="brand-slogan text-white font-semibold">
+          {{ LOGIN_TEXT.brand.slogan.split('\n')[1] }}
         </p>
         <!-- 副标语 -->
-        <p class="text-white/70 text-base mt-4">
+        <p class="brand-description text-white/70">
           {{ LOGIN_TEXT.brand.subtitle }}
         </p>
       </div>
@@ -519,7 +525,7 @@ onUnmounted(() => {
 
     <!-- ========== 右侧：登录/注册表单区 (lg:w-7/12) ========== -->
     <main class="login-main relative z-10 flex-1 flex items-center justify-center px-6 py-10 sm:px-10 lg:px-16">
-      <div class="login-form-panel w-full max-w-[440px]">
+      <div class="login-form-panel w-full max-w-[480px]">
 
         <!-- 移动端可见的品牌 Logo + 名称 -->
         <div class="flex flex-col items-center mb-10 lg:hidden">
@@ -577,9 +583,9 @@ onUnmounted(() => {
               </el-form-item>
 
               <!-- 隐私协议勾选 -->
-              <el-form-item prop="agreeToPrivacy">
+              <el-form-item class="login-agreement-item" prop="agreeToPrivacy">
                 <el-checkbox v-model="loginForm.agreeToPrivacy">
-                  <span class="text-xs text-(--zh-text-caption)">
+                  <span class="login-agreement-text">
                     {{ LOGIN_TEXT.privacy.prefix }}
                     <a href="#" class="text-(--zh-text-link) hover:underline">
                       {{ LOGIN_TEXT.privacy.serviceAgreement }}
@@ -597,8 +603,7 @@ onUnmounted(() => {
                 <el-button
                   type="primary"
                   size="large"
-                  round
-                  class="w-full !h-[48px] !text-base !font-semibold"
+                  class="w-full !h-[52px] !text-base !font-semibold"
                   :loading="loginLoading"
                   @click="handleLogin($event)"
                 >
@@ -701,8 +706,7 @@ onUnmounted(() => {
                 <el-button
                   type="primary"
                   size="large"
-                  round
-                  class="w-full !h-[48px] !text-base !font-semibold"
+                  class="w-full !h-[52px] !text-base !font-semibold"
                   :loading="registerLoading"
                   @click="handleRegister"
                 >
@@ -791,7 +795,11 @@ onUnmounted(() => {
 .login-calibration-mark--top { top: 32px; }
 .login-calibration-mark--bottom { bottom: 32px; }
 
-.login-brand-panel { border-right: 1px solid rgb(255 255 255 / 16%); }
+.login-brand-panel {
+  isolation: isolate;
+  border-right: 0;
+  z-index: 0;
+}
 
 .login-brand-panel::after {
   position: absolute;
@@ -807,20 +815,51 @@ onUnmounted(() => {
 }
 
 .login-brand-image {
-  filter: saturate(.82) contrast(1.04);
+  width: 112%;
+  max-width: none;
+  filter: saturate(.76) contrast(1.01) brightness(.94);
+  object-position: left center;
   transform: scale(1.02);
+  mask-image: linear-gradient(90deg, #000 0 52%, rgb(0 0 0 / 58%) 76%, transparent 100%);
+  -webkit-mask-image: linear-gradient(90deg, #000 0 52%, rgb(0 0 0 / 58%) 76%, transparent 100%);
 }
 
 .login-brand-scrim {
+  right: 0;
+  width: 112%;
   background:
-    linear-gradient(90deg, rgb(8 27 67 / 52%), rgb(8 27 67 / 7%)),
-    linear-gradient(0deg, rgb(7 20 50 / 78%), rgb(7 20 50 / 5%) 60%, rgb(7 20 50 / 20%));
+    linear-gradient(90deg, rgb(5 24 61 / 24%) 0%, rgb(5 24 61 / 10%) 64%, rgb(5 24 61 / 0%) 100%),
+    linear-gradient(0deg, rgb(7 20 50 / 62%), rgb(7 20 50 / 0%) 62%, rgb(7 20 50 / 12%));
 }
 
 .login-brand-copy { text-shadow: 0 2px 20px rgb(5 17 45 / 38%); }
 
+.brand-name {
+  margin: 0 0 12px;
+  font-size: 30px;
+  line-height: 1.2;
+}
+
+.brand-subtitle {
+  margin: 0;
+  font-size: 28px;
+  line-height: 1.35;
+}
+
+.brand-slogan {
+  margin: 2px 0 0;
+  font-size: 36px;
+  line-height: 1.35;
+}
+
+.brand-description {
+  margin: 16px 0 0;
+  font-size: var(--zh-font-size16);
+  line-height: 1.5;
+}
+
 .login-form-panel {
-  padding: 36px;
+  padding: 40px 44px;
   border: 1px solid rgb(37 99 235 / 12%);
   border-radius: var(--zh-radius16);
   background: rgb(255 255 255 / 76%);
@@ -870,15 +909,24 @@ onUnmounted(() => {
   margin-bottom: 20px;
 }
 
+:deep(.login-agreement-item) {
+  margin-bottom: 12px;
+}
+
 /** 表单项标签加粗 */
 :deep(.el-form-item__label) {
   font-weight: 500;
   color: var(--zh-text-primary);
 }
 
+:deep(.el-form-item.is-required .el-form-item__label::before) {
+  margin-right: 4px;
+}
+
 /** 大号输入框高度微调 */
 :deep(.el-input--large .el-input__wrapper) {
-  padding: 12px 16px;
+  min-height: 54px;
+  padding: 10px 16px;
   border: 1px solid var(--zh-line-border);
   background: rgb(255 255 255 / 78%);
   box-shadow: none;
@@ -891,17 +939,63 @@ onUnmounted(() => {
   box-shadow: 0 0 0 3px var(--zh-line-theme20);
 }
 
+:deep(.el-input__inner::placeholder) {
+  color: var(--zh-text-caption);
+}
+
+:deep(.el-input__inner:-webkit-autofill),
+:deep(.el-input__inner:-webkit-autofill:hover),
+:deep(.el-input__inner:-webkit-autofill:focus),
+:deep(.el-input__inner:-webkit-autofill:active) {
+  -webkit-text-fill-color: var(--zh-text-primary);
+  -webkit-box-shadow: 0 0 0 1000px var(--zh-background-primary) inset;
+  box-shadow: 0 0 0 1000px var(--zh-background-primary) inset;
+  caret-color: var(--zh-text-primary);
+}
+
+:deep(.el-input__prefix-inner),
+:deep(.el-input__suffix-inner) {
+  color: var(--zh-text-caption);
+}
+
+:deep(.el-checkbox) {
+  align-items: flex-start;
+  min-height: 20px;
+  line-height: 20px;
+}
+
+:deep(.el-checkbox__input) {
+  margin-top: 1px;
+}
+
+:deep(.el-checkbox__inner) {
+  width: 18px;
+  height: 18px;
+  border-color: var(--zh-line-heavier);
+}
+
+:deep(.el-checkbox__label) {
+  padding-left: 8px;
+  color: var(--zh-text-secondary);
+  line-height: 20px;
+}
+
+.login-agreement-text {
+  color: var(--zh-text-secondary);
+  font-size: var(--zh-font-size14);
+}
+
 :deep(.el-button--primary) {
   border: 0;
-  border-radius: var(--zh-radius8);
+  border-radius: var(--zh-radius12);
   background: var(--zh-gradient-dblue);
-  box-shadow: 0 10px 20px -12px rgb(29 78 216 / 68%);
+  box-shadow: 0 8px 16px -10px rgb(29 78 216 / 52%);
   transition: transform .18s ease, box-shadow .18s ease, filter .18s ease;
 }
 
 :deep(.el-button--primary:hover) {
   filter: brightness(1.04);
-  box-shadow: 0 14px 26px -14px rgb(29 78 216 / 78%);
+  box-shadow: 0 10px 20px -12px rgb(29 78 216 / 64%);
   transform: translateY(-1px);
 }
 
@@ -909,8 +1003,8 @@ onUnmounted(() => {
 
 @media (max-width: 1023px) {
   .login-form-panel {
-    max-width: 440px;
-    padding: 28px;
+    max-width: 480px;
+    padding: 36px 40px;
   }
 }
 

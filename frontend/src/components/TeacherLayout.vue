@@ -4,13 +4,14 @@
   - 输出: 教师端所有独立页面共用的侧栏与顶栏布局
 -->
 <script setup>
-import { computed, ref } from 'vue'
+import { computed, onMounted, ref } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import {
   Bell, ChatDotRound, Download, FolderOpened, Grid,
   Moon, MoreFilled, Plus, Setting, Sunny,
 } from '@element-plus/icons-vue'
 import { TEACHER_HOME } from '../config/teacherHome.config.js'
+import { getCurrentUser, listProjects } from '../apis/teacher'
 
 const route = useRoute()
 const router = useRouter()
@@ -24,6 +25,22 @@ const routeMap = {
 }
 const activeMenu = computed(() => route.meta.menu || 'home')
 const isWorkspace = computed(() => route.path === '/main/workspace')
+const teacher = ref(TEACHER_HOME.teacher)
+const history = ref(TEACHER_HOME.history)
+
+const loadTeacherContext = async () => {
+  try {
+    const [userResult, projectResult] = await Promise.all([getCurrentUser(), listProjects({ page: 1, size: 5 })])
+    const user = userResult?.data || userResult
+    if (user?.real_name || user?.username) {
+      const name = user.real_name || user.username
+      teacher.value = { name, role: user.user_type === 'teacher' ? '教师' : user.user_type || '教师', initials: name.slice(0, 1) }
+    }
+    const records = projectResult?.data?.records || projectResult?.records || []
+    if (records.length) history.value = records.map((item) => ({ id: item.id, title: item.project_name || '未命名项目', time: item.updated_at || item.created_at || '刚刚' }))
+  } catch { /* 个人资料接口不可用时保留页面基础展示。 */ }
+}
+onMounted(loadTeacherContext)
 
 /** 跳转到教师端目标功能模块。 */
 const handleMenuSelect = (index) => {
@@ -65,13 +82,13 @@ const toggleTheme = () => {
           <span id="history-title">{{ TEACHER_HOME.historyTitle }}</span>
           <el-button text circle aria-label="更多历史记录"><el-icon><MoreFilled /></el-icon></el-button>
         </div>
-        <button v-for="item in TEACHER_HOME.history" :key="item.id" class="history-item" type="button">
+        <button v-for="item in history" :key="item.id" class="history-item" type="button" @click="router.push({ path: '/main/workspace', query: { ...(route.query.preview ? { preview: '1' } : {}), projectId: item.id } })">
           <span>{{ item.title }}</span><small>{{ item.time }}</small>
         </button>
       </section>
       <footer class="teacher-profile">
-        <el-avatar :size="38" shape="square">{{ TEACHER_HOME.teacher.initials }}</el-avatar>
-        <div class="profile-copy"><strong>{{ TEACHER_HOME.teacher.name }}</strong><span>{{ TEACHER_HOME.teacher.role }}</span></div>
+        <el-avatar :size="38" shape="square">{{ teacher.initials }}</el-avatar>
+        <div class="profile-copy"><strong>{{ teacher.name }}</strong><span>{{ teacher.role }}</span></div>
         <el-button text circle aria-label="设置"><el-icon><Setting /></el-icon></el-button>
       </footer>
     </aside>
@@ -85,7 +102,7 @@ const toggleTheme = () => {
         <div class="topbar-actions">
           <el-button text circle aria-label="切换主题" @click="toggleTheme"><el-icon><component :is="isDark ? Sunny : Moon" /></el-icon></el-button>
           <el-button text circle aria-label="通知"><el-icon><Bell /></el-icon></el-button>
-          <el-avatar :size="34">{{ TEACHER_HOME.teacher.initials }}</el-avatar>
+          <el-avatar :size="34">{{ teacher.initials }}</el-avatar>
         </div>
       </header>
       <router-view />

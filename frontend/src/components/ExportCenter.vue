@@ -5,10 +5,13 @@
 -->
 <script setup>
 import { computed, onMounted, ref, watch } from 'vue'
+import { useRoute } from 'vue-router'
 import { ElMessage } from 'element-plus'
 import { CircleCheck, Download, Files, Refresh, Search, Warning } from '@element-plus/icons-vue'
 import { EXPORT_PAGE } from '../config/teacherPages.config.js'
-import { downloadExportArtifact, listExportTasks, retryExportTask } from '../apis/teacher'
+import { createExportTask, downloadExportArtifact, listExportTasks, precheckExport, retryExportTask } from '../apis/teacher'
+
+const route = useRoute()
 
 const keyword = ref('')
 const activeTab = ref('全部任务')
@@ -45,8 +48,18 @@ const filteredTasks = computed(() => {
   })
 })
 
-/** 模拟创建标准格式导出任务。 */
-const createExport = () => ElMessage.info('请在工作台选择项目快照后发起导出')
+const createExport = async () => {
+  const projectId = route.query.projectId
+  if (!projectId) return ElMessage.info('请在工作台选择项目后发起导出')
+  try {
+    const precheck = await precheckExport(projectId, { snapshot_version: 1, export_type: 'package' })
+    const checkData = precheck?.data || precheck || {}
+    if (checkData.passed === false) return ElMessage.error(checkData.errors?.[0] || '导出前校验未通过')
+    await createExportTask({ project_id: Number(projectId), snapshot_version: 1, export_type: 'package', config: '{}' })
+    ElMessage.success('导出任务已创建')
+    await loadTasks()
+  } catch { ElMessage.error('创建导出任务失败，请稍后重试') }
+}
 const download = async (row) => {
   if (!row.id) return ElMessage.info('示例任务暂不支持下载')
   try {

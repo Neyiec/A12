@@ -17,6 +17,7 @@ import {
   Promotion,
 } from '@element-plus/icons-vue'
 import { TEACHER_HOME } from '../config/teacherHome.config.js'
+import { createAiSession, createProject } from '../apis/teacher'
 
 const router = useRouter()
 const route = useRoute()
@@ -30,10 +31,21 @@ const applySuggestion = (suggestion) => {
 }
 
 /** 创建演示任务并进入创作工作台。 */
-const sendPrompt = () => {
+const sending = ref(false)
+const sendPrompt = async () => {
   if (!canSend.value) return
-  ElMessage.success('教学思路已梳理，正在展开创作工作台')
-  router.push({ path: '/main/workspace', query: route.query.preview ? { preview: '1' } : {} })
+  sending.value = true
+  try {
+    const title = prompt.value.trim().slice(0, 60)
+    const session = await createAiSession({ title, subject: '未指定', grade: '未指定', messages: JSON.stringify([{ role: 'user', text: prompt.value.trim() }]) })
+    const taskId = session?.data?.id || session?.data?.task_id || session?.id
+    const project = await createProject({ project_name: title, project_type: 'courseware', status: 'draft', current_version: 1, snapshots: '{}', edit_history: '[]' })
+    const projectId = project?.data?.id || project?.id
+    ElMessage.success('已创建备课项目')
+    router.push({ path: '/main/workspace', query: { ...(route.query.preview ? { preview: '1' } : {}), ...(projectId ? { projectId } : {}), ...(taskId ? { sessionId: taskId } : {}) } })
+  } catch {
+    ElMessage.error('创建备课项目失败，请检查后端服务后重试')
+  } finally { sending.value = false }
 }
 </script>
 
@@ -84,6 +96,7 @@ const sendPrompt = () => {
           circle
           :icon="Promotion"
           :disabled="!canSend"
+          :loading="sending"
           :aria-label="TEACHER_HOME.composer.send"
           @click="sendPrompt"
         />
