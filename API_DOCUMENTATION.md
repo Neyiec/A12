@@ -12,19 +12,21 @@
 
 ## API-01 POST /api/v1/auth/register
 
-**功能**: 注册教师账号（服务端强制设置角色为教师，拒绝客户端指定角色）
+**功能**: 注册教师账号。先通过 API-02 发送验证码到邮箱，再将验证码连同注册信息提交至此接口。服务端校验验证码后创建账号（直接激活，is_active=1）
 
 **请求体 (JSON)**
 | 字段 | 类型 | 必填 | 说明 |
 |---|---|---|---|
 | `username` | String | **是** | 登录用户名 |
-| `password_hash` | String | **是** | 密码（前端加密后传输） |
+| `password` | String | **是** | 密码（前端传明文，后端哈希后存储） |
 | `real_name` | String | **是** | 真实姓名 |
 | `phone` | String | **是** | 手机号 |
 | `email` | String | **是** | 邮箱 |
 | `avatar` | String | 否 | 头像 URL |
+| `code` | String | **是** | 验证码 |
 
-**后端 DTO**: 暂无独立 DTO（可复用 `UserDTO` 但不接收 user_type/roles）
+
+**后端 DTO**: ``
 
 **响应 VO**: `Result<UserVO>` — 注册成功返回用户信息
 
@@ -32,13 +34,14 @@
 
 ## API-02 POST /api/v1/auth/verification-codes
 
-**功能**: 向绑定的手机号或邮箱发送验证码
+**功能**: 发送邮箱验证码
 
 **请求体 (JSON)**
 | 字段 | 类型 | 必填 | 说明 |
 |---|---|---|---|
-| `username` | String | **是** | 账号（用于确认绑定手机/邮箱） |
-| `channel` | String | **是** | 发送渠道: `phone` / `email` |
+| `username` | String | **是** | 注册场景填邮箱，密码重置场景填用户名 |
+| `scene` | String | **是** | 场景: `register` / `password_reset` |
+| `channel` | String | **是** | 发送渠道: 仅支持 `email` |
 
 **后端 DTO**: 暂无独立 DTO
 
@@ -48,7 +51,7 @@
 
 ## API-03 POST /api/v1/auth/verify
 
-**功能**: 校验验证码并将账号状态由待验证→正常
+**功能**: 校验验证码（目前仅用于密码重置场景；注册场景的验证码校验在 API-01 中完成）
 
 **请求体 (JSON)**
 | 字段 | 类型 | 必填 | 说明 |
@@ -69,9 +72,9 @@
 | 字段 | 类型 | 必填 | 说明 |
 |---|---|---|---|
 | `username` | String | **是** | 账号 |
-| `password_hash` | String | **是** | 密码（前端加密后传输） |
+| `password` | String | **是** | 密码（前端传明文，后端哈希后存储） |
 
-**后端 DTO**: `LoginDTO { username, password_hash }`
+**后端 DTO**: `LoginDTO { username, password }`
 
 **响应 VO**: `Result<LoginVO>` — 含 token、用户基本信息、角色权限
 
@@ -95,8 +98,8 @@
 | 字段 | 类型 | 必填 | 说明 |
 |---|---|---|---|
 | `username` | String | **是** | 账号 |
-| `initial_password` | String | **是** | 初始密码 |
-| `new_password_hash` | String | **是** | 新密码（前端加密） |
+| `initial_password` | String | **是** | 初始密码（前端传明文，后端哈希后校验） |
+| `new_password` | String | **是** | 新密码（前端传明文，后端哈希后存储） |
 
 **后端 DTO**: 暂无独立 DTO
 
@@ -113,7 +116,7 @@
 |---|---|---|---|
 | `username` | String | **是** | 账号 |
 | `code` | String | **是** | 密码重置验证码 |
-| `new_password_hash` | String | **是** | 新密码 |
+| `new_password` | String | **是** | 新密码（前端传明文，后端哈希后存储） |
 
 **后端 DTO**: 暂无独立 DTO
 
@@ -128,8 +131,8 @@
 **请求体 (JSON)**
 | 字段 | 类型 | 必填 | 说明 |
 |---|---|---|---|
-| `current_password_hash` | String | **是** | 当前密码 |
-| `new_password_hash` | String | **是** | 新密码 |
+| `current_password` | String | **是** | 当前密码（前端传明文，后端哈希后校验） |
+| `new_password` | String | **是** | 新密码（前端传明文，后端哈希后存储） |
 
 **后端 DTO**: 暂无独立 DTO
 
@@ -178,9 +181,28 @@
 
 ---
 
+## API-10 GET /api/v1/users/by-username
+
+**功能**: 根据用户名查询用户ID和基本信息
+
+**查询参数**: username(String, 必填) — 用户名
+
+**响应 VO**: Result<{id: int, username: String, real_name: String, email: String}>
+
+---
+
+## API-11 GET /api/v1/users/by-email
+
+**功能**: 根据邮箱查询用户ID和基本信息
+
+**查询参数**: email(String, 必填) — 邮箱
+
+**响应 VO**: Result<{id: int, username: String, real_name: String, email: String}>
+
+---
 # 三、AI 教学引擎
 
-## API-10 POST /api/v1/ai/sessions
+## API-12 POST /api/v1/ai/sessions
 
 **功能**: 创建备课会话，提交文字、语音、参考资料、Skill和课程信息
 
@@ -200,7 +222,7 @@
 
 ---
 
-## API-11 POST /api/v1/ai/sessions/{id}/messages
+## API-13 POST /api/v1/ai/sessions/{id}/messages
 
 **功能**: 对话中补充需求、回答澄清问题或提交反馈
 
@@ -217,7 +239,7 @@
 
 ---
 
-## API-12 GET /api/v1/ai/sessions/{id}/plan
+## API-14 GET /api/v1/ai/sessions/{id}/plan
 
 **功能**: 获取当前教学设计大纲及版本
 
@@ -229,7 +251,7 @@
 
 ---
 
-## API-13 POST /api/v1/ai/sessions/{id}/plan-confirmations
+## API-15 POST /api/v1/ai/sessions/{id}/plan-confirmations
 
 **功能**: 确认、退回或补充教学设计大纲
 
@@ -248,7 +270,7 @@
 
 ---
 
-## API-14 POST /api/v1/ai/sessions/{id}/runs
+## API-16 POST /api/v1/ai/sessions/{id}/runs
 
 **功能**: 依据已确认计划创建执行任务
 
@@ -260,7 +282,7 @@
 
 ---
 
-## API-15 GET /api/v1/ai/runs/{runId}
+## API-17 GET /api/v1/ai/runs/{runId}
 
 **功能**: 查询生成、反思及失败状态
 
@@ -272,7 +294,7 @@
 
 ---
 
-## API-16 GET /api/v1/ai/runs/{runId}/events
+## API-18 GET /api/v1/ai/runs/{runId}/events
 
 **功能**: 通过 SSE 接收阶段、进度和预览更新，支持断线续传
 
@@ -291,7 +313,9 @@
 
 # 四、项目模块
 
-## API-17 POST /api/v1/projects
+> **权限说明**：所有需要对项目进行写操作的接口，均需校验当前用户是否为项目拥有者（user_id == currentId）或被授权用户（currentId 存在于 permissions JSON 数组中）。
+
+## API-20 POST /api/v1/projects
 
 **功能**: 创建个人教学项目或社区派生项目
 
@@ -310,7 +334,7 @@
 
 ---
 
-## API-18 GET /api/v1/projects
+## API-21 GET /api/v1/projects
 
 **功能**: 按名称、课程、成果类型、状态和更新时间分页查询项目
 
@@ -330,9 +354,10 @@
 
 ---
 
-## API-19 GET /api/v1/projects/{id}
+## API-22 GET /api/v1/projects/{id}
 
 **功能**: 获取项目内容、元数据、当前版本和权限
+**权限**: 仅项目拥有者或被授权用户可以查看
 
 **路径参数**: `id` — 项目ID
 
@@ -340,7 +365,7 @@
 
 ---
 
-## API-20 PATCH /api/v1/projects/{id}
+## API-23 PATCH /api/v1/projects/{id}
 
 **功能**: 修改项目名称、类型、状态等元数据，使用版本号防并发覆盖
 
@@ -360,7 +385,7 @@
 
 ---
 
-## API-21 POST /api/v1/projects/{id}/copies
+## API-24 POST /api/v1/projects/{id}/copies
 
 **功能**: 复制有权访问的项目并创建新的私有项目
 
@@ -377,7 +402,7 @@
 
 ---
 
-## API-22 POST /api/v1/projects/{id}/archive
+## API-25 POST /api/v1/projects/{id}/archive
 
 **功能**: 归档项目，禁止继续编辑
 
@@ -389,7 +414,7 @@
 
 ---
 
-## API-23 POST /api/v1/projects/{id}/restore
+## API-26 POST /api/v1/projects/{id}/restore
 
 **功能**: 将归档或可恢复删除状态的项目恢复为可用
 
@@ -401,7 +426,7 @@
 
 ---
 
-## API-24 DELETE /api/v1/projects/{id}
+## API-27 DELETE /api/v1/projects/{id}
 
 **功能**: 校验权限、保留期和关联导出任务后永久删除
 
@@ -413,7 +438,7 @@
 
 ---
 
-## API-25 POST /api/v1/projects/{id}/ai-revisions
+## API-28 POST /api/v1/projects/{id}/ai-revisions
 
 **功能**: 对指定页面或组件执行自然语言修改
 
@@ -433,7 +458,7 @@
 
 ---
 
-## API-26 POST /api/v1/projects/{id}/components
+## API-29 POST /api/v1/projects/{id}/components
 
 **功能**: 插入文本、图片、音视频、表格、H5或学科工具组件
 
@@ -455,7 +480,7 @@
 
 ---
 
-## API-27 PATCH /api/v1/projects/{id}/components/{componentId}
+## API-30 PATCH /api/v1/projects/{id}/components/{componentId}
 
 **功能**: 修改组件内容、位置和样式
 
@@ -473,7 +498,7 @@
 
 ---
 
-## API-28 POST /api/v1/projects/{id}/versions
+## API-31 POST /api/v1/projects/{id}/versions
 
 **功能**: 保存不可变项目版本并返回版本编号
 
@@ -490,7 +515,7 @@
 
 ---
 
-## API-29 GET /api/v1/projects/{id}/versions
+## API-32 GET /api/v1/projects/{id}/versions
 
 **功能**: 分页查询项目历史版本、创建人、说明和创建时间
 
@@ -508,7 +533,7 @@
 
 ---
 
-## API-30 GET /api/v1/projects/{id}/versions/{versionId}/diff
+## API-33 GET /api/v1/projects/{id}/versions/{versionId}/diff
 
 **功能**: 将目标版本与指定版本或当前版本进行差异比较
 
@@ -523,7 +548,7 @@
 
 ---
 
-## API-31 POST /api/v1/projects/{id}/versions/{versionId}/restore
+## API-34 POST /api/v1/projects/{id}/versions/{versionId}/restore
 
 **功能**: 基于历史版本创建新的当前版本，不修改原历史记录
 
@@ -535,37 +560,70 @@
 
 ---
 
+## API-35 POST /api/v1/projects/{id}/permissions
+
+**功能**: 添加项目授权用户。仅项目创建者（拥有者）可以调用，将被授权用户的ID加入到项目的 `permissions` JSON 数组中（去重）。
+
+**路径参数**: `id` — 项目ID
+
+**请求体 (JSON)**
+| 字段 | 类型 | 必填 | 说明 |
+|---|---|---|---|
+| `user_id` | Integer | **是** | 要授权的用户ID（需已注册） |
+
+**后端 DTO**: `ProjectPermissionDTO { user_id }`
+
+**响应 VO**: `Result<ProjectVO>` — 更新后的项目信息（含最新的 `permissions` 列表）
+
+---
+
 # 五、个人资源库
 
-## API-32 POST /api/v1/resources/uploads
+## API-36 POST /api/v1/resources/upload-tokens
  
- **功能**: 上传文件到个人资源库，后端接收文件后存储到阿里云 OSS 并返回资源元数据
+ **功能**: 获取 OSS 签名上传 URL。后端生成唯一 objectKey 并返回签名 PUT URL，前端拿到 URL 后直传阿里云 OSS
  
- **请求体 (Multipart/Form-Data)**
+ **请求体 (JSON)**
  | 字段 | 类型 | 必填 | 说明 |
  |---|---|---|---|
- | `file` | File | **是** | 要上传的文件（Multipart） |
+ | `file_name` | String | **是** | 文件名 |
  | `file_type` | String | 否 | 文件类型: `word`/`pdf`/`ppt`/`txt`/`image`/`audio`/`video`（不传则根据扩展名自动检测） |
+ | `description` | String | 否 | 文件描述 |
+ | `replace_target_id` | Integer | 否 | 要替换的资源ID（替换时后端会清理旧文件并软删除旧记录） |
  
- **后端 DTO**: `MultipartFile`
+ **后端 DTO**: `UploadTokenDTO { file_name, file_type, description, replace_target_id }`
  
- **响应 VO**: `Result<MaterialVO>` — 上传完成后的资源元数据
+ **响应 VO**: `Result<UploadTokenVO>`
  
- ---
- 
- ~~## API-33 POST /api/v1/resources/uploads/{id}/complete (已弃用)~~
- 
- **功能**: ~~已弃用，上传改为一步完成，不再需要创建会话后再完成~~
- 
- **路径参数**: ~~`id` — 上传会话ID~~
- 
- **后端参数**: ~~无请求体~~
- 
- **响应 VO**: ~~`Result<MaterialVO>` — 完成后的资源元数据~~
+ | UploadTokenVO 字段 | 类型 | 说明 |
+ |---|---|---|
+ | `object_key` | String | OSS 对象键 |
+ | `upload_url` | String | 签名 PUT URL（有效期60分钟） |
+ | `expires_at` | LocalDateTime | URL 过期时间 |
  
  ---
  
-## API-34 GET /api/v1/resources
+## API-37 POST /api/v1/resources/uploaded-files
+ 
+ **功能**: 前端直传 OSS 成功后通知后端确认。后端验证文件已存在于 OSS，创建资源记录并存入数据库
+ 
+ **请求体 (JSON)**
+ | 字段 | 类型 | 必填 | 说明 |
+ |---|---|---|---|
+ | `object_key` | String | **是** | API-36 返回的 object_key |
+ | `file_name` | String | **是** | 文件名 |
+ | `file_size` | long | **是** | 文件大小（字节） |
+ | `file_type` | String | 否 | 文件类型，不传则根据扩展名自动检测 |
+ | `description` | String | 否 | 文件描述 |
+ | `replace_target_id` | Integer | 否 | 要替换的资源ID |
+ 
+ **后端 DTO**: `ResourceUploadConfirmDTO { object_key, file_name, file_size, file_type, description, replace_target_id }`
+ 
+ **响应 VO**: `Result<MaterialVO>` — 资源元数据
+ 
+ ---
+ 
+## API-38 GET /api/v1/resources
 
 **功能**: 按名称、课程、章节、知识点、标签、类型和时间分页检索资源
 
@@ -584,7 +642,7 @@
 
 ---
 
-## API-35 GET /api/v1/resources/{id}
+## API-39 GET /api/v1/resources/{id}
 
 **功能**: 获取资源元数据、分类、解析状态和当前权限摘要
 
@@ -594,7 +652,7 @@
 
 ---
 
-## API-36 PATCH /api/v1/resources/{id}
+## API-40 PATCH /api/v1/resources/{id}
 
 **功能**: 编辑资源名称、标签、课程、分类或所在目录
 
@@ -614,7 +672,7 @@
 
 ---
 
-## API-37 DELETE /api/v1/resources/{id}
+## API-41 DELETE /api/v1/resources/{id}
 
 **功能**: 删除资源并触发关联知识索引停用
 
@@ -626,7 +684,7 @@
 
 ---
 
-## API-38 POST /api/v1/resources/batch-actions
+## API-42 POST /api/v1/resources/batch-actions
 
 **功能**: 按幂等键批量移动、分类或删除资源
 
@@ -644,7 +702,7 @@
 
 ---
 
-## API-39 GET /api/v1/resources/{id}/permission
+## API-43 GET /api/v1/resources/{id}/permission
 
 **功能**: 获取资源私有/共享状态、共享对象及访问权限
 
@@ -654,7 +712,7 @@
 
 ---
 
-## API-40 PUT /api/v1/resources/{id}/permission
+## API-44 PUT /api/v1/resources/{id}/permission
 
 **功能**: 设置资源私有状态、共享对象及访问权限
 
@@ -673,7 +731,7 @@
 
 ---
 
-## API-41 GET /api/v1/resources/{id}/audit-logs
+## API-45 GET /api/v1/resources/{id}/audit-logs
 
 **功能**: 查看权限和元数据修改记录
 
@@ -689,7 +747,7 @@
 
 ---
 
-## API-42 POST /api/v1/resources/{id}/download-url
+## API-46 POST /api/v1/resources/{id}/download-url
 
 **功能**: 校验权限并生成短时下载地址
 
@@ -701,7 +759,7 @@
 
 # 六、成果导出中心
 
-## API-43 POST /api/v1/projects/{id}/export-prechecks
+## API-47 POST /api/v1/projects/{id}/export-prechecks
 
 **功能**: 检查项目快照、素材、字体、兼容性、版权和敏感信息
 
@@ -715,7 +773,7 @@
 
 ---
 
-## API-44 POST /api/v1/export-tasks
+## API-48 POST /api/v1/export-tasks
 
 **功能**: 绑定项目快照、模板版本和导出参数，创建异步导出任务
 
@@ -732,7 +790,7 @@
 
 ---
 
-## API-45 GET /api/v1/export-tasks
+## API-49 GET /api/v1/export-tasks
 
 **功能**: 分页查询本人或获授权的导出任务
 
@@ -748,7 +806,7 @@
 
 ---
 
-## API-46 GET /api/v1/export-tasks/{id}
+## API-50 GET /api/v1/export-tasks/{id}
 
 **功能**: 查看进度、失败原因、质量状态和文件状态
 
@@ -777,42 +835,42 @@
 
 ---
 
-## API-47 POST /api/v1/export-tasks/{id}/cancel
+## API-51 POST /api/v1/export-tasks/{id}/cancel
 **功能**: 取消排队中或生成中的任务
 **路径参数**: `id` — 导出任务ID
 **响应 VO**: `Result<ExportTaskVO>`
 
 ---
 
-## API-48 POST /api/v1/export-tasks/{id}/retry
+## API-52 POST /api/v1/export-tasks/{id}/retry
 **功能**: 按原快照和参数重新执行
 **路径参数**: `id` — 导出任务ID
 **响应 VO**: `Result<ExportTaskVO>`
 
 ---
 
-## API-49 GET /api/v1/export-tasks/{id}/quality-report
+## API-53 GET /api/v1/export-tasks/{id}/quality-report
 **功能**: 获取导出质量报告、警告和降级项
 **路径参数**: `id` — 导出任务ID
 **响应 VO**: `Result<{quality_report: String(JSON)}>`
 
 ---
 
-## API-50 GET /api/v1/export-artifacts/{id}
+## API-54 GET /api/v1/export-artifacts/{id}
 **功能**: 获取成果文件元数据、文件状态、缩略图清单和可预览类型
 **路径参数**: `id` — 成果文件ID
 **响应 VO**: `Result<ExportTaskVO>`
 
 ---
 
-## API-51 POST /api/v1/export-artifacts/{id}/preview-url
+## API-55 POST /api/v1/export-artifacts/{id}/preview-url
 **功能**: 生成成果缩略图或预览文件的短时访问地址
 **路径参数**: `id` — 成果文件ID
 **响应 VO**: `Result<{preview_url: String, expires_at: LocalDateTime}>`
 
 ---
 
-## API-52 POST /api/v1/export-artifacts/{id}/download-url
+## API-56 POST /api/v1/export-artifacts/{id}/download-url
 **功能**: 生成成果文件的短时下载链接
 **路径参数**: `id` — 成果文件ID
 **响应 VO**: `Result<{download_url: String, expires_at: LocalDateTime}>`
@@ -821,7 +879,7 @@
 
 # 七、社区模块
 
-## API-53 GET /api/v1/community/items
+## API-57 GET /api/v1/community/items
 **功能**: 检索公开可用的 Skill 和教学案例
 
 **查询参数**:
@@ -839,7 +897,7 @@
 
 ---
 
-## API-54 GET /api/v1/community/items/{id}
+## API-58 GET /api/v1/community/items/{id}
 **功能**: 获取用途、变量、示例、作者、版本和授权信息
 **路径参数**: `id` — 内容ID
 **响应 VO**: `Result<ContentVO>`
@@ -869,49 +927,49 @@
 
 ---
 
-## API-55 PUT /api/v1/community/items/{id}/favorite
+## API-59 PUT /api/v1/community/items/{id}/favorite
 **功能**: 收藏指定社区内容
 **路径参数**: `id` — 内容ID
 **响应 VO**: `Result<Void>`
 
 ---
 
-## API-56 DELETE /api/v1/community/items/{id}/favorite
+## API-60 DELETE /api/v1/community/items/{id}/favorite
 **功能**: 取消收藏
 **路径参数**: `id` — 内容ID
 **响应 VO**: `Result<Void>`
 
 ---
 
-## API-57 POST /api/v1/community/items/{id}/view-events
+## API-61 POST /api/v1/community/items/{id}/view-events
 **功能**: 记录浏览事件（按用户和内容幂等更新）
 **路径参数**: `id` — 内容ID
 **响应 VO**: `Result<Void>`
 
 ---
 
-## API-58 GET /api/v1/community/favorites
+## API-62 GET /api/v1/community/favorites
 **功能**: 分页查询当前用户收藏的公开可用内容
 **查询参数**: page(默认1), size(默认10)
 **响应 VO**: `Result<PageResult<ContentVO>>`
 
 ---
 
-## API-59 GET /api/v1/community/recent-views
+## API-63 GET /api/v1/community/recent-views
 **功能**: 分页查询当前用户最近浏览记录
 **查询参数**: page(默认1), size(默认10)
 **响应 VO**: `Result<PageResult<{item: ContentVO, viewed_at: LocalDateTime}>>`
 
 ---
 
-## API-60 DELETE /api/v1/community/recent-views/{itemId}
+## API-64 DELETE /api/v1/community/recent-views/{itemId}
 **功能**: 移除指定最近浏览记录
 **路径参数**: `itemId` — 内容ID
 **响应 VO**: `Result<Void>`
 
 ---
 
-## API-61 POST /api/v1/community/items/{id}/reuse
+## API-65 POST /api/v1/community/items/{id}/reuse
 **功能**: 校验内容状态、版本和授权，复制到个人空间并返回派生项目
 **路径参数**: `id` — 内容ID
 **请求体 (JSON)**
@@ -924,7 +982,7 @@
 
 ---
 
-## API-62 POST /api/v1/community/submissions
+## API-66 POST /api/v1/community/submissions
 **功能**: 创建投稿草稿
 **请求体 (JSON)**
 | 字段 | 类型 | 必填 | 说明 |
@@ -944,7 +1002,7 @@
 
 ---
 
-## API-63 GET /api/v1/community/submissions
+## API-67 GET /api/v1/community/submissions
 **功能**: 分页查询当前教师的投稿及审核状态
 **查询参数**: status(否), page(否), size(否)
 **后端 DTO**: `ContentQueryDTO extends PageQuery { status }`
@@ -952,23 +1010,23 @@
 
 ---
 
-## API-64 GET /api/v1/community/submissions/{id}
+## API-68 GET /api/v1/community/submissions/{id}
 **功能**: 获取投稿草稿、版本、审核状态和退回意见
 **路径参数**: `id` — 投稿ID
 **响应 VO**: `Result<ContentVO>`
 
 ---
 
-## API-65 PATCH /api/v1/community/submissions/{id}
+## API-69 PATCH /api/v1/community/submissions/{id}
 **功能**: 修改草稿或退回修改状态的投稿
 **路径参数**: `id` — 投稿ID
-**请求体**: 与 API-62 相同结构，全选填
+**请求体**: 与 API-66 相同结构，全选填
 **后端 DTO**: `ContentDTO`
 **响应 VO**: `Result<ContentVO>`
 
 ---
 
-## API-66 POST /api/v1/community/submissions/{id}/versions
+## API-70 POST /api/v1/community/submissions/{id}/versions
 **功能**: 保存投稿不可变版本
 **路径参数**: `id` — 投稿ID
 **请求体**: description(否)
@@ -976,7 +1034,7 @@
 
 ---
 
-## API-67 POST /api/v1/community/submissions/{id}/submit
+## API-71 POST /api/v1/community/submissions/{id}/submit
 **功能**: 提交审核（首期MVP由功能开关禁用）
 **路径参数**: `id` — 投稿ID
 **请求体 (JSON)**
@@ -988,7 +1046,7 @@
 
 ---
 
-## API-68 POST /api/v1/community/reports
+## API-72 POST /api/v1/community/reports
 **功能**: 创建举报记录
 **请求体 (JSON)**
 | 字段 | 类型 | 必填 | 说明 |
@@ -1002,14 +1060,14 @@
 
 ---
 
-## API-69 GET /api/v1/community/reports
+## API-73 GET /api/v1/community/reports
 **功能**: 分页查询本人举报及处理状态
 **查询参数**: status(否), page(否), size(否)
 **响应 VO**: `Result<PageResult<AuditVO>>`
 
 ---
 
-## API-70 GET /api/v1/community/reports/{id}
+## API-74 GET /api/v1/community/reports/{id}
 **功能**: 获取举报受理状态及处理结果
 **路径参数**: `id` — 举报ID
 **响应 VO**: `Result<AuditVO>`
@@ -1018,7 +1076,7 @@
 
 # 八、后台 — 用户权限模块
 
-## API-71 GET /api/v1/admin/users
+## API-75 GET /api/v1/admin/users
 **功能**: 按角色、账号状态和关键词分页查询用户
 **查询参数**: keyword(否), user_type(否), is_active(否), page(默认1), size(默认10)
 **后端 DTO**: `UserQueryDTO extends PageQuery { keyword, user_type, is_active }`
@@ -1026,14 +1084,14 @@
 
 ---
 
-## API-72 GET /api/v1/admin/users/{id}
+## API-76 GET /api/v1/admin/users/{id}
 **功能**: 获取用户状态、角色、权限摘要及安全状态
 **路径参数**: `id` — 用户ID
 **响应 VO**: `Result<UserVO>`
 
 ---
 
-## API-73 PATCH /api/v1/admin/users/{id}/status
+## API-77 PATCH /api/v1/admin/users/{id}/status
 **功能**: 启用、停用或锁定用户账号
 **路径参数**: `id` — 用户ID
 **请求体 (JSON)**
@@ -1044,41 +1102,41 @@
 
 ---
 
-## API-74 POST /api/v1/admin/users
+## API-78 POST /api/v1/admin/users
 **功能**: 创建单个后台账号
 **请求体 (JSON)**
 | 字段 | 类型 | 必填 | 说明 |
 |---|---|---|---|
 | `username` | String | **是** | 用户名 |
-| `password_hash` | String | **是** | 密码 |
+| `password` | String | **是** | 密码（前端传明文，后端哈希后存储） |
 | `real_name` | String | **是** | 真实姓名 |
 | `phone` | String | 否 | 手机号 |
 | `email` | String | 否 | 邮箱 |
 | `user_type` | String | **是** | `admin` |
 | `roles` | String(JSON) | **是** | 角色列表 |
-**后端 DTO**: `UserDTO { username, password_hash, real_name, phone, email, avatar, user_type, roles, permissions, is_active }`
+**后端 DTO**: `UserDTO { username, password, real_name, phone, email, avatar, user_type, roles, permissions, is_active }`
 **响应 VO**: `Result<UserVO>`
 
 ---
 
-## API-75 POST /api/v1/admin/users/batch
+## API-79 POST /api/v1/admin/users/batch
 **功能**: 批量创建后台账号
 **请求体 (JSON)**
 | 字段 | 类型 | 必填 | 说明 |
 |---|---|---|---|
 | `idempotent_key` | String | **是** | 幂等键 |
-| `users` | Array | **是** | 用户列表（每个同API-74结构） |
+| `users` | Array | **是** | 用户列表（每个同API-78结构，密码传明文，后端哈希后存储） |
 **响应 VO**: `Result<{results: Array<{username, success, initial_credentials, error}>>}`
 
 ---
 
-## API-76 GET /api/v1/admin/roles
+## API-80 GET /api/v1/admin/roles
 **功能**: 查询后台角色、权限集合及审核范围
 **响应 VO**: `Result<Array<{role_id, role_name, permissions, audit_scope}>>`
 
 ---
 
-## API-77 PUT /api/v1/admin/users/{id}/roles
+## API-81 PUT /api/v1/admin/users/{id}/roles
 **功能**: 分配系统管理员或内容审核员角色
 **路径参数**: `id` — 用户ID
 **请求体 (JSON)**: `roles`(String JSON) **是**
@@ -1086,7 +1144,7 @@
 
 ---
 
-## API-78 PUT /api/v1/admin/roles/{id}/permissions
+## API-82 PUT /api/v1/admin/roles/{id}/permissions
 **功能**: 配置后台功能权限及审核范围
 **路径参数**: `id` — 角色ID
 **请求体 (JSON)**: `permissions`(String JSON) **是**
@@ -1096,7 +1154,7 @@
 
 # 九、后台 — 公共资源模块
 
-## API-79 GET /api/v1/admin/public-resources
+## API-83 GET /api/v1/admin/public-resources
 **功能**: 分页查询公共资源
 **查询参数**: resource_type(否), status(否), page(默认1), size(默认10)
 **响应 VO**: `Result<PageResult<ResourceVO>>`
@@ -1119,7 +1177,7 @@
 
 ---
 
-## API-80 POST /api/v1/admin/public-resources/uploads
+## API-84 POST /api/v1/admin/public-resources/uploads
 **功能**: 创建公共资源上传会话
 **请求体 (JSON)**: resource_type(**是**), title(**是**), file_url(**是**), file_size(**是**)
 **后端 DTO**: `ResourceDTO { resource_type, title, subject, grade, file_url, template_data, thumbnail, description, status }`
@@ -1127,21 +1185,21 @@
 
 ---
 
-## API-81 POST /api/v1/admin/public-resources/uploads/{id}/complete
+## API-85 POST /api/v1/admin/public-resources/uploads/{id}/complete
 **功能**: 完成上传并触发安全检测
 **路径参数**: `id` — 上传会话ID
 **响应 VO**: `Result<ResourceVO>`
 
 ---
 
-## API-82 GET /api/v1/admin/public-resources/{id}
+## API-86 GET /api/v1/admin/public-resources/{id}
 **功能**: 获取公共资源详情
 **路径参数**: `id` — 资源ID
 **响应 VO**: `Result<ResourceVO>`
 
 ---
 
-## API-83 PATCH /api/v1/admin/public-resources/{id}
+## API-87 PATCH /api/v1/admin/public-resources/{id}
 **功能**: 更新公共资源元数据
 **路径参数**: `id` — 资源ID
 **请求体**: title(否), subject(否), grade(否), description(否)
@@ -1150,7 +1208,7 @@
 
 ---
 
-## API-84 PUT /api/v1/admin/public-resources/{id}/status
+## API-88 PUT /api/v1/admin/public-resources/{id}/status
 **功能**: 启用/停用公共资源
 **路径参数**: `id` — 资源ID
 **请求体**: status(int) **是** 0=停用 1=启用
@@ -1158,7 +1216,7 @@
 
 ---
 
-## API-85 GET /api/v1/admin/public-resources/{id}/processing-status
+## API-89 GET /api/v1/admin/public-resources/{id}/processing-status
 **功能**: 查询处理状态
 **路径参数**: `id` — 资源ID
 **响应 VO**: `Result<{security_check, parse_status, index_status, error_msg}>`
@@ -1167,21 +1225,21 @@
 
 # 十、后台 — 内容审核与举报处理
 
-## API-86 GET /api/v1/admin/moderation/tasks
+## API-90 GET /api/v1/admin/moderation/tasks
 **功能**: 按状态、对象类型和审核员查询审核任务
 **查询参数**: status(否), target_type(否), handler_id(否), page(默认1), size(默认10)
 **响应 VO**: `Result<PageResult<AuditVO>>`
 
 ---
 
-## API-87 GET /api/v1/admin/moderation/tasks/{id}
+## API-91 GET /api/v1/admin/moderation/tasks/{id}
 **功能**: 获取待审内容、投稿人、来源版本、授权信息和检测结果
 **路径参数**: `id` — 审核任务ID
 **响应 VO**: `Result<AuditVO>`
 
 ---
 
-## API-88 POST /api/v1/admin/moderation/tasks/{id}/decisions
+## API-92 POST /api/v1/admin/moderation/tasks/{id}/decisions
 **功能**: 提交审核决定
 **路径参数**: `id` — 审核任务ID
 **请求体 (JSON)**
@@ -1194,7 +1252,7 @@
 
 ---
 
-## API-89 PUT /api/v1/admin/community-items/{id}/status
+## API-93 PUT /api/v1/admin/community-items/{id}/status
 **功能**: 上架/下架/停用社区内容
 **路径参数**: `id` — 社区内容ID
 **请求体**: status(String) **是** `published`/`unpublished`/`disabled`
@@ -1202,7 +1260,7 @@
 
 ---
 
-## API-90 PUT /api/v1/admin/community-items/{id}/recommendation
+## API-94 PUT /api/v1/admin/community-items/{id}/recommendation
 **功能**: 设置推荐或置顶
 **路径参数**: `id` — 社区内容ID
 **请求体 (JSON)**
@@ -1214,21 +1272,21 @@
 
 ---
 
-## API-91 GET /api/v1/admin/reports
+## API-95 GET /api/v1/admin/reports
 **功能**: 分页查询举报
 **查询参数**: status(否): `pending`/`processing`/`resolved`, page(否), size(否)
 **响应 VO**: `Result<PageResult<AuditVO>>`
 
 ---
 
-## API-92 GET /api/v1/admin/reports/{id}
+## API-96 GET /api/v1/admin/reports/{id}
 **功能**: 查看举报详情
 **路径参数**: `id` — 举报ID
 **响应 VO**: `Result<AuditVO>`
 
 ---
 
-## API-93 POST /api/v1/admin/reports/{id}/resolution
+## API-97 POST /api/v1/admin/reports/{id}/resolution
 **功能**: 提交举报处理结论
 **路径参数**: `id` — 举报ID
 **请求体 (JSON)**
@@ -1243,21 +1301,21 @@
 
 # 十一、后台 — 导出模板模块
 
-## API-94 GET /api/v1/admin/export-templates
+## API-98 GET /api/v1/admin/export-templates
 **功能**: 分页查询导出模板
 **查询参数**: export_type(否), status(否), page(否), size(否)
 **响应 VO**: `Result<PageResult<{id, name, export_type, version, status, created_at, updated_at}>>`
 
 ---
 
-## API-95 POST /api/v1/admin/export-templates
+## API-99 POST /api/v1/admin/export-templates
 **功能**: 创建导出模板及首个版本
 **请求体 (JSON)**: name(**是**), export_type(**是**), template_data(**是**), description(否)
 **响应 VO**: `Result<{id, version}>`
 
 ---
 
-## API-96 PATCH /api/v1/admin/export-templates/{id}
+## API-100 PATCH /api/v1/admin/export-templates/{id}
 **功能**: 更新模板元数据或创建新版本
 **路径参数**: `id` — 模板ID
 **请求体**: name(否), template_data(否), description(否)
@@ -1265,7 +1323,7 @@
 
 ---
 
-## API-97 PUT /api/v1/admin/export-templates/{id}/status
+## API-101 PUT /api/v1/admin/export-templates/{id}/status
 **功能**: 发布或停用模板版本
 **路径参数**: `id` — 模板ID
 **请求体**: status(String) **是** `published`/`unpublished`
@@ -1275,7 +1333,7 @@
 
 # 十二、后台 — AI配置模块
 
-## API-98 GET /api/v1/admin/ai-configs
+## API-102 GET /api/v1/admin/ai-configs
 **功能**: 查询模型、工具和运行参数配置
 **查询参数**: config_group(否)
 **响应 VO**: `Result<Array<ConfigVO>>`
@@ -1292,7 +1350,7 @@
 
 ---
 
-## API-99 POST /api/v1/admin/ai-configs
+## API-103 POST /api/v1/admin/ai-configs
 **功能**: 创建AI配置版本
 **请求体 (JSON)**: config_group(**是**), config_key(**是**), config_value(**是**), description(否)
 **后端 DTO**: `ConfigDTO { config_group, config_key, config_value, description }`
@@ -1300,14 +1358,14 @@
 
 ---
 
-## API-100 POST /api/v1/admin/ai-configs/{id}/publish
+## API-121 POST /api/v1/admin/ai-configs/{id}/publish
 **功能**: 发布AI配置版本
 **路径参数**: `id` — 配置ID
 **响应 VO**: `Result<{node_status: Array<{node, status}>>}`
 
 ---
 
-## API-101 POST /api/v1/admin/ai-configs/{id}/rollback
+## API-122 POST /api/v1/admin/ai-configs/{id}/rollback
 **功能**: 回滚到指定历史配置
 **路径参数**: `id` — 配置ID
 **请求体 (JSON)**: target_version(int **是**), reason(String **是**)
@@ -1317,13 +1375,13 @@
 
 # 十三、后台 — 安全策略
 
-## API-102 GET /api/v1/admin/security-policies
+## API-123 GET /api/v1/admin/security-policies
 **功能**: 获取安全策略及当前生效版本
 **响应 VO**: `Result<Array<ConfigVO>>`
 
 ---
 
-## API-103 PUT /api/v1/admin/security-policies/{id}
+## API-124 PUT /api/v1/admin/security-policies/{id}
 **功能**: 更新安全策略（版本号防并发覆盖）
 **路径参数**: `id` — 策略ID
 **请求体 (JSON)**: config_value(**是**), version(int **是**)
@@ -1332,7 +1390,7 @@
 
 ---
 
-## API-104 POST /api/v1/admin/security-policies/{id}/publish
+## API-125 POST /api/v1/admin/security-policies/{id}/publish
 **功能**: 发布安全策略
 **路径参数**: `id` — 策略ID
 **响应 VO**: `Result<{published: boolean}>`
@@ -1341,7 +1399,7 @@
 
 # 十四、后台 — 日志与看板
 
-## API-105 GET /api/v1/admin/audit-logs
+## API-126 GET /api/v1/admin/audit-logs
 **功能**: 查询脱敏后的业务审计日志
 **查询参数**: user_id(否), log_type(否), module(否), start_time(否), end_time(否), page(默认1), size(默认10)
 **后端 DTO**: `LogQueryDTO extends PageQuery { user_id, log_type, module, start_time, end_time }`
@@ -1362,7 +1420,7 @@
 
 ---
 
-## API-106 GET /api/v1/admin/system-logs
+## API-127 GET /api/v1/admin/system-logs
 **功能**: 查询脱敏后的系统运行及异常日志
 **查询参数**: log_type(否), module(否), start_time(否), end_time(否), page(默认1), size(默认10)
 **后端 DTO**: `LogQueryDTO`
@@ -1370,34 +1428,34 @@
 
 ---
 
-## API-107 GET /api/v1/admin/dashboard
+## API-128 GET /api/v1/admin/dashboard
 **功能**: 查询业务指标
 **响应 VO**: `Result<{user_count, resource_count, ai_task_count, export_task_count, moderation_pending_count}>`
 
 ---
 
-## API-108 GET /api/v1/admin/alerts
+## API-129 GET /api/v1/admin/alerts
 **功能**: 分页查询告警
 **查询参数**: level(否), source(否), status(否), page(默认1), size(默认10)
 **响应 VO**: `Result<PageResult<{id, level, source, title, status, created_at, resolved_at}>>`
 
 ---
 
-## API-109 GET /api/v1/admin/alerts/{id}
+## API-130 GET /api/v1/admin/alerts/{id}
 **功能**: 获取告警详情
 **路径参数**: `id` — 告警ID
 **响应 VO**: `Result<{id, level, source, title, detail, status, acknowledged_by, resolved_by, created_at, acknowledged_at, resolved_at}>`
 
 ---
 
-## API-110 POST /api/v1/admin/alerts/{id}/acknowledge
+## API-131 POST /api/v1/admin/alerts/{id}/acknowledge
 **功能**: 确认告警
 **路径参数**: `id` — 告警ID
 **响应 VO**: `Result<Void>`
 
 ---
 
-## API-111 POST /api/v1/admin/alerts/{id}/resolve
+## API-132 POST /api/v1/admin/alerts/{id}/resolve
 **功能**: 解决告警
 **路径参数**: `id` — 告警ID
 **请求体**: resolution(String **是**)

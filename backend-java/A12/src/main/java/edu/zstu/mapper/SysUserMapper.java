@@ -1,6 +1,7 @@
 package edu.zstu.mapper;
 
 import edu.zstu.entity.Sys_User;
+import edu.zstu.dto.UserQueryDTO;
 import org.apache.ibatis.annotations.*;
 
 import java.util.List;
@@ -17,4 +18,5 @@ public interface SysUserMapper {
     int updateActiveStatus(@Param("id") Integer id, @Param("isActive") Integer isActive);
     int changePassword(@Param("newPasswordHash") String newPasswordHash, @Param("username") String username);
     int deleteById(@Param("id") Integer id);
+    List<Sys_User> findByQuery(UserQueryDTO dto);
 }

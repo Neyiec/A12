@@ -3,14 +3,27 @@ import{
     createWebHashHistory
 } from 'vue-router'
 
-import HelloWorld from '../components/HelloWorld.vue'
+import login from '../components/login.vue'
+import main from '../components/main.vue'
 import {getRouters} from'../apis/login.js'
 import {isTokenExpired} from '../utils/JWTParser.js'
+// 全局用户 store — 替代直接操作 localStorage
+import { useUserStore } from '../storage/user.js'
+import path from 'node:path'
 
-const routes = [{
+const routes = [
+  {
+    path: '/',
+    redirect: '/main',
+  },
+  {
     path: '/login',
-    component: HelloWorld
-}
+    component: login,
+  },
+  {
+    path: '/main',
+    component: main
+  }
 ]
 
 const router = createRouter({
@@ -60,29 +73,41 @@ export function addDynamicRoutes(menus) {
 let menusLoaded = false
 
 router.beforeEach((to, from, next) => {
-  const token = localStorage.getItem('token')
-  
+  // 本地开发预览入口：便于在外部浏览器检查教师端界面，不影响生产环境鉴权。
+  const isDevelopmentPreview =
+    import.meta.env.DEV && to.path.startsWith('/main') && to.query.preview === '1'
+
+  if (isDevelopmentPreview) {
+    next()
+    return
+  }
+
+  // 从 Pinia store 获取 token（自动从持久化的 localStorage 恢复）
+  const userStore = useUserStore()
+  const token = userStore.token
+
   if (to.path !== '/login' && (!token || isTokenExpired(token))) {
     next('/login')
     return
   }
 
-  if(!token || isTokenExpired(token)){
-      localStorage.removeItem('token')
-      localStorage.removeItem('menus')
-      menusLoaded = false
-    }
-  // 
-  if (to.path.startsWith('/main') && !menusLoaded) {
+  // 清除过期或缺失 token 的用户状态
+  if (!token || isTokenExpired(token)) {
+    userStore.clearUser()
+    menusLoaded = false
+  }
+
+  // 动态路由加载：非静态教师页面且菜单未加载时，请求后端获取菜单
+  if (to.path.startsWith('/main/') && !to.meta.staticTeacherPage && !menusLoaded) {
     getRouters().then(res => {
       // 添加动态路由
       addDynamicRoutes(res.data.menus)
       // 标记菜单已加载
       menusLoaded = true
-      // 存储菜单数据
-      localStorage.setItem('menus', JSON.stringify(res.data.menus));
+      // 将菜单数据存入 Pinia store（自动持久化）
+      userStore.setMenus(res.data.menus)
 
-      next(to.fullPath);
+      next(to.fullPath)
     })
   } else {
     next()

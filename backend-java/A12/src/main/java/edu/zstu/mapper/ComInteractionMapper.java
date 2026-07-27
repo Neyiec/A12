@@ -12,4 +12,7 @@ public interface ComInteractionMapper {
     int insert(Com_Interaction interaction);
     int deleteByUserAndTarget(@Param("userId") Integer userId, @Param("targetType") String targetType,
                               @Param("targetId") Integer targetId, @Param("actionType") String actionType);
+    List<Com_Interaction> findRecentViewsByUser(@Param("userId") Integer userId);
+    Com_Interaction findByUserAndTarget(@Param("userId") Integer userId, @Param("actionType") String actionType,
+                                        @Param("targetType") String targetType, @Param("targetId") Integer targetId);
 }

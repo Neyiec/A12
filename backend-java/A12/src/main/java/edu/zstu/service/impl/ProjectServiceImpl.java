@@ -1,12 +1,16 @@
 package edu.zstu.service.impl;
 
 import cn.hutool.core.bean.BeanUtil;
+import cn.hutool.json.JSONArray;
+import cn.hutool.json.JSONUtil;
 import com.github.pagehelper.PageHelper;
 import com.github.pagehelper.PageInfo;
 import edu.zstu.dto.*;
+import edu.zstu.entity.Sys_User;
 import edu.zstu.entity.Ws_Page;
 import edu.zstu.entity.Ws_Project;
 import edu.zstu.entity.Ws_Version;
+import edu.zstu.mapper.SysUserMapper;
 import edu.zstu.mapper.WsPageMapper;
 import edu.zstu.mapper.WsProjectMapper;
 import edu.zstu.mapper.WsVersionMapper;
@@ -16,6 +20,7 @@ import edu.zstu.vo.PageVO;
 import edu.zstu.vo.ProjectVO;
 import edu.zstu.vo.VersionVO;
 import org.springframework.stereotype.Service;
+import org.springframework.transaction.annotation.Transactional;
 
 import java.util.*;
 
@@ -25,11 +30,14 @@ public class ProjectServiceImpl implements ProjectService {
     private final WsProjectMapper projectMapper;
     private final WsPageMapper pageMapper;
     private final WsVersionMapper versionMapper;
+    private final SysUserMapper userMapper;
 
-    public ProjectServiceImpl(WsProjectMapper projectMapper, WsPageMapper pageMapper, WsVersionMapper versionMapper) {
+    public ProjectServiceImpl(WsProjectMapper projectMapper, WsPageMapper pageMapper,
+                              WsVersionMapper versionMapper, SysUserMapper userMapper) {
         this.projectMapper = projectMapper;
         this.pageMapper = pageMapper;
         this.versionMapper = versionMapper;
+        this.userMapper = userMapper;
     }
 
     @Override
@@ -67,16 +75,18 @@ public class ProjectServiceImpl implements ProjectService {
         return r;
     }
 
-    @Override public ProjectVO getProject(String id) {
-        Ws_Project project=projectMapper.findById(Integer.valueOf(id));
+    @Override
+    public ProjectVO getProject(String id, Integer userId) {
+        Ws_Project project = projectMapper.findById(Integer.valueOf(id));
         if (project == null) throw new RuntimeException("项目不存在");
+        checkPermission(project, userId);
         return toProjectVO(project);
     }
 
     @Override
     public ProjectVO updateProject(String id, ProjectCreateDTO dto, Integer userId) {
         Ws_Project p = findProject(id);
-        checkOwner(p, userId);
+        checkPermission(p, userId);
         checkEditable(p);
         if (dto.getCurrent_version() == null || dto.getCurrent_version() != p.getCurrent_version())
             throw new RuntimeException("版本冲突，请刷新后重试");
@@ -85,7 +95,33 @@ public class ProjectServiceImpl implements ProjectService {
         if (dto.getStatus() != null) p.setStatus(dto.getStatus());
         if (dto.getSnapshots() != null) p.setSnapshots(dto.getSnapshots());
         if (dto.getEdit_history() != null) p.setEdit_history(dto.getEdit_history());
+        if (dto.getPermissions() != null) p.setPermissions(dto.getPermissions());
         p.setCurrent_version(p.getCurrent_version() + 1);
+        projectMapper.update(p);
+        return toProjectVO(p);
+    }
+
+    @Override
+    public ProjectVO addPermission(String id, ProjectPermissionDTO dto, Integer userId) {
+        Ws_Project p = findProject(id);
+        // 仅项目拥有者可添加授权
+        if (p.getUser_id() != userId) throw new RuntimeException("仅项目创建者可添加授权");
+        if (dto.getUser_id() == null) throw new RuntimeException("用户ID不能为空");
+        // 校验被授权用户存在
+        Sys_User targetUser = userMapper.findById(dto.getUser_id());
+        if (targetUser == null) throw new RuntimeException("指定用户不存在");
+        // 解析现有权限列表
+        JSONArray arr;
+        if (p.getPermissions() != null && !p.getPermissions().isBlank()) {
+            arr = JSONUtil.parseArray(p.getPermissions());
+        } else {
+            arr = new JSONArray();
+        }
+        // 去重添加
+        if (!arr.contains(dto.getUser_id())) {
+            arr.add(dto.getUser_id());
+        }
+        p.setPermissions(JSONUtil.toJsonStr(arr));
         projectMapper.update(p);
         return toProjectVO(p);
     }
@@ -93,14 +129,22 @@ public class ProjectServiceImpl implements ProjectService {
     @Override
     public ProjectVO copyProject(String id, ProjectCopyDTO dto, Integer userId) {
         Ws_Project src = findProject(id);
-        checkOwner(src, userId);
+        checkPermission(src, userId);
         Ws_Project np = new Ws_Project();
         np.setUser_id(userId);
         np.setProject_name(dto.getNew_name() != null ? dto.getNew_name() : src.getProject_name() + " - 副本");
         np.setProject_type(src.getProject_type());
         np.setStatus("draft");
         np.setCurrent_version(1);
+        np.setPermissions(src.getPermissions());
         projectMapper.insert(np);
+        List<Ws_Page> pages = pageMapper.findByProjectId(src.getId());
+        for (Ws_Page page : pages) {
+            Ws_Page newPage = new Ws_Page();
+            BeanUtil.copyProperties(page, newPage, "id", "project_id", "created_at", "updated_at");
+            newPage.setProject_id(np.getId());
+            pageMapper.insert(newPage);
+        }
         return toProjectVO(np);
     }
 
@@ -109,7 +153,7 @@ public class ProjectServiceImpl implements ProjectService {
     @Override
     public ProjectVO archiveProject(String id, Integer userId) {
         Ws_Project p = findProject(id);
-        checkOwner(p, userId);
+        checkPermission(p, userId);
         projectMapper.updateStatus(p.getId(), "archived");
         p.setStatus("archived");
         return toProjectVO(p);
@@ -118,23 +162,27 @@ public class ProjectServiceImpl implements ProjectService {
     @Override
     public ProjectVO restoreProject(String id, Integer userId) {
         Ws_Project p = findProject(id);
-        checkOwner(p, userId);
+        checkPermission(p, userId);
         projectMapper.updateStatus(p.getId(), "draft");
         p.setStatus("draft");
         return toProjectVO(p);
     }
 
     @Override
+    @Transactional
     public void deleteProject(String id, Integer userId) {
         Ws_Project p = findProject(id);
-        checkOwner(p, userId);
-        projectMapper.deleteById(p.getId());
+        checkPermission(p, userId);
+        int projectId = p.getId();
+        pageMapper.deleteByProjectId(projectId);
+        versionMapper.deleteByProjectId(projectId);
+        projectMapper.deleteById(projectId);
     }
 
     @Override
     public PageVO aiRevision(String id, AiRevisionDTO dto, Integer userId) {
         Ws_Project p = findProject(id);
-        checkOwner(p, userId);
+        checkPermission(p, userId);
         checkEditable(p);
         // 暂不接入 AI，仅做校验返回空 PageVO
         return new PageVO();
@@ -143,7 +191,7 @@ public class ProjectServiceImpl implements ProjectService {
     @Override
     public PageVO addComponent(String id, PageDTO dto, Integer userId) {
         Ws_Project p = findProject(id);
-        checkOwner(p, userId);
+        checkPermission(p, userId);
         checkEditable(p);
         Ws_Page page = new Ws_Page();
         BeanUtil.copyProperties(dto, page);
@@ -156,7 +204,7 @@ public class ProjectServiceImpl implements ProjectService {
     @Override
     public PageVO updateComponent(String id, String componentId, PageDTO dto, Integer userId) {
         Ws_Project p = findProject(id);
-        checkOwner(p, userId);
+        checkPermission(p, userId);
         checkEditable(p);
         Ws_Page page = pageMapper.findById(Integer.valueOf(componentId));
         if (page.getProject_id() != Integer.valueOf(id)) throw new RuntimeException("页面不属于该项目");
@@ -171,7 +219,7 @@ public class ProjectServiceImpl implements ProjectService {
     @Override
     public Map<String, Object> saveVersion(String id, VersionCreateDTO dto, Integer userId) {
         Ws_Project p = findProject(id);
-        checkOwner(p, userId);
+        checkPermission(p, userId);
         checkEditable(p);
         int nextNum = versionMapper.findMaxVersionNumber(Integer.valueOf(id)) + 1;
         Ws_Version v = new Ws_Version();
@@ -188,7 +236,7 @@ public class ProjectServiceImpl implements ProjectService {
     @Override
     public PageResult<VersionVO> listVersions(String id, PageQuery pageQuery, Integer userId) {
         Ws_Project p = findProject(id);
-        checkOwner(p, userId);
+        checkPermission(p, userId);
         PageHelper.startPage(pageQuery.getPage(), pageQuery.getSize());
         List<Ws_Version> list = versionMapper.findByProjectId(Integer.valueOf(id));
         PageInfo<Ws_Version> info = new PageInfo<>(list);
@@ -211,7 +259,7 @@ public class ProjectServiceImpl implements ProjectService {
     @Override
     public Map<String, Object> versionDiff(String id, String versionId, Integer compareVersionId, Integer userId) {
         Ws_Project p = findProject(id);
-        checkOwner(p, userId);
+        checkPermission(p, userId);
         Ws_Version v1 = versionMapper.findById(Integer.valueOf(versionId));
         if (v1 == null) throw new RuntimeException("版本不存在");
         Map<String, Object> r = new HashMap<>();
@@ -225,7 +273,7 @@ public class ProjectServiceImpl implements ProjectService {
     @Override
     public ProjectVO restoreVersion(String id, String versionId, Integer userId) {
         Ws_Project p = findProject(id);
-        checkOwner(p, userId);
+        checkPermission(p, userId);
         Ws_Version v = versionMapper.findById(Integer.valueOf(versionId));
         if (v == null) throw new RuntimeException("版本不存在");
         p.setCurrent_version(p.getCurrent_version() + 1);
@@ -241,8 +289,15 @@ public class ProjectServiceImpl implements ProjectService {
         return p;
     }
 
-    private void checkOwner(Ws_Project p, Integer userId) {
-        if (p.getUser_id() != userId) throw new RuntimeException("无权操作该项目");
+    private void checkPermission(Ws_Project p, Integer userId) {
+        // 项目拥有者直接通过
+        if (p.getUser_id() == userId) return;
+        // 被授权的用户也通过
+        if (p.getPermissions() != null && !p.getPermissions().isBlank()) {
+            JSONArray arr = JSONUtil.parseArray(p.getPermissions());
+            if (arr.contains(userId)) return;
+        }
+        throw new RuntimeException("无权操作该项目");
     }
 
     private void checkEditable(Ws_Project p) {

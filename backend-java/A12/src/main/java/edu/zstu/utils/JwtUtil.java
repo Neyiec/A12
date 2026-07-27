@@ -50,7 +50,7 @@ public class JwtUtil {
             newConfig.setConfig_value(keyStr);
             newConfig.setDescription("JWT HMAC-SHA256签名密钥（自动生成）");
             newConfig.setUpdated_by(0);
-            newConfig.setUpdated_at(LocalDateTime.now().toString());
+            newConfig.setUpdated_at(LocalDateTime.now());
             configMapper.insert(newConfig);
         }
         this.secretKey = Keys.hmacShaKeyFor(keyStr.getBytes(StandardCharsets.UTF_8));

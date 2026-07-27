@@ -1,4 +1,4 @@
-﻿package edu.zstu.config;
+package edu.zstu.config;
 
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;

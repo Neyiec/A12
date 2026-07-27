@@ -14,7 +14,7 @@ public class Adm_Audit {
     private String audit_type; //类型(audit/report)
     private String target_type; //目标类型(skill/case)
     private int target_id;
-    private int reporter_id; //举报人ID(审核时为空)
+    private Integer reporter_id; //举报人ID(审核时为空)
     private String reason; //举报原因/审核备注
     private int handler_id; //处理人ID
     private String action; //处理动作(approve/reject/offline/ignore)

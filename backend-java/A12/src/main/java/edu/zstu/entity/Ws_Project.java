@@ -19,6 +19,7 @@ public class Ws_Project {
     private int current_version; //当前版本号
     private String snapshots; //json字符串 版本快照列表
     private String edit_history; //json字符串 编辑历史列表
+    private String permissions; //json字符串 授权用户ID列表
     private LocalDateTime created_at;
     private LocalDateTime updated_at;
 }

@@ -12,13 +12,14 @@
         <result column="current_version" property="current_version"/>
         <result column="snapshots" property="snapshots"/>
         <result column="edit_history" property="edit_history"/>
+        <result column="permissions" property="permissions"/>
         <result column="created_at" property="created_at"/>
         <result column="updated_at" property="updated_at"/>
     </resultMap>
 
     <sql id="Base_Columns">
         id, user_id, task_id, project_name, project_type, status,
-        current_version, snapshots, edit_history, created_at, updated_at
+        current_version, snapshots, edit_history, permissions, created_at, updated_at
     </sql>
 
     <select id="findById" resultMap="BaseResultMap">
@@ -35,9 +36,9 @@
 
     <insert id="insert" useGeneratedKeys="true" keyProperty="id">
         INSERT INTO ws_project(user_id, task_id, project_name, project_type, status,
-                               current_version, snapshots, edit_history, created_at, updated_at)
+                               current_version, snapshots, edit_history, permissions, created_at, updated_at)
         VALUES(#{user_id}, #{task_id}, #{project_name}, #{project_type}, #{status},
-               #{current_version}, #{snapshots}, #{edit_history}, NOW(), NOW())
+               #{current_version}, #{snapshots}, #{edit_history}, #{permissions}, NOW(), NOW())
     </insert>
 
     <update id="update">
@@ -49,6 +50,7 @@
             <if test="current_version != null">current_version = #{current_version},</if>
             <if test="snapshots != null">snapshots = #{snapshots},</if>
             <if test="edit_history != null">edit_history = #{edit_history},</if>
+            <if test="permissions != null">permissions = #{permissions},</if>
             updated_at = NOW()
         </set>
         WHERE id = #{id}

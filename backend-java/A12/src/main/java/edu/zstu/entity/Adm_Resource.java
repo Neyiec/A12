@@ -19,6 +19,7 @@ public class Adm_Resource {
     private String template_data; //json字符串 组件模板数据(仅component类型)
     private String thumbnail;
     private String description;
+    private Long file_size;
     private int status; //状态(1启用/0禁用)
     private int uploaded_by; //上传人ID
     private LocalDateTime created_at;

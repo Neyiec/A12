@@ -11,8 +11,9 @@ import java.util.Map;
 public interface ProjectService {
     ProjectVO createProject(ProjectCreateDTO dto, Integer userId);
     PageResult<ProjectVO> listProjects(ProjectQueryDTO dto, Integer userId);
-    ProjectVO getProject(String id);
+    ProjectVO getProject(String id, Integer userId);
     ProjectVO updateProject(String id, ProjectCreateDTO dto, Integer userId);
+    ProjectVO addPermission(String id, ProjectPermissionDTO dto, Integer userId);
     ProjectVO copyProject(String id, ProjectCopyDTO dto, Integer userId);
     ProjectVO archiveProject(String id, Integer userId);
     ProjectVO restoreProject(String id, Integer userId);

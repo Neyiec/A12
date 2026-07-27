@@ -22,6 +22,7 @@ public class ResourceVO {
     private String template_data;
     private String thumbnail;
     private String description;
+    private Long file_size;
     private int status;
     private Integer uploaded_by;
     private LocalDateTime created_at;
