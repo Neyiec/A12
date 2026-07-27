@@ -10,15 +10,21 @@
   - 路由: 由 `/login` 路由匹配，见 `src/router/index.js`
 -->
 <script setup>
-import { ref, reactive, computed } from 'vue'
-import { useRouter } from 'vue-router'
+import { ref, reactive, computed, onMounted, onUnmounted } from 'vue'
+import { useRoute, useRouter } from 'vue-router'
 import { ElMessage } from 'element-plus'
 import { User, Lock } from '@element-plus/icons-vue'
-import { login, register } from '../apis/login.js'
+import { login, register, sendRegisterVerificationCode } from '../apis/login.js'
 import { LOGIN_TEXT, VALIDATION_RULES } from '../config/login.config.js'
 import { startPageTransition } from '../utils/pageTransition.js'
 
 const router = useRouter()
+const route = useRoute()
+
+/** 本地界面预览开关：仅 Vite 开发环境且 URL 带 ?preview=1 时有效。 */
+const isDevelopmentPreview = computed(() => (
+  import.meta.env.DEV && route.query.preview === '1'
+))
 
 // ========== 响应式状态 ==========
 
@@ -34,6 +40,15 @@ const registerFormRef = ref(null)
 const loginLoading = ref(false)
 /** 注册按钮加载态 */
 const registerLoading = ref(false)
+/** 发送验证码按钮加载态 */
+const verificationCodeLoading = ref(false)
+/** 验证码重发倒计时（秒） */
+const verificationCodeCountdown = ref(0)
+let verificationCodeTimer = null
+const backgroundCanvas = ref(null)
+let backgroundAnimation = null
+let removeCanvasResizeListener = null
+let removeCanvasPointerListeners = null
 
 /** 登录表单数据 */
 const loginForm = reactive({
@@ -45,6 +60,8 @@ const loginForm = reactive({
 /** 注册表单数据 */
 const registerForm = reactive({
   username: '',
+  email: '',
+  code: '',
   password: '',
   confirmPassword: '',
 })
@@ -94,6 +111,18 @@ const registerRules = computed(() => ({
     message: VALIDATION_RULES.username.message,
     trigger: VALIDATION_RULES.username.trigger,
   }],
+  email: [{
+    required: VALIDATION_RULES.email.required,
+    type: VALIDATION_RULES.email.type,
+    message: VALIDATION_RULES.email.message,
+    trigger: VALIDATION_RULES.email.trigger,
+  }],
+  code: [{
+    required: VALIDATION_RULES.verificationCode.required,
+    pattern: VALIDATION_RULES.verificationCode.pattern,
+    message: VALIDATION_RULES.verificationCode.message,
+    trigger: VALIDATION_RULES.verificationCode.trigger,
+  }],
   password: [{
     required: VALIDATION_RULES.password.required,
     min: VALIDATION_RULES.password.min,
@@ -126,9 +155,51 @@ const toggleMode = () => {
   loginFormRef.value?.resetFields()
   // 清空注册表单
   registerForm.username = ''
+  registerForm.email = ''
+  registerForm.code = ''
   registerForm.password = ''
   registerForm.confirmPassword = ''
   registerFormRef.value?.resetFields()
+
+  if (verificationCodeTimer) {
+    window.clearInterval(verificationCodeTimer)
+    verificationCodeTimer = null
+  }
+  verificationCodeCountdown.value = 0
+}
+
+/** 发送注册邮箱验证码，并启动与服务端一致的 60 秒重发倒计时。 */
+const handleSendVerificationCode = async () => {
+  if (!registerFormRef.value || verificationCodeCountdown.value > 0) return
+
+  try {
+    await registerFormRef.value.validateField('email')
+  } catch {
+    return
+  }
+
+  verificationCodeLoading.value = true
+  try {
+    const res = await sendRegisterVerificationCode(registerForm.email)
+    if (res?.code !== 200) {
+      ElMessage.error(res?.message || LOGIN_TEXT.message.verificationCodeFailed)
+      return
+    }
+
+    ElMessage.success(LOGIN_TEXT.message.verificationCodeSent)
+    verificationCodeCountdown.value = 60
+    verificationCodeTimer = window.setInterval(() => {
+      verificationCodeCountdown.value -= 1
+      if (verificationCodeCountdown.value <= 0) {
+        window.clearInterval(verificationCodeTimer)
+        verificationCodeTimer = null
+      }
+    }, 1000)
+  } catch {
+    ElMessage.error(LOGIN_TEXT.message.networkError)
+  } finally {
+    verificationCodeLoading.value = false
+  }
 }
 
 // ========== 提交处理 ==========
@@ -148,10 +219,36 @@ const handleLogin = async (event) => {
 
   loginLoading.value = true
   try {
+    // 本地预览无需启动后端，仍复用真实的页面转场和主界面路由。
+    if (isDevelopmentPreview.value) {
+      ElMessage.success(LOGIN_TEXT.message.loginSuccess)
+      await startPageTransition({
+        sourceEvent: event,
+        onCovered: () => router.push({ path: '/main', query: { preview: '1' } }),
+      })
+      return
+    }
+
     const res = await login({
       username: loginForm.username,
       password: loginForm.password,
     })
+
+    // 后端使用 Result<LoginVO> 包装响应：认证失败时仍会返回 HTTP 200，
+    // 因此前端必须先判断业务状态，不能直接读取 token。
+    if (res?.code !== 200 || !res?.data?.token) {
+      ElMessage.error(res?.message || LOGIN_TEXT.message.loginFailed)
+      loginForm.password = ''
+      return
+    }
+
+    // /main 是教师端入口，统一登录接口返回的管理员/审核员账号不可进入此处。
+    if (res.data.user_type !== 'teacher') {
+      ElMessage.error('当前账号没有教师端访问权限')
+      loginForm.password = ''
+      return
+    }
+
     // 存储认证信息
     localStorage.setItem('token', res.data.token)
     ElMessage.success(LOGIN_TEXT.message.loginSuccess)
@@ -190,10 +287,16 @@ const handleRegister = async () => {
 
   registerLoading.value = true
   try {
-    await register({
+    const res = await register({
       username: registerForm.username,
       password: registerForm.password,
+      email: registerForm.email,
+      code: registerForm.code,
     })
+    if (res?.code !== 200) {
+      ElMessage.error(res?.message || LOGIN_TEXT.message.registerFailed)
+      return
+    }
     ElMessage.success(LOGIN_TEXT.message.registerSuccess)
     // 注册成功后切换到登录模式
     toggleMode()
@@ -208,14 +311,180 @@ const handleRegister = async () => {
     registerLoading.value = false
   }
 }
+
+/** 低对比字符场：以缓慢呼吸和鼠标涟漪回应用户，不依赖第三方动画素材。 */
+const startFluidBackground = () => {
+  const canvas = backgroundCanvas.value
+  const context = canvas?.getContext('2d')
+  if (!canvas || !context) return
+
+  const prefersReducedMotion = window.matchMedia('(prefers-reduced-motion: reduce)').matches
+  const pointer = {
+    x: window.innerWidth * .72,
+    y: window.innerHeight * .5,
+    targetX: window.innerWidth * .72,
+    targetY: window.innerHeight * .5,
+    velocity: 0,
+    active: false,
+  }
+  const glyphs = '·:｡･+×○01'
+  let viewportWidth = window.innerWidth
+  let viewportHeight = window.innerHeight
+  let previousPointerX = pointer.x
+  let previousPointerY = pointer.y
+
+  const glyphAt = (column, row, phase) => {
+    // 变化沿斜向波带传播，避免整屏字符在同一帧机械切换。
+    const cycle = Math.floor(phase * 1.3 + row * .14 - column * .07)
+    return glyphs[(column * 7 + row * 11 + cycle) % glyphs.length]
+  }
+
+  const resize = () => {
+    const scale = Math.min(window.devicePixelRatio || 1, 2)
+    viewportWidth = window.innerWidth
+    viewportHeight = window.innerHeight
+    canvas.width = viewportWidth * scale
+    canvas.height = viewportHeight * scale
+    canvas.style.width = `${viewportWidth}px`
+    canvas.style.height = `${viewportHeight}px`
+    context.setTransform(scale, 0, 0, scale, 0, 0)
+  }
+
+  const paint = (time = 0) => {
+    const width = viewportWidth
+    const height = viewportHeight
+    const phase = time / 1000
+    context.clearRect(0, 0, width, height)
+
+    pointer.x += (pointer.targetX - pointer.x) * .12
+    pointer.y += (pointer.targetY - pointer.y) * .12
+    pointer.velocity *= .9
+
+    const ambientX = pointer.active
+      ? pointer.x
+      : width * (.72 + Math.sin(phase * .24) * .09)
+    const ambientY = pointer.active
+      ? pointer.y
+      : height * (.5 + Math.cos(phase * .19) * .12)
+    const ambient = context.createRadialGradient(
+      ambientX,
+      ambientY,
+      0,
+      ambientX,
+      ambientY,
+      Math.max(width, height) * .38,
+    )
+    ambient.addColorStop(0, `rgba(96, 165, 250, ${pointer.active ? .045 : .085})`)
+    ambient.addColorStop(.52, 'rgba(37, 99, 235, .02)')
+    ambient.addColorStop(1, 'rgba(247, 248, 252, 0)')
+    context.fillStyle = ambient
+    context.fillRect(0, 0, width, height)
+
+    const cellWidth = width < 640 ? 22 : 20
+    const cellHeight = width < 640 ? 25 : 23
+    const interactionRadius = Math.min(150, Math.max(105, width * .11))
+    const wake = Math.min(pointer.velocity / 26, 1)
+    context.font = `${width < 640 ? 11 : 12}px ui-monospace, SFMono-Regular, Menlo, Consolas, monospace`
+    context.textBaseline = 'middle'
+    context.textAlign = 'center'
+
+    for (let row = 0, y = cellHeight / 2; y < height + cellHeight; row += 1, y += cellHeight) {
+      for (let column = 0, x = cellWidth / 2; x < width + cellWidth; column += 1, x += cellWidth) {
+        const dx = x - pointer.x
+        const dy = y - pointer.y
+        const distance = Math.sqrt(dx * dx + dy * dy) || 1
+        const proximity = pointer.active
+          ? Math.max(0, 1 - distance / interactionRadius)
+          : 0
+        const easedProximity = proximity * proximity * (3 - 2 * proximity)
+        const directionX = dx / distance
+        const directionY = dy / distance
+        const idleWave = prefersReducedMotion
+          ? 0
+          : (Math.sin(phase * 1.28 - row * .2 + column * .09) + 1) / 2
+        const crossWave = prefersReducedMotion
+          ? 0
+          : Math.sin(phase * .9 + row * .11 + column * .17)
+        const signalBand = prefersReducedMotion
+          ? 0
+          : Math.max(0, Math.sin(phase * 1.02 - row * .15 + column * .045) - .68) / .32
+        const shimmerSeed = (column * 13 + row * 17) % 37
+        const shimmer = prefersReducedMotion
+          ? 0
+          : Math.max(0, Math.sin(phase * 1.34 + shimmerSeed) - .88) / .12
+        const wave = prefersReducedMotion
+          ? 0
+          : Math.sin(distance * .052 - phase * 3.1) * easedProximity
+        const displacement = easedProximity * (4 + wake * 5) + wave * 1.2
+        const offsetX = directionX * displacement + crossWave * .65
+        const offsetY = directionY * displacement + (idleWave - .5) * 3.4
+        const baseAlpha = .08 + idleWave * .1 + signalBand * .13 + shimmer * .09
+        const blueMix = easedProximity * (.07 + wake * .03)
+          + signalBand * .14
+        const finalAlpha = Math.min(baseAlpha + blueMix, .58)
+
+        context.fillStyle = blueMix > .06
+          ? `rgba(37, 99, 235, ${finalAlpha})`
+          : `rgba(102, 102, 102, ${baseAlpha})`
+        context.fillText(glyphAt(column, row, phase), x + offsetX, y + offsetY)
+      }
+    }
+
+    if (!prefersReducedMotion) backgroundAnimation = window.requestAnimationFrame(paint)
+  }
+
+  resize()
+  paint()
+  window.addEventListener('resize', resize)
+  const updatePointer = (event) => {
+    const deltaX = event.clientX - previousPointerX
+    const deltaY = event.clientY - previousPointerY
+    pointer.targetX = event.clientX
+    pointer.targetY = event.clientY
+    pointer.velocity = Math.max(pointer.velocity, Math.sqrt(deltaX * deltaX + deltaY * deltaY))
+    pointer.active = true
+    previousPointerX = event.clientX
+    previousPointerY = event.clientY
+  }
+  const clearPointer = () => {
+    pointer.active = false
+  }
+  window.addEventListener('pointermove', updatePointer, { passive: true })
+  document.documentElement.addEventListener('pointerleave', clearPointer)
+  window.addEventListener('blur', clearPointer)
+  removeCanvasResizeListener = () => window.removeEventListener('resize', resize)
+  removeCanvasPointerListeners = () => {
+    window.removeEventListener('pointermove', updatePointer)
+    document.documentElement.removeEventListener('pointerleave', clearPointer)
+    window.removeEventListener('blur', clearPointer)
+  }
+}
+
+onMounted(startFluidBackground)
+
+onUnmounted(() => {
+  if (verificationCodeTimer) {
+    window.clearInterval(verificationCodeTimer)
+  }
+  if (backgroundAnimation) window.cancelAnimationFrame(backgroundAnimation)
+  removeCanvasResizeListener?.()
+  removeCanvasPointerListeners?.()
+})
 </script>
 
 <template>
   <!-- 全屏容器：左右分栏 -->
-  <div class="flex h-screen overflow-hidden bg-(--zh-background-primary)">
+  <div class="login-shell flex min-h-[100dvh] overflow-hidden bg-(--zh-background-primary)">
+    <!-- 参考 Essential 的克制字符场：Canvas 负责缓慢呼吸和鼠标涟漪。 -->
+    <div class="login-tech-background" aria-hidden="true">
+      <canvas ref="backgroundCanvas" class="login-fluid-canvas"></canvas>
+      <div class="login-background-wash"></div>
+      <span class="login-calibration-mark login-calibration-mark--top"></span>
+      <span class="login-calibration-mark login-calibration-mark--bottom"></span>
+    </div>
 
     <!-- ========== 左侧：品牌展示区 (lg:w-5/12) ========== -->
-    <aside class="hidden lg:flex lg:w-5/12 relative overflow-hidden">
+    <aside class="login-brand-panel hidden lg:flex lg:w-5/12 relative overflow-hidden">
       <!--
         [此处需填写：AI生成的品牌插图]
         提示词: A futuristic digital classroom scene with a glowing holographic brain at the center
@@ -225,14 +494,14 @@ const handleRegister = async () => {
         建议尺寸: 1920×1280px, WebP 或 SVG 格式
       -->
       <img
-        class="absolute inset-0 w-full h-full object-cover"
+        class="login-brand-image absolute inset-0 w-full h-full object-cover"
         src="/image_384866672794550.png"
         alt="智核品牌插图"
       />
       <!-- 底部渐变遮罩，确保文字可读性 -->
-      <div class="absolute inset-0 bg-gradient-to-t from-black/40 via-black/10 to-transparent"></div>
+      <div class="login-brand-scrim absolute inset-0"></div>
       <!-- 品牌文字叠加层 -->
-      <div class="relative z-10 flex flex-col justify-end h-full p-12">
+      <div class="login-brand-copy relative z-10 flex flex-col justify-end h-full p-12">
         <!-- 品牌名 -->
         <h1 class="text-white text-[32px] font-bold mb-3 tracking-wide">
           {{ LOGIN_TEXT.brand.name }}
@@ -249,8 +518,8 @@ const handleRegister = async () => {
     </aside>
 
     <!-- ========== 右侧：登录/注册表单区 (lg:w-7/12) ========== -->
-    <main class="flex-1 flex items-center justify-center px-6 sm:px-10 lg:px-16">
-      <div class="w-full max-w-[440px]">
+    <main class="login-main relative z-10 flex-1 flex items-center justify-center px-6 py-10 sm:px-10 lg:px-16">
+      <div class="login-form-panel w-full max-w-[440px]">
 
         <!-- 移动端可见的品牌 Logo + 名称 -->
         <div class="flex flex-col items-center mb-10 lg:hidden">
@@ -370,6 +639,39 @@ const handleRegister = async () => {
                 />
               </el-form-item>
 
+              <!-- 注册邮箱及验证码 -->
+              <el-form-item :label="LOGIN_TEXT.label.email" prop="email">
+                <div class="flex w-full gap-3">
+                  <el-input
+                    v-model="registerForm.email"
+                    type="email"
+                    :placeholder="LOGIN_TEXT.placeholder.email"
+                    size="large"
+                    clearable
+                  />
+                  <el-button
+                    size="large"
+                    :loading="verificationCodeLoading"
+                    :disabled="verificationCodeCountdown > 0"
+                    @click="handleSendVerificationCode"
+                  >
+                    {{ verificationCodeCountdown > 0
+                      ? `${verificationCodeCountdown}${LOGIN_TEXT.button.resendVerificationCode}`
+                      : LOGIN_TEXT.button.sendVerificationCode }}
+                  </el-button>
+                </div>
+              </el-form-item>
+
+              <el-form-item :label="LOGIN_TEXT.label.verificationCode" prop="code">
+                <el-input
+                  v-model="registerForm.code"
+                  inputmode="numeric"
+                  maxlength="6"
+                  :placeholder="LOGIN_TEXT.placeholder.verificationCode"
+                  size="large"
+                />
+              </el-form-item>
+
               <!-- 密码 -->
               <el-form-item :label="LOGIN_TEXT.label.password" prop="password">
                 <el-input
@@ -428,6 +730,105 @@ const handleRegister = async () => {
 </template>
 
 <style scoped>
+.login-shell {
+  position: relative;
+  isolation: isolate;
+  background: var(--zh-background-light);
+}
+
+.login-tech-background {
+  position: absolute;
+  z-index: -1;
+  inset: 0;
+  overflow: hidden;
+  pointer-events: none;
+}
+
+.login-fluid-canvas {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+}
+
+.login-background-wash {
+  position: absolute;
+  inset: 0;
+  background:
+    linear-gradient(90deg, transparent 0 42%, rgb(247 248 252 / 12%) 48%, rgb(247 248 252 / 70%) 100%),
+    radial-gradient(circle at 74% 48%, transparent 0 28%, rgb(247 248 252 / 22%) 66%, rgb(247 248 252 / 58%) 100%);
+}
+
+.login-calibration-mark {
+  position: absolute;
+  right: 32px;
+  width: 16px;
+  height: 16px;
+  opacity: .46;
+}
+
+.login-calibration-mark::before,
+.login-calibration-mark::after {
+  position: absolute;
+  content: '';
+  background: var(--zh-line-theme50);
+}
+
+.login-calibration-mark::before {
+  top: 50%;
+  left: 0;
+  width: 100%;
+  height: 1px;
+}
+
+.login-calibration-mark::after {
+  top: 0;
+  left: 50%;
+  width: 1px;
+  height: 100%;
+}
+
+.login-calibration-mark--top { top: 32px; }
+.login-calibration-mark--bottom { bottom: 32px; }
+
+.login-brand-panel { border-right: 1px solid rgb(255 255 255 / 16%); }
+
+.login-brand-panel::after {
+  position: absolute;
+  z-index: 1;
+  inset: 0;
+  content: '';
+  pointer-events: none;
+  opacity: .32;
+  background-image:
+    radial-gradient(circle, rgb(191 219 254 / 42%) 1px, transparent 1.5px);
+  background-size: 20px 23px;
+  mask-image: linear-gradient(135deg, black, transparent 82%);
+}
+
+.login-brand-image {
+  filter: saturate(.82) contrast(1.04);
+  transform: scale(1.02);
+}
+
+.login-brand-scrim {
+  background:
+    linear-gradient(90deg, rgb(8 27 67 / 52%), rgb(8 27 67 / 7%)),
+    linear-gradient(0deg, rgb(7 20 50 / 78%), rgb(7 20 50 / 5%) 60%, rgb(7 20 50 / 20%));
+}
+
+.login-brand-copy { text-shadow: 0 2px 20px rgb(5 17 45 / 38%); }
+
+.login-form-panel {
+  padding: 36px;
+  border: 1px solid rgb(37 99 235 / 12%);
+  border-radius: var(--zh-radius16);
+  background: rgb(255 255 255 / 76%);
+  box-shadow: 0 24px 70px -36px rgb(30 64 175 / 30%), 0 1px 0 rgb(255 255 255 / 88%) inset;
+  backdrop-filter: blur(20px) saturate(1.1);
+  -webkit-backdrop-filter: blur(20px) saturate(1.1);
+}
+
 /* ===== 表单切换动画 ===== */
 
 /** 新内容从右侧滑入 */
@@ -478,5 +879,50 @@ const handleRegister = async () => {
 /** 大号输入框高度微调 */
 :deep(.el-input--large .el-input__wrapper) {
   padding: 12px 16px;
+  border: 1px solid var(--zh-line-border);
+  background: rgb(255 255 255 / 78%);
+  box-shadow: none;
+  transition: border-color .18s ease, box-shadow .18s ease, background .18s ease;
+}
+
+:deep(.el-input--large .el-input__wrapper.is-focus) {
+  border-color: var(--zh-line-theme);
+  background: #fff;
+  box-shadow: 0 0 0 3px var(--zh-line-theme20);
+}
+
+:deep(.el-button--primary) {
+  border: 0;
+  border-radius: var(--zh-radius8);
+  background: var(--zh-gradient-dblue);
+  box-shadow: 0 10px 20px -12px rgb(29 78 216 / 68%);
+  transition: transform .18s ease, box-shadow .18s ease, filter .18s ease;
+}
+
+:deep(.el-button--primary:hover) {
+  filter: brightness(1.04);
+  box-shadow: 0 14px 26px -14px rgb(29 78 216 / 78%);
+  transform: translateY(-1px);
+}
+
+:deep(.el-button--primary:active) { transform: translateY(0) scale(.98); }
+
+@media (max-width: 1023px) {
+  .login-form-panel {
+    max-width: 440px;
+    padding: 28px;
+  }
+}
+
+@media (max-width: 639px) {
+  .login-main { align-items: flex-start; padding-top: 72px; }
+  .login-form-panel { padding: 0; border: 0; background: transparent; box-shadow: none; backdrop-filter: none; }
+  .login-calibration-mark { right: 20px; }
+  .login-calibration-mark--top { top: 20px; }
+  .login-calibration-mark--bottom { bottom: 20px; }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .login-fluid-canvas { opacity: .72; }
 }
 </style>

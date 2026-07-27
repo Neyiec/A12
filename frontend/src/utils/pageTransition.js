@@ -1,6 +1,6 @@
 /**
  * 登录成功后的原点扩散转场。
- * 由点击位置扩散覆盖，在路由更新完成后向上收回。
+ * 由点击位置扩散覆盖，在路由更新完成后收回至同一视觉锚点。
  */
 const EXPAND_DURATION = 400
 const RETRACT_DURATION = 450
@@ -33,7 +33,7 @@ export async function startPageTransition({ sourceEvent, onCovered }) {
   await new Promise((resolve) => window.setTimeout(resolve, EXPAND_DURATION))
   await onCovered?.()
   overlay.classList.remove('is-expanding')
-  overlay.classList.add('is-retracting-slide-up')
+  overlay.classList.add('is-retracting-to-anchor')
 
   await new Promise((resolve) => window.setTimeout(resolve, RETRACT_DURATION))
   overlay.className = 'ui-page-transition'

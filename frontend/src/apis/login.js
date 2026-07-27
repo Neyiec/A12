@@ -30,6 +30,19 @@ export function register(user) {
 }
 
 /**
+ * 发送注册邮箱验证码
+ * @param {string} email - 注册邮箱
+ * @returns {Promise} 后端返回发送结果
+ */
+export function sendRegisterVerificationCode(email) {
+  return post('/api/v1/auth/verification-codes', {
+    username: email,
+    scene: 'register',
+    channel: 'email',
+  })
+}
+
+/**
  * 获取动态路由菜单
  * @returns {Promise} 后端返回 { menus: Array } 菜单树
  */

@@ -29,6 +29,8 @@ export const LOGIN_TEXT = {
   // ========== 输入框标签 ==========
   label: {
     username: '用户名',
+    email: '邮箱',
+    verificationCode: '验证码',
     password: '密码',
     confirmPassword: '确认密码',
   },
@@ -36,6 +38,8 @@ export const LOGIN_TEXT = {
   // ========== placeholder ==========
   placeholder: {
     username: '请输入用户名',
+    email: '请输入邮箱地址',
+    verificationCode: '请输入 6 位验证码',
     password: '请输入密码',
     registerPassword: '请输入密码（至少6位）',
     confirmPassword: '请再次输入密码',
@@ -47,6 +51,8 @@ export const LOGIN_TEXT = {
     register: '注册',
     loginLoading: '登录中...',
     registerLoading: '注册中...',
+    sendVerificationCode: '发送验证码',
+    resendVerificationCode: '秒后重发',
   },
 
   // ========== 隐私协议 ==========
@@ -70,6 +76,8 @@ export const LOGIN_TEXT = {
     loginFailed: '用户名或密码错误',
     networkError: '网络连接失败，请检查网络后重试',
     registerFailed: '注册失败，请稍后重试',
+    verificationCodeSent: '验证码已发送，请查收邮箱',
+    verificationCodeFailed: '验证码发送失败，请稍后重试',
     passwordMismatch: '两次输入的密码不一致',
   },
 }
@@ -86,6 +94,18 @@ export const VALIDATION_RULES = {
     required: true,
     min: 6,
     message: '密码至少需要6位',
+    trigger: ['blur', 'change'],
+  },
+  email: {
+    required: true,
+    type: 'email',
+    message: '请输入正确的邮箱地址',
+    trigger: ['blur', 'change'],
+  },
+  verificationCode: {
+    required: true,
+    pattern: /^\d{6}$/,
+    message: '请输入 6 位数字验证码',
     trigger: ['blur', 'change'],
   },
   confirmPassword: {
