@@ -17,3 +17,15 @@ export const downloadExportArtifact = (id) => post(`/api/v1/export-artifacts/${i
 export const createExportTask = (data) => post('/api/v1/export-tasks', data)
 
 export const patchProject = (id, data) => apiRequest({ url: `/api/v1/projects/${id}`, method: 'patch', data })
+
+// 教师端项目管理
+export const createProject = (data) => post('/api/v1/projects', data)
+export const listProjects = (params) => get('/api/v1/projects', params)
+export const getProject = (id) => get(`/api/v1/projects/${id}`)
+export const copyProject = (id, data = {}) => post(`/api/v1/projects/${id}/copies`, data)
+export const archiveProject = (id) => post(`/api/v1/projects/${id}/archive`)
+export const restoreProject = (id) => post(`/api/v1/projects/${id}/restore`)
+export const deleteProject = (id) => del(`/api/v1/projects/${id}`)
+export const saveProjectVersion = (id, data) => post(`/api/v1/projects/${id}/versions`, data)
+export const listProjectVersions = (id, params) => get(`/api/v1/projects/${id}/versions`, params)
+export const restoreProjectVersion = (id, versionId) => post(`/api/v1/projects/${id}/versions/${versionId}/restore`)
