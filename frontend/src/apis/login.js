@@ -49,3 +49,23 @@ export function sendVerificationCode(params) {
 export function getRouters() {
   return get('/api/v1/menu/routers')
 }
+
+/** 获取当前登录用户的最新资料。 */
+export function getCurrentUser() {
+  return get('/api/v1/users/me')
+}
+
+/** 修改当前登录用户密码。 */
+export function changePassword(data) {
+  return post('/api/v1/users/me/password-change', data)
+}
+
+/** 通过邮箱验证码重置密码。 */
+export function resetPassword(data) {
+  return post('/api/v1/auth/password-reset', data)
+}
+
+/** 使服务端会话失效。 */
+export function logout() {
+  return post('/api/v1/auth/logout')
+}

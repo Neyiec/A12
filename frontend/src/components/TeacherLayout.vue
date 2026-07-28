@@ -4,17 +4,20 @@
   - 输出: 教师端所有独立页面共用的侧栏与顶栏布局
 -->
 <script setup>
-import { computed, ref } from 'vue'
+import { computed, onMounted, ref } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import {
   Bell, ChatDotRound, Download, FolderOpened, Grid,
   Moon, MoreFilled, Plus, Setting, Sunny,
 } from '@element-plus/icons-vue'
 import { TEACHER_HOME } from '../config/teacherHome.config.js'
+import { getCurrentUser } from '../apis/login.js'
+import { useUserStore } from '../storage/user.js'
 
 const route = useRoute()
 const router = useRouter()
 const isDark = ref(document.documentElement.dataset.theme === 'dark')
+const userStore = useUserStore()
 const iconMap = { ChatDotRound, FolderOpened, Grid, Download }
 const routeMap = {
   home: '/main',
@@ -24,6 +27,8 @@ const routeMap = {
 }
 const activeMenu = computed(() => route.meta.menu || 'home')
 const isWorkspace = computed(() => route.path === '/main/workspace')
+const avatarText = computed(() => (userStore.userInfo?.real_name || userStore.userInfo?.username || TEACHER_HOME.teacher.name).slice(0, 1))
+const avatarUrl = computed(() => userStore.userInfo?.avatar || undefined)
 
 /** 跳转到教师端目标功能模块。 */
 const handleMenuSelect = (index) => {
@@ -36,6 +41,14 @@ const toggleTheme = () => {
   isDark.value = !isDark.value
   document.documentElement.dataset.theme = isDark.value ? 'dark' : 'light'
 }
+
+onMounted(async () => {
+  if (!userStore.token) return
+  try {
+    const res = await getCurrentUser()
+    if (res.code === 0 || res.code === 200) userStore.setUserInfo(res.data)
+  } catch { /* 请求层会统一处理失效会话 */ }
+})
 </script>
 
 <template>
@@ -70,9 +83,9 @@ const toggleTheme = () => {
         </button>
       </section>
       <footer class="teacher-profile">
-        <el-avatar :size="38" shape="square">{{ TEACHER_HOME.teacher.initials }}</el-avatar>
-        <div class="profile-copy"><strong>{{ TEACHER_HOME.teacher.name }}</strong><span>{{ TEACHER_HOME.teacher.role }}</span></div>
-        <el-button text circle aria-label="设置"><el-icon><Setting /></el-icon></el-button>
+        <el-avatar :size="38" shape="square" :src="avatarUrl">{{ avatarText }}</el-avatar>
+        <div class="profile-copy"><strong>{{ userStore.userInfo?.real_name || TEACHER_HOME.teacher.name }}</strong><span>{{ userStore.userInfo?.user_type === 'admin' ? '管理员' : TEACHER_HOME.teacher.role }}</span></div>
+        <el-button text circle aria-label="设置" @click="router.push('/main/settings')"><el-icon><Setting /></el-icon></el-button>
       </footer>
     </aside>
 
@@ -85,7 +98,7 @@ const toggleTheme = () => {
         <div class="topbar-actions">
           <el-button text circle aria-label="切换主题" @click="toggleTheme"><el-icon><component :is="isDark ? Sunny : Moon" /></el-icon></el-button>
           <el-button text circle aria-label="通知"><el-icon><Bell /></el-icon></el-button>
-          <el-avatar :size="34">{{ TEACHER_HOME.teacher.initials }}</el-avatar>
+          <el-avatar :size="34" class="cursor-pointer" :src="avatarUrl" @click="router.push('/main/settings')">{{ avatarText }}</el-avatar>
         </div>
       </header>
       <router-view />
