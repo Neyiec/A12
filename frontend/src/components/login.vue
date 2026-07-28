@@ -15,7 +15,7 @@ import { ref, reactive, computed, onBeforeUnmount } from 'vue'
 import { useRouter } from 'vue-router'
 import { ElMessage } from 'element-plus'
 import { User, Lock, Message, Phone, Key } from '@element-plus/icons-vue'
-import { login, register, sendVerificationCode } from '../apis/login.js'
+import { login, register, resetPassword, sendVerificationCode } from '../apis/login.js'
 import { LOGIN_TEXT, VALIDATION_RULES } from '../config/login.config.js'
 import { useUserStore } from '../storage/user.js'
 
@@ -27,6 +27,10 @@ const userStore = useUserStore()
 
 /** 当前是否为登录模式（true=登录, false=注册） */
 const isLoginMode = ref(true)
+const resetVisible = ref(false)
+const resetLoading = ref(false)
+const resetCodeLoading = ref(false)
+const resetForm = reactive({ username: '', code: '', new_password: '', confirmPassword: '' })
 
 /** 登录表单组件引用 */
 const loginFormRef = ref(null)
@@ -343,6 +347,30 @@ const handleLogin = async () => {
   }
 }
 
+const sendResetCode = async () => {
+  if (!resetForm.username) return ElMessage.warning('请输入登录账号')
+  resetCodeLoading.value = true
+  try {
+    const res = await sendVerificationCode({ username: resetForm.username, scene: 'password_reset', channel: 'email' })
+    if (res.code !== 0 && res.code !== 200) return ElMessage.error(res.message || '验证码发送失败')
+    ElMessage.success('验证码已发送至该账号绑定的邮箱')
+  } catch { ElMessage.error('验证码发送失败，请稍后重试') } finally { resetCodeLoading.value = false }
+}
+
+const submitReset = async () => {
+  if (!resetForm.username || !resetForm.code || !resetForm.new_password) return ElMessage.warning('请完整填写重置资料')
+  if (resetForm.new_password.length < 6) return ElMessage.warning('新密码至少 6 位')
+  if (resetForm.new_password !== resetForm.confirmPassword) return ElMessage.warning('两次输入的密码不一致')
+  resetLoading.value = true
+  try {
+    const res = await resetPassword({ username: resetForm.username, code: resetForm.code, new_password: resetForm.new_password })
+    if (res.code !== 0 && res.code !== 200) return ElMessage.error(res.message || '密码重置失败')
+    ElMessage.success('密码重置成功，请使用新密码登录')
+    resetVisible.value = false
+    Object.assign(resetForm, { username: '', code: '', new_password: '', confirmPassword: '' })
+  } catch { ElMessage.error('密码重置失败，请稍后重试') } finally { resetLoading.value = false }
+}
+
 /**
  * 处理注册提交
  * 校验表单 → 调用注册 API（含验证码）→ 提示成功并切换到登录模式
@@ -492,6 +520,10 @@ onBeforeUnmount(() => {
                   show-password
                 />
               </el-form-item>
+
+              <div class="flex justify-end -mt-3 mb-4">
+                <el-button text type="primary" size="small" @click="resetVisible = true">忘记密码？</el-button>
+              </div>
 
               <!-- 隐私协议勾选 -->
               <el-form-item prop="agreeToPrivacy">
@@ -718,6 +750,17 @@ onBeforeUnmount(() => {
         </Transition>
       </div>
     </main>
+
+    <el-dialog v-model="resetVisible" title="重置密码" width="420px" :close-on-click-modal="false">
+      <p class="reset-tip">验证码将发送至该账号绑定的邮箱。</p>
+      <el-form label-position="top" @submit.prevent="submitReset">
+        <el-form-item label="登录账号"><el-input v-model="resetForm.username" :prefix-icon="User" autocomplete="username" /></el-form-item>
+        <el-form-item label="邮箱验证码"><div class="code-row"><el-input v-model="resetForm.code" :prefix-icon="Key" maxlength="6" /><el-button :loading="resetCodeLoading" @click="sendResetCode">发送验证码</el-button></div></el-form-item>
+        <el-form-item label="新密码"><el-input v-model="resetForm.new_password" :prefix-icon="Lock" type="password" show-password autocomplete="new-password" /></el-form-item>
+        <el-form-item label="确认新密码"><el-input v-model="resetForm.confirmPassword" :prefix-icon="Lock" type="password" show-password autocomplete="new-password" @keyup.enter="submitReset" /></el-form-item>
+      </el-form>
+      <template #footer><el-button @click="resetVisible = false">取消</el-button><el-button type="primary" :loading="resetLoading" @click="submitReset">确认重置</el-button></template>
+    </el-dialog>
   </div>
 </template>
 
@@ -812,4 +855,6 @@ onBeforeUnmount(() => {
 :deep(.send-code-btn) {
   height: auto;
 }
+.reset-tip { margin: -8px 0 18px; color: var(--zh-text-caption); font-size: var(--zh-font-size13); }
+.code-row { display: flex; width: 100%; gap: 8px; }.code-row .el-button { flex: 0 0 auto; }
 </style>

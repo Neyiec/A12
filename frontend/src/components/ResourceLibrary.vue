@@ -7,15 +7,68 @@
 import { computed, onMounted, ref } from 'vue'
 import { ElMessage } from 'element-plus'
 import { Delete, Folder, Lock, MoreFilled, Search, Upload } from '@element-plus/icons-vue'
-import { RESOURCE_PAGE } from '../config/teacherPages.config.js'
 import { deleteResource, downloadResource, listResources, uploadResource } from '../apis/teacher'
 
 const keyword = ref('')
 const activeFolder = ref('全部素材')
 const selectedRows = ref([])
-const resources = ref(RESOURCE_PAGE.files)
+const resources = ref([])
+const resourceTotal = ref(0)
 const fileInput = ref(null)
 const loading = ref(false)
+const uploading = ref(false)
+const uploadProgress = ref(0)
+
+const formatFileSize = (bytes) => {
+  const size = Number(bytes) || 0
+  if (size < 1024) return `${size} B`
+  const units = ['KB', 'MB', 'GB', 'TB']
+  const unitIndex = Math.min(Math.floor(Math.log(size) / Math.log(1024)), units.length - 1)
+  return `${(size / (1024 ** (unitIndex + 1))).toFixed(size >= 1024 ** (unitIndex + 2) ? 1 : 0)} ${units[unitIndex]}`
+}
+
+const formatUpdatedAt = (value) => {
+  if (!value) return '—'
+  const date = new Date(value)
+  return Number.isNaN(date.getTime()) ? String(value) : new Intl.DateTimeFormat('zh-CN', { month: 'numeric', day: 'numeric', hour: '2-digit', minute: '2-digit' }).format(date)
+}
+
+const parseList = (value) => {
+  if (Array.isArray(value)) return value
+  try { return JSON.parse(value || '[]') } catch { return [] }
+}
+
+const normalizeRealResource = (item) => ({
+  id: item.id,
+  name: item.file_name,
+  type: (item.file_type || 'file').toUpperCase(),
+  course: parseList(item.categories).join(' · ') || '未分类',
+  size: formatFileSize(item.file_size),
+  fileSize: Number(item.file_size) || 0,
+  date: formatUpdatedAt(item.updated_at || item.created_at),
+  status: item.allow_ai === 1 ? '已启用' : '未启用',
+  private: item.access_type !== 'shared',
+})
+
+const resourceStats = computed(() => {
+  const totalSize = resources.value.reduce((sum, item) => sum + item.fileSize, 0)
+  const aiAvailable = resources.value.filter((item) => item.status === '已启用').length
+  return [
+    { label: '全部素材', value: String(resourceTotal.value), detail: `当前已加载 ${resources.value.length} 项` },
+    { label: '可供 AI 引用', value: String(aiAvailable), detail: '依据资源授权状态统计' },
+    { label: '已加载空间', value: formatFileSize(totalSize), detail: '当前列表资源总大小' },
+  ]
+})
+
+const resourceFolders = computed(() => [
+  '全部素材',
+  ...new Set(resources.value.flatMap((item) => item.course === '未分类' ? [] : item.course.split(' · '))),
+])
+
+const visibleFiles = computed(() => resources.value.filter((file) => (
+  (activeFolder.value === '全部素材' || file.course.split(' · ').includes(activeFolder.value)) &&
+  file.name.toLowerCase().includes(keyword.value.toLowerCase())
+)))
 const filteredFiles = computed(() => resources.value.filter((file) => (
   (activeFolder.value === '全部素材' || activeFolder.value === '我的课件' && file.type === 'PPT') &&
   file.name.toLowerCase().includes(keyword.value.toLowerCase())
@@ -33,12 +86,13 @@ const loadResources = async () => {
   try {
     const result = await listResources({ keyword: keyword.value || undefined, page: 1, size: 50 })
     const records = result?.data?.records || result?.data?.list || result?.data?.items || result?.records || []
-    if (records.length) resources.value = records.map(normalizeResource)
+    resources.value = records.map(normalizeRealResource)
+    resourceTotal.value = Number(result?.data?.total ?? result?.total ?? resources.value.length)
   } catch { /* 开发环境保留示例数据，接口上线后自动替换。 */ } finally { loading.value = false }
 }
 
 const startUpload = () => fileInput.value?.click()
-const handleUpload = async (event) => {
+const handleUploadLegacy = async (event) => {
   const file = event.target.files?.[0]
   if (!file) return
   const formData = new FormData()
@@ -50,6 +104,30 @@ const handleUpload = async (event) => {
   } catch { ElMessage.error('上传失败，请检查服务连接后重试') }
   event.target.value = ''
 }
+const handleUpload = async (event) => {
+  const file = event.target.files?.[0]
+  if (!file) return
+
+  uploading.value = true
+  uploadProgress.value = 0
+  try {
+    const resource = await uploadResource(file, (progress) => { uploadProgress.value = progress })
+    if (resource?.id) {
+      resources.value = [normalizeRealResource(resource), ...resources.value.filter((item) => item.id !== resource.id)]
+      resourceTotal.value += 1
+    } else {
+      await loadResources()
+    }
+    ElMessage.success('素材已上传并加入个人资源库')
+  } catch (error) {
+    ElMessage.error(error?.message || '上传失败，请检查服务连接后重试')
+  } finally {
+    uploading.value = false
+    uploadProgress.value = 0
+    event.target.value = ''
+  }
+}
+
 const handleAction = async (row, command) => {
   if (!row.id) return ElMessage.info('示例素材暂不支持此操作')
   try {
@@ -72,8 +150,10 @@ onMounted(loadResources)
       <el-button type="primary" :icon="Upload" @click="startUpload">上传素材</el-button><input ref="fileInput" class="visually-hidden" type="file" accept=".doc,.docx,.pdf,.ppt,.pptx,.txt,image/*,audio/*,video/*" @change="handleUpload">
     </header>
 
+    <el-progress v-if="uploading" :percentage="uploadProgress" :stroke-width="5" :show-text="false" class="upload-progress" />
+
     <section class="stat-strip" aria-label="资源库概览">
-      <article v-for="stat in RESOURCE_PAGE.stats" :key="stat.label">
+      <article v-for="stat in resourceStats" :key="stat.label">
         <span>{{ stat.label }}</span><strong>{{ stat.value }}</strong><small>{{ stat.detail }}</small>
       </article>
     </section>
@@ -81,7 +161,7 @@ onMounted(loadResources)
     <section class="resource-layout">
       <aside class="folder-panel">
         <div class="panel-title"><span>分类目录</span><el-button text circle aria-label="新建分类">+</el-button></div>
-        <button v-for="folder in RESOURCE_PAGE.folders" :key="folder" :class="{ active: activeFolder === folder }" @click="activeFolder = folder">
+        <button v-for="folder in resourceFolders" :key="folder" :class="{ active: activeFolder === folder }" @click="activeFolder = folder">
           <el-icon><Folder /></el-icon><span>{{ folder }}</span>
         </button>
         <div class="privacy-note"><el-icon><Lock /></el-icon><p><strong>默认私有</strong><br>仅你和授权的智能体可以访问。</p></div>
@@ -93,7 +173,7 @@ onMounted(loadResources)
           <el-select model-value="全部类型" aria-label="资源类型"><el-option label="全部类型" value="全部类型" /><el-option label="课件" value="课件" /><el-option label="文档" value="文档" /></el-select>
           <el-button :icon="Delete" :disabled="selectedRows.length === 0">批量管理</el-button>
         </div>
-        <el-table v-loading="loading" :data="filteredFiles" @selection-change="selectedRows = $event">
+        <el-table v-loading="loading" :data="visibleFiles" @selection-change="selectedRows = $event">
           <el-table-column type="selection" width="42" />
           <el-table-column label="素材" min-width="260">
             <template #default="{ row }"><div class="file-cell"><span class="file-mark">{{ row.type.slice(0, 1) }}</span><div><strong>{{ row.name }}</strong><small>{{ row.course }} · {{ row.size }}</small></div></div></template>
@@ -114,6 +194,7 @@ onMounted(loadResources)
 .page-kicker { margin: 0 0 6px !important; color: var(--zh-text-theme) !important; font-size: 13px !important; font-weight: 600; }
 .page-heading h1 { margin: 0; font-size: 30px; letter-spacing: var(--zh-tracking-tight); }
 .page-heading p { margin: 8px 0 0; color: var(--zh-text-secondary); font-size: 14px; }
+.upload-progress { margin-top: 14px; }
 .stat-strip { display: grid; grid-template-columns: repeat(3, 1fr); margin-top: 32px; border-block: 1px solid var(--zh-line-border); }
 .stat-strip article { display: grid; grid-template-columns: 1fr auto; gap: 4px 12px; padding: 22px 28px; border-right: 1px solid var(--zh-line-border); }
 .stat-strip article:last-child { border: 0; }

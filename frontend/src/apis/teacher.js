@@ -1,7 +1,39 @@
-import { apiRequest, del, get, post, put, uploadFile } from '../utils/api'
+import axios from 'axios'
+import { apiRequest, del, get, post, put } from '../utils/api'
 
 export const listResources = (params) => get('/api/v1/resources', params)
-export const uploadResource = (formData, onProgress) => uploadFile('/api/v1/resources/uploads', formData, onProgress)
+export const uploadResource = async (file, onProgress) => {
+  const uploadTokenResult = await post('/api/v1/resources/upload-tokens', {
+    file_name: file.name,
+    file_type: file.type || undefined,
+  })
+  if (uploadTokenResult?.code && uploadTokenResult.code !== 200 && uploadTokenResult.code !== 0) {
+    throw new Error(uploadTokenResult.message || '获取上传凭证失败')
+  }
+
+  const uploadToken = uploadTokenResult?.data || uploadTokenResult
+  if (!uploadToken?.upload_url || !uploadToken?.object_key) {
+    throw new Error('上传凭证无效，请稍后重试')
+  }
+
+  await axios.put(uploadToken.upload_url, file, {
+    headers: { 'Content-Type': file.type || 'application/octet-stream' },
+    onUploadProgress: (event) => {
+      if (event.total && onProgress) onProgress(Math.round((event.loaded / event.total) * 100))
+    },
+  })
+
+  const confirmResult = await post('/api/v1/resources/uploaded-files', {
+    object_key: uploadToken.object_key,
+    file_name: file.name,
+    file_size: file.size,
+    file_type: file.type || undefined,
+  })
+  if (confirmResult?.code && confirmResult.code !== 200 && confirmResult.code !== 0) {
+    throw new Error(confirmResult.message || '素材入库失败')
+  }
+  return confirmResult?.data || confirmResult
+}
 export const deleteResource = (id) => del(`/api/v1/resources/${id}`)
 export const downloadResource = (id) => post(`/api/v1/resources/${id}/download-url`)
 
