@@ -1,14 +1,406 @@
+/**
+ * [数据交互说明]
+ * - 导出: 全局 CSS 自定义属性（--zh-* 设计 Token），供所有组件通过 var() 引用
+ * - 依赖:
+ *   - TailwindCSS v4: @theme 块将 Token 注册为工具类
+ *   - ElementPlus: 通过覆盖 --el-* 变量实现品牌主题统一
+ * - 输入: 无（纯 CSS 变量声明，无需外部输入）
+ * - 输出: 全局可用的设计 Token 体系（色彩、字体、间距、圆角、阴影、层级）
+ */
 @import "tailwindcss";
 
-/* 1. 浮动动画 */
+/* ===================================================================
+ * 1. 基础 Token
+ * =================================================================== */
+
+:root {
+  --zh-base-size: 16px;
+  --zh-base-spacing: 0.0625rem;   /* = 1px */
+  --zh-base-radius: 0.0625rem;    /* = 1px */
+  --zh-base-blur: 0.0625rem;      /* = 1px */
+  --zh-base-weight: 400;
+  --zh-base-line-height: 1.5;
+  --zh-base-letter-spacing: 0em;
+}
+
+/* ===================================================================
+ * 2. 色彩体系 (Light Mode)
+ * =================================================================== */
+
+:root {
+  /* 品牌主色 */
+  --zh-theme-primary: #2563EB;
+  --zh-color-primary: #2563EB;
+  --zh-text-theme: #2563EB;
+  --zh-line-theme: #3B82F6;
+  --zh-line-theme50: #2563EB80;
+  --zh-line-theme20: #2563EB33;
+
+  /* 渐变 */
+  --zh-gradient-blue: linear-gradient(135deg, #2563EB 0%, #60A5FA 100%);
+  --zh-gradient-dblue: linear-gradient(135deg, #1D4ED8 0%, #3B82F6 100%);
+
+  /* 背景色 */
+  --zh-background-primary: #FFFFFF;
+  --zh-background-base: #FFFFFF;
+  --zh-background-pc-sidebar: #F7F7F9;
+  --zh-background-pop: #FFFFFF;
+  --zh-background-capsule: #FFFFFF;
+  --zh-background-card: #2563EB1A;
+  --zh-background-option: #22222208;
+  --zh-background-option-on: #DBEAFE;
+  --zh-background-tag: #2222220F;
+  --zh-background-button: #2563EB;
+  --zh-background-button-hover: #1D4ED8;
+  --zh-background-black-button: #222222;
+  --zh-background-gray-button-hover: #F8F8F8;
+  --zh-background-light: #F7F8FC;
+  --zh-background-light-gray: #F5F6F7;
+  --zh-background-light-grey: #E7E7EA;
+  --zh-background-menu: #F6F6F6;
+  --zh-background-select: #DBEAFE;
+  --zh-background-user-query: #EFF6FF;
+  --zh-background-answer-card: #FFFFFF99;
+  --zh-background-area: #2563EB1A;
+  --zh-background-weaken: #2563EB0D;
+  --zh-background-toast: #000000;
+  --zh-background-floating: #0000004D;
+  --zh-background-overlay: #00000033;
+  --zh-background-setting: #FFFFFF;
+  --zh-background-input: #FFFFFFCC;
+
+  /* 文字色 */
+  --zh-text-primary: #222222;
+  --zh-text-secondary: #666666;
+  --zh-text-caption: #999999;
+  --zh-text-disabled: #CCCCCC;
+  --zh-text-white: #FFFFFF;
+  --zh-text-link: #1D4ED8;
+  --zh-text-theme-disabled: #2563EB33;
+  --zh-text-line-base: #222222;
+
+  /* 边框色 */
+  --zh-line-border: #2222220F;
+  --zh-line-heavier: #2222221F;
+  --zh-line-parting: #22222208;
+  --zh-line-capsule: #2563EB1A;
+  --zh-line-circle: #FFFFFF;
+  --zh-line-tag: #2563EB0D;
+
+  /* 功能色 */
+  --zh-red: #FF4040;
+  --zh-danger-clicked: #DB2323;
+  --zh-danger-disabled: #FF404080;
+  --zh-danger-background: #FF40401A;
+  --zh-orange: #FF6B3F;
+  --zh-yellow: #FFD575;
+  --zh-yellow-light: #FFFBE5;
+  --zh-green: #1F993F;
+  --zh-cyan: #29BECC;
+  --zh-earth: #B37536;
+
+  /* 遮罩层 */
+  --zh-background-mask70: #000000B3;
+  --zh-background-mask50: #00000080;
+  --zh-background-mask10: #0000001A;
+  --zh-background-mask5: #0000000D;
+
+  /* 字体族 */
+  --zh-font-text: "Microsoft YaHei", "Segoe UI", system-ui, Roboto, "Noto Sans SC", "Helvetica Neue", Arial, sans-serif;
+  --zh-font-number: "PlusJakartaSans", system-ui, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
+  --zh-font-code: ui-monospace, "SFMono-Regular", "SF Mono", Menlo, Consolas, "Liberation Mono", monospace;
+
+  /* 字号 */
+  --zh-font-size8: 8px;
+  --zh-font-size9: 9px;
+  --zh-font-size10: 10px;
+  --zh-font-size11: 11px;
+  --zh-font-size12: 12px;
+  --zh-font-size13: 13px;
+  --zh-font-size14: 14px;
+  --zh-font-size15: 15px;
+  --zh-font-size16: 16px;
+  --zh-font-size17: 17px;
+  --zh-font-size18: 18px;
+  --zh-font-size20: 20px;
+  --zh-font-size24: 24px;
+  --zh-font-size30: 30px;
+  --zh-font-size32: 32px;
+  --zh-font-size36: 36px;
+  --zh-font-size48: 48px;
+
+  /* 语义化字号 */
+  --zh-text-xs: 12px;
+  --zh-text-sm: 14px;
+  --zh-text-base: 16px;
+  --zh-text-lg: 18px;
+  --zh-text-xl: 20px;
+
+  /* 行高 */
+  --font-base-line-height: 26px;
+  --zh-base-line-height: 1.5;
+  --zh-base-line-height-rem: 1.5rem;
+
+  /* 字间距 */
+  --zh-tracking-normal: 1px;
+  --zh-tracking-tight: -0.025em;
+  --zh-tracking-tighter: -0.05em;
+  --zh-tracking-wide: +0.025em;
+  --zh-tracking-wider: +0.05em;
+  --zh-tracking-widest: +0.1em;
+
+  /* 圆角 */
+  --zh-radius0: 0px;
+  --zh-radius2: 2px;
+  --zh-radius4: 4px;
+  --zh-radius6: 6px;
+  --zh-radius8: 8px;
+  --zh-radius10: 10px;
+  --zh-radius12: 12px;
+  --zh-radius14: 14px;
+  --zh-radius16: 16px;
+  --zh-radius18: 18px;
+  --zh-radius20: 20px;
+  --zh-radius24: 24px;
+  --zh-radius28: 28px;
+  --zh-radius32: 32px;
+
+  /* 阴影 */
+  --zh-shadow1: 0px 8px 16px -4px rgba(0,0,0,0.05);
+  --zh-shadow2: 0px 12px 24px -2px rgba(0,0,0,0.05);
+  --zh-shadow3: 0px 12px 36px 0px rgba(0,0,0,0.10);
+
+  /* 模糊 */
+  --zh-backdrop-blur-2: blur(2px);
+  --zh-backdrop-blur-4: blur(4px);
+  --zh-backdrop-blur-8: blur(8px);
+  --zh-backdrop-blur-12: blur(12px);
+}
+
+/* ===================================================================
+ * 3. 暗色模式 (Dark Mode)
+ * =================================================================== */
+
+[data-theme="dark"] {
+  --zh-theme-primary: #60A5FA;
+  --zh-color-primary: #60A5FA;
+  --zh-text-theme: #60A5FA;
+  --zh-line-theme: #60A5FA;
+  --zh-line-theme50: #60A5FA80;
+  --zh-line-theme20: #60A5FA33;
+
+  --zh-background-primary: #222222;
+  --zh-background-base: #222222;
+  --zh-background-pc-sidebar: #111112;
+  --zh-background-pop: #222222;
+  --zh-background-capsule: #2C2C2C;
+  --zh-background-card: #60A5FA1A;
+  --zh-background-option: #FAFBFF0D;
+  --zh-background-option-on: #1E3050;
+  --zh-background-tag: #FAFBFF1F;
+  --zh-background-button: #60A5FA;
+  --zh-background-button-hover: #3B82F6;
+  --zh-background-black-button: #FAFBFF;
+  --zh-background-gray-button-hover: #19191A;
+  --zh-background-light: #141420;
+  --zh-background-light-gray: #111112;
+  --zh-background-light-grey: #262626;
+  --zh-background-menu: #1E1E1E;
+  --zh-background-select: #1E3050;
+  --zh-background-user-query: #1E3050;
+  --zh-background-input: #212121;
+  --zh-background-toast: #000000;
+
+  --zh-text-primary: #FAFBFF;
+  --zh-text-secondary: #FAFBFFB3;
+  --zh-text-caption: #FAFBFF80;
+  --zh-text-disabled: #FAFBFF3D;
+  --zh-text-link: #60A5FA;
+  --zh-text-theme-disabled: #60A5FA4D;
+  --zh-text-line-base: #FAFBFF;
+
+  --zh-line-border: #FAFBFF1F;
+  --zh-line-heavier: #FAFBFF33;
+  --zh-line-parting: #FAFBFF0D;
+  --zh-line-capsule: #60A5FA1A;
+  --zh-line-circle: #222222;
+  --zh-line-tag: #60A5FA14;
+
+  --zh-shadow1: 0px 8px 16px -4px rgba(0,0,0,0.15);
+  --zh-shadow2: 0px 12px 24px -2px rgba(0,0,0,0.15);
+  --zh-shadow3: 0px 12px 36px 0px rgba(0,0,0,0.25);
+}
+
+/* ===================================================================
+ * 4. ElementPlus 全局主题覆盖
+ * =================================================================== */
+
+:root {
+  --el-color-primary: var(--zh-theme-primary);
+  --el-color-primary-light-3: #DBEAFE;
+  --el-color-primary-light-5: #EFF6FF;
+  --el-color-primary-light-7: #DBEAFE;
+  --el-color-primary-light-9: #EFF6FF;
+  --el-color-primary-dark-2: #1D4ED8;
+  --el-color-success: var(--zh-green);
+  --el-color-warning: var(--zh-orange);
+  --el-color-danger: var(--zh-red);
+  --el-color-info: var(--zh-cyan);
+  --el-text-color-primary: var(--zh-text-primary);
+  --el-text-color-regular: var(--zh-text-secondary);
+  --el-text-color-secondary: var(--zh-text-caption);
+  --el-text-color-placeholder: var(--zh-text-disabled);
+  --el-border-color: var(--zh-line-border);
+  --el-border-color-light: var(--zh-line-parting);
+  --el-border-color-lighter: var(--zh-line-parting);
+  --el-border-color-dark: var(--zh-line-heavier);
+  --el-border-radius-base: var(--zh-radius8);
+  --el-bg-color: var(--zh-background-primary);
+  --el-bg-color-page: var(--zh-background-light);
+  --el-bg-color-overlay: var(--zh-background-pop);
+
+  /* ElMenu 主题覆盖 */
+  --el-menu-bg-color: var(--zh-background-pc-sidebar);
+  --el-menu-text-color: var(--zh-text-secondary);
+  --el-menu-hover-bg-color: var(--zh-background-option);
+  --el-menu-active-color: var(--zh-text-theme);
+  --el-menu-item-height: 48px;
+  --el-menu-sub-item-height: 44px;
+  --el-menu-item-font-size: var(--zh-font-size14);
+  --el-menu-sub-item-font-size: var(--zh-font-size13);
+  --el-menu-border-width: 0px;
+  --el-menu-item-border-width: 0px;
+  --el-sub-menu-title-font-size: var(--zh-font-size14);
+  --el-menu-item-hover-fill: var(--zh-text-primary);
+  --el-menu-icon-width: 20px;
+}
+
+[data-theme="dark"] {
+  --el-color-primary: var(--zh-theme-primary);
+  --el-color-primary-light-3: #1E3050;
+  --el-color-primary-light-5: #1A2740;
+  --el-color-primary-light-7: #1E3050;
+  --el-color-primary-light-9: #1A2740;
+  --el-color-primary-dark-2: #3B82F6;
+  --el-text-color-primary: var(--zh-text-primary);
+  --el-text-color-regular: var(--zh-text-secondary);
+  --el-text-color-secondary: var(--zh-text-caption);
+  --el-text-color-placeholder: var(--zh-text-disabled);
+  --el-border-color: var(--zh-line-border);
+  --el-border-color-light: var(--zh-line-parting);
+  --el-border-color-lighter: var(--zh-line-parting);
+  --el-border-color-dark: var(--zh-line-heavier);
+  --el-bg-color: var(--zh-background-primary);
+  --el-bg-color-page: var(--zh-background-light);
+  --el-bg-color-overlay: var(--zh-background-pop);
+
+  /* ElMenu 主题覆盖（暗色模式） */
+  --el-menu-bg-color: var(--zh-background-pc-sidebar);
+  --el-menu-text-color: var(--zh-text-secondary);
+  --el-menu-hover-bg-color: var(--zh-background-option);
+  --el-menu-active-color: var(--zh-text-theme);
+}
+
+/* ===================================================================
+ * 5. TailwindCSS v4 @theme 配置
+ * =================================================================== */
+
+@theme {
+  --color-primary: var(--zh-theme-primary);
+  --color-primary-hover: var(--zh-background-button-hover);
+  --color-blue-50: #EFF6FF;
+  --color-blue-100: #DBEAFE;
+  --color-blue-200: #BFDBFE;
+  --color-blue-400: #60A5FA;
+  --color-blue-500: #3B82F6;
+  --color-blue-600: #2563EB;
+  --color-blue-700: #1D4ED8;
+  --radius-8: var(--zh-radius8);
+  --radius-12: var(--zh-radius12);
+  --radius-16: var(--zh-radius16);
+  --radius-20: var(--zh-radius20);
+  --shadow-1: var(--zh-shadow1);
+  --shadow-2: var(--zh-shadow2);
+  --shadow-3: var(--zh-shadow3);
+  --color-zh-red: var(--zh-red);
+  --color-zh-green: var(--zh-green);
+  --color-zh-orange: var(--zh-orange);
+  --color-zh-cyan: var(--zh-cyan);
+}
+
+/* ===================================================================
+ * 6. 基础动画与全局样式
+ * =================================================================== */
+
+/* 浮动动画 */
 @keyframes float {
   0% { transform: translateY(0px); }
   50% { transform: translateY(-15px); }
   100% { transform: translateY(0px); }
 }
 
+/* 淡入动画 */
+@keyframes fadeIn {
+  from { opacity: 0; transform: translateY(8px); }
+  to { opacity: 1; transform: translateY(0); }
+}
+
+/* 脉冲动画（状态指示灯） */
+@keyframes pulse {
+  0%, 100% { opacity: 1; }
+  50% { opacity: 0.5; }
+}
+
+/* 骨架屏闪烁 */
+@keyframes shimmer {
+  0% { background-position: -200% 0; }
+  100% { background-position: 200% 0; }
+}
+
+/* 通知红点 */
+@keyframes ping {
+  0% { transform: scale(1); opacity: 1; }
+  75%, 100% { transform: scale(2); opacity: 0; }
+}
+
+/* 加载旋转 */
+@keyframes loadingSpin {
+  from { transform: rotate(0deg); }
+  to { transform: rotate(360deg); }
+}
+
 html, body, #app {
   height: 100%;
   margin: 0;
   padding: 0;
+  font-family: var(--zh-font-text);
+  color: var(--zh-text-primary);
+  background-color: var(--zh-background-primary);
+}
+
+/* 滚动条全局样式 */
+::-webkit-scrollbar {
+  width: 4px;
+  height: 4px;
+}
+::-webkit-scrollbar-track {
+  background: transparent;
+}
+::-webkit-scrollbar-thumb {
+  background: var(--zh-line-border);
+  border-radius: 2px;
+}
+::-webkit-scrollbar-thumb:hover {
+  background: var(--zh-line-heavier);
+}
+
+/* ===================================================================
+ * 7. 通用工具类
+ * =================================================================== */
+
+.skeleton-loader {
+  background: linear-gradient(90deg, var(--zh-background-light-gray) 25%, var(--zh-background-light-grey) 50%, var(--zh-background-light-gray) 75%);
+  background-size: 200% 100%;
+  animation: shimmer 1.5s infinite;
+  border-radius: var(--zh-radius4);
 }
