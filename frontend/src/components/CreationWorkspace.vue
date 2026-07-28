@@ -1,108 +1,71 @@
-<!--
-  [数据交互说明]
-  - 导入: 工作台演示数据、Element Plus 组件
-  - 输出: 对话驱动的课件创作工作台
--->
 <script setup>
-import { computed, ref } from 'vue'
+import { computed, reactive, ref } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { ElMessage } from 'element-plus'
-import {
-  ArrowLeft, Brush, ChatDotRound, CircleCheck, CopyDocument, DataBoard,
-  Delete, Download, EditPen, Picture, Plus, Promotion, Refresh,
-} from '@element-plus/icons-vue'
-import { WORKSPACE_PAGE } from '../config/teacherPages.config.js'
+import { ArrowLeft, Brush, ChatDotRound, CircleCheck, CopyDocument, DataBoard, Delete, Download, EditPen, FullScreen, Monitor, Picture, Plus, Promotion, VideoPlay } from '@element-plus/icons-vue'
 
 const router = useRouter()
 const route = useRoute()
-const selectedSlide = ref(2)
 const prompt = ref('')
-const activePanel = ref('样式')
-const panels = ['样式', '布局', '动画']
-const slideTitle = computed(() => WORKSPACE_PAGE.slides[selectedSlide.value])
-
-/** 模拟自然语言修改当前课件页。 */
-const sendRevision = () => {
-  if (!prompt.value.trim()) return
-  ElMessage.success(`已将修改应用到“${slideTitle.value}”`)
-  prompt.value = ''
-}
+const selectedSlide = ref(0)
+const activePanel = ref('style')
+const previewVisible = ref(false)
+const themes = [
+  { id: 'blue', name: '经典蓝', color: '#2563eb' },
+  { id: 'navy', name: '沉静蓝', color: '#173d78' },
+  { id: 'green', name: '自然绿', color: '#1f993f' },
+  { id: 'orange', name: '活力橙', color: '#ff6b3f' },
+]
+const layouts = ['重点陈述', '图文并置', '双栏探究']
+const messages = reactive([
+  { role: 'assistant', text: '我已根据教学目标整理出一份 6 页课件。你可以直接描述想调整的内容，或在右侧细化当前页面。' },
+  { role: 'user', text: '让情境导入更贴近校园生活。' },
+  { role: 'assistant', text: '已将导入场景调整为校园旗杆测量任务，并保留小组讨论环节。' },
+])
+const slides = reactive([
+  { title: '勾股定理', eyebrow: '八年级数学 · 第 1 课时', description: '从实际测量出发，发现直角三角形三边之间恒定而优雅的关系。', layout: '重点陈述', theme: 'blue' },
+  { title: '情境导入', eyebrow: '01 / 生活中的直角', description: '校园里有哪些直角三角形？用旗杆与影子的测量任务开启今天的探索。', layout: '图文并置', theme: 'blue' },
+  { title: '观察与猜想', eyebrow: '02 / 发现关系', description: '拖动顶点，观察两条直角边所对应正方形面积与斜边面积的变化。', layout: '图文并置', theme: 'navy' },
+  { title: '公式推导', eyebrow: '03 / 建立模型', description: '将三边长度转化为面积，归纳勾股定理的表达式。', layout: '双栏探究', theme: 'green' },
+  { title: '互动练习', eyebrow: '04 / 动手验证', description: '完成三组测量与计算，检验你的发现是否始终成立。', layout: '双栏探究', theme: 'orange' },
+])
+const current = computed(() => slides[selectedSlide.value])
+const theme = computed(() => themes.find((item) => item.id === current.value.theme) || themes[0])
+const goHome = () => router.push({ path: '/main', query: route.query.preview ? { preview: '1' } : {} })
+const exportProject = () => router.push({ path: '/main/exports', query: route.query.preview ? { preview: '1' } : {} })
+const addSlide = () => { slides.push({ title: `新建页面 ${slides.length + 1}`, eyebrow: '新建内容', description: '在右侧完善页面文案与布局，或通过 AI 对话继续创作。', layout: '图文并置', theme: 'blue' }); selectedSlide.value = slides.length - 1 }
+const copySlide = () => { slides.splice(selectedSlide.value + 1, 0, { ...current.value, title: `${current.value.title} 副本` }); selectedSlide.value++ }
+const removeSlide = () => { if (slides.length === 1) return ElMessage.warning('课件至少保留一页'); slides.splice(selectedSlide.value, 1); selectedSlide.value = Math.max(0, selectedSlide.value - 1) }
+const sendRevision = () => { if (!prompt.value.trim()) return; messages.push({ role: 'user', text: prompt.value.trim() }, { role: 'assistant', text: `已将建议应用到「${current.value.title}」，你可以继续微调页面内容。` }); prompt.value = ''; ElMessage.success('修改建议已应用') }
 </script>
 
 <template>
   <div class="workspace">
-    <header class="workspace-toolbar">
-      <div class="workspace-title"><el-button text circle aria-label="返回首页" @click="router.push({ path: '/main', query: route.query.preview ? { preview: '1' } : {} })"><el-icon><ArrowLeft /></el-icon></el-button><div><strong>勾股定理互动教学</strong><span><el-icon><CircleCheck /></el-icon> 已保存 · v2.1</span></div></div>
-      <div class="tool-cluster" title="组件编辑能力将在项目接口接入后开放"><el-button text :icon="EditPen" disabled>文本</el-button><el-button text :icon="Picture" disabled>图片</el-button><el-button text :icon="DataBoard" disabled>互动组件</el-button><el-button text :icon="Brush" disabled>背景</el-button></div>
-      <div><el-button :icon="Refresh" disabled title="项目预览暂未接入">预览</el-button><el-button type="primary" :icon="Download" @click="router.push({ path: '/main/exports', query: route.query.preview ? { preview: '1' } : {} })">导出</el-button></div>
+    <header class="toolbar">
+      <div class="project-title"><el-button text circle aria-label="返回教学助手" @click="goHome"><el-icon><ArrowLeft /></el-icon></el-button><div><strong>{{ current.title }}教学设计</strong><span><el-icon><CircleCheck /></el-icon> 已保存 · 项目 {{ route.query.projectId || '演示' }}</span></div></div>
+      <div class="editing-tools"><el-button text :icon="EditPen">文本</el-button><el-button text :icon="Picture">图片</el-button><el-button text :icon="DataBoard">互动组件</el-button><el-button text :icon="Brush">背景</el-button></div>
+      <div class="toolbar-actions"><el-button :icon="Monitor" @click="previewVisible = true">预览</el-button><el-button type="primary" :icon="Download" @click="exportProject">导出</el-button></div>
     </header>
 
     <div class="workspace-grid">
-      <aside class="ai-panel">
-        <header><div class="ai-mark">智</div><div><strong>AI 教学助手</strong><span>正在编辑第 {{ selectedSlide + 1 }} 页</span></div></header>
-        <section class="messages">
-          <article v-for="(message, index) in WORKSPACE_PAGE.messages" :key="index" :class="['message', message.role]">
-            <span v-if="message.role === 'assistant'">智</span><p>{{ message.text }}</p>
-          </article>
-        </section>
-        <footer class="ai-composer"><el-input v-model="prompt" type="textarea" :rows="3" resize="none" placeholder="描述你想修改的内容……" @keydown.ctrl.enter="sendRevision" /><div><span>选中：{{ slideTitle }}</span><el-button type="primary" circle :icon="Promotion" :disabled="!prompt.trim()" @click="sendRevision" /></div></footer>
+      <aside class="assistant-panel" aria-label="AI 教学助手">
+        <header><div class="assistant-mark">智</div><div><strong>AI 教学助手</strong><span>正在编辑第 {{ selectedSlide + 1 }} 页</span></div></header>
+        <section class="conversation"><article v-for="(message, index) in messages" :key="index" :class="['message', message.role]"><span v-if="message.role === 'assistant'">智</span><p>{{ message.text }}</p></article></section>
+        <footer class="composer"><el-input v-model="prompt" type="textarea" :rows="3" resize="none" placeholder="例如：把提问改得更有启发性" @keydown.ctrl.enter="sendRevision" /><div><span>Ctrl + Enter 发送</span><el-button type="primary" circle :icon="Promotion" :disabled="!prompt.trim()" aria-label="发送修改" @click="sendRevision" /></div></footer>
       </aside>
 
       <section class="editor-stage">
-        <aside class="slide-list">
-          <button v-for="(slide, index) in WORKSPACE_PAGE.slides" :key="slide" :class="{ active: selectedSlide === index }" @click="selectedSlide = index">
-            <span>{{ index + 1 }}</span><div class="mini-slide"><i></i><b>{{ slide }}</b></div>
-          </button>
-          <el-button text :icon="Plus" disabled title="页面编辑暂未接入">添加页面</el-button>
-        </aside>
-
-        <main class="canvas-area">
-          <div class="canvas-meta"><span>{{ selectedSlide + 1 }} / {{ WORKSPACE_PAGE.slides.length }}</span><span>16:9 · 适应窗口</span></div>
-          <article class="slide-canvas">
-            <span class="slide-label">03 / 观察与猜想</span>
-            <h1>直角三角形的三边，<br>藏着怎样的关系？</h1>
-            <div class="theorem-visual">
-              <div class="triangle"></div>
-              <div class="formula"><span>a² + b²</span><i>=</i><strong>c²</strong><small>拖动顶点，观察面积变化</small></div>
-            </div>
-            <footer><span>小组任务</span><p>测量三组直角三角形边长，记录并比较两个较小正方形与最大正方形的面积。</p></footer>
-          </article>
-          <div class="zoom-control" title="缩放暂未接入"><button disabled>−</button><span>86%</span><button disabled>＋</button></div>
-        </main>
+        <aside class="slide-rail" aria-label="课件页面列表"><button v-for="(slide, index) in slides" :key="`${slide.title}-${index}`" :class="{ active: selectedSlide === index }" @click="selectedSlide = index"><span>{{ String(index + 1).padStart(2, '0') }}</span><div class="thumbnail" :style="{ '--thumb': themes.find((item) => item.id === slide.theme)?.color }"><i></i><b>{{ slide.title }}</b></div></button><el-button text :icon="Plus" @click="addSlide">添加页面</el-button></aside>
+        <main class="canvas-area"><div class="canvas-meta"><span>第 {{ selectedSlide + 1 }} 页，共 {{ slides.length }} 页</span><span>16:9 · 自适应窗口</span></div><article class="slide-canvas" :class="`layout-${current.layout}`" :style="{ '--accent': theme.color }"><span class="slide-eyebrow">{{ current.eyebrow }}</span><h1>{{ current.title }}</h1><p>{{ current.description }}</p><div v-if="current.layout !== '重点陈述'" class="theorem"><div class="triangle"><i>a</i><i>b</i><i>c</i></div><div class="formula"><span>a² + b²</span><em>=</em><strong>c²</strong><small>拖动顶点，观察面积变化</small></div></div><footer><span>{{ current.layout === '重点陈述' ? '本课目标' : '小组任务' }}</span><p>在测量、猜想与验证中理解勾股定理，并用它解决简单的实际问题。</p></footer></article><div class="canvas-controls"><button aria-label="缩小">−</button><span>86%</span><button aria-label="放大">+</button><button aria-label="全屏预览" @click="previewVisible = true"><el-icon><FullScreen /></el-icon></button></div></main>
       </section>
 
-      <aside class="property-panel">
-        <header><strong>属性设置</strong><span>页面 03</span></header>
-        <div class="panel-tabs"><button v-for="panel in panels" :key="panel" :class="{ active: activePanel === panel }" @click="activePanel = panel">{{ panel }}</button></div>
-        <section><label>页面布局</label><div class="layout-options"><button class="active" disabled><i></i><i></i></button><button disabled><i></i><i></i></button><button disabled><i></i></button></div></section>
-        <section><label>主题色</label><div class="color-row"><button class="blue" disabled></button><button class="navy" disabled></button><button class="green" disabled></button><button class="orange" disabled></button><button class="custom" disabled>+</button></div></section>
-        <section><label>背景</label><el-select model-value="浅色网格" disabled><el-option label="浅色网格" value="浅色网格" /></el-select><el-slider :model-value="18" disabled /></section>
-        <section><label>页面操作</label><div class="action-list"><el-button :icon="CopyDocument" disabled>复制页面</el-button><el-button :icon="Delete" disabled>删除页面</el-button></div></section>
-        <div class="property-tip"><el-icon><ChatDotRound /></el-icon><p>你也可以在左侧直接说：<br>“把背景换成更简洁的浅蓝色”</p></div>
-      </aside>
+      <aside class="properties" aria-label="页面属性设置"><header><strong>页面属性</strong><span>页面 {{ String(selectedSlide + 1).padStart(2, '0') }}</span></header><div class="tabs"><button :class="{ active: activePanel === 'style' }" @click="activePanel = 'style'">样式</button><button :class="{ active: activePanel === 'layout' }" @click="activePanel = 'layout'">布局</button><button :class="{ active: activePanel === 'animation' }" @click="activePanel = 'animation'">动画</button></div><section v-if="activePanel === 'style'"><label>页面标题</label><el-input v-model="current.title" maxlength="20" show-word-limit /><label>引导文案</label><el-input v-model="current.description" type="textarea" :rows="4" maxlength="70" show-word-limit /><label>主题色</label><div class="theme-picker"><button v-for="item in themes" :key="item.id" :class="{ selected: current.theme === item.id }" :style="{ background: item.color }" :title="item.name" @click="current.theme = item.id"></button></div></section><section v-else-if="activePanel === 'layout'"><label>页面布局</label><div class="layout-picker"><button v-for="item in layouts" :key="item" :class="{ active: current.layout === item }" @click="current.layout = item"><i></i><i></i><span>{{ item }}</span></button></div></section><section v-else><label>页面进入动画</label><el-select model-value="fade"><el-option label="淡入出现" value="fade" /><el-option label="向上浮现" value="rise" /><el-option label="无动画" value="none" /></el-select><label>讲解节奏</label><el-slider :model-value="60" :show-tooltip="false" /><p class="hint">建议保留简洁动画，避免影响学生对知识点的注意力。</p></section><section class="page-actions"><label>页面操作</label><el-button :icon="CopyDocument" @click="copySlide">复制页面</el-button><el-button :icon="Delete" @click="removeSlide">删除页面</el-button></section><div class="assistant-tip"><el-icon><ChatDotRound /></el-icon><p>也可以在左侧直接描述希望调整的内容、语气或活动设计。</p></div></aside>
     </div>
+
+    <el-dialog v-model="previewVisible" class="preview-dialog" width="min(960px, 92vw)" title="课件预览"><div class="preview"><article class="slide-canvas preview-slide" :style="{ '--accent': theme.color }"><span class="slide-eyebrow">{{ current.eyebrow }}</span><h1>{{ current.title }}</h1><p>{{ current.description }}</p><div class="formula preview-formula"><span>a² + b²</span><em>=</em><strong>c²</strong></div></article></div><template #footer><el-button @click="previewVisible = false">继续编辑</el-button><el-button type="primary" :icon="VideoPlay" @click="previewVisible = false">播放预览</el-button></template></el-dialog>
   </div>
 </template>
 
 <style scoped>
-.workspace { height: 100dvh; display: grid; grid-template-rows: 58px minmax(0, 1fr); overflow: hidden; background: var(--zh-background-light); }
-.workspace-toolbar { display: grid; grid-template-columns: 1fr auto 1fr; align-items: center; gap: 16px; padding: 0 16px; border-bottom: 1px solid var(--zh-line-border); background: var(--zh-background-primary); }.workspace-toolbar > :last-child { justify-self: end; }
-.workspace-title { display: flex; align-items: center; gap: 8px; }.workspace-title > div { display: flex; flex-direction: column; }.workspace-title strong { font-size: 13px; }.workspace-title span { display: flex; align-items: center; gap: 3px; margin-top: 2px; color: var(--zh-text-caption); font-size: 10px; }.workspace-title span .el-icon { color: var(--zh-green); }
-.tool-cluster { display: flex; padding: 3px; border-radius: var(--zh-radius8); background: var(--zh-background-light); }
-.workspace-grid { min-height: 0; display: grid; grid-template-columns: 286px minmax(480px, 1fr) 250px; }
-.ai-panel, .property-panel { min-height: 0; background: var(--zh-background-primary); }.ai-panel { display: flex; flex-direction: column; border-right: 1px solid var(--zh-line-border); }.ai-panel > header { display: flex; align-items: center; gap: 9px; padding: 16px; border-bottom: 1px solid var(--zh-line-parting); }.ai-mark { width: 32px; height: 32px; display: grid; place-items: center; border-radius: var(--zh-radius8); color: white; background: var(--zh-gradient-blue); font-weight: 700; }.ai-panel header > div:last-child { display: flex; flex-direction: column; }.ai-panel header strong { font-size: 13px; }.ai-panel header span { color: var(--zh-text-caption); font-size: 10px; }
-.messages { flex: 1; padding: 16px; overflow-y: auto; }.message { display: flex; align-items: start; gap: 7px; margin-bottom: 18px; }.message > span { flex: none; width: 24px; height: 24px; display: grid; place-items: center; border-radius: 6px; color: white; background: var(--zh-theme-primary); font-size: 10px; }.message p { margin: 0; padding: 10px 12px; border-radius: var(--zh-radius8); background: var(--zh-background-answer-card); box-shadow: 0 1px 0 var(--zh-line-border); color: var(--zh-text-secondary); font-size: 12px; line-height: 1.65; }.message.user { justify-content: flex-end; }.message.user p { background: var(--zh-background-user-query); color: var(--zh-text-primary); }
-.ai-composer { padding: 12px; border-top: 1px solid var(--zh-line-border); }.ai-composer :deep(.el-textarea__inner) { box-shadow: none; background: var(--zh-background-light); }.ai-composer > div { display: flex; align-items: center; justify-content: space-between; margin-top: 8px; }.ai-composer span { color: var(--zh-text-caption); font-size: 10px; }
-.editor-stage { min-width: 0; display: grid; grid-template-columns: 116px minmax(0, 1fr); }.slide-list { padding: 12px 9px; border-right: 1px solid var(--zh-line-border); overflow-y: auto; background: var(--zh-background-primary); }.slide-list > button { width: 100%; display: grid; grid-template-columns: 16px 1fr; gap: 4px; margin-bottom: 10px; padding: 3px; border: 1px solid transparent; border-radius: 6px; color: var(--zh-text-caption); background: transparent; cursor: pointer; }.slide-list > button.active { border-color: var(--zh-line-theme); color: var(--zh-text-theme); }.mini-slide { height: 54px; display: flex; flex-direction: column; justify-content: center; gap: 5px; padding: 8px; border-radius: 4px; background: var(--zh-background-light); }.mini-slide i { width: 65%; height: 3px; background: var(--zh-line-theme50); }.mini-slide b { overflow: hidden; color: var(--zh-text-secondary); font-size: 8px; text-overflow: ellipsis; white-space: nowrap; }
-.canvas-area { min-width: 0; position: relative; display: grid; place-items: center; padding: 44px 34px; overflow: auto; background-color: #eef0f4; background-image: radial-gradient(#c9ced7 1px, transparent 1px); background-size: 18px 18px; }.canvas-meta { position: absolute; top: 12px; inset-inline: 20px; display: flex; justify-content: space-between; color: #7c8491; font-size: 10px; }
-.slide-canvas { width: min(780px, 100%); aspect-ratio: 16 / 9; position: relative; overflow: hidden; padding: clamp(28px, 4vw, 52px); color: #102d54; background: #f9fbff; box-shadow: 0 18px 45px rgb(40 57 82 / 18%); }.slide-canvas::after { content: ""; position: absolute; right: -8%; top: -18%; width: 42%; aspect-ratio: 1; border-radius: 50%; background: #dbeafe; opacity: .7; }.slide-label { color: #3772ba; font: 600 10px var(--zh-font-number); letter-spacing: .12em; }.slide-canvas h1 { max-width: 72%; margin: 18px 0 0; font-size: clamp(22px, 3vw, 38px); line-height: 1.28; letter-spacing: -.04em; }
-.theorem-visual { display: grid; grid-template-columns: .8fr 1.2fr; align-items: center; gap: 32px; width: 76%; margin: 34px auto 0; }.triangle { width: 0; height: 0; border-left: 80px solid #4a83c8; border-top: 55px solid transparent; border-bottom: 55px solid transparent; transform: rotate(45deg); filter: drop-shadow(8px 10px 0 #bfdbfe); }.formula { display: grid; grid-template-columns: auto 24px auto; align-items: center; font-family: var(--zh-font-number); }.formula span, .formula strong { font-size: clamp(22px, 3vw, 36px); }.formula i { color: #7c8da4; font-style: normal; }.formula strong { color: #2563eb; }.formula small { grid-column: 1 / -1; margin-top: 8px; color: #7c8da4; font-size: 10px; }
-.slide-canvas footer { position: absolute; inset-inline: 0; bottom: 0; display: grid; grid-template-columns: 110px 1fr; padding: 14px 28px; color: white; background: #173d78; }.slide-canvas footer span { font-weight: 600; }.slide-canvas footer p { margin: 0; font-size: 10px; line-height: 1.5; }
-.zoom-control { position: absolute; right: 18px; bottom: 14px; display: flex; align-items: center; overflow: hidden; border-radius: var(--zh-radius8); background: var(--zh-background-capsule); box-shadow: var(--zh-shadow1); }.zoom-control button, .zoom-control span { padding: 6px 9px; border: 0; color: var(--zh-text-secondary); background: var(--zh-background-capsule); font-size: 10px; }
-.property-panel { border-left: 1px solid var(--zh-line-border); overflow-y: auto; }.property-panel > header { display: flex; justify-content: space-between; padding: 16px; border-bottom: 1px solid var(--zh-line-parting); }.property-panel header strong { font-size: 13px; }.property-panel header span { color: var(--zh-text-caption); font-size: 10px; }
-.panel-tabs { display: grid; grid-template-columns: repeat(3, 1fr); padding: 10px 14px 0; border-bottom: 1px solid var(--zh-line-parting); }.panel-tabs button { padding: 8px; border: 0; border-bottom: 2px solid transparent; color: var(--zh-text-caption); background: transparent; cursor: pointer; }.panel-tabs button.active { color: var(--zh-text-theme); border-color: var(--zh-line-theme); }
-.property-panel section { padding: 15px; border-bottom: 1px solid var(--zh-line-parting); }.property-panel label { display: block; margin-bottom: 10px; color: var(--zh-text-secondary); font-size: 11px; font-weight: 600; }.layout-options, .color-row, .action-list { display: flex; gap: 8px; }.layout-options button { width: 54px; height: 36px; display: grid; grid-template-columns: 1fr 1fr; gap: 3px; padding: 6px; border: 1px solid var(--zh-line-border); border-radius: 5px; background: var(--zh-background-light); }.layout-options button.active { border-color: var(--zh-line-theme); }.layout-options i { background: var(--zh-line-theme20); }.color-row button { width: 24px; height: 24px; border: 2px solid var(--zh-background-primary); border-radius: 50%; box-shadow: 0 0 0 1px var(--zh-line-border); }.blue { background: #2563eb; }.navy { background: #173d78; }.green { background: #1f993f; }.orange { background: #ff6b3f; }.custom { color: var(--zh-text-caption); background: var(--zh-background-light); }.property-panel :deep(.el-select) { width: 100%; }.action-list { flex-direction: column; }.action-list :deep(.el-button) { margin: 0; justify-content: start; }
-.property-tip { display: flex; gap: 8px; margin: 16px; padding: 12px; border-radius: var(--zh-radius8); color: var(--zh-text-theme); background: var(--zh-background-weaken); }.property-tip p { margin: 0; color: var(--zh-text-secondary); font-size: 10px; line-height: 1.6; }
-@media (max-width: 1120px) { .workspace-grid { grid-template-columns: 250px minmax(460px, 1fr); }.property-panel { display: none; } }
-@media (max-width: 820px) { .workspace-toolbar { grid-template-columns: 1fr auto; }.tool-cluster { display: none; }.workspace-grid { grid-template-columns: 1fr; }.ai-panel { display: none; }.editor-stage { grid-template-columns: 88px minmax(0, 1fr); } }
+.workspace{height:100dvh;display:grid;grid-template-rows:60px minmax(0,1fr);overflow:hidden;background:var(--zh-background-light)}.toolbar{display:grid;grid-template-columns:1fr auto 1fr;align-items:center;padding:0 16px;border-bottom:1px solid var(--zh-line-border);background:var(--zh-background-primary)}.project-title{display:flex;align-items:center;gap:8px}.project-title div{display:flex;flex-direction:column}.project-title strong{font-size:13px}.project-title span{display:flex;align-items:center;gap:4px;margin-top:3px;color:var(--zh-text-caption);font-size:10px}.project-title span .el-icon{color:var(--zh-green)}.editing-tools{display:flex;padding:3px;border-radius:var(--zh-radius8);background:var(--zh-background-light)}.toolbar-actions{justify-self:end;display:flex;gap:8px}.workspace-grid{min-height:0;display:grid;grid-template-columns:286px minmax(500px,1fr) 270px}.assistant-panel,.properties{min-height:0;background:var(--zh-background-primary)}.assistant-panel{display:flex;flex-direction:column;border-right:1px solid var(--zh-line-border)}.assistant-panel>header{display:flex;align-items:center;gap:9px;padding:16px;border-bottom:1px solid var(--zh-line-parting)}.assistant-mark{display:grid;place-items:center;width:32px;height:32px;border-radius:var(--zh-radius8);color:#fff;background:var(--zh-gradient-blue);font-weight:700}.assistant-panel header div:last-child{display:flex;flex-direction:column}.assistant-panel header strong{font-size:13px}.assistant-panel header span{margin-top:2px;color:var(--zh-text-caption);font-size:10px}.conversation{flex:1;padding:16px;overflow:auto}.message{display:flex;align-items:flex-start;gap:8px;margin-bottom:16px}.message>span{display:grid;place-items:center;flex:none;width:24px;height:24px;border-radius:6px;color:#fff;background:var(--zh-theme-primary);font-size:10px}.message p{margin:0;padding:10px 12px;border-radius:var(--zh-radius12);color:var(--zh-text-secondary);background:var(--zh-background-answer-card);font-size:12px;line-height:1.65}.message.user{justify-content:flex-end}.message.user p{color:var(--zh-text-primary);background:var(--zh-background-user-query)}.composer{padding:12px;border-top:1px solid var(--zh-line-border)}.composer>div{display:flex;align-items:center;justify-content:space-between;margin-top:8px}.composer span{color:var(--zh-text-caption);font-size:10px}.composer :deep(.el-textarea__inner){background:var(--zh-background-light);box-shadow:none}.editor-stage{display:grid;grid-template-columns:116px minmax(0,1fr);min-width:0}.slide-rail{padding:12px 9px;overflow:auto;border-right:1px solid var(--zh-line-border);background:var(--zh-background-primary)}.slide-rail>button{display:grid;grid-template-columns:18px 1fr;gap:4px;width:100%;margin-bottom:10px;padding:3px;border:1px solid transparent;border-radius:6px;color:var(--zh-text-caption);background:transparent;text-align:left;cursor:pointer}.slide-rail>button.active{border-color:var(--zh-line-theme);color:var(--zh-text-theme);background:var(--zh-background-weaken)}.thumbnail{display:flex;flex-direction:column;justify-content:center;gap:5px;height:54px;padding:8px;border-radius:4px;background:var(--zh-background-light)}.thumbnail i{width:65%;height:3px;background:var(--thumb)}.thumbnail b{overflow:hidden;color:var(--zh-text-secondary);font-size:8px;text-overflow:ellipsis;white-space:nowrap}.slide-rail :deep(.el-button){width:100%;justify-content:flex-start}.canvas-area{position:relative;display:grid;place-items:center;min-width:0;padding:44px 34px;overflow:auto;background-color:#eef0f4;background-image:radial-gradient(#c9ced7 1px,transparent 1px);background-size:18px 18px}.canvas-meta{position:absolute;top:12px;inset-inline:20px;display:flex;justify-content:space-between;color:#7c8491;font-size:10px}.slide-canvas{position:relative;width:min(780px,100%);aspect-ratio:16/9;overflow:hidden;padding:clamp(28px,4vw,52px);color:#102d54;background:#f9fbff;box-shadow:0 18px 45px rgb(40 57 82 / 18%)}.slide-canvas:after{content:'';position:absolute;top:-18%;right:-8%;width:42%;aspect-ratio:1;border-radius:50%;background:color-mix(in srgb,var(--accent) 16%,white)}.slide-eyebrow,.slide-canvas h1,.slide-canvas>p,.theorem{position:relative;z-index:1}.slide-eyebrow{color:var(--accent);font:600 10px var(--zh-font-number);letter-spacing:.12em}.slide-canvas h1{max-width:76%;margin:18px 0 0;font-size:clamp(26px,3vw,40px);line-height:1.2;letter-spacing:-.04em}.slide-canvas>p{max-width:64%;margin:12px 0;color:#607491;font-size:clamp(11px,1.2vw,15px);line-height:1.65}.theorem{display:grid;grid-template-columns:.8fr 1.2fr;align-items:center;gap:28px;width:76%;margin:28px auto}.triangle{position:relative;width:104px;height:104px;border-right:5px solid var(--accent);border-bottom:5px solid var(--accent);transform:skewY(-35deg) rotate(-10deg)}.triangle i{position:absolute;color:var(--accent);font-style:normal;font-weight:700;transform:skewY(35deg) rotate(10deg)}.triangle i:nth-child(1){bottom:-22px;left:36px}.triangle i:nth-child(2){top:40px;right:-18px}.triangle i:nth-child(3){top:-22px;left:8px}.formula{display:grid;grid-template-columns:auto 24px auto;align-items:center;font-family:var(--zh-font-number)}.formula span,.formula strong{font-size:clamp(22px,3vw,36px)}.formula em{color:#7c8da4;font-style:normal}.formula strong{color:var(--accent)}.formula small{grid-column:1/-1;margin-top:8px;color:#7c8da4;font-size:10px}.slide-canvas footer{position:absolute;z-index:1;right:0;bottom:0;left:0;display:grid;grid-template-columns:110px 1fr;padding:14px 28px;color:#fff;background:color-mix(in srgb,var(--accent) 82%,#102d54)}.slide-canvas footer p{margin:0;font-size:10px;line-height:1.5}.layout-重点陈述 h1{margin-top:54px;font-size:clamp(34px,4.4vw,52px)}.canvas-controls{position:absolute;right:18px;bottom:14px;display:flex;overflow:hidden;border-radius:var(--zh-radius8);background:var(--zh-background-capsule);box-shadow:var(--zh-shadow1)}.canvas-controls button,.canvas-controls span{padding:6px 9px;border:0;color:var(--zh-text-secondary);background:transparent;font-size:11px}.canvas-controls button{cursor:pointer}.properties{overflow:auto;border-left:1px solid var(--zh-line-border)}.properties>header{display:flex;justify-content:space-between;padding:16px;border-bottom:1px solid var(--zh-line-parting)}.properties header strong{font-size:13px}.properties header span{color:var(--zh-text-caption);font-size:10px}.tabs{display:grid;grid-template-columns:repeat(3,1fr);padding:10px 14px 0;border-bottom:1px solid var(--zh-line-parting)}.tabs button{padding:8px;border:0;border-bottom:2px solid transparent;color:var(--zh-text-caption);background:transparent;cursor:pointer}.tabs button.active{border-color:var(--zh-line-theme);color:var(--zh-text-theme)}.properties section{padding:16px;border-bottom:1px solid var(--zh-line-parting)}.properties label{display:block;margin:0 0 10px;color:var(--zh-text-secondary);font-size:11px;font-weight:600}.properties label:not(:first-child){margin-top:18px}.theme-picker{display:flex;gap:12px}.theme-picker button{width:24px;height:24px;border:2px solid var(--zh-background-primary);border-radius:50%;box-shadow:0 0 0 1px var(--zh-line-border);cursor:pointer}.theme-picker button.selected{outline:2px solid var(--zh-text-theme);outline-offset:2px}.layout-picker{display:grid;grid-template-columns:repeat(3,1fr);gap:8px}.layout-picker button{display:grid;grid-template-rows:26px auto;gap:4px;min-height:66px;padding:7px 4px;border:1px solid var(--zh-line-border);border-radius:6px;color:var(--zh-text-caption);background:var(--zh-background-light);font-size:9px;cursor:pointer}.layout-picker button.active{border-color:var(--zh-line-theme);color:var(--zh-text-theme);background:var(--zh-background-weaken)}.layout-picker i{display:block;width:70%;height:4px;margin:auto;background:var(--zh-line-theme50)}.layout-picker i:nth-child(2){width:48%}.page-actions{display:grid;gap:8px}.page-actions :deep(.el-button){justify-content:flex-start;margin:0}.assistant-tip{display:flex;gap:8px;margin:16px;padding:12px;border-radius:var(--zh-radius8);background:var(--zh-background-weaken)}.assistant-tip p,.hint{margin:0;color:var(--zh-text-secondary);font-size:10px;line-height:1.6}.preview{display:grid;place-items:center;padding:18px;background:#eef0f4}.preview-slide{width:min(780px,100%)}.preview-formula{width:max-content;margin:50px auto}.preview-dialog :deep(.el-dialog__body){padding:0}@media(max-width:1120px){.workspace-grid{grid-template-columns:250px minmax(460px,1fr)}.properties{display:none}}@media(max-width:820px){.toolbar{grid-template-columns:1fr auto}.editing-tools{display:none}.workspace-grid{grid-template-columns:1fr}.assistant-panel{display:none}.editor-stage{grid-template-columns:88px minmax(0,1fr)}}
 </style>
