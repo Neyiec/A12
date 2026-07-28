@@ -69,3 +69,8 @@ export function resetPassword(data) {
 export function logout() {
   return post('/api/v1/auth/logout')
 }
+
+export function checkUsername(username) { return get('/api/v1/auth/check-username', { username }) }
+export function checkEmail(email) { return get('/api/v1/auth/check-email', { email }) }
+export function verifyCode(data) { return post('/api/v1/auth/verify', data) }
+export function initialPasswordChange(data) { return post('/api/v1/auth/initial-password-change', data) }

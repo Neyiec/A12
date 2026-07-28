@@ -8,13 +8,16 @@ import { computed, onMounted, ref, watch } from 'vue'
 import { ElMessage } from 'element-plus'
 import { CircleCheck, Download, Files, Refresh, Search, Warning } from '@element-plus/icons-vue'
 import { EXPORT_PAGE } from '../config/teacherPages.config.js'
-import { downloadExportArtifact, listExportTasks, retryExportTask } from '../apis/teacher'
+import { cancelExportTask, createExportPreviewUrl, createExportTask, downloadExportArtifact, getExportArtifact, getExportQualityReport, listExportTasks, precheckProjectExport, retryExportTask } from '../apis/teacher'
 
 const keyword = ref('')
 const activeTab = ref('全部任务')
 const tabs = ['全部任务', '进行中', '已完成', '需要处理']
 const tasks = ref(EXPORT_PAGE.tasks)
 const loading = ref(false)
+const exportDialogVisible = ref(false), reportVisible = ref(false), previewVisible = ref(false)
+const exportForm = ref({ project_id: '', export_type: 'pdf', snapshot_version: '' })
+const precheck = ref(null), qualityReport = ref(null), previewUrl = ref('')
 const normalizeTask = (task) => ({
   id: task.id, project: task.project_name || task.project?.project_name || task.file_name || '未命名项目',
   format: (task.export_type || task.format || '成果包').toUpperCase(), version: task.snapshot_version ? `v${task.snapshot_version}` : task.version || '—',
@@ -46,7 +49,7 @@ const filteredTasks = computed(() => {
 })
 
 /** 模拟创建标准格式导出任务。 */
-const createExport = () => ElMessage.info('请在工作台选择项目快照后发起导出')
+const createExport = () => openExportDialog()
 const download = async (row) => {
   if (!row.id) return ElMessage.info('示例任务暂不支持下载')
   try {
@@ -56,6 +59,12 @@ const download = async (row) => {
     if (url) window.open(url, '_blank', 'noopener'); else ElMessage.warning('文件尚未生成完成')
   } catch { ElMessage.error('操作未成功，请稍后重试') }
 }
+const openExportDialog = () => { exportForm.value = { project_id: '', export_type: 'pdf', snapshot_version: '' }; precheck.value = null; exportDialogVisible.value = true }
+const runPrecheck = async () => { if (!exportForm.value.project_id) return ElMessage.warning('请输入项目 ID'); try { precheck.value = (await precheckProjectExport(exportForm.value.project_id, { export_type: exportForm.value.export_type, snapshot_version: exportForm.value.snapshot_version || undefined }))?.data || null } catch (error) { ElMessage.error(error?.message || '导出预检失败') } }
+const submitExport = async () => { if (!exportForm.value.project_id) return ElMessage.warning('请输入项目 ID'); try { await createExportTask({ ...exportForm.value, snapshot_version: Number(exportForm.value.snapshot_version) || undefined }); exportDialogVisible.value = false; ElMessage.success('导出任务已创建'); await loadTasks() } catch (error) { ElMessage.error(error?.message || '导出任务创建失败') } }
+const cancelTask = async (row) => { try { await cancelExportTask(row.id); ElMessage.success('任务已取消'); await loadTasks() } catch (error) { ElMessage.error(error?.message || '任务取消失败') } }
+const openQualityReport = async (row) => { try { qualityReport.value = (await getExportQualityReport(row.id))?.data || null; reportVisible.value = true } catch (error) { ElMessage.error(error?.message || '质量报告加载失败') } }
+const previewArtifact = async (row) => { try { const artifact = (await getExportArtifact(row.id))?.data || {}; const result = await createExportPreviewUrl(artifact.id || artifact.artifact_id || row.id); previewUrl.value = result?.data?.preview_url || result?.preview_url || ''; if (!previewUrl.value) throw new Error('预览地址未返回'); previewVisible.value = true } catch (error) { ElMessage.error(error?.message || '预览地址获取失败') } }
 watch(activeTab, loadTasks)
 onMounted(loadTasks)
 </script>
@@ -101,6 +110,9 @@ onMounted(loadTasks)
       </el-table>
     </section>
   </div>
+    <el-dialog v-model="exportDialogVisible" title="配置导出任务" width="460px"><el-form label-position="top"><el-form-item label="项目 ID"><el-input v-model="exportForm.project_id" /></el-form-item><el-form-item label="导出格式"><el-select v-model="exportForm.export_type"><el-option label="PDF" value="pdf" /><el-option label="Word" value="word" /><el-option label="PowerPoint" value="ppt" /></el-select></el-form-item><el-form-item label="快照版本"><el-input v-model="exportForm.snapshot_version" /></el-form-item></el-form><div v-if="precheck" class="precheck-result"><strong>预检完成</strong><pre>{{ JSON.stringify(precheck, null, 2) }}</pre></div><template #footer><el-button @click="runPrecheck">运行预检</el-button><el-button type="primary" @click="submitExport">创建导出</el-button></template></el-dialog>
+    <el-dialog v-model="reportVisible" title="完整质量报告" width="min(680px, 92vw)"><pre class="report-content">{{ JSON.stringify(qualityReport, null, 2) }}</pre></el-dialog>
+    <el-dialog v-model="previewVisible" title="成果在线预览" width="min(1000px, 94vw)"><iframe v-if="previewUrl" :src="previewUrl" class="artifact-preview" title="导出成果预览" /></el-dialog>
 </template>
 
 <style scoped>
@@ -124,4 +136,5 @@ onMounted(loadTasks)
 @keyframes loadingSpin { to { transform: rotate(360deg); } }
 @media (max-width: 900px) { .active-task { grid-template-columns: auto 1fr; }.task-progress { grid-column: 1 / -1; }.quality-items { grid-template-columns: repeat(2, 1fr); } }
 @media (max-width: 620px) { .export-stats { grid-template-columns: 1fr; }.history-header { align-items: stretch; flex-direction: column; }.history-header :deep(.el-input) { width: 100%; margin-bottom: 12px; }.quality-items { grid-template-columns: 1fr; } }
+.precheck-result{padding:12px;border-radius:var(--zh-radius8);background:var(--zh-background-weaken)}.precheck-result pre,.report-content{max-height:380px;overflow:auto;margin:8px 0 0;white-space:pre-wrap;font:12px/1.65 var(--zh-font-code)}.report-content{padding:16px;border-radius:var(--zh-radius8);background:var(--zh-background-light)}.artifact-preview{width:100%;height:min(70vh,720px);border:1px solid var(--zh-line-border);border-radius:var(--zh-radius8)}
 </style>

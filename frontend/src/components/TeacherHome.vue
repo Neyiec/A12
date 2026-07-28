@@ -4,7 +4,7 @@
   - 输出: 教师端默认首页内容，由 `TeacherLayout.vue` 承载全局导航
 -->
 <script setup>
-import { computed, onMounted, ref } from 'vue'
+import { computed, onMounted, reactive, ref } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { ElMessage } from 'element-plus'
 import {
@@ -17,7 +17,7 @@ import {
   Promotion,
 } from '@element-plus/icons-vue'
 import { TEACHER_HOME } from '../config/teacherHome.config.js'
-import { createProject, listProjects } from '../apis/teacher'
+import { createAiSession, createProject, listProjects, listResources, restoreProject } from '../apis/teacher'
 
 const router = useRouter()
 const route = useRoute()
@@ -25,6 +25,15 @@ const prompt = ref('')
 const canSend = computed(() => prompt.value.trim().length > 0)
 const iconMap = { Presentation: Monitor, Document, MagicStick }
 const projects = ref([])
+const sessionDialogVisible = ref(false)
+const sessionCreating = ref(false)
+const resourcesLoading = ref(false)
+const availableResources = ref([])
+const selectedResourceIds = ref([])
+const sessionForm = reactive({ title: '', subject: '', grade: '' })
+const archivedVisible = ref(false)
+const archivedProjects = ref([])
+const archivedLoading = ref(false)
 
 const openProject = (project) => router.push({
   path: '/main/workspace',
@@ -67,6 +76,47 @@ const createProjectFromPrompt = async () => {
   } catch (error) {
     ElMessage.error(error?.message || '创建项目失败，请登录后重试')
   }
+}
+
+const openSessionDialog = async () => {
+  if (!canSend.value) return
+  sessionForm.title = prompt.value.trim().slice(0, 40)
+  sessionForm.subject = ''
+  sessionForm.grade = ''
+  selectedResourceIds.value = []
+  sessionDialogVisible.value = true
+  resourcesLoading.value = true
+  try {
+    const result = await listResources({ page: 1, size: 30 })
+    availableResources.value = result?.data?.records || result?.data?.list || result?.data?.items || []
+  } catch { availableResources.value = [] } finally { resourcesLoading.value = false }
+}
+
+const createSessionFromPrompt = async () => {
+  if (!sessionForm.title.trim() || !sessionForm.subject.trim() || !sessionForm.grade.trim()) return ElMessage.warning('请完整填写备课信息')
+  sessionCreating.value = true
+  try {
+    const result = await createAiSession({
+      title: sessionForm.title.trim(), subject: sessionForm.subject.trim(), grade: sessionForm.grade.trim(), status: 'active',
+      messages: JSON.stringify([{ role: 'user', content: prompt.value.trim() }]), uploaded_refs: JSON.stringify(selectedResourceIds.value),
+    })
+    const task = result?.data || result
+    const sessionId = task?.conversation_id || task?.id
+    if (!sessionId) throw new Error(result?.message || '创建备课会话失败')
+    sessionDialogVisible.value = false
+    ElMessage.success('备课会话已创建，正在生成教学大纲')
+    router.push({ path: '/main/workspace', query: { ...(route.query.preview ? { preview: '1' } : {}), sessionId, taskId: task.id } })
+  } catch (error) { ElMessage.error(error?.message || '创建备课会话失败，请稍后重试') } finally { sessionCreating.value = false }
+}
+
+const openArchivedProjects = async () => {
+  archivedVisible.value = true; archivedLoading.value = true
+  try { const result = await listProjects({ page: 1, size: 30, status: 'archived' }); archivedProjects.value = result?.data?.records || result?.data?.list || result?.data?.items || [] }
+  catch (error) { ElMessage.error(error?.message || '归档项目加载失败') } finally { archivedLoading.value = false }
+}
+const restoreArchivedProject = async (project) => {
+  try { await restoreProject(project.id); archivedProjects.value = archivedProjects.value.filter((item) => item.id !== project.id); await loadProjects(); ElMessage.success('项目已恢复到草稿') }
+  catch (error) { ElMessage.error(error?.message || '项目恢复失败') }
 }
 
 onMounted(loadProjects)
@@ -116,12 +166,12 @@ onMounted(loadProjects)
         :autosize="{ minRows: 3, maxRows: 7 }"
         resize="none"
         :placeholder="TEACHER_HOME.composer.placeholder"
-        @keydown.ctrl.enter="createProjectFromPrompt"
+        @keydown.ctrl.enter="openSessionDialog"
       />
       <div class="composer-toolbar">
         <div class="composer-tools">
-          <el-tooltip content="资料上传将在会话接口接入后开放"><span><el-button text :icon="Paperclip" disabled>{{ TEACHER_HOME.composer.attach }}</el-button></span></el-tooltip>
-          <el-tooltip content="知识库选择将在会话接口接入后开放"><span><el-button text :icon="Collection" disabled>{{ TEACHER_HOME.composer.knowledge }}</el-button></span></el-tooltip>
+          <el-tooltip content="在下一步选择本次备课要引用的资源"><span><el-button text :icon="Paperclip" :disabled="!canSend" @click="openSessionDialog">{{ TEACHER_HOME.composer.attach }}</el-button></span></el-tooltip>
+          <el-tooltip content="在下一步选择知识资源"><span><el-button text :icon="Collection" :disabled="!canSend" @click="openSessionDialog">{{ TEACHER_HOME.composer.knowledge }}</el-button></span></el-tooltip>
           <el-tooltip content="语音输入暂未接入"><span><el-button text circle aria-label="语音输入" disabled><el-icon><Microphone /></el-icon></el-button></span></el-tooltip>
         </div>
         <el-button
@@ -130,12 +180,22 @@ onMounted(loadProjects)
           :icon="Promotion"
           :disabled="!canSend"
           :aria-label="TEACHER_HOME.composer.send"
-          @click="createProjectFromPrompt"
+          @click="openSessionDialog"
         />
       </div>
     </section>
     <p class="composer-hint">{{ TEACHER_HOME.composer.hint }}</p>
+    <el-dialog v-model="sessionDialogVisible" title="创建 AI 备课会话" width="min(600px, 92vw)" destroy-on-close>
+      <el-form label-position="top" class="session-form">
+        <div class="session-fields"><el-form-item label="备课主题" required><el-input v-model="sessionForm.title" maxlength="40" show-word-limit /></el-form-item><el-form-item label="学科" required><el-input v-model="sessionForm.subject" placeholder="例如：数学" /></el-form-item><el-form-item label="年级" required><el-input v-model="sessionForm.grade" placeholder="例如：八年级" /></el-form-item></div>
+        <el-form-item label="本次需求"><div class="prompt-preview">{{ prompt }}</div></el-form-item>
+        <el-form-item label="引用个人资源（可选）"><el-checkbox-group v-model="selectedResourceIds" v-loading="resourcesLoading" class="resource-picker"><el-checkbox v-for="item in availableResources" :key="item.id" :value="item.id">{{ item.file_name }}</el-checkbox><span v-if="!resourcesLoading && !availableResources.length" class="empty-resources">暂无可选资源</span></el-checkbox-group></el-form-item>
+      </el-form>
+      <template #footer><el-button @click="sessionDialogVisible = false">取消</el-button><el-button type="primary" :loading="sessionCreating" @click="createSessionFromPrompt">开始生成大纲</el-button></template>
+    </el-dialog>
   </section>
+    <div class="archive-entry"><el-button text size="small" @click="openArchivedProjects">归档项目管理</el-button></div>
+    <el-dialog v-model="archivedVisible" title="归档项目" width="min(620px, 92vw)"><div v-loading="archivedLoading" class="archived-list"><article v-for="project in archivedProjects" :key="project.id"><div><strong>{{ project.project_name }}</strong><span>{{ project.project_type || '教学项目' }}</span></div><el-button type="primary" plain size="small" @click="restoreArchivedProject(project)">恢复</el-button></article><el-empty v-if="!archivedLoading && !archivedProjects.length" description="暂无归档项目" /></div><template #footer><el-button @click="archivedVisible = false">关闭</el-button></template></el-dialog>
 </template>
 
 <style scoped>
@@ -166,11 +226,14 @@ h1 { margin: 0; font-size: clamp(36px, 4vw, 48px); line-height: 1.15; letter-spa
 .composer-tools { display: flex; align-items: center; }
 .composer-tools :deep(.el-button) { color: var(--zh-text-secondary); }
 .composer-hint { margin: 10px 0 0; color: var(--zh-text-caption); font-size: 11px; text-align: center; }
+.session-fields { display:grid; grid-template-columns: 1.5fr 1fr 1fr; gap:12px; }.session-fields :deep(.el-form-item){margin-bottom:0}.prompt-preview{width:100%;padding:10px 12px;border-radius:var(--zh-radius8);color:var(--zh-text-secondary);background:var(--zh-background-light);line-height:1.65;white-space:pre-wrap}.resource-picker{display:grid;gap:8px;max-height:160px;overflow:auto;padding:10px 12px;border:1px solid var(--zh-line-border);border-radius:var(--zh-radius8);background:var(--zh-background-light)}.empty-resources{color:var(--zh-text-caption);font-size:12px}
 
 @media (max-width: 680px) {
   .home-welcome { width: min(100% - 28px, 540px); padding-top: 54px; }
   .suggestion-grid, .project-grid { grid-template-columns: 1fr; }
   .suggestion-card :deep(.el-card__body) { min-height: 118px; }
   .suggestion-icon { margin-bottom: 16px; }
+  .session-fields { grid-template-columns:1fr; }
 }
+.archive-entry{display:flex;justify-content:center;margin-top:10px}.archived-list{display:grid;gap:10px}.archived-list article{display:flex;align-items:center;justify-content:space-between;padding:12px;border:1px solid var(--zh-line-border);border-radius:var(--zh-radius8);background:var(--zh-background-light)}.archived-list article div{display:flex;flex-direction:column;gap:4px}.archived-list strong{font-size:13px}.archived-list span{color:var(--zh-text-caption);font-size:11px}
 </style>
