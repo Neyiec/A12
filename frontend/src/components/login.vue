@@ -1,30 +1,27 @@
 <!--
   [数据交互说明]
   - 导入:
-    - `login`, `register`: 来自 `../apis/login.js` 的 API 方法
+    - `login`, `register`, `sendVerificationCode`: 来自 `../apis/login.js` 的 API 方法
     - `LOGIN_TEXT`, `VALIDATION_RULES`: 来自 `../config/login.config.js` 的配置常量
-    - `User`, `Lock`: ElementPlus Icons 图标组件
+    - `User`, `Lock`, `Message`, `Phone`, `Key`: ElementPlus Icons 图标组件
+    - `useUserStore`: 全局用户状态 Pinia store（持久化）
   - 输出:
-    - 登录成功后将 token 存入 localStorage，跳转至 `/main`
+    - 登录成功后将 token + 用户信息写入 Pinia store（自动持久化至 localStorage），跳转至 `/main`
     - 注册成功后将自动切换到登录模式
   - 路由: 由 `/login` 路由匹配，见 `src/router/index.js`
 -->
 <script setup>
-import { ref, reactive, computed, onMounted, onUnmounted } from 'vue'
-import { useRoute, useRouter } from 'vue-router'
+import { ref, reactive, computed, onBeforeUnmount } from 'vue'
+import { useRouter } from 'vue-router'
 import { ElMessage } from 'element-plus'
-import { User, Lock } from '@element-plus/icons-vue'
-import { login, register, sendRegisterVerificationCode } from '../apis/login.js'
+import { User, Lock, Message, Phone, Key } from '@element-plus/icons-vue'
+import { login, register, sendVerificationCode } from '../apis/login.js'
 import { LOGIN_TEXT, VALIDATION_RULES } from '../config/login.config.js'
-import { startPageTransition } from '../utils/pageTransition.js'
+import { useUserStore } from '../storage/user.js'
 
 const router = useRouter()
-const route = useRoute()
-
-/** 本地界面预览开关：仅 Vite 开发环境且 URL 带 ?preview=1 时有效。 */
-const isDevelopmentPreview = computed(() => (
-  import.meta.env.DEV && route.query.preview === '1'
-))
+/** 用户状态 store — 登录成功后写入 token 与用户信息 */
+const userStore = useUserStore()
 
 // ========== 响应式状态 ==========
 
@@ -41,14 +38,11 @@ const loginLoading = ref(false)
 /** 注册按钮加载态 */
 const registerLoading = ref(false)
 /** 发送验证码按钮加载态 */
-const verificationCodeLoading = ref(false)
-/** 验证码重发倒计时（秒） */
-const verificationCodeCountdown = ref(0)
-let verificationCodeTimer = null
-const backgroundCanvas = ref(null)
-let backgroundAnimation = null
-let removeCanvasResizeListener = null
-let removeCanvasPointerListeners = null
+const sendCodeLoading = ref(false)
+/** 发送验证码后倒计时秒数（0=可再次发送） */
+const sendCodeCooldown = ref(0)
+/** 倒计时定时器引用 — 用于组件卸载时清理 */
+let cooldownTimer = null
 
 /** 登录表单数据 */
 const loginForm = reactive({
@@ -60,11 +54,22 @@ const loginForm = reactive({
 /** 注册表单数据 */
 const registerForm = reactive({
   username: '',
-  email: '',
-  code: '',
   password: '',
   confirmPassword: '',
+  real_name: '',
+  phone: '',
+  email: '',
+  verificationCode: '',
 })
+
+/** 当前注册步骤索引（0=基本信息, 1=邮箱验证, 2=设置密码） */
+const currentStep = ref(0)
+/** 每个步骤对应的表单字段名 — handleNext 只校验当前步字段 */
+const stepFields = [
+  ['username', 'real_name', 'phone'],
+  ['email', 'verificationCode'],
+  ['password', 'confirmPassword'],
+]
 
 // ========== 表单校验规则 ==========
 
@@ -72,6 +77,26 @@ const registerForm = reactive({
 const validateConfirmPassword = (rule, value, callback) => {
   if (value !== registerForm.password) {
     callback(new Error(LOGIN_TEXT.message.passwordMismatch))
+  } else {
+    callback()
+  }
+}
+
+/** 手机号校验器 — 中国手机号正则匹配 */
+const validatePhone = (rule, value, callback) => {
+  if (!VALIDATION_RULES.phone.pattern.test(value)) {
+    callback(new Error(LOGIN_TEXT.message.phoneInvalid))
+  } else {
+    callback()
+  }
+}
+
+/** 邮箱格式校验器 */
+const validateEmail = (rule, value, callback) => {
+  // 基础邮箱正则校验
+  const emailPattern = /^[^\s@]+@[^\s@]+\.[^\s@]+$/
+  if (!emailPattern.test(value)) {
+    callback(new Error(LOGIN_TEXT.message.emailInvalid))
   } else {
     callback()
   }
@@ -111,15 +136,31 @@ const registerRules = computed(() => ({
     message: VALIDATION_RULES.username.message,
     trigger: VALIDATION_RULES.username.trigger,
   }],
-  email: [{
-    required: VALIDATION_RULES.email.required,
-    type: VALIDATION_RULES.email.type,
-    message: VALIDATION_RULES.email.message,
-    trigger: VALIDATION_RULES.email.trigger,
+  real_name: [{
+    required: VALIDATION_RULES.realName.required,
+    min: VALIDATION_RULES.realName.min,
+    message: VALIDATION_RULES.realName.message,
+    trigger: VALIDATION_RULES.realName.trigger,
   }],
-  code: [{
+  phone: [
+    {
+      required: VALIDATION_RULES.phone.required,
+      message: VALIDATION_RULES.phone.message,
+      trigger: VALIDATION_RULES.phone.trigger,
+    },
+    { validator: validatePhone, trigger: ['blur', 'change'] },
+  ],
+  email: [
+    {
+      required: VALIDATION_RULES.email.required,
+      message: VALIDATION_RULES.email.message,
+      trigger: VALIDATION_RULES.email.trigger,
+    },
+    { validator: validateEmail, trigger: ['blur', 'change'] },
+  ],
+  verificationCode: [{
     required: VALIDATION_RULES.verificationCode.required,
-    pattern: VALIDATION_RULES.verificationCode.pattern,
+    len: VALIDATION_RULES.verificationCode.len,
     message: VALIDATION_RULES.verificationCode.message,
     trigger: VALIDATION_RULES.verificationCode.trigger,
   }],
@@ -153,62 +194,116 @@ const toggleMode = () => {
   loginForm.password = ''
   loginForm.agreeToPrivacy = false
   loginFormRef.value?.resetFields()
-  // 清空注册表单
+  // 清空注册表单（含新增字段）
   registerForm.username = ''
-  registerForm.email = ''
-  registerForm.code = ''
   registerForm.password = ''
   registerForm.confirmPassword = ''
+  registerForm.real_name = ''
+  registerForm.phone = ''
+  registerForm.email = ''
+  registerForm.verificationCode = ''
   registerFormRef.value?.resetFields()
-
-  if (verificationCodeTimer) {
-    window.clearInterval(verificationCodeTimer)
-    verificationCodeTimer = null
+  // 重置注册步骤
+  currentStep.value = 0
+  // 重置验证码倒计时
+  sendCodeCooldown.value = 0
+  if (cooldownTimer) {
+    clearInterval(cooldownTimer)
+    cooldownTimer = null
   }
-  verificationCodeCountdown.value = 0
 }
 
-/** 发送注册邮箱验证码，并启动与服务端一致的 60 秒重发倒计时。 */
-const handleSendVerificationCode = async () => {
-  if (!registerFormRef.value || verificationCodeCountdown.value > 0) return
+// ========== 步骤导航 ==========
 
+/**
+ * 下一步：仅校验当前步骤字段 → 通过后推进步骤
+ */
+const handleNext = async () => {
+  if (!registerFormRef.value) return
+  const fields = stepFields[currentStep.value]
   try {
-    await registerFormRef.value.validateField('email')
+    // 逐一校验当前步的每个字段
+    await registerFormRef.value.validateField(fields)
   } catch {
-    return
+    return // 校验不通过，停留在当前步骤
   }
+  currentStep.value++
+}
 
-  verificationCodeLoading.value = true
-  try {
-    const res = await sendRegisterVerificationCode(registerForm.email)
-    if (res?.code !== 200) {
-      ElMessage.error(res?.message || LOGIN_TEXT.message.verificationCodeFailed)
-      return
-    }
+/**
+ * 上一步：无需校验，直接回退
+ */
+const handlePrev = () => {
+  if (currentStep.value > 0) {
+    currentStep.value--
+  }
+}
 
-    ElMessage.success(LOGIN_TEXT.message.verificationCodeSent)
-    verificationCodeCountdown.value = 60
-    verificationCodeTimer = window.setInterval(() => {
-      verificationCodeCountdown.value -= 1
-      if (verificationCodeCountdown.value <= 0) {
-        window.clearInterval(verificationCodeTimer)
-        verificationCodeTimer = null
-      }
-    }, 1000)
-  } catch {
-    ElMessage.error(LOGIN_TEXT.message.networkError)
-  } finally {
-    verificationCodeLoading.value = false
+/**
+ * 点击步骤指示器跳转到已完成步骤
+ * @param {number} n - 目标步骤索引
+ */
+const goToStep = (n) => {
+  // 仅允许跳转到已完成步骤（< currentStep）
+  if (n < currentStep.value) {
+    currentStep.value = n
   }
 }
 
 // ========== 提交处理 ==========
 
 /**
- * 处理登录提交
- * 校验表单 → 调用登录 API → 存储 token 并跳转
+ * 发送邮箱验证码
+ * 先单独校验邮箱字段 → 调用 API-02 → 成功后启动 60 秒倒计时
+ * 注意：request.js 响应拦截器已返回 response.data（{ code, data, message }），
+ * 业务错误也会 resolve，需自行判断 res.code；只有网络/HTTP 错误才会进 catch
  */
-const handleLogin = async (event) => {
+const handleSendCode = async () => {
+  // 单独校验邮箱字段
+  if (!registerFormRef.value) return
+  try {
+    await registerFormRef.value.validateField('email')
+  } catch {
+    return // 邮箱格式校验不通过
+  }
+
+  sendCodeLoading.value = true
+  try {
+    const res = await sendVerificationCode({
+      username: registerForm.email,
+      scene: 'register',
+      channel: 'email',
+    })
+    // 检查业务状态码（200 或 0 视为成功）
+    if (res.code !== 200 && res.code !== 0) {
+      ElMessage.error(res.message || LOGIN_TEXT.message.sendCodeFailed)
+      return
+    }
+    ElMessage.success(LOGIN_TEXT.message.sendCodeSuccess)
+    // 启动 60 秒倒计时
+    sendCodeCooldown.value = 60
+    cooldownTimer = setInterval(() => {
+      sendCodeCooldown.value--
+      if (sendCodeCooldown.value <= 0) {
+        clearInterval(cooldownTimer)
+        cooldownTimer = null
+      }
+    }, 1000)
+  } catch {
+    // HTTP/网络错误已被 request.js 拦截器记录日志，此处仅做用户提示
+    ElMessage.error(LOGIN_TEXT.message.networkError)
+  } finally {
+    sendCodeLoading.value = false
+  }
+}
+
+/**
+ * 处理登录提交
+ * 校验表单 → 调用登录 API → 将 LoginVO 完整存入 Pinia store 并跳转
+ * 注意：request.js 响应拦截器已返回 response.data（{ code, data, message }），
+ * 业务错误也会 resolve，需自行判断 res.code；只有网络/HTTP 错误才会进 catch
+ */
+const handleLogin = async () => {
   // 表单校验
   if (!loginFormRef.value) return
   try {
@@ -219,53 +314,29 @@ const handleLogin = async (event) => {
 
   loginLoading.value = true
   try {
-    // 本地预览无需启动后端，仍复用真实的页面转场和主界面路由。
-    if (isDevelopmentPreview.value) {
-      ElMessage.success(LOGIN_TEXT.message.loginSuccess)
-      await startPageTransition({
-        sourceEvent: event,
-        onCovered: () => router.push({ path: '/main', query: { preview: '1' } }),
-      })
-      return
-    }
-
     const res = await login({
       username: loginForm.username,
       password: loginForm.password,
     })
-
-    // 后端使用 Result<LoginVO> 包装响应：认证失败时仍会返回 HTTP 200，
-    // 因此前端必须先判断业务状态，不能直接读取 token。
-    if (res?.code !== 200 || !res?.data?.token) {
-      ElMessage.error(res?.message || LOGIN_TEXT.message.loginFailed)
+    // res 为 { code, data, message }，其中 data 是 LoginVO
+    // 检查业务状态码（200 或 0 视为成功）
+    if (res.code !== 200 && res.code !== 0) {
+      ElMessage.error(res.message || LOGIN_TEXT.message.loginFailed)
       loginForm.password = ''
       return
     }
-
-    // /main 是教师端入口，统一登录接口返回的管理员/审核员账号不可进入此处。
-    if (res.data.user_type !== 'teacher') {
-      ElMessage.error('当前账号没有教师端访问权限')
-      loginForm.password = ''
-      return
-    }
-
-    // 存储认证信息
-    localStorage.setItem('token', res.data.token)
+    // 将登录返回的 LoginVO 完整写入 Pinia store（自动持久化到 localStorage）
+    const loginVO = res.data
+    userStore.setToken(loginVO.token)
+    userStore.setUserInfo(loginVO)
     ElMessage.success(LOGIN_TEXT.message.loginSuccess)
-    await startPageTransition({
-      sourceEvent: event,
-      onCovered: () => router.push('/main'),
-    })
-  } catch (err) {
-    // 根据错误类型给出对应提示
-    const status = err?.response?.status
-    if (status === 401 || status === 403) {
-      ElMessage.error(LOGIN_TEXT.message.loginFailed)
-    } else if (status) {
-      ElMessage.error(err.response?.data?.message || LOGIN_TEXT.message.loginFailed)
-    } else {
-      ElMessage.error(LOGIN_TEXT.message.networkError)
-    }
+    // 短暂延迟后跳转，让用户看到成功提示
+    setTimeout(() => {
+      router.push('/main')
+    }, 200)
+  } catch {
+    // HTTP/网络错误已被 request.js 拦截器记录日志，此处仅做用户提示
+    ElMessage.error(LOGIN_TEXT.message.networkError)
     loginForm.password = ''
   } finally {
     loginLoading.value = false
@@ -274,7 +345,9 @@ const handleLogin = async (event) => {
 
 /**
  * 处理注册提交
- * 校验表单 → 调用注册 API → 提示成功并切换到登录模式
+ * 校验表单 → 调用注册 API（含验证码）→ 提示成功并切换到登录模式
+ * 注意：request.js 响应拦截器已返回 response.data（{ code, data, message }），
+ * 业务错误也会 resolve，需自行判断 res.code；只有网络/HTTP 错误才会进 catch
  */
 const handleRegister = async () => {
   // 表单校验
@@ -290,204 +363,44 @@ const handleRegister = async () => {
     const res = await register({
       username: registerForm.username,
       password: registerForm.password,
+      real_name: registerForm.real_name,
+      phone: registerForm.phone,
       email: registerForm.email,
-      code: registerForm.code,
+      code: registerForm.verificationCode,
     })
-    if (res?.code !== 200) {
-      ElMessage.error(res?.message || LOGIN_TEXT.message.registerFailed)
+    // 检查业务状态码（200 或 0 视为成功）
+    if (res.code !== 200 && res.code !== 0) {
+      ElMessage.error(res.message || LOGIN_TEXT.message.registerFailed)
       return
     }
     ElMessage.success(LOGIN_TEXT.message.registerSuccess)
     // 注册成功后切换到登录模式
     toggleMode()
-  } catch (err) {
-    const status = err?.response?.status
-    if (status) {
-      ElMessage.error(err.response?.data?.message || LOGIN_TEXT.message.registerFailed)
-    } else {
-      ElMessage.error(LOGIN_TEXT.message.networkError)
-    }
+  } catch {
+    // HTTP/网络错误已被 request.js 拦截器记录日志，此处仅做用户提示
+    ElMessage.error(LOGIN_TEXT.message.networkError)
   } finally {
     registerLoading.value = false
   }
 }
 
-/** 低对比字符场：以缓慢呼吸和鼠标涟漪回应用户，不依赖第三方动画素材。 */
-const startFluidBackground = () => {
-  const canvas = backgroundCanvas.value
-  const context = canvas?.getContext('2d')
-  if (!canvas || !context) return
+// ========== 生命周期 ==========
 
-  const prefersReducedMotion = window.matchMedia('(prefers-reduced-motion: reduce)').matches
-  const pointer = {
-    x: window.innerWidth * .72,
-    y: window.innerHeight * .5,
-    targetX: window.innerWidth * .72,
-    targetY: window.innerHeight * .5,
-    velocity: 0,
-    active: false,
+/** 组件卸载前清理倒计时定时器，防止内存泄漏 */
+onBeforeUnmount(() => {
+  if (cooldownTimer) {
+    clearInterval(cooldownTimer)
+    cooldownTimer = null
   }
-  const glyphs = '·:｡･+×○01'
-  let viewportWidth = window.innerWidth
-  let viewportHeight = window.innerHeight
-  let previousPointerX = pointer.x
-  let previousPointerY = pointer.y
-
-  const glyphAt = (column, row, phase) => {
-    // 变化沿斜向波带传播，避免整屏字符在同一帧机械切换。
-    const cycle = Math.floor(phase * 1.55 + row * .14 - column * .07)
-    return glyphs[(column * 7 + row * 11 + cycle) % glyphs.length]
-  }
-
-  const resize = () => {
-    const scale = Math.min(window.devicePixelRatio || 1, 2)
-    viewportWidth = window.innerWidth
-    viewportHeight = window.innerHeight
-    canvas.width = viewportWidth * scale
-    canvas.height = viewportHeight * scale
-    canvas.style.width = `${viewportWidth}px`
-    canvas.style.height = `${viewportHeight}px`
-    context.setTransform(scale, 0, 0, scale, 0, 0)
-  }
-
-  const paint = (time = 0) => {
-    const width = viewportWidth
-    const height = viewportHeight
-    const phase = time / 1000
-    context.clearRect(0, 0, width, height)
-
-    pointer.x += (pointer.targetX - pointer.x) * .12
-    pointer.y += (pointer.targetY - pointer.y) * .12
-    pointer.velocity *= .9
-
-    const ambientX = pointer.active
-      ? pointer.x
-      : width * (.72 + Math.sin(phase * .28) * .12)
-    const ambientY = pointer.active
-      ? pointer.y
-      : height * (.5 + Math.cos(phase * .22) * .15)
-    const ambient = context.createRadialGradient(
-      ambientX,
-      ambientY,
-      0,
-      ambientX,
-      ambientY,
-      Math.max(width, height) * .38,
-    )
-    ambient.addColorStop(0, `rgba(96, 165, 250, ${pointer.active ? .045 : .11})`)
-    ambient.addColorStop(.52, 'rgba(37, 99, 235, .02)')
-    ambient.addColorStop(1, 'rgba(247, 248, 252, 0)')
-    context.fillStyle = ambient
-    context.fillRect(0, 0, width, height)
-
-    const cellWidth = width < 640 ? 22 : 20
-    const cellHeight = width < 640 ? 25 : 23
-    const interactionRadius = Math.min(150, Math.max(105, width * .11))
-    const wake = Math.min(pointer.velocity / 26, 1)
-    context.font = `${width < 640 ? 11 : 12}px ui-monospace, SFMono-Regular, Menlo, Consolas, monospace`
-    context.textBaseline = 'middle'
-    context.textAlign = 'center'
-
-    for (let row = 0, y = cellHeight / 2; y < height + cellHeight; row += 1, y += cellHeight) {
-      for (let column = 0, x = cellWidth / 2; x < width + cellWidth; column += 1, x += cellWidth) {
-        const dx = x - pointer.x
-        const dy = y - pointer.y
-        const distance = Math.sqrt(dx * dx + dy * dy) || 1
-        const proximity = pointer.active
-          ? Math.max(0, 1 - distance / interactionRadius)
-          : 0
-        const easedProximity = proximity * proximity * (3 - 2 * proximity)
-        const directionX = dx / distance
-        const directionY = dy / distance
-        const idleWave = prefersReducedMotion
-          ? 0
-          : (Math.sin(phase * 1.5 - row * .2 + column * .09) + 1) / 2
-        const crossWave = prefersReducedMotion
-          ? 0
-          : Math.sin(phase * 1.08 + row * .11 + column * .17)
-        const signalBand = prefersReducedMotion
-          ? 0
-          : Math.max(0, Math.sin(phase * 1.18 - row * .15 + column * .045) - .62) / .38
-        const shimmerSeed = (column * 13 + row * 17) % 37
-        const shimmer = prefersReducedMotion
-          ? 0
-          : Math.max(0, Math.sin(phase * 1.55 + shimmerSeed) - .84) / .16
-        const wave = prefersReducedMotion
-          ? 0
-          : Math.sin(distance * .052 - phase * 3.1) * easedProximity
-        const displacement = easedProximity * (4 + wake * 5) + wave * 1.2
-        const offsetX = directionX * displacement + crossWave * .9
-        const offsetY = directionY * displacement + (idleWave - .5) * 4.6
-        const baseAlpha = .07 + idleWave * .14 + signalBand * .16 + shimmer * .11
-        const blueMix = easedProximity * (.07 + wake * .03)
-          + signalBand * .18
-        const finalAlpha = Math.min(baseAlpha + blueMix, .66)
-        const lowerAreaOpacity = y > height * .68 ? .8 : 1
-        const visibleAlpha = finalAlpha * lowerAreaOpacity
-        const visibleBaseAlpha = baseAlpha * lowerAreaOpacity
-
-        context.fillStyle = blueMix > .06
-          ? `rgba(37, 99, 235, ${visibleAlpha})`
-          : `rgba(102, 102, 102, ${visibleBaseAlpha})`
-        context.fillText(glyphAt(column, row, phase), x + offsetX, y + offsetY)
-      }
-    }
-
-    if (!prefersReducedMotion) backgroundAnimation = window.requestAnimationFrame(paint)
-  }
-
-  resize()
-  paint()
-  window.addEventListener('resize', resize)
-  const updatePointer = (event) => {
-    const deltaX = event.clientX - previousPointerX
-    const deltaY = event.clientY - previousPointerY
-    pointer.targetX = event.clientX
-    pointer.targetY = event.clientY
-    pointer.velocity = Math.max(pointer.velocity, Math.sqrt(deltaX * deltaX + deltaY * deltaY))
-    pointer.active = true
-    previousPointerX = event.clientX
-    previousPointerY = event.clientY
-  }
-  const clearPointer = () => {
-    pointer.active = false
-  }
-  window.addEventListener('pointermove', updatePointer, { passive: true })
-  document.documentElement.addEventListener('pointerleave', clearPointer)
-  window.addEventListener('blur', clearPointer)
-  removeCanvasResizeListener = () => window.removeEventListener('resize', resize)
-  removeCanvasPointerListeners = () => {
-    window.removeEventListener('pointermove', updatePointer)
-    document.documentElement.removeEventListener('pointerleave', clearPointer)
-    window.removeEventListener('blur', clearPointer)
-  }
-}
-
-onMounted(startFluidBackground)
-
-onUnmounted(() => {
-  if (verificationCodeTimer) {
-    window.clearInterval(verificationCodeTimer)
-  }
-  if (backgroundAnimation) window.cancelAnimationFrame(backgroundAnimation)
-  removeCanvasResizeListener?.()
-  removeCanvasPointerListeners?.()
 })
 </script>
 
 <template>
   <!-- 全屏容器：左右分栏 -->
-  <div class="login-shell flex min-h-[100dvh] overflow-hidden bg-(--zh-background-primary)">
-    <!-- 参考 Essential 的克制字符场：Canvas 负责缓慢呼吸和鼠标涟漪。 -->
-    <div class="login-tech-background" aria-hidden="true">
-      <canvas ref="backgroundCanvas" class="login-fluid-canvas"></canvas>
-      <div class="login-background-wash"></div>
-      <span class="login-calibration-mark login-calibration-mark--top"></span>
-      <span class="login-calibration-mark login-calibration-mark--bottom"></span>
-    </div>
+  <div class="flex h-screen overflow-hidden bg-(--zh-background-primary)">
 
     <!-- ========== 左侧：品牌展示区 (lg:w-5/12) ========== -->
-    <aside class="login-brand-panel hidden lg:flex lg:w-5/12 relative">
+    <aside class="hidden lg:flex lg:w-5/12 relative overflow-hidden">
       <!--
         [此处需填写：AI生成的品牌插图]
         提示词: A futuristic digital classroom scene with a glowing holographic brain at the center
@@ -497,35 +410,32 @@ onUnmounted(() => {
         建议尺寸: 1920×1280px, WebP 或 SVG 格式
       -->
       <img
-        class="login-brand-image absolute inset-0 w-full h-full object-cover"
-        src="/login-knowledge-network-portrait.png"
+        class="absolute inset-0 w-full h-full object-cover"
+        src="/image_384866672794550.png"
         alt="智核品牌插图"
       />
       <!-- 底部渐变遮罩，确保文字可读性 -->
-      <div class="login-brand-scrim absolute inset-0"></div>
+      <div class="absolute inset-0 bg-gradient-to-t from-black/40 via-black/10 to-transparent"></div>
       <!-- 品牌文字叠加层 -->
-      <div class="login-brand-copy relative z-10 flex flex-col justify-end h-full px-14 py-16">
+      <div class="relative z-10 flex flex-col justify-end h-full p-12">
         <!-- 品牌名 -->
-        <h1 class="brand-name text-white font-bold tracking-wide">
+        <h1 class="text-white text-[32px] font-bold mb-3 tracking-wide">
           {{ LOGIN_TEXT.brand.name }}
         </h1>
         <!-- 主标语 -->
-        <p class="brand-subtitle text-white font-semibold">
-          {{ LOGIN_TEXT.brand.slogan.split('\n')[0] }}
-        </p>
-        <p class="brand-slogan text-white font-semibold">
-          {{ LOGIN_TEXT.brand.slogan.split('\n')[1] }}
+        <p class="text-white text-[30px] font-semibold leading-relaxed whitespace-pre-line">
+          {{ LOGIN_TEXT.brand.slogan }}
         </p>
         <!-- 副标语 -->
-        <p class="brand-description text-white/70">
+        <p class="text-white/70 text-base mt-4">
           {{ LOGIN_TEXT.brand.subtitle }}
         </p>
       </div>
     </aside>
 
     <!-- ========== 右侧：登录/注册表单区 (lg:w-7/12) ========== -->
-    <main class="login-main relative z-10 flex-1 flex items-center justify-center px-6 py-10 sm:px-10 lg:px-16">
-      <div class="login-form-panel w-full max-w-[480px]">
+    <main class="flex-1 flex items-center justify-center px-6 sm:px-10 lg:px-16">
+      <div class="w-full max-w-[440px]">
 
         <!-- 移动端可见的品牌 Logo + 名称 -->
         <div class="flex flex-col items-center mb-10 lg:hidden">
@@ -557,6 +467,7 @@ onUnmounted(() => {
               :model="loginForm"
               :rules="loginRules"
               label-position="top"
+              @submit.prevent
               @keyup.enter="handleLogin"
             >
               <!-- 用户名 -->
@@ -583,9 +494,9 @@ onUnmounted(() => {
               </el-form-item>
 
               <!-- 隐私协议勾选 -->
-              <el-form-item class="login-agreement-item" prop="agreeToPrivacy">
+              <el-form-item prop="agreeToPrivacy">
                 <el-checkbox v-model="loginForm.agreeToPrivacy">
-                  <span class="login-agreement-text">
+                  <span class="text-xs text-(--zh-text-caption)">
                     {{ LOGIN_TEXT.privacy.prefix }}
                     <a href="#" class="text-(--zh-text-link) hover:underline">
                       {{ LOGIN_TEXT.privacy.serviceAgreement }}
@@ -603,9 +514,10 @@ onUnmounted(() => {
                 <el-button
                   type="primary"
                   size="large"
-                  class="w-full !h-[52px] !text-base !font-semibold"
+                  round
+                  class="w-full !h-[48px] !text-base !font-semibold"
                   :loading="loginLoading"
-                  @click="handleLogin($event)"
+                  @click="handleLogin"
                 >
                   {{ loginLoading ? LOGIN_TEXT.button.loginLoading : LOGIN_TEXT.button.login }}
                 </el-button>
@@ -624,99 +536,175 @@ onUnmounted(() => {
             </p>
           </div>
 
-          <!-- ===== 注册表单 ===== -->
+          <!-- ===== 注册表单（分步） ===== -->
           <div v-else key="register">
             <el-form
               ref="registerFormRef"
               :model="registerForm"
               :rules="registerRules"
               label-position="top"
-              @keyup.enter="handleRegister"
+              @submit.prevent
+              @keyup.enter="currentStep < 2 ? handleNext() : handleRegister()"
             >
-              <!-- 用户名 -->
-              <el-form-item :label="LOGIN_TEXT.label.username" prop="username">
-                <el-input
-                  v-model="registerForm.username"
-                  :placeholder="LOGIN_TEXT.placeholder.username"
-                  :prefix-icon="User"
-                  size="large"
-                  clearable
+              <!-- 步骤指示器 — 已完成步骤可点击回退 -->
+              <el-steps :active="currentStep" align-center class="mb-8">
+                <el-step
+                  v-for="(title, i) in LOGIN_TEXT.steps.titles"
+                  :key="i"
+                  :title="title"
+                  :class="{ 'cursor-pointer': i < currentStep }"
+                  @click="goToStep(i)"
                 />
-              </el-form-item>
+              </el-steps>
 
-              <!-- 注册邮箱及验证码 -->
-              <el-form-item :label="LOGIN_TEXT.label.email" prop="email">
-                <div class="flex w-full gap-3">
-                  <el-input
-                    v-model="registerForm.email"
-                    type="email"
-                    :placeholder="LOGIN_TEXT.placeholder.email"
-                    size="large"
-                    clearable
-                  />
-                  <el-button
-                    size="large"
-                    :loading="verificationCodeLoading"
-                    :disabled="verificationCodeCountdown > 0"
-                    @click="handleSendVerificationCode"
-                  >
-                    {{ verificationCodeCountdown > 0
-                      ? `${verificationCodeCountdown}${LOGIN_TEXT.button.resendVerificationCode}`
-                      : LOGIN_TEXT.button.sendVerificationCode }}
-                  </el-button>
+              <!-- ===== 第 1 步：基本信息 ===== -->
+              <Transition name="step" mode="out-in">
+                <div v-if="currentStep === 0" key="step1">
+                  <!-- 用户名 -->
+                  <el-form-item :label="LOGIN_TEXT.label.username" prop="username">
+                    <el-input
+                      v-model="registerForm.username"
+                      :placeholder="LOGIN_TEXT.placeholder.username"
+                      :prefix-icon="User"
+                      size="large"
+                      clearable
+                    />
+                  </el-form-item>
+
+                  <!-- 真实姓名 -->
+                  <el-form-item :label="LOGIN_TEXT.label.realName" prop="real_name">
+                    <el-input
+                      v-model="registerForm.real_name"
+                      :placeholder="LOGIN_TEXT.placeholder.realName"
+                      :prefix-icon="User"
+                      size="large"
+                      clearable
+                    />
+                  </el-form-item>
+
+                  <!-- 手机号 -->
+                  <el-form-item :label="LOGIN_TEXT.label.phone" prop="phone">
+                    <el-input
+                      v-model="registerForm.phone"
+                      :placeholder="LOGIN_TEXT.placeholder.phone"
+                      :prefix-icon="Phone"
+                      size="large"
+                      clearable
+                    />
+                  </el-form-item>
                 </div>
-              </el-form-item>
 
-              <el-form-item :label="LOGIN_TEXT.label.verificationCode" prop="code">
-                <el-input
-                  v-model="registerForm.code"
-                  inputmode="numeric"
-                  maxlength="6"
-                  :placeholder="LOGIN_TEXT.placeholder.verificationCode"
-                  size="large"
-                />
-              </el-form-item>
+                <!-- ===== 第 2 步：邮箱验证 ===== -->
+                <div v-else-if="currentStep === 1" key="step2">
+                  <!-- 邮箱 + 发送验证码按钮（同一行） -->
+                  <el-form-item :label="LOGIN_TEXT.label.email" prop="email">
+                    <div class="flex gap-2">
+                      <el-input
+                        v-model="registerForm.email"
+                        :placeholder="LOGIN_TEXT.placeholder.email"
+                        :prefix-icon="Message"
+                        size="large"
+                        clearable
+                        class="flex-1"
+                      />
+                      <el-button
+                        size="large"
+                        class="min-w-[128px] send-code-btn"
+                        :disabled="sendCodeCooldown > 0"
+                        :loading="sendCodeLoading"
+                        @click="handleSendCode"
+                      >
+                        {{
+                          sendCodeLoading
+                            ? LOGIN_TEXT.button.sendingCode
+                            : sendCodeCooldown > 0
+                              ? LOGIN_TEXT.button.codeSent.replace('{n}', sendCodeCooldown)
+                              : LOGIN_TEXT.button.sendCode
+                        }}
+                      </el-button>
+                    </div>
+                  </el-form-item>
 
-              <!-- 密码 -->
-              <el-form-item :label="LOGIN_TEXT.label.password" prop="password">
-                <el-input
-                  v-model="registerForm.password"
-                  type="password"
-                  :placeholder="LOGIN_TEXT.placeholder.registerPassword"
-                  :prefix-icon="Lock"
-                  size="large"
-                  show-password
-                />
-              </el-form-item>
+                  <!-- 验证码 — 紧接邮箱下方 -->
+                  <el-form-item :label="LOGIN_TEXT.label.verificationCode" prop="verificationCode">
+                    <el-input
+                      v-model="registerForm.verificationCode"
+                      :placeholder="LOGIN_TEXT.placeholder.verificationCode"
+                      :prefix-icon="Key"
+                      size="large"
+                      clearable
+                      maxlength="6"
+                    />
+                  </el-form-item>
+                </div>
 
-              <!-- 确认密码 -->
-              <el-form-item :label="LOGIN_TEXT.label.confirmPassword" prop="confirmPassword">
-                <el-input
-                  v-model="registerForm.confirmPassword"
-                  type="password"
-                  :placeholder="LOGIN_TEXT.placeholder.confirmPassword"
-                  :prefix-icon="Lock"
-                  size="large"
-                  show-password
-                />
-              </el-form-item>
+                <!-- ===== 第 3 步：设置密码 ===== -->
+                <div v-else key="step3">
+                  <!-- 密码 -->
+                  <el-form-item :label="LOGIN_TEXT.label.password" prop="password">
+                    <el-input
+                      v-model="registerForm.password"
+                      type="password"
+                      :placeholder="LOGIN_TEXT.placeholder.registerPassword"
+                      :prefix-icon="Lock"
+                      size="large"
+                      show-password
+                    />
+                  </el-form-item>
 
-              <!-- 注册按钮 -->
-              <el-form-item>
+                  <!-- 确认密码 -->
+                  <el-form-item :label="LOGIN_TEXT.label.confirmPassword" prop="confirmPassword">
+                    <el-input
+                      v-model="registerForm.confirmPassword"
+                      type="password"
+                      :placeholder="LOGIN_TEXT.placeholder.confirmPassword"
+                      :prefix-icon="Lock"
+                      size="large"
+                      show-password
+                    />
+                  </el-form-item>
+                </div>
+              </Transition>
+
+              <!-- 步骤导航按钮 -->
+              <div class="flex justify-between mt-4">
                 <el-button
+                  v-if="currentStep > 0"
+                  size="large"
+                  round
+                  class="w-[120px]"
+                  @click="handlePrev"
+                >
+                  {{ LOGIN_TEXT.steps.prev }}
+                </el-button>
+                <span v-else></span>
+
+                <el-button
+                  v-if="currentStep < 2"
                   type="primary"
                   size="large"
-                  class="w-full !h-[52px] !text-base !font-semibold"
+                  round
+                  class="w-[120px]"
+                  @click="handleNext"
+                >
+                  {{ LOGIN_TEXT.steps.next }}
+                </el-button>
+                <el-button
+                  v-else
+                  type="primary"
+                  size="large"
+                  round
+                  class="w-[120px]"
                   :loading="registerLoading"
                   @click="handleRegister"
                 >
                   {{ registerLoading ? LOGIN_TEXT.button.registerLoading : LOGIN_TEXT.button.register }}
                 </el-button>
-              </el-form-item>
+              </div>
             </el-form>
 
             <!-- 切换到登录 -->
-            <p class="text-center text-sm text-(--zh-text-caption)">
+            <p class="text-center text-sm text-(--zh-text-caption) mt-4">
               <a
                 href="javascript:void(0)"
                 class="text-(--zh-text-link) hover:underline cursor-pointer"
@@ -734,140 +722,6 @@ onUnmounted(() => {
 </template>
 
 <style scoped>
-.login-shell {
-  position: relative;
-  isolation: isolate;
-  background: var(--zh-background-light);
-}
-
-.login-tech-background {
-  position: absolute;
-  z-index: -1;
-  inset: 0;
-  overflow: hidden;
-  pointer-events: none;
-}
-
-.login-fluid-canvas {
-  position: absolute;
-  inset: 0;
-  width: 100%;
-  height: 100%;
-}
-
-.login-background-wash {
-  position: absolute;
-  inset: 0;
-  background:
-    linear-gradient(90deg, transparent 0 42%, rgb(247 248 252 / 12%) 48%, rgb(247 248 252 / 70%) 100%),
-    radial-gradient(circle at 74% 48%, transparent 0 28%, rgb(247 248 252 / 22%) 66%, rgb(247 248 252 / 58%) 100%);
-}
-
-.login-calibration-mark {
-  position: absolute;
-  right: 32px;
-  width: 16px;
-  height: 16px;
-  opacity: .46;
-}
-
-.login-calibration-mark::before,
-.login-calibration-mark::after {
-  position: absolute;
-  content: '';
-  background: var(--zh-line-theme50);
-}
-
-.login-calibration-mark::before {
-  top: 50%;
-  left: 0;
-  width: 100%;
-  height: 1px;
-}
-
-.login-calibration-mark::after {
-  top: 0;
-  left: 50%;
-  width: 1px;
-  height: 100%;
-}
-
-.login-calibration-mark--top { top: 32px; }
-.login-calibration-mark--bottom { bottom: 32px; }
-
-.login-brand-panel {
-  isolation: isolate;
-  border-right: 0;
-  z-index: 0;
-}
-
-.login-brand-panel::after {
-  position: absolute;
-  z-index: 1;
-  inset: 0;
-  content: '';
-  pointer-events: none;
-  opacity: .32;
-  background-image:
-    radial-gradient(circle, rgb(191 219 254 / 42%) 1px, transparent 1.5px);
-  background-size: 20px 23px;
-  mask-image: linear-gradient(135deg, black, transparent 82%);
-}
-
-.login-brand-image {
-  width: 112%;
-  max-width: none;
-  filter: saturate(.76) contrast(1.01) brightness(.94);
-  object-position: left center;
-  transform: scale(1.02);
-  mask-image: linear-gradient(90deg, #000 0 52%, rgb(0 0 0 / 58%) 76%, transparent 100%);
-  -webkit-mask-image: linear-gradient(90deg, #000 0 52%, rgb(0 0 0 / 58%) 76%, transparent 100%);
-}
-
-.login-brand-scrim {
-  right: 0;
-  width: 112%;
-  background:
-    linear-gradient(90deg, rgb(5 24 61 / 24%) 0%, rgb(5 24 61 / 10%) 64%, rgb(5 24 61 / 0%) 100%),
-    linear-gradient(0deg, rgb(7 20 50 / 62%), rgb(7 20 50 / 0%) 62%, rgb(7 20 50 / 12%));
-}
-
-.login-brand-copy { text-shadow: 0 2px 20px rgb(5 17 45 / 38%); }
-
-.brand-name {
-  margin: 0 0 12px;
-  font-size: 30px;
-  line-height: 1.2;
-}
-
-.brand-subtitle {
-  margin: 0;
-  font-size: 28px;
-  line-height: 1.35;
-}
-
-.brand-slogan {
-  margin: 2px 0 0;
-  font-size: 36px;
-  line-height: 1.35;
-}
-
-.brand-description {
-  margin: 16px 0 0;
-  font-size: var(--zh-font-size16);
-  line-height: 1.5;
-}
-
-.login-form-panel {
-  padding: 40px 44px;
-  border: 1px solid rgb(37 99 235 / 12%);
-  border-radius: var(--zh-radius16);
-  background: rgb(255 255 255 / 76%);
-  box-shadow: 0 24px 70px -36px rgb(30 64 175 / 30%), 0 1px 0 rgb(255 255 255 / 88%) inset;
-  backdrop-filter: blur(20px) saturate(1.1);
-  -webkit-backdrop-filter: blur(20px) saturate(1.1);
-}
-
 /* ===== 表单切换动画 ===== */
 
 /** 新内容从右侧滑入 */
@@ -902,15 +756,45 @@ onUnmounted(() => {
   }
 }
 
+/* ===== 步骤切换动画 ===== */
+
+/** 步骤前进：新内容从右侧滑入 */
+.step-enter-active {
+  animation: stepSlideIn 0.25s cubic-bezier(0.4, 0, 0.2, 1);
+}
+
+/** 步骤回退：旧内容向右侧滑出后，新内容从左侧滑入 */
+.step-leave-active {
+  animation: stepSlideOut 0.15s cubic-bezier(0.4, 0, 0.2, 1);
+}
+
+@keyframes stepSlideIn {
+  from {
+    transform: translateX(40px);
+    opacity: 0;
+  }
+  to {
+    transform: translateX(0);
+    opacity: 1;
+  }
+}
+
+@keyframes stepSlideOut {
+  from {
+    transform: translateX(0);
+    opacity: 1;
+  }
+  to {
+    transform: translateX(-40px);
+    opacity: 0;
+  }
+}
+
 /* ===== ElementPlus 组件微调 ===== */
 
 /** 调整 el-form-item 之间的间距，使其更紧凑 */
 :deep(.el-form-item) {
   margin-bottom: 20px;
-}
-
-:deep(.login-agreement-item) {
-  margin-bottom: 12px;
 }
 
 /** 表单项标签加粗 */
@@ -919,104 +803,13 @@ onUnmounted(() => {
   color: var(--zh-text-primary);
 }
 
-:deep(.el-form-item.is-required .el-form-item__label::before) {
-  margin-right: 4px;
-}
-
 /** 大号输入框高度微调 */
 :deep(.el-input--large .el-input__wrapper) {
-  min-height: 54px;
-  padding: 10px 16px;
-  border: 1px solid var(--zh-line-border);
-  background: rgb(255 255 255 / 78%);
-  box-shadow: none;
-  transition: border-color .18s ease, box-shadow .18s ease, background .18s ease;
+  padding: 12px 16px;
 }
 
-:deep(.el-input--large .el-input__wrapper.is-focus) {
-  border-color: var(--zh-line-theme);
-  background: #fff;
-  box-shadow: 0 0 0 3px var(--zh-line-theme20);
-}
-
-:deep(.el-input__inner::placeholder) {
-  color: var(--zh-text-caption);
-}
-
-:deep(.el-input__inner:-webkit-autofill),
-:deep(.el-input__inner:-webkit-autofill:hover),
-:deep(.el-input__inner:-webkit-autofill:focus),
-:deep(.el-input__inner:-webkit-autofill:active) {
-  -webkit-text-fill-color: var(--zh-text-primary);
-  -webkit-box-shadow: 0 0 0 1000px var(--zh-background-primary) inset;
-  box-shadow: 0 0 0 1000px var(--zh-background-primary) inset;
-  caret-color: var(--zh-text-primary);
-}
-
-:deep(.el-input__prefix-inner),
-:deep(.el-input__suffix-inner) {
-  color: var(--zh-text-caption);
-}
-
-:deep(.el-checkbox) {
-  align-items: flex-start;
-  min-height: 20px;
-  line-height: 20px;
-}
-
-:deep(.el-checkbox__input) {
-  margin-top: 1px;
-}
-
-:deep(.el-checkbox__inner) {
-  width: 18px;
-  height: 18px;
-  border-color: var(--zh-line-heavier);
-}
-
-:deep(.el-checkbox__label) {
-  padding-left: 8px;
-  color: var(--zh-text-secondary);
-  line-height: 20px;
-}
-
-.login-agreement-text {
-  color: var(--zh-text-secondary);
-  font-size: var(--zh-font-size14);
-}
-
-:deep(.el-button--primary) {
-  border: 0;
-  border-radius: var(--zh-radius12);
-  background: var(--zh-gradient-dblue);
-  box-shadow: 0 8px 16px -10px rgb(29 78 216 / 52%);
-  transition: transform .18s ease, box-shadow .18s ease, filter .18s ease;
-}
-
-:deep(.el-button--primary:hover) {
-  filter: brightness(1.04);
-  box-shadow: 0 10px 20px -12px rgb(29 78 216 / 64%);
-  transform: translateY(-1px);
-}
-
-:deep(.el-button--primary:active) { transform: translateY(0) scale(.98); }
-
-@media (max-width: 1023px) {
-  .login-form-panel {
-    max-width: 480px;
-    padding: 36px 40px;
-  }
-}
-
-@media (max-width: 639px) {
-  .login-main { align-items: flex-start; padding-top: 72px; }
-  .login-form-panel { padding: 0; border: 0; background: transparent; box-shadow: none; backdrop-filter: none; }
-  .login-calibration-mark { right: 20px; }
-  .login-calibration-mark--top { top: 20px; }
-  .login-calibration-mark--bottom { bottom: 20px; }
-}
-
-@media (prefers-reduced-motion: reduce) {
-  .login-fluid-canvas { opacity: .72; }
+/** 发送验证码按钮：取消 ElementPlus 固定高度，与同行输入框自然对齐 */
+:deep(.send-code-btn) {
+  height: auto;
 }
 </style>
