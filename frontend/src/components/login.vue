@@ -15,7 +15,7 @@ import { ref, reactive, computed, onBeforeUnmount } from 'vue'
 import { useRouter } from 'vue-router'
 import { ElMessage } from 'element-plus'
 import { User, Lock, Message, Phone, Key } from '@element-plus/icons-vue'
-import { login, register, resetPassword, sendVerificationCode } from '../apis/login.js'
+import { checkEmail, checkUsername, initialPasswordChange, login, register, resetPassword, sendVerificationCode } from '../apis/login.js'
 import { LOGIN_TEXT, VALIDATION_RULES } from '../config/login.config.js'
 import { useUserStore } from '../storage/user.js'
 
@@ -31,6 +31,9 @@ const resetVisible = ref(false)
 const resetLoading = ref(false)
 const resetCodeLoading = ref(false)
 const resetForm = reactive({ username: '', code: '', new_password: '', confirmPassword: '' })
+const initialPasswordVisible = ref(false)
+const initialPasswordLoading = ref(false)
+const initialPasswordForm = reactive({ username: '', initial_password: '', new_password: '', confirmPassword: '' })
 
 /** 登录表单组件引用 */
 const loginFormRef = ref(null)
@@ -333,6 +336,11 @@ const handleLogin = async () => {
     const loginVO = res.data
     userStore.setToken(loginVO.token)
     userStore.setUserInfo(loginVO)
+    if (loginVO.initial_password_required || loginVO.force_password_change) {
+      initialPasswordForm.username = loginForm.username
+      initialPasswordVisible.value = true
+      return
+    }
     ElMessage.success(LOGIN_TEXT.message.loginSuccess)
     // 短暂延迟后跳转，让用户看到成功提示
     setTimeout(() => {
@@ -346,6 +354,8 @@ const handleLogin = async () => {
     loginLoading.value = false
   }
 }
+const checkUsernameAvailability = async () => { if (!registerForm.username) return; try { const res = await checkUsername(registerForm.username); if (res?.data?.exists) ElMessage.warning('该用户名已被使用') } catch { /* 保留注册时的后端兜底校验 */ } }
+const checkEmailAvailability = async () => { if (!registerForm.email) return; try { const res = await checkEmail(registerForm.email); if (res?.data?.exists) ElMessage.warning('该邮箱已被使用') } catch { /* 保留注册时的后端兜底校验 */ } }
 
 const sendResetCode = async () => {
   if (!resetForm.username) return ElMessage.warning('请输入登录账号')
@@ -412,6 +422,13 @@ const handleRegister = async () => {
   }
 }
 
+const submitInitialPasswordChange = async () => {
+  if (!initialPasswordForm.username || !initialPasswordForm.initial_password || !initialPasswordForm.new_password) return ElMessage.warning('请完整填写密码信息')
+  if (initialPasswordForm.new_password !== initialPasswordForm.confirmPassword) return ElMessage.warning('两次输入的新密码不一致')
+  initialPasswordLoading.value = true
+  try { const res = await initialPasswordChange({ username: initialPasswordForm.username, initial_password: initialPasswordForm.initial_password, new_password: initialPasswordForm.new_password }); if (res?.code !== 0 && res?.code !== 200) throw new Error(res?.message); initialPasswordVisible.value = false; ElMessage.success('初始密码已修改，请使用新密码登录') }
+  catch (error) { ElMessage.error(error?.message || '初始密码修改失败') } finally { initialPasswordLoading.value = false }
+}
 // ========== 生命周期 ==========
 
 /** 组件卸载前清理倒计时定时器，防止内存泄漏 */
@@ -762,6 +779,7 @@ onBeforeUnmount(() => {
       <template #footer><el-button @click="resetVisible = false">取消</el-button><el-button type="primary" :loading="resetLoading" @click="submitReset">确认重置</el-button></template>
     </el-dialog>
   </div>
+    <el-dialog v-model="initialPasswordVisible" title="首次登录，请修改初始密码" width="420px" :close-on-click-modal="false" :close-on-press-escape="false" :show-close="false"><el-form label-position="top"><el-form-item label="登录账号"><el-input v-model="initialPasswordForm.username" disabled /></el-form-item><el-form-item label="初始密码"><el-input v-model="initialPasswordForm.initial_password" type="password" show-password /></el-form-item><el-form-item label="新密码"><el-input v-model="initialPasswordForm.new_password" type="password" show-password /></el-form-item><el-form-item label="确认新密码"><el-input v-model="initialPasswordForm.confirmPassword" type="password" show-password @keyup.enter="submitInitialPasswordChange" /></el-form-item></el-form><template #footer><el-button type="primary" :loading="initialPasswordLoading" @click="submitInitialPasswordChange">确认修改</el-button></template></el-dialog>
 </template>
 
 <style scoped>
