@@ -5,20 +5,23 @@
         <id column="id" property="id"/><result column="user_id" property="user_id"/>
         <result column="title" property="title"/><result column="status" property="status"/>
         <result column="messages" property="messages"/><result column="context_summary" property="context_summary"/>
+        <result column="python_session_id" property="python_session_id"/><result column="last_question" property="last_question"/>
         <result column="created_at" property="created_at"/><result column="updated_at" property="updated_at"/>
     </resultMap>
-    <sql id="Base_Columns">id, user_id, title, status, messages, context_summary, created_at, updated_at</sql>
+    <sql id="Base_Columns">id, user_id, title, status, messages, context_summary, python_session_id, last_question, created_at, updated_at</sql>
     <select id="findById" resultMap="BaseResultMap">SELECT <include refid="Base_Columns"/> FROM ai_conversation WHERE id = #{id}</select>
     <select id="findByUserId" resultMap="BaseResultMap">SELECT <include refid="Base_Columns"/> FROM ai_conversation WHERE user_id = #{userId} ORDER BY updated_at DESC</select>
     <insert id="insert" useGeneratedKeys="true" keyProperty="id">
-        INSERT INTO ai_conversation(user_id, title, status, messages, context_summary, created_at, updated_at)
-        VALUES(#{user_id}, #{title}, #{status}, #{messages}, #{context_summary}, NOW(), NOW())
+        INSERT INTO ai_conversation(user_id, title, status, messages, context_summary, python_session_id, last_question, created_at, updated_at)
+        VALUES(#{user_id}, #{title}, #{status}, #{messages}, #{context_summary}, #{python_session_id}, #{last_question}, NOW(), NOW())
     </insert>
     <update id="update">
         UPDATE ai_conversation <set>
         <if test="title != null">title = #{title},</if><if test="status != null">status = #{status},</if>
         <if test="messages != null">messages = #{messages},</if>
         <if test="context_summary != null">context_summary = #{context_summary},</if>
+        <if test="python_session_id != null">python_session_id = #{python_session_id},</if>
+        <if test="last_question != null">last_question = #{last_question},</if>
         updated_at = NOW()</set> WHERE id = #{id}
     </update>
 </mapper>

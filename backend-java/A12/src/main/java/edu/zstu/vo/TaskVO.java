@@ -25,6 +25,11 @@ public class TaskVO {
     private String plan_confirm_status;
     private String exec_steps;
     private String reflections;
+    private String python_session_id;
+    private String python_outline_id;
+    private String python_presentation_id;
+    private String generation_mode;
+    private String error_message;
     private LocalDateTime created_at;
     private LocalDateTime updated_at;
 }

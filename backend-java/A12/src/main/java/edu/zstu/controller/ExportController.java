@@ -3,8 +3,10 @@ package edu.zstu.controller;
 import edu.zstu.dto.ExportTaskDTO;
 import edu.zstu.dto.ExportPrecheckDTO;
 import edu.zstu.dto.TaskQueryDTO;
+import edu.zstu.service.ExportService;
 import edu.zstu.utils.Result;
 import edu.zstu.vo.ExportTaskVO;
+import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.web.bind.annotation.*;
 
 /**
@@ -17,6 +19,8 @@ import org.springframework.web.bind.annotation.*;
 @RestController
 @RequestMapping("/api/v1")
 public class ExportController {
+    @Autowired
+    private ExportService exportService;
 
     /**
      * API-43 导出预检
@@ -30,7 +34,9 @@ public class ExportController {
     @PostMapping("/projects/{id}/export-prechecks")
     public Result<?> precheckExport(@PathVariable String id,
                                     @RequestBody ExportPrecheckDTO dto) {
-        return Result.success();
+        try {
+            return Result.success(exportService.precheckExport(id, dto));
+        } catch (RuntimeException e) { return Result.error(400, e.getMessage()); }
     }
 
     /**
@@ -43,7 +49,9 @@ public class ExportController {
      */
     @PostMapping("/export-tasks")
     public Result<ExportTaskVO> createExportTask(@RequestBody ExportTaskDTO dto) {
-        return Result.success();
+        try {
+            return Result.success(exportService.createExportTask(dto));
+        } catch (RuntimeException e) { return Result.error(400, e.getMessage()); }
     }
 
     /**
@@ -56,7 +64,9 @@ public class ExportController {
      */
     @GetMapping("/export-tasks")
     public Result<?> listExportTasks(TaskQueryDTO dto) {
-        return Result.success();
+        try {
+            return Result.success(exportService.listExportTasks(dto));
+        } catch (RuntimeException e) { return Result.error(400, e.getMessage()); }
     }
 
     /**
@@ -69,7 +79,9 @@ public class ExportController {
      */
     @GetMapping("/export-tasks/{id}")
     public Result<ExportTaskVO> getExportTask(@PathVariable String id) {
-        return Result.success();
+        try {
+            return Result.success(exportService.getExportTask(id));
+        } catch (RuntimeException e) { return Result.error(400, e.getMessage()); }
     }
 
     /**
@@ -82,7 +94,9 @@ public class ExportController {
      */
     @PostMapping("/export-tasks/{id}/cancel")
     public Result<ExportTaskVO> cancelExport(@PathVariable String id) {
-        return Result.success();
+        try {
+            return Result.success(exportService.cancelExport(id));
+        } catch (RuntimeException e) { return Result.error(400, e.getMessage()); }
     }
 
     /**
@@ -95,7 +109,9 @@ public class ExportController {
      */
     @PostMapping("/export-tasks/{id}/retry")
     public Result<ExportTaskVO> retryExport(@PathVariable String id) {
-        return Result.success();
+        try {
+            return Result.success(exportService.retryExport(id));
+        } catch (RuntimeException e) { return Result.error(400, e.getMessage()); }
     }
 
     /**
@@ -108,7 +124,9 @@ public class ExportController {
      */
     @GetMapping("/export-tasks/{id}/quality-report")
     public Result<?> getQualityReport(@PathVariable String id) {
-        return Result.success();
+        try {
+            return Result.success(exportService.getQualityReport(id));
+        } catch (RuntimeException e) { return Result.error(400, e.getMessage()); }
     }
 
     /**
@@ -121,7 +139,9 @@ public class ExportController {
      */
     @GetMapping("/export-artifacts/{id}")
     public Result<ExportTaskVO> getArtifact(@PathVariable String id) {
-        return Result.success();
+        try {
+            return Result.success(exportService.getArtifact(id));
+        } catch (RuntimeException e) { return Result.error(400, e.getMessage()); }
     }
 
     /**
@@ -134,7 +154,9 @@ public class ExportController {
      */
     @PostMapping("/export-artifacts/{id}/preview-url")
     public Result<?> createPreviewUrl(@PathVariable String id) {
-        return Result.success();
+        try {
+            return Result.success(exportService.createPreviewUrl(id));
+        } catch (RuntimeException e) { return Result.error(400, e.getMessage()); }
     }
 
     /**
@@ -147,6 +169,8 @@ public class ExportController {
      */
     @PostMapping("/export-artifacts/{id}/download-url")
     public Result<?> createDownloadUrl(@PathVariable String id) {
-        return Result.success();
+        try {
+            return Result.success(exportService.createDownloadUrl(id));
+        } catch (RuntimeException e) { return Result.error(400, e.getMessage()); }
     }
 }

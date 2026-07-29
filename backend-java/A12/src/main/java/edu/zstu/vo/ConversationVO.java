@@ -19,6 +19,8 @@ public class ConversationVO {
     private String status;
     private String messages;
     private String context_summary;
+    private String python_session_id;
+    private String last_question;
     private LocalDateTime created_at;
     private LocalDateTime updated_at;
 }

@@ -15,4 +15,10 @@ public class ConversationDTO {
     private String status;
     private String messages;
     private String context_summary;
+    private String message;
+    private String resource_ids;
+    private Boolean enable_rag;
+    private Boolean enable_web;
+    private Integer slide_count;
+    private String known_context;
 }

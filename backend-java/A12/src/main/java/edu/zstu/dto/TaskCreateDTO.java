@@ -18,4 +18,8 @@ public class TaskCreateDTO {
     private String uploaded_refs;
     private String plan_json;
     private String messages;
+    private String resource_ids;
+    private Boolean enable_rag;
+    private Boolean enable_web;
+    private Integer slide_count;
 }

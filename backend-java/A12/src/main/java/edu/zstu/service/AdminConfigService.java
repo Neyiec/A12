@@ -1,8 +1,12 @@
 package edu.zstu.service;
 
 import edu.zstu.dto.ConfigDTO;
+import edu.zstu.dto.LogQueryDTO;
 import edu.zstu.dto.RollbackDTO;
+import edu.zstu.dto.SecurityPolicyDTO;
+import edu.zstu.utils.PageResult;
 import edu.zstu.vo.ConfigVO;
+import edu.zstu.vo.LogVO;
 
 import java.util.List;
 import java.util.Map;
@@ -15,14 +19,14 @@ public interface AdminConfigService {
     ConfigVO createAiConfig(ConfigDTO dto);
     Map<String, Object> publishAiConfig(Integer id);
     ConfigVO rollbackAiConfig(Integer id, RollbackDTO dto);
-    Object listSecurityPolicies();
-    Object updateSecurityPolicy(String id);
-    Object publishSecurityPolicy(String id);
-    Object listAuditLogs();
-    Object listSystemLogs();
-    Object getDashboard();
-    Object listAlerts();
-    Object getAlert(String id);
-    Object acknowledgeAlert(String id);
-    Object resolveAlert(String id);
+    List<ConfigVO> listSecurityPolicies();
+    ConfigVO updateSecurityPolicy(String id, SecurityPolicyDTO dto);
+    Map<String, Object> publishSecurityPolicy(String id);
+    PageResult<LogVO> listAuditLogs(LogQueryDTO dto);
+    PageResult<LogVO> listSystemLogs(LogQueryDTO dto);
+    Map<String, Object> getDashboard();
+    PageResult<Map<String, Object>> listAlerts(String level, String source, String status, int page, int size);
+    Map<String, Object> getAlert(String id);
+    void acknowledgeAlert(String id);
+    void resolveAlert(String id, String resolution);
 }

@@ -8,13 +8,13 @@
         <result column="target_id" property="target_id"/><result column="detail" property="detail"/>
         <result column="ip" property="ip"/><result column="create_at" property="create_at"/>
     </resultMap>
-    <sql id="Base_Columns">id, user_id, log_type, module, action, target_type, target_id, detail, ip, create_at</sql>
+    <sql id="Base_Columns">id, user_id, log_type, module, action, target_type, target_id, detail, ip, created_at AS create_at</sql>
     <select id="findById" resultMap="BaseResultMap">SELECT <include refid="Base_Columns"/> FROM sys_log WHERE id = #{id}</select>
-    <select id="findAll" resultMap="BaseResultMap">SELECT <include refid="Base_Columns"/> FROM sys_log ORDER BY create_at DESC</select>
+    <select id="findAll" resultMap="BaseResultMap">SELECT <include refid="Base_Columns"/> FROM sys_log ORDER BY created_at DESC</select>
     <select id="findByUserId" resultMap="BaseResultMap">SELECT <include refid="Base_Columns"/> FROM sys_log WHERE user_id = #{userId}</select>
-    <select id="findByTypeAndTime" resultMap="BaseResultMap">SELECT <include refid="Base_Columns"/> FROM sys_log WHERE log_type = #{logType} AND create_at BETWEEN #{startTime} AND #{endTime}</select>
+    <select id="findByTypeAndTime" resultMap="BaseResultMap">SELECT <include refid="Base_Columns"/> FROM sys_log WHERE log_type = #{logType} AND created_at BETWEEN #{startTime} AND #{endTime}</select>
     <insert id="insert" useGeneratedKeys="true" keyProperty="id">
-        INSERT INTO sys_log(user_id, log_type, module, action, target_type, target_id, detail, ip, create_at)
+        INSERT INTO sys_log(user_id, log_type, module, action, target_type, target_id, detail, ip, created_at)
         VALUES(#{user_id}, #{log_type}, #{module}, #{action}, #{target_type}, #{target_id}, #{detail}, #{ip}, NOW())
     </insert>
 </mapper>

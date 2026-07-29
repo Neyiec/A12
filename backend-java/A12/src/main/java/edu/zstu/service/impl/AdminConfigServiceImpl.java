@@ -2,18 +2,27 @@ package edu.zstu.service.impl;
 
 import cn.hutool.core.bean.BeanUtil;
 import edu.zstu.dto.ConfigDTO;
+import edu.zstu.dto.LogQueryDTO;
 import edu.zstu.dto.RollbackDTO;
+import edu.zstu.dto.SecurityPolicyDTO;
 import edu.zstu.entity.AiConfigVersion;
 import edu.zstu.entity.Sys_Config;
+import edu.zstu.entity.Sys_Log;
 import edu.zstu.mapper.AiConfigVersionMapper;
 import edu.zstu.mapper.SysConfigMapper;
+import edu.zstu.mapper.SysLogMapper;
 import edu.zstu.service.AdminConfigService;
+import edu.zstu.service.BusinessLogService;
 import edu.zstu.utils.CurrentHolder;
+import edu.zstu.utils.PageResult;
+import edu.zstu.utils.RedisCacheUtil;
 import edu.zstu.vo.ConfigVO;
+import edu.zstu.vo.LogVO;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
 import java.time.LocalDateTime;
+import java.time.Duration;
 import java.util.List;
 import java.util.Map;
 import java.util.stream.Collectors;
@@ -23,23 +32,37 @@ public class AdminConfigServiceImpl implements AdminConfigService {
 
     private final SysConfigMapper configMapper;
     private final AiConfigVersionMapper versionMapper;
+    private final SysLogMapper logMapper;
+    private final BusinessLogService businessLogService;
+    private final RedisCacheUtil redisCacheUtil;
 
-    public AdminConfigServiceImpl(SysConfigMapper configMapper, AiConfigVersionMapper versionMapper) {
+    public AdminConfigServiceImpl(SysConfigMapper configMapper, AiConfigVersionMapper versionMapper,
+                                  SysLogMapper logMapper, BusinessLogService businessLogService,
+                                  RedisCacheUtil redisCacheUtil) {
         this.configMapper = configMapper;
         this.versionMapper = versionMapper;
+        this.logMapper = logMapper;
+        this.businessLogService = businessLogService;
+        this.redisCacheUtil = redisCacheUtil;
     }
 
     // ==================== API-98 查询AI配置列表 ====================
 
     @Override
     public List<ConfigVO> listAiConfigs(String configGroup) {
-        List<Sys_Config> list;
-        if (configGroup != null && !configGroup.isBlank()) {
-            list = configMapper.findByGroup(configGroup);
-        } else {
-            list = configMapper.findAll();
-        }
-        return list.stream().map(this::toConfigVO).collect(Collectors.toList());
+        String key = configGroup != null && !configGroup.isBlank()
+                ? "config:group:" + configGroup
+                : "config:all";
+        return redisCacheUtil.getOrLoad(key, new com.fasterxml.jackson.core.type.TypeReference<List<ConfigVO>>() {},
+                Duration.ofMinutes(10), () -> {
+                    List<Sys_Config> list;
+                    if (configGroup != null && !configGroup.isBlank()) {
+                        list = configMapper.findByGroup(configGroup);
+                    } else {
+                        list = configMapper.findAll();
+                    }
+                    return list.stream().map(this::toConfigVO).collect(Collectors.toList());
+                });
     }
 
     // ==================== API-99 创建/更新AI配置 ====================
@@ -80,6 +103,9 @@ public class AdminConfigServiceImpl implements AdminConfigService {
             existing.setUpdated_by(currentUser);
             existing.setStatus("draft");
             configMapper.update(existing);
+            evictConfigCache(existing);
+            businessLogService.record("operation", "admin_config", "update_ai_config", "config", existing.getId(),
+                    Map.of("config_key", existing.getConfig_key(), "version", existing.getVersion()));
             return toConfigVO(existing);
         } else {
             // 新建配置
@@ -93,6 +119,7 @@ public class AdminConfigServiceImpl implements AdminConfigService {
             config.setVersion(1);
             config.setStatus("draft");
             configMapper.insert(config);
+            evictConfigCache(config);
 
             // 同时写入历史表（version 1）
             AiConfigVersion history = new AiConfigVersion();
@@ -102,6 +129,8 @@ public class AdminConfigServiceImpl implements AdminConfigService {
             history.setCreatedBy(currentUser);
             history.setCreatedAt(LocalDateTime.now());
             versionMapper.insert(history);
+            businessLogService.record("operation", "admin_config", "create_ai_config", "config", config.getId(),
+                    Map.of("config_key", config.getConfig_key(), "version", config.getVersion()));
 
             return toConfigVO(config);
         }
@@ -118,6 +147,8 @@ public class AdminConfigServiceImpl implements AdminConfigService {
         }
 
         configMapper.updateStatus(id, "published");
+        evictConfigCache(config);
+        businessLogService.record("operation", "admin_config", "publish_ai_config", "config", id);
 
         // 模拟多节点发布状态
         List<Map<String, String>> nodeStatuses = List.of(
@@ -162,38 +193,153 @@ public class AdminConfigServiceImpl implements AdminConfigService {
         config.setUpdated_by(currentUser);
         config.setStatus("draft");
         configMapper.update(config);
+        evictConfigCache(config);
+        businessLogService.record("operation", "admin_config", "rollback_ai_config", "config", id,
+                Map.of("target_version", dto.getTarget_version(), "new_version", config.getVersion()));
 
         return toConfigVO(config);
     }
 
-    // ==================== 以下为占位实现（后续 API 继续实现） ====================
+    @Override
+    public List<ConfigVO> listSecurityPolicies() {
+        return redisCacheUtil.getOrLoad("config:group:security",
+                new com.fasterxml.jackson.core.type.TypeReference<List<ConfigVO>>() {},
+                Duration.ofMinutes(10),
+                () -> configMapper.findByGroup("security").stream().map(this::toConfigVO).collect(Collectors.toList()));
+    }
 
     @Override
-    public Object listSecurityPolicies() { return null; }
+    @Transactional
+    public ConfigVO updateSecurityPolicy(String id, SecurityPolicyDTO dto) {
+        Sys_Config config = configMapper.findById(Integer.parseInt(id));
+        if (config == null || !"security".equals(config.getConfig_group())) throw new RuntimeException("安全策略不存在");
+        if (dto.getVersion() != config.getVersion()) throw new RuntimeException("版本冲突，请刷新后重试");
+        if (dto.getConfig_value() == null || dto.getConfig_value().isBlank()) throw new RuntimeException("config_value 不能为空");
+        config.setConfig_value(dto.getConfig_value());
+        config.setVersion(config.getVersion() + 1);
+        config.setStatus("draft");
+        config.setUpdated_by(CurrentHolder.getCurrentId());
+        configMapper.update(config);
+        evictConfigCache(config);
+        businessLogService.record("operation", "admin_config", "update_security_policy", "config", config.getId(),
+                Map.of("version", config.getVersion()));
+        return toConfigVO(config);
+    }
+
     @Override
-    public Object updateSecurityPolicy(String id) { return null; }
+    @Transactional
+    public Map<String, Object> publishSecurityPolicy(String id) {
+        Sys_Config config = configMapper.findById(Integer.parseInt(id));
+        if (config == null || !"security".equals(config.getConfig_group())) throw new RuntimeException("安全策略不存在");
+        configMapper.updateStatus(config.getId(), "published");
+        evictConfigCache(config);
+        businessLogService.record("operation", "admin_config", "publish_security_policy", "config", config.getId());
+        return Map.of("published", true);
+    }
+
     @Override
-    public Object publishSecurityPolicy(String id) { return null; }
+    public PageResult<LogVO> listAuditLogs(LogQueryDTO dto) {
+        return redisCacheUtil.getOrLoad(logCacheKey("audit", dto),
+                new com.fasterxml.jackson.core.type.TypeReference<PageResult<LogVO>>() {},
+                Duration.ofSeconds(20),
+                () -> pageLogs(filterLogs(dto, "audit"), dto));
+    }
+
     @Override
-    public Object listAuditLogs() { return null; }
+    public PageResult<LogVO> listSystemLogs(LogQueryDTO dto) {
+        return redisCacheUtil.getOrLoad(logCacheKey("system", dto),
+                new com.fasterxml.jackson.core.type.TypeReference<PageResult<LogVO>>() {},
+                Duration.ofSeconds(20),
+                () -> pageLogs(filterLogs(dto, null), dto));
+    }
+
     @Override
-    public Object listSystemLogs() { return null; }
+    public Map<String, Object> getDashboard() {
+        return redisCacheUtil.getOrLoad("admin:dashboard",
+                new com.fasterxml.jackson.core.type.TypeReference<Map<String, Object>>() {},
+                Duration.ofSeconds(60),
+                () -> {
+                    long aiConfigCount = configMapper.findByGroup("ai_model").size();
+                    long logCount = logMapper.findAll().size();
+                    return Map.of("user_count", 0, "resource_count", 0, "ai_task_count", aiConfigCount,
+                            "export_task_count", 0, "moderation_pending_count", 0, "log_count", logCount);
+                });
+    }
+
     @Override
-    public Object getDashboard() { return null; }
+    public PageResult<Map<String, Object>> listAlerts(String level, String source, String status, int page, int size) {
+        int p = page <= 0 ? 1 : page;
+        int s = size <= 0 ? 10 : size;
+        return new PageResult<>(0, p, s, List.of());
+    }
+
     @Override
-    public Object listAlerts() { return null; }
+    public Map<String, Object> getAlert(String id) {
+        return Map.of("id", id, "level", "info", "source", "system", "title", "告警不存在",
+                "detail", "当前系统未接入告警存储", "status", "resolved");
+    }
+
     @Override
-    public Object getAlert(String id) { return null; }
+    public void acknowledgeAlert(String id) {
+        businessLogService.record("operation", "admin_alert", "acknowledge", "alert", Integer.parseInt(id));
+    }
+
     @Override
-    public Object acknowledgeAlert(String id) { return null; }
-    @Override
-    public Object resolveAlert(String id) { return null; }
+    public void resolveAlert(String id, String resolution) {
+        if (resolution == null || resolution.isBlank()) throw new RuntimeException("resolution 不能为空");
+        businessLogService.record("operation", "admin_alert", "resolve", "alert", Integer.parseInt(id),
+                Map.of("resolution", resolution));
+    }
 
     // ==================== 内部辅助 ====================
 
     private ConfigVO toConfigVO(Sys_Config config) {
         ConfigVO vo = new ConfigVO();
         BeanUtil.copyProperties(config, vo);
+        return vo;
+    }
+
+    private void evictConfigCache(Sys_Config config) {
+        redisCacheUtil.delete("config:all");
+        redisCacheUtil.delete("config:group:" + config.getConfig_group());
+        redisCacheUtil.delete("config:key:" + config.getConfig_key());
+        redisCacheUtil.delete("admin:dashboard");
+    }
+
+    private String logCacheKey(String scope, LogQueryDTO dto) {
+        return "logs:" + scope + ":" +
+                blankToAll(dto.getLog_type()) + ":" +
+                blankToAll(dto.getModule()) + ":" +
+                (dto.getUser_id() == null ? "all" : dto.getUser_id()) + ":p" +
+                dto.getPage() + ":s" + dto.getSize();
+    }
+
+    private String blankToAll(String value) {
+        return value == null || value.isBlank() ? "all" : value;
+    }
+
+    private List<LogVO> filterLogs(LogQueryDTO dto, String forcedType) {
+        return logMapper.findAll().stream()
+                .filter(l -> forcedType == null || forcedType.equals(l.getLog_type()))
+                .filter(l -> dto.getLog_type() == null || dto.getLog_type().isBlank() || dto.getLog_type().equals(l.getLog_type()))
+                .filter(l -> dto.getModule() == null || dto.getModule().isBlank() || dto.getModule().equals(l.getModule()))
+                .filter(l -> dto.getUser_id() == null || dto.getUser_id().equals(l.getUser_id()))
+                .map(this::toLogVO)
+                .toList();
+    }
+
+    private PageResult<LogVO> pageLogs(List<LogVO> all, LogQueryDTO dto) {
+        int page = dto.getPage() <= 0 ? 1 : dto.getPage();
+        int size = dto.getSize() <= 0 ? 10 : dto.getSize();
+        int from = Math.min((page - 1) * size, all.size());
+        int to = Math.min(from + size, all.size());
+        return new PageResult<>(all.size(), page, size, all.subList(from, to));
+    }
+
+    private LogVO toLogVO(Sys_Log log) {
+        LogVO vo = new LogVO();
+        BeanUtil.copyProperties(log, vo);
+        vo.setCreated_at(log.getCreate_at());
         return vo;
     }
 }

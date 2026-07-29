@@ -86,7 +86,9 @@ public class AdminConfigController {
      */
     @GetMapping("/security-policies")
     public Result<?> listSecurityPolicies() {
-        return Result.success();
+        try {
+            return Result.success(adminConfigService.listSecurityPolicies());
+        } catch (RuntimeException e) { return Result.error(400, e.getMessage()); }
     }
 
     /**
@@ -94,7 +96,9 @@ public class AdminConfigController {
      */
     @PutMapping("/security-policies/{id}")
     public Result<ConfigVO> updateSecurityPolicy(@PathVariable String id, @RequestBody SecurityPolicyDTO dto) {
-        return Result.success();
+        try {
+            return Result.success(adminConfigService.updateSecurityPolicy(id, dto));
+        } catch (RuntimeException e) { return Result.error(400, e.getMessage()); }
     }
 
     /**
@@ -102,7 +106,9 @@ public class AdminConfigController {
      */
     @PostMapping("/security-policies/{id}/publish")
     public Result<?> publishSecurityPolicy(@PathVariable String id) {
-        return Result.success();
+        try {
+            return Result.success(adminConfigService.publishSecurityPolicy(id));
+        } catch (RuntimeException e) { return Result.error(400, e.getMessage()); }
     }
 
     /**
@@ -110,7 +116,9 @@ public class AdminConfigController {
      */
     @GetMapping("/audit-logs")
     public Result<?> listAuditLogs(LogQueryDTO dto) {
-        return Result.success();
+        try {
+            return Result.success(adminConfigService.listAuditLogs(dto));
+        } catch (RuntimeException e) { return Result.error(400, e.getMessage()); }
     }
 
     /**
@@ -118,7 +126,9 @@ public class AdminConfigController {
      */
     @GetMapping("/system-logs")
     public Result<?> listSystemLogs(LogQueryDTO dto) {
-        return Result.success();
+        try {
+            return Result.success(adminConfigService.listSystemLogs(dto));
+        } catch (RuntimeException e) { return Result.error(400, e.getMessage()); }
     }
 
     /**
@@ -126,7 +136,9 @@ public class AdminConfigController {
      */
     @GetMapping("/dashboard")
     public Result<?> getDashboard() {
-        return Result.success();
+        try {
+            return Result.success(adminConfigService.getDashboard());
+        } catch (RuntimeException e) { return Result.error(400, e.getMessage()); }
     }
 
     /**
@@ -138,7 +150,9 @@ public class AdminConfigController {
                                 @RequestParam(required = false) String status,
                                 @RequestParam(defaultValue = "1") int page,
                                 @RequestParam(defaultValue = "10") int size) {
-        return Result.success();
+        try {
+            return Result.success(adminConfigService.listAlerts(level, source, status, page, size));
+        } catch (RuntimeException e) { return Result.error(400, e.getMessage()); }
     }
 
     /**
@@ -146,7 +160,9 @@ public class AdminConfigController {
      */
     @GetMapping("/alerts/{id}")
     public Result<?> getAlert(@PathVariable String id) {
-        return Result.success();
+        try {
+            return Result.success(adminConfigService.getAlert(id));
+        } catch (RuntimeException e) { return Result.error(400, e.getMessage()); }
     }
 
     /**
@@ -154,7 +170,10 @@ public class AdminConfigController {
      */
     @PostMapping("/alerts/{id}/acknowledge")
     public Result<Void> acknowledgeAlert(@PathVariable String id) {
-        return Result.success();
+        try {
+            adminConfigService.acknowledgeAlert(id);
+            return Result.success();
+        } catch (RuntimeException e) { return Result.error(400, e.getMessage()); }
     }
 
     /**
@@ -162,6 +181,9 @@ public class AdminConfigController {
      */
     @PostMapping("/alerts/{id}/resolve")
     public Result<Void> resolveAlert(@PathVariable String id, @RequestBody AlertResolveDTO dto) {
-        return Result.success();
+        try {
+            adminConfigService.resolveAlert(id, dto.getResolution());
+            return Result.success();
+        } catch (RuntimeException e) { return Result.error(400, e.getMessage()); }
     }
 }

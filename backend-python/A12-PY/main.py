@@ -1,0 +1,172 @@
+from fastapi import FastAPI, File, Query, UploadFile
+from fastapi.middleware.cors import CORSMiddleware
+import json
+
+from fastapi.responses import FileResponse, StreamingResponse
+
+from a12_ppt.config import get_settings
+from a12_ppt.presentation import (
+    DEFAULT_THEME,
+    PPTGenerator,
+    export_html_slides_to_pptx,
+    list_templates,
+    validate_html,
+)
+from a12_ppt.models import (
+    HtmlValidateRequest,
+    OutlineChatStreamRequest,
+    OutlineGenerateRequest,
+    OutlineUpdateRequest,
+    PresentationExportRequest,
+    PresentationGenerateRequest,
+    ResourceIndexBootstrapRequest,
+    ResourceIndexMetadataRequest,
+    ResourceIndexSyncRequest,
+    Result,
+    SlideModifyRequest,
+)
+from a12_ppt.resources import resource_index_store, save_upload
+from a12_ppt.outline_chat import OutlineChatWorkflow
+from a12_ppt.outline_chat.postgres_store import postgres_memory_store
+from a12_ppt.outline_chat.session_store import outline_session_store
+
+
+settings = get_settings()
+app = FastAPI(title=settings.app_name, version=settings.app_version)
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=["*"],
+    allow_credentials=True,
+    allow_methods=["*"],
+    allow_headers=["*"],
+)
+generator = PPTGenerator()
+outline_chat_workflow = OutlineChatWorkflow(generator)
+
+
+@app.get("/api/v1/python/health")
+async def health() -> Result:
+    return Result(data={
+        "status": "ok",
+        "service": settings.app_name,
+        "version": settings.app_version,
+        "model_ready": bool(settings.openai_api_key),
+        "quality_pipeline": settings.enable_quality_pipeline,
+        "quality_preset": settings.quality_preset,
+        "max_slide_concurrency": settings.max_slide_concurrency,
+        "max_html_retries": settings.max_html_retries,
+    })
+
+
+@app.post("/api/v1/python/resources/upload")
+async def upload_resource(file: UploadFile = File(...)) -> Result:
+    record = await save_upload(file)
+    return Result(data={
+        "resource_id": record.resource_id,
+        "filename": record.filename,
+        "content_type": record.content_type,
+        "text_length": len(record.text),
+        "text_preview": record.text[:500],
+    })
+
+
+@app.post("/api/v1/python/resources/index/sync")
+async def sync_resource_index(request: ResourceIndexSyncRequest) -> Result:
+    return Result(data=await resource_index_store.sync_resource(request))
+
+
+@app.post("/api/v1/python/resources/index/bootstrap")
+async def bootstrap_resource_index(request: ResourceIndexBootstrapRequest) -> Result:
+    return Result(data=await resource_index_store.bootstrap(request.resources, request.force_reparse))
+
+
+@app.patch("/api/v1/python/resources/index/metadata")
+async def update_resource_index_metadata(request: ResourceIndexMetadataRequest) -> Result:
+    return Result(data=resource_index_store.update_metadata(request))
+
+
+@app.delete("/api/v1/python/resources/index/{source_type}/{resource_id}")
+async def delete_resource_index(source_type: str, resource_id: str) -> Result:
+    return Result(data=resource_index_store.delete_resource(source_type, resource_id))
+
+
+@app.get("/api/v1/python/templates")
+async def templates() -> Result:
+    templates_data = list_templates()
+    return Result(data={
+        "total": len(templates_data),
+        "default_theme": DEFAULT_THEME,
+        "templates": templates_data,
+    })
+
+
+@app.post("/api/v1/python/outlines/generate")
+async def generate_outline(request: OutlineGenerateRequest) -> Result:
+    return Result(data=await generator.generate_outline(request))
+
+
+@app.post("/api/v1/python/outlines/chat/stream")
+async def stream_outline_chat(request: OutlineChatStreamRequest):
+    async def event_source():
+        async for item in outline_chat_workflow.stream(request):
+            event = item.get("event", "message")
+            data = json.dumps(item.get("data", {}), ensure_ascii=False)
+            yield f"event: {event}\ndata: {data}\n\n"
+
+    return StreamingResponse(event_source(), media_type="text/event-stream")
+
+
+@app.get("/api/v1/python/outlines/chat/sessions")
+async def list_outline_chat_sessions(user_id: str = Query(..., min_length=1), limit: int = Query(20, ge=1, le=100)) -> Result:
+    return Result(data={
+        "user_id": user_id,
+        "sessions": outline_session_store.list_sessions(user_id, limit=limit),
+    })
+
+
+@app.get("/api/v1/python/teacher-style/profile")
+async def get_teacher_style_profile(user_id: str = Query(..., min_length=1)) -> Result:
+    return Result(data={
+        "user_id": user_id,
+        "profile": postgres_memory_store.get_teacher_profile(user_id),
+        "postgres_available": postgres_memory_store.available,
+    })
+
+
+@app.post("/api/v1/python/outlines/update")
+async def update_outline(request: OutlineUpdateRequest) -> Result:
+    return Result(data=await generator.update_outline(request))
+
+
+@app.post("/api/v1/python/presentations/generate")
+async def generate_presentation(request: PresentationGenerateRequest) -> Result:
+    return Result(data=await generator.generate_presentation(request))
+
+
+@app.post("/api/v1/python/presentations/slides/modify")
+async def modify_slide(request: SlideModifyRequest) -> Result:
+    return Result(data=await generator.modify_slide(request))
+
+
+@app.post("/api/v1/python/presentations/html/validate")
+async def validate_ppt_html(request: HtmlValidateRequest) -> Result:
+    return Result(data=validate_html(request.html, request.strict))
+
+
+@app.post("/api/v1/python/presentations/export/pptx")
+async def export_pptx(request: PresentationExportRequest):
+    output = export_html_slides_to_pptx(request.title, request.slides, request.filename)
+    return FileResponse(
+        path=str(output),
+        filename=output.name,
+        media_type="application/vnd.openxmlformats-officedocument.presentationml.presentation",
+    )
+
+
+def main() -> None:
+    import uvicorn
+    uvicorn.run("main:app", host="127.0.0.1", port=8001, reload=True)
+
+
+if __name__ == "__main__":
+    main()
