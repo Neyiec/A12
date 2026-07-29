@@ -21,6 +21,6 @@ public class MaterialDTO {
     private String tags;
     private String access_type;
     private String authorized_users;
-    private int allow_ai;
+    private Integer allow_ai;
     private Integer replace_target_id;
 }

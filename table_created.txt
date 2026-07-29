@@ -88,13 +88,16 @@ CREATE TABLE ai_conversation (
   user_id INT(11) NOT NULL COMMENT '用户ID',
   title VARCHAR(200) DEFAULT NULL COMMENT '会话标题',
   status VARCHAR(20) NOT NULL DEFAULT 'active' COMMENT '状态(active/completed/archived)',
-  messages JSON DEFAULT NULL COMMENT '消息列表[{role,content_type,content,file_url,created_at}]',
-  context_summary TEXT DEFAULT NULL COMMENT '上下文摘要',
+  messages JSON DEFAULT NULL COMMENT 'Java侧轻量消息索引，不作为长期记忆主存储',
+  context_summary TEXT DEFAULT NULL COMMENT '上下文摘要或Python解析出的intent摘要',
+  python_session_id VARCHAR(80) DEFAULT NULL COMMENT 'Python对话式大纲会话ID',
+  last_question TEXT DEFAULT NULL COMMENT 'Python返回的最近一次澄清问题',
   created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP COMMENT '创建时间',
   updated_at DATETIME DEFAULT NULL ON UPDATE CURRENT_TIMESTAMP COMMENT '更新时间',
   PRIMARY KEY (id),
-  KEY idx_user_id (user_id)
-) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci COMMENT='AI对话表';
+  KEY idx_user_id (user_id),
+  KEY idx_python_session_id (python_session_id)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci COMMENT='AI对话表(Java网关层，长期记忆在Python PostgreSQL)';
 
 -- =============================================
 -- AI教学任务表 ai_task
@@ -113,13 +116,20 @@ CREATE TABLE ai_task (
   plan_confirm_status VARCHAR(20) DEFAULT NULL COMMENT '大纲确认状态(pending/confirmed/rejected)',
   exec_steps JSON DEFAULT NULL COMMENT '执行步骤[{step,tool_name,tool_params,output,status}]',
   reflections JSON DEFAULT NULL COMMENT '反思迭代记录[{round,feedback,adjustment}]',
+  python_session_id VARCHAR(80) DEFAULT NULL COMMENT 'Python对话会话ID',
+  python_outline_id VARCHAR(80) DEFAULT NULL COMMENT 'Python生成的大纲ID',
+  python_presentation_id VARCHAR(80) DEFAULT NULL COMMENT 'Python生成的PPT ID',
+  generation_mode VARCHAR(30) NOT NULL DEFAULT 'python' COMMENT '生成模式(java/python)',
+  error_message TEXT DEFAULT NULL COMMENT 'Python生成或网关转发失败原因',
   created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP COMMENT '创建时间',
   updated_at DATETIME DEFAULT NULL ON UPDATE CURRENT_TIMESTAMP COMMENT '更新时间',
   PRIMARY KEY (id),
   KEY idx_user_id (user_id),
   KEY idx_conversation_id (conversation_id),
-  KEY idx_status (status)
-) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci COMMENT='AI教学任务表';
+  KEY idx_status (status),
+  KEY idx_python_session_id (python_session_id),
+  KEY idx_python_outline_id (python_outline_id)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci COMMENT='AI教学任务表(Java业务任务层，生成由Python服务执行)';
 
 -- =============================================
 -- 创作项目表 ws_project
@@ -135,7 +145,7 @@ CREATE TABLE ws_project (
   current_version INT(11) NOT NULL DEFAULT 1 COMMENT '当前版本号',
   snapshots JSON DEFAULT NULL COMMENT '版本快照列表[{version_no,snapshot_data,created_by,created_at}]',
   edit_history JSON DEFAULT NULL COMMENT '编辑历史[{edit_type,instruction,before,after,created_at}]',
-  permissions JSON DEFAULT NULL COMMENT 授权用户ID列表
+  permissions JSON DEFAULT NULL COMMENT '授权用户ID列表',
   created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP COMMENT '创建时间',
   updated_at DATETIME DEFAULT NULL ON UPDATE CURRENT_TIMESTAMP COMMENT '更新时间',
   PRIMARY KEY (id),
@@ -181,11 +191,15 @@ CREATE TABLE res_material (
   authorized_users JSON DEFAULT NULL COMMENT '授权用户ID列表',
   allow_ai TINYINT(1) NOT NULL DEFAULT 1 COMMENT '是否允许AI访问',
   status TINYINT(1) NOT NULL DEFAULT 1 COMMENT '状态(1正常/0已删除)',
+  ai_index_status VARCHAR(20) NOT NULL DEFAULT 'pending' COMMENT 'AI索引状态(pending/indexing/completed/failed/disabled)',
+  ai_indexed_at DATETIME DEFAULT NULL COMMENT 'AI索引完成时间',
+  ai_index_error TEXT DEFAULT NULL COMMENT 'AI索引失败原因',
   created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP COMMENT '上传时间',
   updated_at DATETIME DEFAULT NULL ON UPDATE CURRENT_TIMESTAMP COMMENT '更新时间',
   PRIMARY KEY (id),
   KEY idx_user_id (user_id),
   KEY idx_file_type (file_type),
+  KEY idx_allow_ai_status (allow_ai, status),
   KEY idx_created_at (created_at)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci COMMENT='素材资源表';
 
@@ -297,7 +311,7 @@ DROP TABLE IF EXISTS com_interaction;
 CREATE TABLE com_interaction (
   id BIGINT(20) NOT NULL AUTO_INCREMENT COMMENT '记录ID',
   user_id INT(11) NOT NULL COMMENT '用户ID',
-  action_type VARCHAR(20) NOT NULL COMMENT ‘操作类型(favorite/derivation/view)’,
+  action_type VARCHAR(20) NOT NULL COMMENT '操作类型(favorite/derivation/view)',
   target_type VARCHAR(20) NOT NULL COMMENT '目标类型(skill/case)',
   target_id INT(11) NOT NULL COMMENT '目标内容ID',
   target_version INT(11) DEFAULT NULL COMMENT '复用时来源版本号',
@@ -347,13 +361,17 @@ CREATE TABLE adm_resource (
   template_data JSON DEFAULT NULL COMMENT '组件模板数据(仅component类型)',
   thumbnail VARCHAR(500) DEFAULT NULL COMMENT '缩略图',
   description VARCHAR(500) DEFAULT NULL COMMENT '描述',
-  file_size BIGINT(20) DEFAULT NULL COMMENT 文件大小(字节)
+  file_size BIGINT(20) DEFAULT NULL COMMENT '文件大小(字节)',
   status TINYINT(1) NOT NULL DEFAULT 1 COMMENT '状态(1启用/0禁用)',
   uploaded_by INT(11) DEFAULT NULL COMMENT '上传人ID',
+  ai_index_status VARCHAR(20) NOT NULL DEFAULT 'pending' COMMENT 'AI索引状态(pending/indexing/completed/failed/disabled)',
+  ai_indexed_at DATETIME DEFAULT NULL COMMENT 'AI索引完成时间',
+  ai_index_error TEXT DEFAULT NULL COMMENT 'AI索引失败原因',
   created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP COMMENT '创建时间',
   updated_at DATETIME DEFAULT NULL ON UPDATE CURRENT_TIMESTAMP COMMENT '更新时间',
   PRIMARY KEY (id),
-  KEY idx_resource_type (resource_type)
+  KEY idx_resource_type (resource_type),
+  KEY idx_status_ai_index (status, ai_index_status)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci COMMENT='公共资源与组件表';
 
 -- =============================================

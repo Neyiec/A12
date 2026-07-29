@@ -2,6 +2,8 @@ package edu.zstu.controller;
 
 import edu.zstu.utils.Result;
 import edu.zstu.dto.ExportTemplateCreateDTO;
+import edu.zstu.service.AdminExportService;
+import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.web.bind.annotation.*;
 
 /**
@@ -13,6 +15,8 @@ import org.springframework.web.bind.annotation.*;
 @RestController
 @RequestMapping("/api/v1/admin/export-templates")
 public class AdminExportController {
+    @Autowired
+    private AdminExportService adminExportService;
 
     /**
      * API-94 分页查询导出模板
@@ -30,7 +34,9 @@ public class AdminExportController {
                                    @RequestParam(required = false) String status,
                                    @RequestParam(defaultValue = "1") int page,
                                    @RequestParam(defaultValue = "10") int size) {
-        return Result.success();
+        try {
+            return Result.success(adminExportService.listTemplates(export_type, status, page, size));
+        } catch (RuntimeException e) { return Result.error(400, e.getMessage()); }
     }
 
     /**
@@ -43,7 +49,9 @@ public class AdminExportController {
      */
     @PostMapping
     public Result<?> createTemplate(@RequestBody ExportTemplateCreateDTO dto) {
-        return Result.success();
+        try {
+            return Result.success(adminExportService.createTemplate(dto));
+        } catch (RuntimeException e) { return Result.error(400, e.getMessage()); }
     }
 
     /**
@@ -57,7 +65,9 @@ public class AdminExportController {
      */
     @PatchMapping("/{id}")
     public Result<?> updateTemplate(@PathVariable String id, @RequestBody ExportTemplateCreateDTO dto) {
-        return Result.success();
+        try {
+            return Result.success(adminExportService.updateTemplate(id, dto));
+        } catch (RuntimeException e) { return Result.error(400, e.getMessage()); }
     }
 
     /**
@@ -72,6 +82,9 @@ public class AdminExportController {
     @PutMapping("/{id}/status")
     public Result<Void> updateTemplateStatus(@PathVariable String id,
                                              @RequestParam String status) {
-        return Result.success();
+        try {
+            adminExportService.updateTemplateStatus(id, status);
+            return Result.success();
+        } catch (RuntimeException e) { return Result.error(400, e.getMessage()); }
     }
 }

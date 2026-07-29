@@ -3,10 +3,16 @@ package edu.zstu.controller;
 import edu.zstu.dto.ConversationDTO;
 import edu.zstu.dto.PlanConfirmationDTO;
 import edu.zstu.dto.TaskCreateDTO;
+import edu.zstu.service.AIService;
 import edu.zstu.utils.Result;
 import edu.zstu.vo.ConversationVO;
 import edu.zstu.vo.TaskVO;
+import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.http.MediaType;
 import org.springframework.web.bind.annotation.*;
+import org.springframework.web.servlet.mvc.method.annotation.SseEmitter;
+
+import java.io.IOException;
 
 /**
  * AI 教学引擎 Controller
@@ -17,6 +23,8 @@ import org.springframework.web.bind.annotation.*;
 @RestController
 @RequestMapping("/api/v1/ai")
 public class AIController {
+    @Autowired
+    private AIService aiService;
 
     /**
      * API-10 创建备课会话
@@ -28,7 +36,9 @@ public class AIController {
      */
     @PostMapping("/sessions")
     public Result<TaskVO> createSession(@RequestBody TaskCreateDTO dto) {
-        return Result.success();
+        try {
+            return Result.success(aiService.createSession(dto));
+        } catch (RuntimeException e) { return Result.error(400, e.getMessage()); }
     }
 
     /**
@@ -43,7 +53,9 @@ public class AIController {
     @PostMapping("/sessions/{id}/messages")
     public Result<ConversationVO> sendMessage(@PathVariable String id,
                                               @RequestBody ConversationDTO dto) {
-        return Result.success();
+        try {
+            return Result.success(aiService.sendMessage(id, dto));
+        } catch (RuntimeException e) { return Result.error(400, e.getMessage()); }
     }
 
     /**
@@ -56,7 +68,9 @@ public class AIController {
      */
     @GetMapping("/sessions/{id}/plan")
     public Result<TaskVO> getPlan(@PathVariable String id) {
-        return Result.success();
+        try {
+            return Result.success(aiService.getPlan(id));
+        } catch (RuntimeException e) { return Result.error(400, e.getMessage()); }
     }
 
     /**
@@ -71,7 +85,10 @@ public class AIController {
     @PostMapping("/sessions/{id}/plan-confirmations")
     public Result<Void> confirmPlan(@PathVariable String id,
                                     @RequestBody PlanConfirmationDTO dto) {
-        return Result.success();
+        try {
+            aiService.confirmPlan(id, dto);
+            return Result.success();
+        } catch (RuntimeException e) { return Result.error(400, e.getMessage()); }
     }
 
     /**
@@ -84,7 +101,9 @@ public class AIController {
      */
     @PostMapping("/sessions/{id}/runs")
     public Result<TaskVO> createRun(@PathVariable String id) {
-        return Result.success();
+        try {
+            return Result.success(aiService.createRun(id));
+        } catch (RuntimeException e) { return Result.error(400, e.getMessage()); }
     }
 
     /**
@@ -97,7 +116,9 @@ public class AIController {
      */
     @GetMapping("/runs/{runId}")
     public Result<TaskVO> getRun(@PathVariable String runId) {
-        return Result.success();
+        try {
+            return Result.success(aiService.getRun(runId));
+        } catch (RuntimeException e) { return Result.error(400, e.getMessage()); }
     }
 
     /**
@@ -110,9 +131,20 @@ public class AIController {
      * @param lastEventId 断线续传时携带最后收到的 eventId（选填）
      * @return SSE 事件流，包含阶段进度和预览数据
      */
-    @GetMapping("/runs/{runId}/events")
-    public Result<Void> getRunEvents(@PathVariable String runId,
-                                     @RequestParam(required = false) String lastEventId) {
-        return Result.success();
+    @GetMapping(value = "/runs/{runId}/events", produces = MediaType.TEXT_EVENT_STREAM_VALUE)
+    public SseEmitter getRunEvents(@PathVariable String runId,
+                                   @RequestParam(required = false) String lastEventId) {
+        SseEmitter emitter = new SseEmitter(30_000L);
+        try {
+            TaskVO task = aiService.getRun(runId);
+            emitter.send(SseEmitter.event()
+                    .id(lastEventId == null ? "1" : lastEventId)
+                    .name("status")
+                    .data(task));
+            emitter.complete();
+        } catch (RuntimeException | IOException e) {
+            emitter.completeWithError(e);
+        }
+        return emitter;
     }
 }

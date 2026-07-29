@@ -1,19 +1,27 @@
 package edu.zstu.service;
 
+import edu.zstu.dto.ExportPrecheckDTO;
+import edu.zstu.dto.ExportTaskDTO;
+import edu.zstu.dto.TaskQueryDTO;
+import edu.zstu.utils.PageResult;
+import edu.zstu.vo.ExportTaskVO;
+
+import java.util.Map;
+
 /**
  * 成果导出中心 Service 接口<br>提供导出预检、导出任务管理、成果文件获取等导出相关业务方法。
  */
 
 public interface ExportService {
-    Object precheckExport(String id);
-    Object createExportTask();
-    Object listExportTasks();
-    Object getExportTask(String id);
-    Object cancelExport(String id);
-    Object retryExport(String id);
-    Object getQualityReport(String id);
-    Object getArtifact(String id);
-    Object createPreviewUrl(String id);
-    Object createDownloadUrl(String id);
+    Map<String, Object> precheckExport(String id, ExportPrecheckDTO dto);
+    ExportTaskVO createExportTask(ExportTaskDTO dto);
+    PageResult<ExportTaskVO> listExportTasks(TaskQueryDTO dto);
+    ExportTaskVO getExportTask(String id);
+    ExportTaskVO cancelExport(String id);
+    ExportTaskVO retryExport(String id);
+    Map<String, Object> getQualityReport(String id);
+    ExportTaskVO getArtifact(String id);
+    Map<String, Object> createPreviewUrl(String id);
+    Map<String, Object> createDownloadUrl(String id);
 }
 

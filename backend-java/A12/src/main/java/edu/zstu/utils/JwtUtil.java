@@ -13,7 +13,9 @@ import org.springframework.stereotype.Component;
 import javax.crypto.SecretKey;
 import java.nio.charset.StandardCharsets;
 import java.time.LocalDateTime;
+import java.util.Date;
 import java.util.Map;
+import java.util.UUID;
 
 /**
  * JWT 工具类
@@ -51,6 +53,7 @@ public class JwtUtil {
             newConfig.setDescription("JWT HMAC-SHA256签名密钥（自动生成）");
             newConfig.setUpdated_by(0);
             newConfig.setUpdated_at(LocalDateTime.now());
+            newConfig.setStatus("published");
             configMapper.insert(newConfig);
         }
         this.secretKey = Keys.hmacShaKeyFor(keyStr.getBytes(StandardCharsets.UTF_8));
@@ -62,6 +65,8 @@ public class JwtUtil {
     public String generateToken(Map<String, Object> claims) {
         var builder = Jwts.builder();
         claims.forEach(builder::claim);
+        builder.id(UUID.randomUUID().toString());
+        builder.issuedAt(new Date());
         return builder.signWith(secretKey).compact();
     }
 

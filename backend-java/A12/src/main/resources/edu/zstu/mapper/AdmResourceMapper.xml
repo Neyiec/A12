@@ -6,30 +6,46 @@
         <result column="title" property="title"/><result column="subject" property="subject"/>
         <result column="grade" property="grade"/><result column="file_url" property="file_url"/>
         <result column="template_data" property="template_data"/><result column="thumbnail" property="thumbnail"/>
-        <result column="description" property="description"/><result column="status" property="status"/>
+        <result column="description" property="description"/><result column="file_size" property="file_size"/>
+        <result column="status" property="status"/>
         <result column="uploaded_by" property="uploaded_by"/>
+        <result column="ai_index_status" property="ai_index_status"/>
+        <result column="ai_indexed_at" property="ai_indexed_at"/>
+        <result column="ai_index_error" property="ai_index_error"/>
         <result column="created_at" property="created_at"/><result column="updated_at" property="updated_at"/>
     </resultMap>
-    <sql id="Base_Columns">id, resource_type, title, subject, grade, file_url, template_data, thumbnail, description, status, uploaded_by, created_at, updated_at</sql>
+    <sql id="Base_Columns">id, resource_type, title, subject, grade, file_url, template_data, thumbnail, description, file_size, status, uploaded_by, ai_index_status, ai_indexed_at, ai_index_error, created_at, updated_at</sql>
     <select id="findById" resultMap="BaseResultMap">SELECT <include refid="Base_Columns"/> FROM adm_resource WHERE id = #{id}</select>
     <select id="findActive" resultMap="BaseResultMap">SELECT <include refid="Base_Columns"/> FROM adm_resource WHERE status = 1 ORDER BY updated_at DESC</select>
     <select id="findAll" resultMap="BaseResultMap">SELECT <include refid="Base_Columns"/> FROM adm_resource ORDER BY updated_at DESC</select>
     <select id="findByType" resultMap="BaseResultMap">SELECT <include refid="Base_Columns"/> FROM adm_resource WHERE resource_type = #{resourceType} AND status = 1</select>
     <insert id="insert" useGeneratedKeys="true" keyProperty="id">
-        INSERT INTO adm_resource(resource_type, title, subject, grade, file_url, template_data, thumbnail, description, status, uploaded_by, created_at, updated_at)
-        VALUES(#{resource_type}, #{title}, #{subject}, #{grade}, #{file_url}, #{template_data}, #{thumbnail}, #{description}, #{status}, #{uploaded_by}, NOW(), NOW())
+        INSERT INTO adm_resource(resource_type, title, subject, grade, file_url, template_data, thumbnail, description, file_size, status, uploaded_by, ai_index_status, created_at, updated_at)
+        VALUES(#{resource_type}, #{title}, #{subject}, #{grade}, #{file_url}, #{template_data}, #{thumbnail}, #{description}, #{file_size}, #{status}, #{uploaded_by}, #{ai_index_status}, NOW(), NOW())
     </insert>
     <update id="update">
         UPDATE adm_resource <set>
         <if test="resource_type != null">resource_type = #{resource_type},</if><if test="title != null">title = #{title},</if>
         <if test="subject != null">subject = #{subject},</if><if test="grade != null">grade = #{grade},</if>
         <if test="file_url != null">file_url = #{file_url},</if>
+        <if test="file_size != null">file_size = #{file_size},</if>
         <if test="template_data != null">template_data = #{template_data},</if>
         <if test="thumbnail != null">thumbnail = #{thumbnail},</if>
         <if test="description != null">description = #{description},</if><if test="status != null">status = #{status},</if>
+        <if test="ai_index_status != null">ai_index_status = #{ai_index_status},</if>
+        <if test="ai_indexed_at != null">ai_indexed_at = #{ai_indexed_at},</if>
+        <if test="ai_index_error != null">ai_index_error = #{ai_index_error},</if>
         updated_at = NOW()</set> WHERE id = #{id}
     </update>
     <update id="updateStatus">UPDATE adm_resource SET status = #{status}, updated_at = NOW() WHERE id = #{id}</update>
+    <update id="updateAiIndexStatus">
+        UPDATE adm_resource
+        SET ai_index_status = #{status},
+            ai_index_error = #{error},
+            ai_indexed_at = CASE WHEN #{status} = 'completed' THEN NOW() ELSE ai_indexed_at END,
+            updated_at = NOW()
+        WHERE id = #{id}
+    </update>
     <select id="findByQuery" resultMap="BaseResultMap">
         SELECT <include refid="Base_Columns"/> FROM adm_resource
         <where>

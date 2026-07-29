@@ -25,6 +25,9 @@ public class ResourceVO {
     private Long file_size;
     private int status;
     private Integer uploaded_by;
+    private String ai_index_status;
+    private LocalDateTime ai_indexed_at;
+    private String ai_index_error;
     private LocalDateTime created_at;
     private LocalDateTime updated_at;
 }

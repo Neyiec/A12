@@ -41,6 +41,8 @@
     </update>
     <update id="incrementViewCount">UPDATE com_content SET view_count = view_count + 1 WHERE id = #{id}</update>
     <update id="incrementUseCount">UPDATE com_content SET use_count = use_count + 1 WHERE id = #{id}</update>
+    <update id="incrementViewCountBy">UPDATE com_content SET view_count = view_count + #{delta} WHERE id = #{id}</update>
+    <update id="incrementUseCountBy">UPDATE com_content SET use_count = use_count + #{delta} WHERE id = #{id}</update>
     <select id="searchPublic" resultMap="BaseResultMap">
         SELECT <include refid="Base_Columns"/> FROM com_content
         WHERE status = 'public'

@@ -3,6 +3,7 @@ package edu.zstu.filter;
 import edu.zstu.entity.Sys_User;
 import edu.zstu.mapper.SysUserMapper;
 import edu.zstu.utils.CurrentHolder;
+import edu.zstu.utils.RedisCacheUtil;
 import jakarta.servlet.*;
 import jakarta.servlet.http.HttpServletRequest;
 import jakarta.servlet.http.HttpServletResponse;
@@ -12,6 +13,7 @@ import org.springframework.stereotype.Component;
 import org.springframework.util.AntPathMatcher;
 
 import java.io.IOException;
+import java.time.Duration;
 
 /**
  * 后台管理员权限过滤器
@@ -26,9 +28,11 @@ public class AdminAuthFilter implements Filter {
     private static final String ADMIN_PATH_PATTERN = "/api/v1/admin/**";
 
     private final SysUserMapper userMapper;
+    private final RedisCacheUtil redisCacheUtil;
 
-    public AdminAuthFilter(SysUserMapper userMapper) {
+    public AdminAuthFilter(SysUserMapper userMapper, RedisCacheUtil redisCacheUtil) {
         this.userMapper = userMapper;
+        this.redisCacheUtil = redisCacheUtil;
     }
 
     @Override
@@ -58,8 +62,11 @@ public class AdminAuthFilter implements Filter {
         }
 
         // 查询用户类型
-        Sys_User user = userMapper.findById(userId);
-        if (user == null || !"admin".equals(user.getUser_type())) {
+        String userType = redisCacheUtil.getOrLoad("user:auth:" + userId, String.class, Duration.ofMinutes(10), () -> {
+            Sys_User user = userMapper.findById(userId);
+            return user == null ? "" : user.getUser_type();
+        });
+        if (!"admin".equals(userType)) {
             writeForbidden(res, "无管理员权限");
             return;
         }

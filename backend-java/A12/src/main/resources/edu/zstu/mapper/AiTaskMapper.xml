@@ -8,18 +8,25 @@
         <result column="status" property="status"/><result column="uploaded_refs" property="uploaded_refs"/>
         <result column="plan_json" property="plan_json"/><result column="plan_confirm_status" property="plan_confirm_status"/>
         <result column="exec_steps" property="exec_steps"/><result column="reflections" property="reflections"/>
+        <result column="python_session_id" property="python_session_id"/><result column="python_outline_id" property="python_outline_id"/>
+        <result column="python_presentation_id" property="python_presentation_id"/><result column="generation_mode" property="generation_mode"/>
+        <result column="error_message" property="error_message"/>
         <result column="created_at" property="created_at"/><result column="updated_at" property="updated_at"/>
     </resultMap>
-    <sql id="Base_Columns">id, user_id, conversation_id, title, subject, grade, status, uploaded_refs, plan_json, plan_confirm_status, exec_steps, reflections, created_at, updated_at</sql>
+    <sql id="Base_Columns">id, user_id, conversation_id, title, subject, grade, status, uploaded_refs, plan_json, plan_confirm_status, exec_steps, reflections, python_session_id, python_outline_id, python_presentation_id, generation_mode, error_message, created_at, updated_at</sql>
     <select id="findById" resultMap="BaseResultMap">SELECT <include refid="Base_Columns"/> FROM ai_task WHERE id = #{id}</select>
     <select id="findByUserId" resultMap="BaseResultMap">SELECT <include refid="Base_Columns"/> FROM ai_task WHERE user_id = #{userId} ORDER BY created_at DESC</select>
     <select id="findByConversationId" resultMap="BaseResultMap">SELECT <include refid="Base_Columns"/> FROM ai_task WHERE conversation_id = #{conversationId}</select>
     <select id="findAll" resultMap="BaseResultMap">SELECT <include refid="Base_Columns"/> FROM ai_task ORDER BY created_at DESC</select>
     <insert id="insert" useGeneratedKeys="true" keyProperty="id">
         INSERT INTO ai_task(user_id, conversation_id, title, subject, grade, status, uploaded_refs,
-                            plan_json, plan_confirm_status, exec_steps, reflections, created_at, updated_at)
+                            plan_json, plan_confirm_status, exec_steps, reflections, python_session_id,
+                            python_outline_id, python_presentation_id, generation_mode, error_message,
+                            created_at, updated_at)
         VALUES(#{user_id}, #{conversation_id}, #{title}, #{subject}, #{grade}, #{status}, #{uploaded_refs},
-               #{plan_json}, #{plan_confirm_status}, #{exec_steps}, #{reflections}, NOW(), NOW())
+               #{plan_json}, #{plan_confirm_status}, #{exec_steps}, #{reflections}, #{python_session_id},
+               #{python_outline_id}, #{python_presentation_id}, #{generation_mode}, #{error_message},
+               NOW(), NOW())
     </insert>
     <update id="update">
         UPDATE ai_task <set>
@@ -30,6 +37,11 @@
         <if test="plan_confirm_status != null">plan_confirm_status = #{plan_confirm_status},</if>
         <if test="exec_steps != null">exec_steps = #{exec_steps},</if>
         <if test="reflections != null">reflections = #{reflections},</if>
+        <if test="python_session_id != null">python_session_id = #{python_session_id},</if>
+        <if test="python_outline_id != null">python_outline_id = #{python_outline_id},</if>
+        <if test="python_presentation_id != null">python_presentation_id = #{python_presentation_id},</if>
+        <if test="generation_mode != null">generation_mode = #{generation_mode},</if>
+        <if test="error_message != null">error_message = #{error_message},</if>
         updated_at = NOW()</set> WHERE id = #{id}
     </update>
 </mapper>
