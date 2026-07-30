@@ -1,5 +1,5 @@
 server:
-  port: 8080
+  port: 8088
 
 spring:
   datasource:
@@ -22,8 +22,8 @@ spring:
   mail:
     host: smtp.qq.com
     port: 587
-    username: your_q_email@qq.com
-    password: your_authorization_code
+    username: 3276142066@qq.com
+    password: rsaoqxavtsnedcah
     properties:
       mail:
         smtp:
@@ -54,3 +54,9 @@ mybatis:
   configuration:
     map-underscore-to-camel-case: true
     log-impl: org.apache.ibatis.logging.stdout.StdOutImpl
+
+a12:
+  python:
+    base-url: http://127.0.0.1:8001
+    connect-timeout-seconds: 5
+    request-timeout-seconds: 180

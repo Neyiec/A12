@@ -11,12 +11,7 @@ import java.security.SecureRandom;
 import java.time.LocalDateTime;
 import java.util.HexFormat;
 
-/**
- * 密码工具类
- * 使用 HMAC-SHA256 对密码进行哈希，密钥存储在 sys_config 表中
- * (config_group = security, config_key = password.secret)
- * 首次启动自动生成 32 字节随机密钥并持久化
- */
+
 @Component
 public class PasswordUtil {
 
@@ -49,13 +44,12 @@ public class PasswordUtil {
             newConfig.setDescription("密码HMAC-SHA256密钥（自动生成）");
             newConfig.setUpdated_by(0);
             newConfig.setUpdated_at(LocalDateTime.now());
+            newConfig.setStatus("published");
             configMapper.insert(newConfig);
         }
     }
 
-    /**
-     * 使用 HMAC-SHA256 对明文密码进行哈希
-     */
+
     public String hash(String password) {
         try {
             Mac mac = Mac.getInstance(HMAC_ALGORITHM);
@@ -63,7 +57,7 @@ public class PasswordUtil {
             mac.init(keySpec);
             return HexFormat.of().formatHex(mac.doFinal(password.getBytes()));
         } catch (Exception e) {
-            throw new RuntimeException("密码加密失败", e);
+            throw new RuntimeException("hash密码出错", e);
         }
     }
 }

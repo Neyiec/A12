@@ -15,4 +15,5 @@ public interface AdminResourceService {
     ResourceVO updateResource(Integer id, ResourceDTO dto, Integer adminId);
     ResourceVO updateStatus(Integer id, ItemStatusDTO dto, Integer adminId);
     Map<String, Object> getProcessingStatus(Integer id);
+    Map<String, Object> bootstrapAiResourceIndex(boolean forceReparse);
 }

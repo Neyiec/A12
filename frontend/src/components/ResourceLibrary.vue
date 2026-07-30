@@ -6,16 +6,81 @@
 <script setup>
 import { computed, onMounted, ref } from 'vue'
 import { ElMessage } from 'element-plus'
-import { Delete, Folder, Lock, MoreFilled, Search, Upload } from '@element-plus/icons-vue'
-import { RESOURCE_PAGE } from '../config/teacherPages.config.js'
-import { deleteResource, downloadResource, listResources, uploadResource } from '../apis/teacher'
+import { Delete, Edit, Folder, Lock, MoreFilled, Search, Upload } from '@element-plus/icons-vue'
+import { batchResourceAction, deleteResource, downloadResource, getResourcePermission, listResources, setResourcePermission, updateResource, uploadResource } from '../apis/teacher'
 
 const keyword = ref('')
 const activeFolder = ref('全部素材')
 const selectedRows = ref([])
-const resources = ref(RESOURCE_PAGE.files)
+const resources = ref([])
+const resourceTotal = ref(0)
 const fileInput = ref(null)
 const loading = ref(false)
+const uploading = ref(false)
+const uploadProgress = ref(0)
+const typeFilter = ref('')
+const editDialogVisible = ref(false)
+const permissionDialogVisible = ref(false)
+const batchDialogVisible = ref(false)
+const saving = ref(false)
+const editingRow = ref(null)
+const editForm = ref({ file_name: '', description: '', categories: '', tags: '' })
+const permissionForm = ref({ access_type: 'private', authorized_users: '', allow_ai: false })
+const batchForm = ref({ action: 'delete', target: '' })
+
+const formatFileSize = (bytes) => {
+  const size = Number(bytes) || 0
+  if (size < 1024) return `${size} B`
+  const units = ['KB', 'MB', 'GB', 'TB']
+  const unitIndex = Math.min(Math.floor(Math.log(size) / Math.log(1024)), units.length - 1)
+  return `${(size / (1024 ** (unitIndex + 1))).toFixed(size >= 1024 ** (unitIndex + 2) ? 1 : 0)} ${units[unitIndex]}`
+}
+
+const formatUpdatedAt = (value) => {
+  if (!value) return '—'
+  const date = new Date(value)
+  return Number.isNaN(date.getTime()) ? String(value) : new Intl.DateTimeFormat('zh-CN', { month: 'numeric', day: 'numeric', hour: '2-digit', minute: '2-digit' }).format(date)
+}
+
+const parseList = (value) => {
+  if (Array.isArray(value)) return value
+  try { return JSON.parse(value || '[]') } catch { return [] }
+}
+
+const normalizeRealResource = (item) => ({
+  id: item.id,
+  name: item.file_name,
+  type: (item.file_type || 'file').toUpperCase(),
+  course: parseList(item.categories).join(' · ') || '未分类',
+  size: formatFileSize(item.file_size),
+  fileSize: Number(item.file_size) || 0,
+  date: formatUpdatedAt(item.updated_at || item.created_at),
+  status: item.allow_ai === 1 ? '已启用' : '未启用',
+  private: item.access_type !== 'shared',
+  description: item.description || '',
+  raw: item,
+})
+
+const resourceStats = computed(() => {
+  const totalSize = resources.value.reduce((sum, item) => sum + item.fileSize, 0)
+  const aiAvailable = resources.value.filter((item) => item.status === '已启用').length
+  return [
+    { label: '全部素材', value: String(resourceTotal.value), detail: `当前已加载 ${resources.value.length} 项` },
+    { label: '可供 AI 引用', value: String(aiAvailable), detail: '依据资源授权状态统计' },
+    { label: '已加载空间', value: formatFileSize(totalSize), detail: '当前列表资源总大小' },
+  ]
+})
+
+const resourceFolders = computed(() => [
+  '全部素材',
+  ...new Set(resources.value.flatMap((item) => item.course === '未分类' ? [] : item.course.split(' · '))),
+])
+
+const visibleFiles = computed(() => resources.value.filter((file) => (
+  (activeFolder.value === '全部素材' || file.course.split(' · ').includes(activeFolder.value)) &&
+  (!typeFilter.value || file.type.toLowerCase() === typeFilter.value) &&
+  file.name.toLowerCase().includes(keyword.value.toLowerCase())
+)))
 const filteredFiles = computed(() => resources.value.filter((file) => (
   (activeFolder.value === '全部素材' || activeFolder.value === '我的课件' && file.type === 'PPT') &&
   file.name.toLowerCase().includes(keyword.value.toLowerCase())
@@ -33,12 +98,13 @@ const loadResources = async () => {
   try {
     const result = await listResources({ keyword: keyword.value || undefined, page: 1, size: 50 })
     const records = result?.data?.records || result?.data?.list || result?.data?.items || result?.records || []
-    if (records.length) resources.value = records.map(normalizeResource)
+    resources.value = records.map(normalizeRealResource)
+    resourceTotal.value = Number(result?.data?.total ?? result?.total ?? resources.value.length)
   } catch { /* 开发环境保留示例数据，接口上线后自动替换。 */ } finally { loading.value = false }
 }
 
 const startUpload = () => fileInput.value?.click()
-const handleUpload = async (event) => {
+const handleUploadLegacy = async (event) => {
   const file = event.target.files?.[0]
   if (!file) return
   const formData = new FormData()
@@ -50,9 +116,35 @@ const handleUpload = async (event) => {
   } catch { ElMessage.error('上传失败，请检查服务连接后重试') }
   event.target.value = ''
 }
+const handleUpload = async (event) => {
+  const file = event.target.files?.[0]
+  if (!file) return
+
+  uploading.value = true
+  uploadProgress.value = 0
+  try {
+    const resource = await uploadResource(file, (progress) => { uploadProgress.value = progress })
+    if (resource?.id) {
+      resources.value = [normalizeRealResource(resource), ...resources.value.filter((item) => item.id !== resource.id)]
+      resourceTotal.value += 1
+    } else {
+      await loadResources()
+    }
+    ElMessage.success('素材已上传并加入个人资源库')
+  } catch (error) {
+    ElMessage.error(error?.message || '上传失败，请检查服务连接后重试')
+  } finally {
+    uploading.value = false
+    uploadProgress.value = 0
+    event.target.value = ''
+  }
+}
+
 const handleAction = async (row, command) => {
   if (!row.id) return ElMessage.info('示例素材暂不支持此操作')
   try {
+    if (command === 'edit') return openEditDialog(row)
+    if (command === 'permission') return openPermissionDialog(row)
     if (command === 'download') {
       const result = await downloadResource(row.id)
       const url = result?.data?.download_url || result?.download_url
@@ -60,6 +152,73 @@ const handleAction = async (row, command) => {
     }
     if (command === 'delete') { await deleteResource(row.id); resources.value = resources.value.filter((item) => item.id !== row.id) }
   } catch { ElMessage.error('操作未成功，请稍后重试') }
+}
+
+const unwrapResponse = (response) => response?.data || response
+const parseEditableList = (value) => parseList(value).join(', ')
+const toJsonList = (value) => JSON.stringify(value.split(/[,，]/).map((item) => item.trim()).filter(Boolean))
+
+const openEditDialog = (row) => {
+  editingRow.value = row
+  editForm.value = { file_name: row.name, description: row.description || '', categories: parseEditableList(row.raw?.categories), tags: parseEditableList(row.raw?.tags) }
+  editDialogVisible.value = true
+}
+
+const submitEdit = async () => {
+  if (!editForm.value.file_name.trim()) return ElMessage.warning('请输入资源名称')
+  saving.value = true
+  try {
+    const updated = unwrapResponse(await updateResource(editingRow.value.id, {
+      file_name: editForm.value.file_name.trim(), description: editForm.value.description.trim(),
+      categories: toJsonList(editForm.value.categories), tags: toJsonList(editForm.value.tags),
+    }))
+    resources.value = resources.value.map((item) => item.id === editingRow.value.id ? normalizeRealResource(updated) : item)
+    editDialogVisible.value = false
+    ElMessage.success('资源信息已更新')
+  } catch (error) { ElMessage.error(error?.message || '保存失败，请稍后重试') } finally { saving.value = false }
+}
+
+const openPermissionDialog = async (row) => {
+  editingRow.value = row
+  permissionDialogVisible.value = true
+  saving.value = true
+  try {
+    const permission = unwrapResponse(await getResourcePermission(row.id))
+    permissionForm.value = { access_type: permission.access_type || 'private', authorized_users: parseEditableList(permission.authorized_users), allow_ai: Number(permission.allow_ai) === 1 }
+  } catch (error) {
+    permissionDialogVisible.value = false
+    ElMessage.error(error?.message || '无法读取资源权限')
+  } finally { saving.value = false }
+}
+
+const submitPermission = async () => {
+  saving.value = true
+  try {
+    const updated = unwrapResponse(await setResourcePermission(editingRow.value.id, {
+      access_type: permissionForm.value.access_type, authorized_users: toJsonList(permissionForm.value.authorized_users), allow_ai: permissionForm.value.allow_ai ? 1 : 0,
+    }))
+    resources.value = resources.value.map((item) => item.id === editingRow.value.id ? normalizeRealResource(updated) : item)
+    permissionDialogVisible.value = false
+    ElMessage.success('资源权限已更新')
+  } catch (error) { ElMessage.error(error?.message || '权限设置失败，请稍后重试') } finally { saving.value = false }
+}
+
+const openBatchDialog = () => {
+  if (!selectedRows.value.length) return ElMessage.warning('请先选择资源')
+  batchForm.value = { action: 'delete', target: '' }
+  batchDialogVisible.value = true
+}
+
+const submitBatchAction = async () => {
+  if (batchForm.value.action !== 'delete' && !batchForm.value.target.trim()) return ElMessage.warning('请输入目标分类或目录')
+  saving.value = true
+  try {
+    await batchResourceAction({ idempotent_key: crypto.randomUUID?.() || `${Date.now()}-${Math.random()}`, action: batchForm.value.action, resource_ids: JSON.stringify(selectedRows.value.map((row) => row.id)), target: batchForm.value.target.trim() || undefined })
+    batchDialogVisible.value = false
+    selectedRows.value = []
+    await loadResources()
+    ElMessage.success('批量操作已提交')
+  } catch (error) { ElMessage.error(error?.message || '批量操作失败，请稍后重试') } finally { saving.value = false }
 }
 
 onMounted(loadResources)
@@ -72,8 +231,10 @@ onMounted(loadResources)
       <el-button type="primary" :icon="Upload" @click="startUpload">上传素材</el-button><input ref="fileInput" class="visually-hidden" type="file" accept=".doc,.docx,.pdf,.ppt,.pptx,.txt,image/*,audio/*,video/*" @change="handleUpload">
     </header>
 
+    <el-progress v-if="uploading" :percentage="uploadProgress" :stroke-width="5" :show-text="false" class="upload-progress" />
+
     <section class="stat-strip" aria-label="资源库概览">
-      <article v-for="stat in RESOURCE_PAGE.stats" :key="stat.label">
+      <article v-for="stat in resourceStats" :key="stat.label">
         <span>{{ stat.label }}</span><strong>{{ stat.value }}</strong><small>{{ stat.detail }}</small>
       </article>
     </section>
@@ -81,7 +242,7 @@ onMounted(loadResources)
     <section class="resource-layout">
       <aside class="folder-panel">
         <div class="panel-title"><span>分类目录</span><el-button text circle aria-label="新建分类">+</el-button></div>
-        <button v-for="folder in RESOURCE_PAGE.folders" :key="folder" :class="{ active: activeFolder === folder }" @click="activeFolder = folder">
+        <button v-for="folder in resourceFolders" :key="folder" :class="{ active: activeFolder === folder }" @click="activeFolder = folder">
           <el-icon><Folder /></el-icon><span>{{ folder }}</span>
         </button>
         <div class="privacy-note"><el-icon><Lock /></el-icon><p><strong>默认私有</strong><br>仅你和授权的智能体可以访问。</p></div>
@@ -90,21 +251,46 @@ onMounted(loadResources)
       <div class="resource-content">
         <div class="resource-toolbar">
           <el-input v-model="keyword" :prefix-icon="Search" placeholder="搜索文件名、课程或标签" clearable />
-          <el-select model-value="全部类型" aria-label="资源类型"><el-option label="全部类型" value="全部类型" /><el-option label="课件" value="课件" /><el-option label="文档" value="文档" /></el-select>
-          <el-button :icon="Delete" :disabled="selectedRows.length === 0">批量管理</el-button>
+          <el-select v-model="typeFilter" aria-label="资源类型" clearable placeholder="全部类型"><el-option label="全部类型" value="" /><el-option label="课件" value="ppt" /><el-option label="文档" value="word" /><el-option label="PDF" value="pdf" /><el-option label="图片" value="image" /><el-option label="音视频" value="audio" /></el-select>
+          <el-button :icon="Delete" :disabled="selectedRows.length === 0" @click="openBatchDialog">批量管理</el-button>
         </div>
-        <el-table v-loading="loading" :data="filteredFiles" @selection-change="selectedRows = $event">
+        <el-table v-loading="loading" :data="visibleFiles" @selection-change="selectedRows = $event">
           <el-table-column type="selection" width="42" />
           <el-table-column label="素材" min-width="260">
             <template #default="{ row }"><div class="file-cell"><span class="file-mark">{{ row.type.slice(0, 1) }}</span><div><strong>{{ row.name }}</strong><small>{{ row.course }} · {{ row.size }}</small></div></div></template>
           </el-table-column>
           <el-table-column prop="date" label="更新时间" min-width="120" />
           <el-table-column label="解析状态" width="110"><template #default="{ row }"><el-tag :type="row.status === '已解析' ? 'success' : row.status === '解析中' ? 'warning' : 'info'" effect="light">{{ row.status }}</el-tag></template></el-table-column>
-          <el-table-column label="权限" width="92"><template #default><span class="private-label"><el-icon><Lock /></el-icon> 私有</span></template></el-table-column>
-          <el-table-column width="54"><template #default="{ row }"><el-dropdown trigger="click" @command="handleAction(row, $event)"><el-button text circle aria-label="更多操作"><el-icon><MoreFilled /></el-icon></el-button><template #dropdown><el-dropdown-menu><el-dropdown-item command="download">下载</el-dropdown-item><el-dropdown-item command="delete" divided>删除</el-dropdown-item></el-dropdown-menu></template></el-dropdown></template></el-table-column>
+          <el-table-column label="权限" width="108"><template #default="{ row }"><span class="private-label"><el-icon><Lock /></el-icon> {{ row.private ? '私有' : '共享' }}</span></template></el-table-column>
+          <el-table-column width="54"><template #default="{ row }"><el-dropdown trigger="click" @command="handleAction(row, $event)"><el-button text circle aria-label="更多操作"><el-icon><MoreFilled /></el-icon></el-button><template #dropdown><el-dropdown-menu><el-dropdown-item command="edit"><el-icon><Edit /></el-icon>编辑信息</el-dropdown-item><el-dropdown-item command="permission">权限设置</el-dropdown-item><el-dropdown-item command="download">下载</el-dropdown-item><el-dropdown-item command="delete" divided>删除</el-dropdown-item></el-dropdown-menu></template></el-dropdown></template></el-table-column>
         </el-table>
       </div>
     </section>
+
+    <el-dialog v-model="editDialogVisible" title="编辑资源信息" width="520px" destroy-on-close>
+      <el-form label-position="top">
+        <el-form-item label="资源名称"><el-input v-model="editForm.file_name" maxlength="100" show-word-limit /></el-form-item>
+        <el-form-item label="描述"><el-input v-model="editForm.description" type="textarea" :rows="3" maxlength="500" show-word-limit /></el-form-item>
+        <el-form-item label="分类"><el-input v-model="editForm.categories" placeholder="多个分类请用逗号分隔" /></el-form-item>
+        <el-form-item label="标签"><el-input v-model="editForm.tags" placeholder="多个标签请用逗号分隔" /></el-form-item>
+      </el-form>
+      <template #footer><el-button @click="editDialogVisible = false">取消</el-button><el-button type="primary" :loading="saving" @click="submitEdit">保存</el-button></template>
+    </el-dialog>
+
+    <el-dialog v-model="permissionDialogVisible" title="资源权限设置" width="480px" destroy-on-close>
+      <el-form label-position="top" v-loading="saving">
+        <el-form-item label="访问范围"><el-radio-group v-model="permissionForm.access_type"><el-radio value="private">仅自己</el-radio><el-radio value="shared">所有成员</el-radio><el-radio value="authorized">指定成员</el-radio></el-radio-group></el-form-item>
+        <el-form-item v-if="permissionForm.access_type === 'authorized'" label="授权用户 ID"><el-input v-model="permissionForm.authorized_users" placeholder="多个用户 ID 请用逗号分隔" /></el-form-item>
+        <el-form-item label="允许 AI 引用"><el-switch v-model="permissionForm.allow_ai" active-text="允许" inactive-text="不允许" /></el-form-item>
+      </el-form>
+      <template #footer><el-button @click="permissionDialogVisible = false">取消</el-button><el-button type="primary" :loading="saving" @click="submitPermission">保存权限</el-button></template>
+    </el-dialog>
+
+    <el-dialog v-model="batchDialogVisible" title="批量管理资源" width="480px" destroy-on-close>
+      <p class="batch-summary">已选择 {{ selectedRows.length }} 个资源</p>
+      <el-form label-position="top"><el-form-item label="操作"><el-radio-group v-model="batchForm.action"><el-radio value="delete">批量删除</el-radio><el-radio value="move">移动目录</el-radio><el-radio value="categorize">修改分类</el-radio></el-radio-group></el-form-item><el-form-item v-if="batchForm.action !== 'delete'" :label="batchForm.action === 'move' ? '目标目录' : '目标分类'"><el-input v-model="batchForm.target" /></el-form-item></el-form>
+      <template #footer><el-button @click="batchDialogVisible = false">取消</el-button><el-button type="primary" :loading="saving" @click="submitBatchAction">确认操作</el-button></template>
+    </el-dialog>
   </div>
 </template>
 
@@ -114,6 +300,7 @@ onMounted(loadResources)
 .page-kicker { margin: 0 0 6px !important; color: var(--zh-text-theme) !important; font-size: 13px !important; font-weight: 600; }
 .page-heading h1 { margin: 0; font-size: 30px; letter-spacing: var(--zh-tracking-tight); }
 .page-heading p { margin: 8px 0 0; color: var(--zh-text-secondary); font-size: 14px; }
+.upload-progress { margin-top: 14px; }
 .stat-strip { display: grid; grid-template-columns: repeat(3, 1fr); margin-top: 32px; border-block: 1px solid var(--zh-line-border); }
 .stat-strip article { display: grid; grid-template-columns: 1fr auto; gap: 4px 12px; padding: 22px 28px; border-right: 1px solid var(--zh-line-border); }
 .stat-strip article:last-child { border: 0; }
@@ -132,6 +319,7 @@ onMounted(loadResources)
 .file-mark { width: 34px; height: 38px; display: grid; place-items: center; border-radius: 6px; color: var(--zh-text-theme); background: var(--zh-background-weaken); font-weight: 700; }
 .visually-hidden { position: absolute; width: 1px; height: 1px; overflow: hidden; clip: rect(0 0 0 0); white-space: nowrap; }
 .private-label { display: inline-flex; align-items: center; gap: 4px; color: var(--zh-text-secondary); font-size: 12px; }
+.batch-summary { margin: 0 0 18px; color: var(--zh-text-secondary); }
 :deep(.el-table) { --el-table-border-color: var(--zh-line-parting); --el-table-header-bg-color: var(--zh-background-light); border-radius: var(--zh-radius12); }
 @media (max-width: 820px) { .resource-layout { grid-template-columns: 1fr; }.folder-panel { display: none; }.stat-strip { grid-template-columns: 1fr; }.stat-strip article { border-right: 0; }.resource-toolbar { grid-template-columns: 1fr; } }
 </style>

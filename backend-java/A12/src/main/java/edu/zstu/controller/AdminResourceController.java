@@ -81,4 +81,12 @@ public class AdminResourceController {
             return Result.success(adminResourceService.getProcessingStatus(id));
         } catch (RuntimeException e) { return Result.error(400, e.getMessage()); }
     }
+
+    @PostMapping("/ai-index/bootstrap")
+    public Result<Map<String, Object>> bootstrapAiResourceIndex(
+            @RequestParam(defaultValue = "false") boolean force_reparse) {
+        try {
+            return Result.success(adminResourceService.bootstrapAiResourceIndex(force_reparse));
+        } catch (RuntimeException e) { return Result.error(400, e.getMessage()); }
+    }
 }

@@ -14,6 +14,7 @@ import edu.zstu.mapper.SysUserMapper;
 import edu.zstu.mapper.WsPageMapper;
 import edu.zstu.mapper.WsProjectMapper;
 import edu.zstu.mapper.WsVersionMapper;
+import edu.zstu.service.BusinessLogService;
 import edu.zstu.service.ProjectService;
 import edu.zstu.utils.PageResult;
 import edu.zstu.vo.PageVO;
@@ -23,7 +24,9 @@ import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
 import java.util.*;
+import lombok.extern.slf4j.Slf4j;
 
+@Slf4j
 @Service
 public class ProjectServiceImpl implements ProjectService {
 
@@ -31,17 +34,22 @@ public class ProjectServiceImpl implements ProjectService {
     private final WsPageMapper pageMapper;
     private final WsVersionMapper versionMapper;
     private final SysUserMapper userMapper;
+    private final BusinessLogService businessLogService;
 
     public ProjectServiceImpl(WsProjectMapper projectMapper, WsPageMapper pageMapper,
-                              WsVersionMapper versionMapper, SysUserMapper userMapper) {
+                              WsVersionMapper versionMapper, SysUserMapper userMapper,
+                              BusinessLogService businessLogService) {
         this.projectMapper = projectMapper;
         this.pageMapper = pageMapper;
         this.versionMapper = versionMapper;
         this.userMapper = userMapper;
+        this.businessLogService = businessLogService;
     }
 
     @Override
+    @Transactional
     public ProjectVO createProject(ProjectCreateDTO dto, Integer userId) {
+        log.info("createProject called");
         if (dto.getProject_name() == null || dto.getProject_name().isBlank())
             throw new RuntimeException("项目名称不能为空");
         if (dto.getProject_type() == null || dto.getProject_type().isBlank())
@@ -53,6 +61,8 @@ public class ProjectServiceImpl implements ProjectService {
         project.setStatus(dto.getStatus() != null ? dto.getStatus() : "draft");
         project.setCurrent_version(1);
         if (projectMapper.insert(project) <= 0) throw new RuntimeException("创建项目失败");
+        businessLogService.record("operation", "project", "create", "project", project.getId(),
+                Map.of("project_name", project.getProject_name(), "project_type", project.getProject_type()));
 
         ProjectVO vo = new ProjectVO();
         BeanUtil.copyProperties(project, vo);
@@ -61,6 +71,7 @@ public class ProjectServiceImpl implements ProjectService {
 
     @Override
     public PageResult<ProjectVO> listProjects(ProjectQueryDTO dto, Integer userId) {
+        log.info("listProjects called");
         dto.setUser_id(userId);
         PageHelper.startPage(dto.getPage(), dto.getSize());
         List<Ws_Project> list = projectMapper.findByQuery(dto);
@@ -77,6 +88,7 @@ public class ProjectServiceImpl implements ProjectService {
 
     @Override
     public ProjectVO getProject(String id, Integer userId) {
+        log.info("getProject called");
         Ws_Project project = projectMapper.findById(Integer.valueOf(id));
         if (project == null) throw new RuntimeException("项目不存在");
         checkPermission(project, userId);
@@ -84,7 +96,9 @@ public class ProjectServiceImpl implements ProjectService {
     }
 
     @Override
+    @Transactional
     public ProjectVO updateProject(String id, ProjectCreateDTO dto, Integer userId) {
+        log.info("updateProject called");
         Ws_Project p = findProject(id);
         checkPermission(p, userId);
         checkEditable(p);
@@ -98,11 +112,15 @@ public class ProjectServiceImpl implements ProjectService {
         if (dto.getPermissions() != null) p.setPermissions(dto.getPermissions());
         p.setCurrent_version(p.getCurrent_version() + 1);
         projectMapper.update(p);
+        businessLogService.record("operation", "project", "update", "project", p.getId(),
+                Map.of("current_version", p.getCurrent_version()));
         return toProjectVO(p);
     }
 
     @Override
+    @Transactional
     public ProjectVO addPermission(String id, ProjectPermissionDTO dto, Integer userId) {
+        log.info("addPermission called");
         Ws_Project p = findProject(id);
         // 仅项目拥有者可添加授权
         if (p.getUser_id() != userId) throw new RuntimeException("仅项目创建者可添加授权");
@@ -123,11 +141,15 @@ public class ProjectServiceImpl implements ProjectService {
         }
         p.setPermissions(JSONUtil.toJsonStr(arr));
         projectMapper.update(p);
+        businessLogService.record("operation", "project", "add_permission", "project", p.getId(),
+                Map.of("authorized_user_id", dto.getUser_id()));
         return toProjectVO(p);
     }
 
     @Override
+    @Transactional
     public ProjectVO copyProject(String id, ProjectCopyDTO dto, Integer userId) {
+        log.info("copyProject called");
         Ws_Project src = findProject(id);
         checkPermission(src, userId);
         Ws_Project np = new Ws_Project();
@@ -145,42 +167,53 @@ public class ProjectServiceImpl implements ProjectService {
             newPage.setProject_id(np.getId());
             pageMapper.insert(newPage);
         }
+        businessLogService.record("operation", "project", "copy", "project", np.getId(),
+                Map.of("source_project_id", src.getId()));
         return toProjectVO(np);
     }
 
     // ==================== API-22 ~ 31 ====================
 
     @Override
+    @Transactional
     public ProjectVO archiveProject(String id, Integer userId) {
+        log.info("archiveProject called");
         Ws_Project p = findProject(id);
         checkPermission(p, userId);
         projectMapper.updateStatus(p.getId(), "archived");
         p.setStatus("archived");
+        businessLogService.record("operation", "project", "archive", "project", p.getId());
         return toProjectVO(p);
     }
 
     @Override
+    @Transactional
     public ProjectVO restoreProject(String id, Integer userId) {
+        log.info("restoreProject called");
         Ws_Project p = findProject(id);
         checkPermission(p, userId);
         projectMapper.updateStatus(p.getId(), "draft");
         p.setStatus("draft");
+        businessLogService.record("operation", "project", "restore", "project", p.getId());
         return toProjectVO(p);
     }
 
     @Override
     @Transactional
     public void deleteProject(String id, Integer userId) {
+        log.info("deleteProject called");
         Ws_Project p = findProject(id);
         checkPermission(p, userId);
         int projectId = p.getId();
         pageMapper.deleteByProjectId(projectId);
         versionMapper.deleteByProjectId(projectId);
         projectMapper.deleteById(projectId);
+        businessLogService.record("operation", "project", "delete", "project", projectId);
     }
 
     @Override
     public PageVO aiRevision(String id, AiRevisionDTO dto, Integer userId) {
+        log.info("aiRevision called");
         Ws_Project p = findProject(id);
         checkPermission(p, userId);
         checkEditable(p);
@@ -189,7 +222,9 @@ public class ProjectServiceImpl implements ProjectService {
     }
 
     @Override
+    @Transactional
     public PageVO addComponent(String id, PageDTO dto, Integer userId) {
+        log.info("addComponent called");
         Ws_Project p = findProject(id);
         checkPermission(p, userId);
         checkEditable(p);
@@ -197,26 +232,33 @@ public class ProjectServiceImpl implements ProjectService {
         BeanUtil.copyProperties(dto, page);
         page.setProject_id(Integer.valueOf(id));
         pageMapper.insert(page);
+        businessLogService.record("operation", "project", "add_component", "page", page.getId(),
+                Map.of("project_id", Integer.valueOf(id)));
         PageVO vo = new PageVO(); BeanUtil.copyProperties(page, vo);
         return vo;
     }
 
     @Override
+    @Transactional
     public PageVO updateComponent(String id, String componentId, PageDTO dto, Integer userId) {
+        log.info("updateComponent called");
         Ws_Project p = findProject(id);
         checkPermission(p, userId);
         checkEditable(p);
         Ws_Page page = pageMapper.findById(Integer.valueOf(componentId));
-        if (page.getProject_id() != Integer.valueOf(id)) throw new RuntimeException("页面不属于该项目");
         if (page == null) throw new RuntimeException("页面不存在");
+        if (page.getProject_id() != Integer.valueOf(id)) throw new RuntimeException("页面不属于该项目");
         if (dto.getPage_content() != null) page.setPage_content(dto.getPage_content());
         if (dto.getComponents() != null) page.setComponents(dto.getComponents());
         pageMapper.update(page);
+        businessLogService.record("operation", "project", "update_component", "page", page.getId(),
+                Map.of("project_id", Integer.valueOf(id)));
         PageVO vo = new PageVO(); BeanUtil.copyProperties(page, vo);
         return vo;
     }
 
     @Override
+    @Transactional
     public Map<String, Object> saveVersion(String id, VersionCreateDTO dto, Integer userId) {
         Ws_Project p = findProject(id);
         checkPermission(p, userId);
@@ -227,6 +269,8 @@ public class ProjectServiceImpl implements ProjectService {
         v.setVersion_number(nextNum);
         v.setDescription(dto.getDescription());
         versionMapper.insert(v);
+        businessLogService.record("operation", "project", "save_version", "project_version", v.getId(),
+                Map.of("project_id", Integer.valueOf(id), "version_number", v.getVersion_number()));
         Map<String, Object> r = new HashMap<>();
         r.put("version_id", v.getId());
         r.put("version_number", v.getVersion_number());
@@ -235,6 +279,7 @@ public class ProjectServiceImpl implements ProjectService {
 
     @Override
     public PageResult<VersionVO> listVersions(String id, PageQuery pageQuery, Integer userId) {
+        log.info("listVersions called");
         Ws_Project p = findProject(id);
         checkPermission(p, userId);
         PageHelper.startPage(pageQuery.getPage(), pageQuery.getSize());
@@ -271,13 +316,17 @@ public class ProjectServiceImpl implements ProjectService {
     }
 
     @Override
+    @Transactional
     public ProjectVO restoreVersion(String id, String versionId, Integer userId) {
+        log.info("restoreVersion called");
         Ws_Project p = findProject(id);
         checkPermission(p, userId);
         Ws_Version v = versionMapper.findById(Integer.valueOf(versionId));
         if (v == null) throw new RuntimeException("版本不存在");
         p.setCurrent_version(p.getCurrent_version() + 1);
         projectMapper.update(p);
+        businessLogService.record("operation", "project", "restore_version", "project", p.getId(),
+                Map.of("source_version_id", Integer.valueOf(versionId), "current_version", p.getCurrent_version()));
         return toProjectVO(p);
     }
 

@@ -10,6 +10,7 @@ import ResourceLibrary from '../components/ResourceLibrary.vue'
 import CommunityHub from '../components/CommunityHub.vue'
 import ExportCenter from '../components/ExportCenter.vue'
 import CreationWorkspace from '../components/CreationWorkspace.vue'
+import AccountSettings from '../components/AccountSettings.vue'
 import {getRouters} from'../apis/login.js'
 import {isTokenExpired} from '../utils/JWTParser.js'
 // 全局用户 store — 替代直接操作 localStorage
@@ -34,6 +35,7 @@ const routes = [
       { path: 'community', component: CommunityHub, meta: { menu: 'community', title: '技能与案例', staticTeacherPage: true } },
       { path: 'exports', component: ExportCenter, meta: { menu: 'exports', title: '成果导出中心', staticTeacherPage: true } },
       { path: 'workspace', component: CreationWorkspace, meta: { menu: 'home', title: '创作工作台', staticTeacherPage: true } },
+      { path: 'settings', component: AccountSettings, meta: { menu: 'settings', title: '账号与安全', staticTeacherPage: true } },
     ],
   },
 ]

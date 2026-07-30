@@ -1,6 +1,7 @@
 package edu.zstu.filter;
 
 import edu.zstu.utils.CurrentHolder;
+import io.jsonwebtoken.Claims;
 import edu.zstu.utils.JwtUtil;
 import jakarta.servlet.*;
 import jakarta.servlet.http.HttpServletRequest;
@@ -59,28 +60,32 @@ public class JwtAuthenticationFilter implements Filter {
         String token = authHeader.substring(7);
 
         // 校验 JWT 签名
-        if (jwtUtil.parseToken(token) == null) {
+                Claims claims = jwtUtil.parseToken(token);
+        if (claims == null) {
+            writeUnauthorized(res, "令牌无效");
+            return;
+        }
+        String userId = claims.get("user_id", String.class);
+        if (userId == null) {
             writeUnauthorized(res, "令牌无效");
             return;
         }
 
-        // 检查 Redis 中是否存在（未过期 / 未撤销）
-        String redisKey = "token:" + token;
-        String Token = redisTemplate.opsForValue().get(redisKey);
-        if (Token == null) {
-            writeUnauthorized(res, "令牌已过期或已撤销");
+        // 按用户 ID 查询存储的令牌，并比对是否一致
+        String redisKey = "token:user:" + userId;
+        String storedToken = redisTemplate.opsForValue().get(redisKey);
+        if (storedToken == null || !storedToken.equals(token)) {
+            writeUnauthorized(res, "令牌已过期或已被替换");
             return;
         }
 
         // 续期 → 7 天
         redisTemplate.expire(redisKey, 7, TimeUnit.DAYS);
 
-        //解析令牌把userid取出来
-        String userId = jwtUtil.parseToken(token).get("user_id", String.class);
-
         CurrentHolder.setCurrentId(Integer.parseInt(userId));
 
         chain.doFilter(request, response);
+        CurrentHolder.remove();
     }
 
     private boolean isAuthPath(String uri) {

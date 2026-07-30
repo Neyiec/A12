@@ -9,18 +9,22 @@
         <result column="categories" property="categories"/><result column="tags" property="tags"/>
         <result column="access_type" property="access_type"/><result column="authorized_users" property="authorized_users"/>
         <result column="allow_ai" property="allow_ai"/><result column="status" property="status"/>
+        <result column="ai_index_status" property="ai_index_status"/>
+        <result column="ai_indexed_at" property="ai_indexed_at"/>
+        <result column="ai_index_error" property="ai_index_error"/>
         <result column="created_at" property="created_at"/><result column="updated_at" property="updated_at"/>
     </resultMap>
-    <sql id="Base_Columns">id, user_id, file_name, file_type, file_url, file_size, thumbnail, description, categories, tags, access_type, authorized_users, allow_ai, status, created_at, updated_at</sql>
+    <sql id="Base_Columns">id, user_id, file_name, file_type, file_url, file_size, thumbnail, description, categories, tags, access_type, authorized_users, allow_ai, status, ai_index_status, ai_indexed_at, ai_index_error, created_at, updated_at</sql>
     <select id="findById" resultMap="BaseResultMap">SELECT <include refid="Base_Columns"/> FROM res_material WHERE id = #{id}</select>
     <select id="findByUserId" resultMap="BaseResultMap">SELECT <include refid="Base_Columns"/> FROM res_material WHERE user_id = #{userId} AND status = 1</select>
     <select id="findAll" resultMap="BaseResultMap">SELECT <include refid="Base_Columns"/> FROM res_material WHERE status = 1 ORDER BY created_at DESC</select>
+    <select id="findAiAvailable" resultMap="BaseResultMap">SELECT <include refid="Base_Columns"/> FROM res_material WHERE status = 1 AND allow_ai = 1 ORDER BY updated_at DESC</select>
     <select id="findByTypeAndUser" resultMap="BaseResultMap">SELECT <include refid="Base_Columns"/> FROM res_material WHERE file_type = #{fileType} AND user_id = #{userId} AND status = 1</select>
     <insert id="insert" useGeneratedKeys="true" keyProperty="id">
         INSERT INTO res_material(user_id, file_name, file_type, file_url, file_size, thumbnail, description, categories,
-                                 tags, access_type, authorized_users, allow_ai, status, created_at, updated_at)
+                                 tags, access_type, authorized_users, allow_ai, status, ai_index_status, created_at, updated_at)
         VALUES(#{user_id}, #{file_name}, #{file_type}, #{file_url}, #{file_size}, #{thumbnail}, #{description}, #{categories},
-               #{tags}, #{access_type}, #{authorized_users}, #{allow_ai}, #{status}, NOW(), NOW())
+               #{tags}, #{access_type}, #{authorized_users}, #{allow_ai}, #{status}, #{ai_index_status}, NOW(), NOW())
     </insert>
     <update id="update">
         UPDATE res_material <set>
@@ -29,9 +33,20 @@
         <if test="access_type != null">access_type = #{access_type},</if>
         <if test="authorized_users != null">authorized_users = #{authorized_users},</if>
         <if test="allow_ai != null">allow_ai = #{allow_ai},</if>
+        <if test="ai_index_status != null">ai_index_status = #{ai_index_status},</if>
+        <if test="ai_indexed_at != null">ai_indexed_at = #{ai_indexed_at},</if>
+        <if test="ai_index_error != null">ai_index_error = #{ai_index_error},</if>
         updated_at = NOW()</set> WHERE id = #{id}
     </update>
     <update id="softDelete">UPDATE res_material SET status = 0, updated_at = NOW() WHERE id = #{id}</update>
+    <update id="updateAiIndexStatus">
+        UPDATE res_material
+        SET ai_index_status = #{status},
+            ai_index_error = #{error},
+            ai_indexed_at = CASE WHEN #{status} = 'completed' THEN NOW() ELSE ai_indexed_at END,
+            updated_at = NOW()
+        WHERE id = #{id}
+    </update>
     <select id="findByQuery" resultMap="BaseResultMap">
         SELECT <include refid="Base_Columns"/> FROM res_material
         <where>

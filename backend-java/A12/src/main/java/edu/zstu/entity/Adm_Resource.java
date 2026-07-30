@@ -11,17 +11,20 @@ import java.time.LocalDateTime;
 @AllArgsConstructor
 public class Adm_Resource {
     private int id;
-    private String resource_type; //类型(textbook/question_bank/media/component)
+    private String resource_type;
     private String title;
-    private String subject; //学科
-    private String grade; //适用年级
+    private String subject;
+    private String grade;
     private String file_url;
-    private String template_data; //json字符串 组件模板数据(仅component类型)
+    private String template_data;
     private String thumbnail;
     private String description;
     private Long file_size;
-    private int status; //状态(1启用/0禁用)
-    private int uploaded_by; //上传人ID
+    private int status;
+    private int uploaded_by;
+    private String ai_index_status;
+    private LocalDateTime ai_indexed_at;
+    private String ai_index_error;
     private LocalDateTime created_at;
     private LocalDateTime updated_at;
 }
