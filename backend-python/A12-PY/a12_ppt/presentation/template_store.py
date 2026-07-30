@@ -5,7 +5,7 @@ from pathlib import Path
 from typing import Any
 
 
-TEMPLATE_DIR = Path(__file__).with_name("templates")
+TEMPLATE_DIR = Path(__file__).resolve().parents[1] / "templates"
 DEFAULT_THEME = "素白风"
 
 

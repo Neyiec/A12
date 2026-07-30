@@ -15,6 +15,8 @@ public class ResourceDTO {
     private String title;
     private String subject;
     private String grade;
+    private String file_name;
+    private String file_type;
     private String file_url;
     private String template_data;
     private String thumbnail;

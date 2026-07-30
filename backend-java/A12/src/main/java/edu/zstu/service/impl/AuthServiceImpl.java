@@ -11,6 +11,7 @@ import edu.zstu.utils.CurrentHolder;
 import edu.zstu.utils.JwtUtil;
 import edu.zstu.utils.PasswordUtil;
 import edu.zstu.utils.RedisCacheUtil;
+import edu.zstu.utils.RedisRateLimiter;
 import edu.zstu.vo.LoginVO;
 import edu.zstu.vo.UserVO;
 import org.springframework.data.redis.core.StringRedisTemplate;
@@ -18,7 +19,10 @@ import org.springframework.mail.SimpleMailMessage;
 import org.springframework.mail.javamail.JavaMailSender;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
+import org.springframework.web.context.request.RequestContextHolder;
+import org.springframework.web.context.request.ServletRequestAttributes;
 
+import java.time.Duration;
 import java.util.HashMap;
 import java.util.Map;
 import java.util.concurrent.TimeUnit;
@@ -35,11 +39,12 @@ public class AuthServiceImpl implements AuthService {
     private final JavaMailSender mailSender;
     private final BusinessLogService businessLogService;
     private final RedisCacheUtil redisCacheUtil;
+    private final RedisRateLimiter rateLimiter;
 
     public AuthServiceImpl(SysUserMapper userMapper, PasswordUtil passwordUtil,
                            JwtUtil jwtUtil, StringRedisTemplate redisTemplate,
                            JavaMailSender mailSender, BusinessLogService businessLogService,
-                           RedisCacheUtil redisCacheUtil) {
+                           RedisCacheUtil redisCacheUtil, RedisRateLimiter rateLimiter) {
         this.userMapper = userMapper;
         this.passwordUtil = passwordUtil;
         this.jwtUtil = jwtUtil;
@@ -47,12 +52,13 @@ public class AuthServiceImpl implements AuthService {
         this.mailSender = mailSender;
         this.businessLogService = businessLogService;
         this.redisCacheUtil = redisCacheUtil;
+        this.rateLimiter = rateLimiter;
     }
 
     @Override
     @Transactional
     public UserVO register(RegisterDTO dto) {
-        log.info("register called");
+        log.info("register username={}, email={}", dto.getUsername(), dto.getEmail());
         // 1. 校验验证码（注册场景）
         String redisKey = "verify:code:register:" + dto.getEmail();
         String storedCode = redisTemplate.opsForValue().get(redisKey);
@@ -85,12 +91,15 @@ public class AuthServiceImpl implements AuthService {
         user.setRoles("[\"teacher\"]");
         user.setPermissions("[]");
         user.setIs_active(1);
+        user.setEmail_verified(1);
+        user.setPhone_verified(0);
 
         int result = userMapper.insert(user);
         if (result <= 0) {
             throw new RuntimeException("注册失败，请稍后重试");
         }
         evictUserCache(user);
+        log.info("register success userId={}, username={}", user.getId(), user.getUsername());
         businessLogService.record("operation", "auth", "register", "user", user.getId(),
                 Map.of("username", user.getUsername(), "user_type", user.getUser_type()));
         return toUserVO(user);
@@ -98,19 +107,24 @@ public class AuthServiceImpl implements AuthService {
 
     @Override
     public boolean checkUsername(String username) {
-        log.info("checkUsername called");
+        log.info("checkUsername username={}", username);
         return userMapper.findByUsername(username) != null;
     }
 
     @Override
     public boolean checkEmail(String email) {
-        log.info("checkEmail called");
+        log.info("checkEmail email={}", email);
         return userMapper.findByEmail(email) != null;
     }
 
     @Override
     public LoginVO login(LoginDTO dto) {
-        log.info("login called");
+        log.info("login username={}", dto.getUsername());
+        String loginIp = currentRequestIp();
+        rateLimiter.assertWithinLimit("rate:auth:login:user:" + dto.getUsername(), 10, Duration.ofMinutes(10),
+                "登录过于频繁，请稍后再试");
+        rateLimiter.assertWithinLimit("rate:auth:login:ip:" + loginIp, 60, Duration.ofMinutes(10),
+                "当前IP登录请求过于频繁，请稍后再试");
         String hashedPassword = passwordUtil.hash(dto.getPassword());
         Sys_User user = userMapper.findByUsernameAndPasswordHash(dto.getUsername(), hashedPassword);
         if (user == null) {
@@ -121,6 +135,11 @@ public class AuthServiceImpl implements AuthService {
         claims.put("user_id", user.getId());
         String token = jwtUtil.generateToken(claims);
         redisTemplate.opsForValue().set("token:user:" + user.getId(), token, 7, TimeUnit.DAYS);
+        userMapper.updateLastLogin(user.getId(), loginIp);
+        user.setLast_login_at(java.time.LocalDateTime.now());
+        user.setLast_login_ip(loginIp);
+        evictUserCache(user);
+        log.info("login success userId={}, username={}", user.getId(), user.getUsername());
         businessLogService.record("operation", "auth", "login", "user", user.getId());
 
         LoginVO vo = new LoginVO();
@@ -132,7 +151,7 @@ public class AuthServiceImpl implements AuthService {
 
     @Override
     public void sendVerificationCode(VerificationCodeDTO dto) {
-        log.info("sendVerificationCode called");
+        log.info("sendVerificationCode scene={}, channel={}, username={}", dto.getScene(), dto.getChannel(), dto.getUsername());
         if (!"register".equals(dto.getScene()) && !"password_reset".equals(dto.getScene())) {
             throw new RuntimeException("无效的场景值，仅支持 register / password_reset");
         }
@@ -155,6 +174,10 @@ public class AuthServiceImpl implements AuthService {
             throw new RuntimeException("邮箱地址无效");
         }
 
+        rateLimiter.assertCooldown("rate:verify:cooldown:" + dto.getScene() + ":" + email,
+                Duration.ofSeconds(60), "验证码发送过于频繁，请稍后再试");
+        rateLimiter.assertWithinLimit("rate:verify:window:" + dto.getScene() + ":" + email,
+                5, Duration.ofMinutes(10), "验证码发送次数过多，请稍后再试");
         String code = RandomUtil.randomNumbers(6);
         redisTemplate.opsForValue().set("verify:code:" + dto.getScene() + ":" + email, code, 60, TimeUnit.SECONDS);
 
@@ -163,12 +186,13 @@ public class AuthServiceImpl implements AuthService {
         message.setSubject("A12 教学平台 - " + ("register".equals(dto.getScene()) ? "注册" : "密码重置") + "验证码");
         message.setText("您的验证码为：" + code + "\n有效期 60 秒，请勿泄露给他人。");
         mailSender.send(message);
+        log.info("sendVerificationCode success scene={}, email={}", dto.getScene(), email);
     }
 
     @Override
     @Transactional
     public void verify(VerifyDTO dto) {
-        log.info("verify called");
+        log.info("verify scene={}, username={}", dto.getScene(), dto.getUsername());
         if (!"register".equals(dto.getScene()) && !"password_reset".equals(dto.getScene())) {
             throw new RuntimeException("无效的场景值，仅支持 register / password_reset");
         }
@@ -187,6 +211,7 @@ public class AuthServiceImpl implements AuthService {
         if ("register".equals(dto.getScene())) {
             userMapper.updateActiveStatus(user.getId(), 1);
             evictUserCache(user);
+            log.info("verifyRegister success userId={}", user.getId());
             businessLogService.record("operation", "auth", "verify_register", "user", user.getId());
         }
     }
@@ -194,7 +219,7 @@ public class AuthServiceImpl implements AuthService {
     @Override
     @Transactional
     public LoginVO initialPasswordChange(InitialPasswordChangeDTO dto) {
-        log.info("initialPasswordChange called");
+        log.info("initialPasswordChange username={}", dto.getUsername());
         Sys_User user = userMapper.findByUsername(dto.getUsername());
         if (user == null) throw new RuntimeException("用户不存在");
         if (user.getIs_active() != 1) throw new RuntimeException("用户未激活，请先激活");
@@ -202,6 +227,10 @@ public class AuthServiceImpl implements AuthService {
             throw new RuntimeException("初始密码错误");
         }
         userMapper.changePassword(passwordUtil.hash(dto.getNew_password()), user.getUsername());
+        String loginIp = currentRequestIp();
+        userMapper.updateLastLogin(user.getId(), loginIp);
+        user.setLast_login_at(java.time.LocalDateTime.now());
+        user.setLast_login_ip(loginIp);
         evictUserCache(user);
 
         LoginVO vo = new LoginVO();
@@ -210,6 +239,8 @@ public class AuthServiceImpl implements AuthService {
         String newToken = jwtUtil.generateToken(Map.of("user_id", user.getId()));
         redisTemplate.opsForValue().set("token:user:" + user.getId(), newToken, 7, TimeUnit.DAYS);
         vo.setToken(newToken);
+        vo.setLast_login_at(user.getLast_login_at());
+        log.info("initialPasswordChange success userId={}", user.getId());
         businessLogService.record("operation", "auth", "initial_password_change", "user", user.getId());
         return vo;
     }
@@ -217,7 +248,7 @@ public class AuthServiceImpl implements AuthService {
     @Override
     @Transactional
     public void passwordReset(PasswordResetDTO dto) {
-        log.info("passwordReset called");
+        log.info("passwordReset username={}", dto.getUsername());
         Sys_User user = userMapper.findByUsername(dto.getUsername());
         if (user == null) throw new RuntimeException("用户不存在");
         String redisKey = "verify:code:password_reset:" + user.getEmail();
@@ -227,15 +258,17 @@ public class AuthServiceImpl implements AuthService {
         redisTemplate.delete(redisKey);
         userMapper.changePassword(passwordUtil.hash(dto.getNew_password()), user.getUsername());
         evictUserCache(user);
+        log.info("passwordReset success userId={}", user.getId());
         businessLogService.record("operation", "auth", "password_reset", "user", user.getId());
     }
 
     @Override
     public void logout(String authorization) {
-        log.info("logout called");
+        log.info("logout currentUserId={}", CurrentHolder.getCurrentId());
         Integer userId = CurrentHolder.getCurrentId();
         if (userId != null) {
             redisTemplate.delete("token:user:" + userId);
+            log.info("logout success userId={}", userId);
             businessLogService.record("operation", "auth", "logout", "user", userId);
         }
     }
@@ -243,7 +276,7 @@ public class AuthServiceImpl implements AuthService {
     @Override
     @Transactional
     public void passwordChange(String currentPassword, String newPassword) {
-        log.info("passwordChange called");
+        log.info("passwordChange currentUserId={}", CurrentHolder.getCurrentId());
         Integer userId = CurrentHolder.getCurrentId();
         if (userId == null) throw new RuntimeException("未登录");
         Sys_User user = userMapper.findById(userId);
@@ -253,6 +286,7 @@ public class AuthServiceImpl implements AuthService {
         }
         userMapper.changePassword(passwordUtil.hash(newPassword), user.getUsername());
         evictUserCache(user);
+        log.info("passwordChange success userId={}", user.getId());
         businessLogService.record("operation", "auth", "password_change", "user", user.getId());
     }
 
@@ -269,4 +303,21 @@ public class AuthServiceImpl implements AuthService {
         if (user.getUsername() != null) redisCacheUtil.delete("user:lookup:username:" + user.getUsername());
         if (user.getEmail() != null) redisCacheUtil.delete("user:lookup:email:" + user.getEmail());
     }
+
+    private String currentRequestIp() {
+        try {
+            ServletRequestAttributes attributes = (ServletRequestAttributes) RequestContextHolder.getRequestAttributes();
+            if (attributes == null) return "";
+            String forwardedFor = attributes.getRequest().getHeader("X-Forwarded-For");
+            if (forwardedFor != null && !forwardedFor.isBlank()) {
+                return forwardedFor.split(",")[0].trim();
+            }
+            String realIp = attributes.getRequest().getHeader("X-Real-IP");
+            if (realIp != null && !realIp.isBlank()) return realIp;
+            return attributes.getRequest().getRemoteAddr();
+        } catch (Exception ignored) {
+            return "";
+        }
+    }
 }
+

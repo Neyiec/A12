@@ -10,3 +10,4 @@ class IndexedChunk:
     chunk_index: int
     content: str
     metadata: dict[str, Any]
+    embedding: list[float] | None = None

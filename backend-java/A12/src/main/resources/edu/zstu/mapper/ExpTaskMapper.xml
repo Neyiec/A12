@@ -10,18 +10,21 @@
         <result column="download_url" property="download_url"/><result column="url_expire_at" property="url_expire_at"/>
         <result column="file_status" property="file_status"/><result column="quality_report" property="quality_report"/>
         <result column="error_msg" property="error_msg"/>
-        <result column="created_at" property="created_at"/><result column="completed_at" property="completed_at"/>
+        <result column="progress" property="progress"/><result column="retry_count" property="retry_count"/>
+        <result column="worker_id" property="worker_id"/><result column="started_at" property="started_at"/>
+        <result column="created_at" property="created_at"/><result column="updated_at" property="updated_at"/>
+        <result column="completed_at" property="completed_at"/>
     </resultMap>
-    <sql id="Base_Columns">id, user_id, project_id, snapshot_version, export_type, status, config, file_name, file_url, file_size, download_url, url_expire_at, file_status, quality_report, error_msg, created_at, completed_at</sql>
+    <sql id="Base_Columns">id, user_id, project_id, snapshot_version, export_type, status, config, file_name, file_url, file_size, download_url, url_expire_at, file_status, quality_report, error_msg, progress, retry_count, worker_id, started_at, created_at, updated_at, completed_at</sql>
     <select id="findById" resultMap="BaseResultMap">SELECT <include refid="Base_Columns"/> FROM exp_task WHERE id = #{id}</select>
     <select id="findByUserId" resultMap="BaseResultMap">SELECT <include refid="Base_Columns"/> FROM exp_task WHERE user_id = #{userId} ORDER BY created_at DESC</select>
     <select id="findByProjectId" resultMap="BaseResultMap">SELECT <include refid="Base_Columns"/> FROM exp_task WHERE project_id = #{projectId} ORDER BY created_at DESC</select>
     <select id="findAll" resultMap="BaseResultMap">SELECT <include refid="Base_Columns"/> FROM exp_task ORDER BY created_at DESC</select>
     <insert id="insert" useGeneratedKeys="true" keyProperty="id">
         INSERT INTO exp_task(user_id, project_id, snapshot_version, export_type, status, config, file_name, file_url,
-                             file_size, download_url, url_expire_at, file_status, quality_report, error_msg, created_at, completed_at)
+                             file_size, download_url, url_expire_at, file_status, quality_report, error_msg, progress, retry_count, worker_id, started_at, created_at, updated_at, completed_at)
         VALUES(#{user_id}, #{project_id}, #{snapshot_version}, #{export_type}, #{status}, #{config}, #{file_name}, #{file_url},
-               #{file_size}, #{download_url}, #{url_expire_at}, #{file_status}, #{quality_report}, #{error_msg}, NOW(), #{completed_at})
+               #{file_size}, #{download_url}, #{url_expire_at}, #{file_status}, #{quality_report}, #{error_msg}, #{progress}, #{retry_count}, #{worker_id}, #{started_at}, NOW(), NOW(), #{completed_at})
     </insert>
     <update id="update">
         UPDATE exp_task <set>
@@ -31,6 +34,11 @@
         <if test="file_status != null">file_status = #{file_status},</if>
         <if test="quality_report != null">quality_report = #{quality_report},</if>
         <if test="error_msg != null">error_msg = #{error_msg},</if>
+        <if test="progress != null">progress = #{progress},</if>
+        <if test="retry_count != null">retry_count = #{retry_count},</if>
+        <if test="worker_id != null">worker_id = #{worker_id},</if>
+        <if test="started_at != null">started_at = #{started_at},</if>
+        updated_at = NOW(),
         completed_at = #{completed_at}</set> WHERE id = #{id}
     </update>
 </mapper>

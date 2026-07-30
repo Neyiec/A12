@@ -10,10 +10,14 @@ import java.util.List;
 public interface WsProjectMapper {
     List<Ws_Project> findByQuery(ProjectQueryDTO dto);
     Ws_Project findById(@Param("id") Integer id);
+    Ws_Project findByIdIncludingDeleted(@Param("id") Integer id);
     List<Ws_Project> findByUserId(@Param("userId") Integer userId);
     List<Ws_Project> findAll();
     int insert(Ws_Project project);
     int update(Ws_Project project);
+    int updateWithVersion(@Param("project") Ws_Project project, @Param("expectedVersion") Integer expectedVersion);
     int updateStatus(@Param("id") Integer id, @Param("status") String status);
+    int softDeleteById(@Param("id") Integer id);
+    int restoreById(@Param("id") Integer id, @Param("status") String status);
     int deleteById(@Param("id") Integer id);
 }

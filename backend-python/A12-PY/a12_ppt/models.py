@@ -47,6 +47,17 @@ class SlideModifyRequest(BaseModel):
     keep_style: bool = True
 
 
+class PresentationModifyRequest(BaseModel):
+    presentation_id: str | None = None
+    title: str = "A12 PPT"
+    slides: list[dict[str, Any]]
+    instruction: str
+    outline: dict[str, Any] | None = None
+    theme: str | None = None
+    keep_style: bool = True
+    max_modified_slides: int | None = Field(default=None, ge=1, le=30)
+
+
 class HtmlValidateRequest(BaseModel):
     html: str
     strict: bool = False
@@ -82,6 +93,39 @@ class PresentationExportRequest(BaseModel):
     title: str = "A12 PPT"
     slides: list[dict[str, Any]]
     filename: str | None = None
+    fidelity: Literal["high_fidelity", "editable_text"] = "high_fidelity"
+
+
+class LessonPlanGenerateRequest(BaseModel):
+    title: str
+    subject: str | None = None
+    grade: str | None = None
+    duration_minutes: int | None = None
+    teaching_goals: str | None = None
+    outline: dict[str, Any] = Field(default_factory=dict)
+    slides: list[dict[str, Any]] = Field(default_factory=list)
+    requirements: str | None = None
+    reference_text: str | None = None
+    language: str = "zh-CN"
+
+
+class LessonPlanExportRequest(BaseModel):
+    title: str = "A12 教案"
+    lesson_plan: dict[str, Any]
+    filename: str | None = None
+
+
+class InteractiveModuleGenerateRequest(BaseModel):
+    title: str
+    topic: str
+    module_type: Literal["animation", "quiz_game", "matching_game", "timeline_game", "simulation"] = "animation"
+    subject: str | None = None
+    grade: str | None = None
+    knowledge_points: list[str] = Field(default_factory=list)
+    requirements: str | None = None
+    theme: str | None = None
+    embed_mode: Literal["standalone", "slide_fragment"] = "standalone"
+    language: str = "zh-CN"
 
 
 class ResourceIndexSyncRequest(BaseModel):

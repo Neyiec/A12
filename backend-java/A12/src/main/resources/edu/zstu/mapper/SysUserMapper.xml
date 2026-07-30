@@ -14,33 +14,40 @@
         <result column="roles" property="roles"/>
         <result column="permissions" property="permissions"/>
         <result column="is_active" property="is_active"/>
+        <result column="email_verified" property="email_verified"/>
+        <result column="phone_verified" property="phone_verified"/>
+        <result column="last_login_at" property="last_login_at"/>
+        <result column="last_login_ip" property="last_login_ip"/>
+        <result column="password_changed_at" property="password_changed_at"/>
+        <result column="deleted_at" property="deleted_at"/>
         <result column="created_at" property="created_at"/>
         <result column="updated_at" property="updated_at"/>
     </resultMap>
 
     <sql id="Base_Columns">
         id, username, password_hash, real_name, email, phone, avatar,
-        user_type, roles, permissions, is_active, created_at, updated_at
+        user_type, roles, permissions, is_active, email_verified, phone_verified,
+        last_login_at, last_login_ip, password_changed_at, deleted_at, created_at, updated_at
     </sql>
 
     <select id="findById" resultMap="BaseResultMap">
-        SELECT <include refid="Base_Columns"/> FROM sys_user WHERE id = #{id}
+        SELECT <include refid="Base_Columns"/> FROM sys_user WHERE id = #{id} AND deleted_at IS NULL
     </select>
 
     <select id="findByUsername" resultMap="BaseResultMap">
-        SELECT <include refid="Base_Columns"/> FROM sys_user WHERE username = #{username}
+        SELECT <include refid="Base_Columns"/> FROM sys_user WHERE username = #{username} AND deleted_at IS NULL
     </select>
 
     <select id="findByEmail" resultMap="BaseResultMap">
-        SELECT <include refid="Base_Columns"/> FROM sys_user WHERE email = #{email}
+        SELECT <include refid="Base_Columns"/> FROM sys_user WHERE email = #{email} AND deleted_at IS NULL
     </select>
 
     <select id="findByUsernameAndPasswordHash" resultMap="BaseResultMap">
-        SELECT <include refid="Base_Columns"/> FROM sys_user WHERE username = #{username} AND password_hash = #{passwordHash}
+        SELECT <include refid="Base_Columns"/> FROM sys_user WHERE username = #{username} AND password_hash = #{passwordHash} AND deleted_at IS NULL
     </select>
 
     <select id="findAll" resultMap="BaseResultMap">
-        SELECT <include refid="Base_Columns"/> FROM sys_user
+        SELECT <include refid="Base_Columns"/> FROM sys_user WHERE deleted_at IS NULL
     </select>
 
     <insert id="insert" useGeneratedKeys="true" keyProperty="id">
@@ -63,6 +70,12 @@
             <if test="roles != null">roles = #{roles},</if>
             <if test="permissions != null">permissions = #{permissions},</if>
             <if test="is_active != null">is_active = #{is_active},</if>
+            <if test="email_verified != null">email_verified = #{email_verified},</if>
+            <if test="phone_verified != null">phone_verified = #{phone_verified},</if>
+            <if test="last_login_at != null">last_login_at = #{last_login_at},</if>
+            <if test="last_login_ip != null">last_login_ip = #{last_login_ip},</if>
+            <if test="password_changed_at != null">password_changed_at = #{password_changed_at},</if>
+            <if test="deleted_at != null">deleted_at = #{deleted_at},</if>
             updated_at = NOW()
         </set>
         WHERE id = #{id}
@@ -73,17 +86,22 @@
     </update>
 
     <update id="changePassword">
-        UPDATE sys_user SET password_hash = #{newPasswordHash} WHERE username = #{username}
+        UPDATE sys_user SET password_hash = #{newPasswordHash}, password_changed_at = NOW(), updated_at = NOW() WHERE username = #{username} AND deleted_at IS NULL
+    </update>
+
+    <update id="updateLastLogin">
+        UPDATE sys_user SET last_login_at = NOW(), last_login_ip = #{lastLoginIp}, updated_at = NOW() WHERE id = #{id}
     </update>
 
     <delete id="deleteById">
-        DELETE FROM sys_user WHERE id = #{id}
+        UPDATE sys_user SET deleted_at = NOW(), is_active = 0, updated_at = NOW() WHERE id = #{id}
     </delete>
     <select id="findByQuery" resultMap="BaseResultMap">
         SELECT <include refid="Base_Columns"/> FROM sys_user
         <where>
+            deleted_at IS NULL
             <if test="keyword != null and keyword != ''">
-                AND (username LIKE CONCAT('%',#{keyword},'%') OR real_name LIKE CONCAT('%',#{keyword},'%'))
+                AND (username LIKE CONCAT('%',#{keyword},'%') OR real_name LIKE CONCAT('%',#{keyword},'%') OR email LIKE CONCAT('%',#{keyword},'%') OR phone LIKE CONCAT('%',#{keyword},'%'))
             </if>
             <if test="user_type != null and user_type != ''">
                 AND user_type = #{user_type}

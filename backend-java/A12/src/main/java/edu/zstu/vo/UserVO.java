@@ -24,6 +24,12 @@ public class UserVO {
     private String roles;
     private String permissions;
     private int is_active;
+    private Integer email_verified;
+    private Integer phone_verified;
+    private LocalDateTime last_login_at;
+    private String last_login_ip;
+    private LocalDateTime password_changed_at;
+    private LocalDateTime deleted_at;
     private LocalDateTime created_at;
     private LocalDateTime updated_at;
 }

@@ -18,7 +18,7 @@ from .prompts import (
     style_gene_prompt,
 )
 from ..llm import LLMClient
-from ..models import OutlineGenerateRequest, OutlineUpdateRequest, PresentationGenerateRequest, SlideModifyRequest
+from ..models import OutlineGenerateRequest, OutlineUpdateRequest, PresentationGenerateRequest, PresentationModifyRequest, SlideModifyRequest
 from ..resources import build_rag_context
 from .template_store import DEFAULT_THEME, get_template
 
@@ -155,6 +155,344 @@ slides 每项字段：slide_no, title, slide_type, content_points(list), teachin
             "metadata": {"model_used": self.llm.available, "theme": req.theme},
         }
 
+    async def modify_presentation(self, req: PresentationModifyRequest) -> dict[str, Any]:
+        slides = [dict(slide) for slide in req.slides or [] if isinstance(slide, dict)]
+        if not slides:
+            return {
+                "presentation_id": req.presentation_id,
+                "title": req.title,
+                "slide_count": 0,
+                "slides": [],
+                "html": "",
+                "change_summary": "没有可修改的 slides",
+                "operations": [],
+                "metadata": {"model_used": False, "theme": req.theme},
+            }
+
+        plan = await self._deck_modify_plan(req, slides)
+        slides = self._apply_delete_operations(slides, plan.get("operations", []))
+        slides = self._apply_reorder_operations(slides, plan.get("operations", []))
+        slides = await self._apply_add_operations(req, slides, plan.get("operations", []))
+        slides = self._renumber_slide_results(slides)
+
+        modify_ops = self._selected_modify_operations(req, slides, plan.get("operations", []))
+        semaphore = asyncio.Semaphore(max(1, self.settings.max_slide_concurrency))
+        modified_map: dict[int, dict[str, Any]] = {}
+
+        async def modify_one(operation: dict[str, Any]) -> None:
+            slide_no = int(operation.get("slide_no") or 0)
+            if slide_no < 1 or slide_no > len(slides):
+                return
+            slide = slides[slide_no - 1]
+            async with semaphore:
+                result = await self.modify_slide(SlideModifyRequest(
+                    presentation_id=req.presentation_id,
+                    slide_no=slide_no,
+                    current_html=str(slide.get("html") or ""),
+                    instruction=str(operation.get("instruction") or req.instruction),
+                    outline_context={
+                        "deck_title": req.title,
+                        "deck_instruction": req.instruction,
+                        "outline": req.outline or {},
+                        "operation": operation,
+                        "all_slide_titles": [item.get("title") for item in slides],
+                    },
+                    theme=req.theme,
+                    keep_style=req.keep_style,
+                ))
+                updated = dict(slide)
+                updated["html"] = result.get("html") or slide.get("html") or ""
+                updated["title"] = str(operation.get("title") or slide.get("title") or f"第 {slide_no} 页")
+                updated["notes"] = slide.get("notes", "")
+                metadata = dict(slide.get("metadata") or {})
+                metadata.update({
+                    "modified": True,
+                    "deck_modify_instruction": req.instruction,
+                    "deck_modify_operation": operation,
+                })
+                updated["metadata"] = metadata
+                modified_map[slide_no] = updated
+
+        await asyncio.gather(*(modify_one(operation) for operation in modify_ops))
+        for slide_no, updated in modified_map.items():
+            slides[slide_no - 1] = updated
+        slides = self._renumber_slide_results(slides)
+        title = str(plan.get("title") or req.title)
+        return {
+            "presentation_id": req.presentation_id or f"ppt_{uuid.uuid4().hex[:12]}",
+            "title": title,
+            "slide_count": len(slides),
+            "slides": slides,
+            "html": self._combine_deck(title, slides),
+            "change_summary": str(plan.get("change_summary") or f"已按整套课件要求修改：{req.instruction}"),
+            "operations": plan.get("operations", []),
+            "modified_slide_nos": sorted(modified_map.keys()),
+            "metadata": {
+                "model_used": self.llm.available,
+                "theme": req.theme,
+                "keep_style": req.keep_style,
+            },
+        }
+
+    async def _deck_modify_plan(self, req: PresentationModifyRequest, slides: list[dict[str, Any]]) -> dict[str, Any]:
+        fallback = self._fallback_deck_modify_plan(req, slides)
+        if not self.llm.available:
+            return fallback
+        slide_summary = [
+            {
+                "slide_no": index + 1,
+                "title": slide.get("title"),
+                "notes": slide.get("notes", ""),
+                "metadata": slide.get("metadata", {}),
+                "html_excerpt": str(slide.get("html") or "")[:1200],
+            }
+            for index, slide in enumerate(slides)
+        ]
+        prompt = f"""
+请把用户对整套 PPT 的自然语言修改要求拆成可执行计划。只返回严格 JSON，不要 Markdown。
+
+用户要求:
+{req.instruction}
+
+课件标题: {req.title}
+主题: {req.theme or ""}
+是否尽量保持原风格: {req.keep_style}
+最多修改页数: {req.max_modified_slides or "不限"}
+
+大纲:
+{json.dumps(req.outline or {}, ensure_ascii=False, default=str)[:8000]}
+
+当前页面摘要:
+{json.dumps(slide_summary, ensure_ascii=False, default=str)[:16000]}
+
+JSON 格式:
+{{
+  "title": "可选，修改后的课件标题",
+  "change_summary": "整套修改摘要",
+  "operations": [
+    {{
+      "type": "modify|add|delete|reorder",
+      "slide_no": 1,
+      "target_slide_no": 2,
+      "after_slide_no": 3,
+      "title": "页面标题",
+      "instruction": "给单页 HTML 修改器或新增页生成器的具体要求",
+      "slide_outline": {{
+        "title": "",
+        "slide_type": "content",
+        "content_points": [],
+        "teaching_intent": "",
+        "visual_suggestion": ""
+      }}
+    }}
+  ]
+}}
+
+规则:
+1. 全局风格、统一字体、减少文字、整体更活泼等要求应生成多个 modify 操作。
+2. “增加/补充一页”用 add，并给出 after_slide_no 和 slide_outline。
+3. “删除第 N 页”用 delete。
+4. “把第 A 页移到第 B 页前/后”用 reorder。
+5. 不确定具体页时，优先修改所有页面，但不要超过最多修改页数。
+""".strip()
+        try:
+            raw = await self.llm.complete("你是 PPT 课件迭代修改调度器，只输出可解析 JSON。", prompt, 0.2)
+            data = json.loads(self._extract_json(raw))
+            if isinstance(data, dict) and isinstance(data.get("operations"), list):
+                return self._normalize_deck_plan(data, fallback, len(slides), req)
+        except Exception:
+            pass
+        return fallback
+
+    def _fallback_deck_modify_plan(self, req: PresentationModifyRequest, slides: list[dict[str, Any]]) -> dict[str, Any]:
+        instruction = req.instruction or ""
+        total = len(slides)
+        operations: list[dict[str, Any]] = []
+        delete_nos = {int(value) for value in re.findall(r"删除第\s*(\d{1,2})\s*页", instruction)}
+        for slide_no in sorted(delete_nos):
+            if 1 <= slide_no <= total:
+                operations.append({"type": "delete", "slide_no": slide_no, "instruction": instruction})
+
+        add_match = re.search(r"(?:增加|新增|补充).*?(?:一页|1页|页面|案例页|活动页|练习页|总结页|导入页|拓展页|页)", instruction)
+        if add_match:
+            after_match = re.search(r"(?:第\s*(\d{1,2})\s*页(?:后|之后)|放到第\s*(\d{1,2})\s*页后)", instruction)
+            after_slide_no = int(next(group for group in after_match.groups() if group)) if after_match else total
+            title_match = re.search(r"(?:案例|活动|练习|总结|导入|拓展)", instruction)
+            title = title_match.group(0) if title_match else "补充内容"
+            operations.append({
+                "type": "add",
+                "after_slide_no": max(0, min(total, after_slide_no)),
+                "instruction": instruction,
+                "slide_outline": {
+                    "title": title,
+                    "slide_type": "content",
+                    "content_points": [instruction],
+                    "teaching_intent": "根据用户迭代要求补充课件内容。",
+                    "visual_suggestion": "保持整套课件主题风格，使用清晰层级展示补充内容。",
+                },
+            })
+
+        target_nos = {int(value) for value in re.findall(r"第\s*(\d{1,2})\s*页", instruction)}
+        target_nos = {slide_no for slide_no in target_nos if 1 <= slide_no <= total and slide_no not in delete_nos}
+        global_keywords = ["全部", "所有", "整套", "整体", "统一", "每页", "全局", "风格", "字体", "配色", "减少文字", "精简"]
+        if any(keyword in instruction for keyword in global_keywords) or not target_nos:
+            target_nos = set(range(1, total + 1))
+        if req.max_modified_slides:
+            target_nos = set(sorted(target_nos)[:req.max_modified_slides])
+        for slide_no in sorted(target_nos):
+            operations.append({"type": "modify", "slide_no": slide_no, "instruction": instruction})
+        return {
+            "title": req.title,
+            "change_summary": f"已生成整套课件迭代修改计划：{instruction}",
+            "operations": operations,
+        }
+
+    def _normalize_deck_plan(self, data: dict[str, Any], fallback: dict[str, Any], total: int, req: PresentationModifyRequest) -> dict[str, Any]:
+        operations: list[dict[str, Any]] = []
+        for raw in data.get("operations") or []:
+            if not isinstance(raw, dict):
+                continue
+            op_type = str(raw.get("type") or "modify").lower()
+            if op_type not in {"modify", "add", "delete", "reorder"}:
+                op_type = "modify"
+            operation = dict(raw)
+            operation["type"] = op_type
+            if op_type in {"modify", "delete", "reorder"}:
+                try:
+                    operation["slide_no"] = int(operation.get("slide_no") or 0)
+                except Exception:
+                    continue
+                if not 1 <= operation["slide_no"] <= total:
+                    continue
+            if op_type == "add":
+                try:
+                    operation["after_slide_no"] = max(0, min(total, int(operation.get("after_slide_no") or total)))
+                except Exception:
+                    operation["after_slide_no"] = total
+                operation.setdefault("slide_outline", {"title": operation.get("title") or "补充内容", "content_points": [req.instruction]})
+            operation.setdefault("instruction", req.instruction)
+            operations.append(operation)
+        if req.max_modified_slides:
+            kept: list[dict[str, Any]] = []
+            modified_count = 0
+            for operation in operations:
+                if operation.get("type") == "modify":
+                    if modified_count >= req.max_modified_slides:
+                        continue
+                    modified_count += 1
+                kept.append(operation)
+            operations = kept
+        return {
+            "title": data.get("title") or fallback.get("title") or req.title,
+            "change_summary": data.get("change_summary") or fallback.get("change_summary") or req.instruction,
+            "operations": operations or fallback.get("operations", []),
+        }
+
+    def _apply_delete_operations(self, slides: list[dict[str, Any]], operations: list[dict[str, Any]]) -> list[dict[str, Any]]:
+        delete_nos = {int(op.get("slide_no")) for op in operations if op.get("type") == "delete" and str(op.get("slide_no", "")).isdigit()}
+        if not delete_nos:
+            return slides
+        return [slide for index, slide in enumerate(slides, 1) if index not in delete_nos]
+
+    def _apply_reorder_operations(self, slides: list[dict[str, Any]], operations: list[dict[str, Any]]) -> list[dict[str, Any]]:
+        ordered = list(slides)
+        for operation in operations:
+            if operation.get("type") != "reorder":
+                continue
+            try:
+                slide_no = int(operation.get("slide_no") or 0)
+                target = int(operation.get("target_slide_no") or operation.get("after_slide_no") or 0)
+            except Exception:
+                continue
+            if not 1 <= slide_no <= len(ordered) or not 1 <= target <= len(ordered):
+                continue
+            slide = ordered.pop(slide_no - 1)
+            insert_at = target - 1
+            if operation.get("after_slide_no"):
+                insert_at = target
+            if slide_no < target:
+                insert_at -= 1
+            ordered.insert(max(0, min(len(ordered), insert_at)), slide)
+        return ordered
+
+    async def _apply_add_operations(self, req: PresentationModifyRequest, slides: list[dict[str, Any]], operations: list[dict[str, Any]]) -> list[dict[str, Any]]:
+        result = list(slides)
+        add_ops = [op for op in operations if op.get("type") == "add"]
+        for operation in add_ops:
+            outline = operation.get("slide_outline") if isinstance(operation.get("slide_outline"), dict) else {}
+            slide_outline = {
+                "title": str(outline.get("title") or operation.get("title") or "补充内容"),
+                "slide_type": str(outline.get("slide_type") or "content"),
+                "content_points": outline.get("content_points") or [operation.get("instruction") or req.instruction],
+                "teaching_intent": str(outline.get("teaching_intent") or "补充用户要求的教学内容。"),
+                "visual_suggestion": str(outline.get("visual_suggestion") or "保持整套课件视觉风格。"),
+            }
+            slide_no = max(1, min(len(result) + 1, int(operation.get("after_slide_no") or len(result)) + 1))
+            html_markup = await self._generate_added_slide_html(req, slide_outline, slide_no, len(result) + 1)
+            result.insert(slide_no - 1, {
+                "slide_no": slide_no,
+                "title": slide_outline["title"],
+                "html": html_markup,
+                "notes": self._speaker_notes(slide_outline),
+                "metadata": {
+                    "theme": req.theme,
+                    "added_by_deck_modify": True,
+                    "deck_modify_instruction": req.instruction,
+                    "deck_modify_operation": operation,
+                },
+            })
+        return result
+
+    async def _generate_added_slide_html(self, req: PresentationModifyRequest, slide_outline: dict[str, Any], slide_no: int, total: int) -> str:
+        if self.llm.available:
+            prompt = f"""
+请根据整套 PPT 迭代要求新增一页 HTML PPT，只返回完整 HTML。
+必须保持 1280x720 固定画布、overflow:hidden、完整 <!DOCTYPE html> 结构。
+
+课件标题: {req.title}
+主题: {req.theme or DEFAULT_THEME}
+整套修改要求: {req.instruction}
+新增页页码: {slide_no}/{total}
+新增页大纲:
+{json.dumps(slide_outline, ensure_ascii=False, default=str)}
+整套大纲:
+{json.dumps(req.outline or {}, ensure_ascii=False, default=str)[:8000]}
+""".strip()
+            html_markup = await self._complete_html_with_retry(prompt, self._html_system_prompt(), slide_outline, slide_no, total)
+            if html_markup:
+                return html_markup
+        return self._fallback_slide_html(req.title, slide_outline, slide_no, total, req.theme or DEFAULT_THEME)
+
+    def _selected_modify_operations(self, req: PresentationModifyRequest, slides: list[dict[str, Any]], operations: list[dict[str, Any]]) -> list[dict[str, Any]]:
+        modify_ops = [op for op in operations if op.get("type") == "modify"]
+        if not modify_ops:
+            modify_ops = self._fallback_deck_modify_plan(req, slides).get("operations", [])
+            modify_ops = [op for op in modify_ops if op.get("type") == "modify"]
+        seen: set[int] = set()
+        selected: list[dict[str, Any]] = []
+        for operation in modify_ops:
+            try:
+                slide_no = int(operation.get("slide_no") or 0)
+            except Exception:
+                continue
+            if 1 <= slide_no <= len(slides) and slide_no not in seen:
+                seen.add(slide_no)
+                selected.append(operation)
+        return selected
+
+    def _renumber_slide_results(self, slides: list[dict[str, Any]]) -> list[dict[str, Any]]:
+        result = []
+        total = len(slides)
+        for index, slide in enumerate(slides, 1):
+            item = dict(slide)
+            item["slide_no"] = index
+            item.setdefault("title", f"第 {index} 页")
+            metadata = dict(item.get("metadata") or {})
+            metadata["deck_slide_count"] = total
+            item["metadata"] = metadata
+            result.append(item)
+        return result
+
     async def _build_quality_assets(
         self,
         title: str,
@@ -191,21 +529,21 @@ slides 每项字段：slide_no, title, slide_type, content_points(list), teachin
 {template_html[:12000]}
 """.strip()
             try:
-                raw = await self.llm.complete("你是  资深视觉总监，只输出 JSON。", prompt, 0.35)
+                raw = await self.llm.complete("你是资深视觉总监，只输出 JSON。", prompt, 0.35)
                 data = json.loads(self._extract_json(raw))
                 return self._normalize_quality_assets(data, fallback)
             except Exception:
                 return fallback
 
         try:
-            style_genes = await self.llm.complete("你是  模板分析专家。", style_gene_prompt(template_name, template_html), 0.25)
+            style_genes = await self.llm.complete("你是模板分析专家。", style_gene_prompt(template_name, template_html), 0.25)
             constitution = await self.llm.complete(
-                "你是  视觉总监。",
+                "你是视觉总监。",
                 global_constitution_prompt(title, theme, request_context, style_genes, slides),
                 0.3,
             )
             briefs_raw = await self.llm.complete(
-                "你是  页面创意总监，只输出 JSON。",
+                "你是页面创意总监，只输出 JSON。",
                 page_briefs_prompt(title, theme, request_context, style_genes, constitution, slides),
                 0.35,
             )

@@ -1,15 +1,16 @@
 import json
-import re
 from dataclasses import asdict
 from pathlib import Path
 from typing import Any
 
 from ..config import get_settings
+from ..llm import EmbeddingClient
 from ..models import ResourceIndexMetadataRequest, ResourceIndexSyncRequest
 from .chunks import chunk_text
-from .downloader import download_and_extract_text
+from .downloader import download_and_parse_resource
 from .identity import resource_fingerprint, resource_key
 from .records import IndexedChunk
+from .similarity import cosine_similarity, embedding_to_pgvector, keyword_score
 
 
 INDEX_DIR = Path(__file__).resolve().parents[2] / "data" / "resource_index"
@@ -20,6 +21,8 @@ FALLBACK_INDEX_PATH = INDEX_DIR / "index.json"
 class ResourceIndexStore:
     def __init__(self) -> None:
         self.settings = get_settings()
+        self.embedding_client = EmbeddingClient()
+        self.embedding_dimensions = self.settings.embedding_dimensions or self._default_embedding_dimensions()
         self.available = False
         self._ensure_postgres()
 
@@ -32,6 +35,9 @@ class ResourceIndexStore:
         try:
             with self._connect() as conn:
                 with conn.cursor() as cur:
+                    cur.execute(
+                        "CREATE EXTENSION IF NOT EXISTS vector"
+                    )
                     cur.execute(
                         """
                         CREATE TABLE IF NOT EXISTS a12_resource_index (
@@ -63,20 +69,39 @@ class ResourceIndexStore:
                             resource_id TEXT NOT NULL,
                             chunk_index INTEGER NOT NULL,
                             content TEXT NOT NULL,
+                            embedding_vector vector(%s),
                             metadata JSONB NOT NULL DEFAULT '{}'::jsonb,
                             created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
                         )
-                        """
+                        """ % self.embedding_dimensions
                     )
                     cur.execute(
                         "CREATE INDEX IF NOT EXISTS idx_a12_resource_index_available ON a12_resource_index(source_type, available, allow_ai)"
                     )
                     cur.execute(
+                        "ALTER TABLE a12_resource_index_chunk ADD COLUMN IF NOT EXISTS embedding_vector vector(%s)" % self.embedding_dimensions
+                    )
+                    cur.execute(
                         "CREATE INDEX IF NOT EXISTS idx_a12_resource_chunk_resource ON a12_resource_index_chunk(resource_key)"
                     )
             self.available = True
+            self._ensure_vector_index()
         except Exception:
             self.available = False
+
+    def _ensure_vector_index(self) -> None:
+        try:
+            with self._connect() as conn:
+                with conn.cursor() as cur:
+                    cur.execute(
+                        """
+                        CREATE INDEX IF NOT EXISTS idx_a12_resource_chunk_embedding_hnsw
+                        ON a12_resource_index_chunk
+                        USING hnsw (embedding_vector vector_cosine_ops)
+                        """
+                    )
+        except Exception:
+            pass
 
     async def sync_resource(self, request: ResourceIndexSyncRequest) -> dict[str, Any]:
         metadata = self._build_metadata(request)
@@ -105,9 +130,15 @@ class ResourceIndexStore:
             }
 
         try:
-            text = await download_and_extract_text(request)
+            parsed = await download_and_parse_resource(request)
+            metadata["parse"] = parsed.metadata
+            text = parsed.text
             chunks = chunk_text(text)
-            self._replace_index(request, metadata, fingerprint, text, chunks)
+            try:
+                embeddings = await self.embedding_client.embed_documents(chunks)
+            except Exception:
+                embeddings = []
+            self._replace_index(request, metadata, fingerprint, text, chunks, embeddings)
             return {
                 "resource_key": key,
                 "status": "indexed",
@@ -189,32 +220,96 @@ class ResourceIndexStore:
             self._write_fallback(data)
         return {"resource_key": key, "status": "deleted"}
 
-    def search_context(self, resource_ids: list[str], query: str, limit: int = 12000) -> dict[str, Any]:
+    async def search_context(self, resource_ids: list[str], query: str, limit: int = 12000, top_k: int = 8) -> dict[str, Any]:
+        try:
+            query_embedding = await self.embedding_client.embed_query(query)
+        except Exception:
+            query_embedding = []
+        if self.available and len(query_embedding) == self.embedding_dimensions:
+            try:
+                vector_result = self._search_pgvector(resource_ids, query, query_embedding, limit, top_k)
+            except Exception:
+                vector_result = {"context": "", "matches": []}
+            if vector_result.get("matches"):
+                return vector_result
+
         chunks = self._load_chunks(resource_ids)
         if not chunks:
             return {"context": "", "matches": []}
-        keywords = [word.lower() for word in re.findall(r"[\w\u4e00-\u9fff]+", query or "") if len(word) > 1]
-        scored: list[tuple[int, IndexedChunk]] = []
+
+        scored: list[tuple[float, str, IndexedChunk]] = []
         for chunk in chunks:
-            lower = chunk.content.lower()
-            score = sum(1 for keyword in keywords if keyword in lower)
-            if score or not keywords:
-                scored.append((score, chunk))
+            if query_embedding and chunk.embedding:
+                score = cosine_similarity(query_embedding, chunk.embedding)
+                match_type = "embedding_fallback"
+            else:
+                score = keyword_score(chunk.content, query)
+                match_type = "keyword"
+            if score > 0 or not query:
+                scored.append((score, match_type, chunk))
         scored.sort(key=lambda item: item[0], reverse=True)
-        selected = [chunk for _, chunk in scored[:8]]
+        selected = scored[:top_k] or [(0.0, "fallback", chunk) for chunk in chunks[:top_k]]
         matches = [
             {
                 "resource_id": f"{chunk.source_type}:{chunk.resource_id}",
                 "chunk_id": chunk.chunk_id,
                 "content": chunk.content[:1500],
                 "metadata": chunk.metadata,
+                "score": round(score, 6),
+                "match_type": match_type,
             }
-            for chunk in selected
+            for score, match_type, chunk in selected
         ]
         context = "\n\n".join(
             f"[{item['resource_id']}#{item['chunk_id']}]\n{item['content']}" for item in matches
         )[:limit]
         return {"context": context, "matches": matches}
+
+    def _search_pgvector(
+        self,
+        resource_ids: list[str],
+        query: str,
+        query_embedding: list[float],
+        limit: int,
+        top_k: int,
+    ) -> dict[str, Any]:
+        keys = [resource_id for resource_id in resource_ids if ":" in resource_id]
+        query_vector = embedding_to_pgvector(query_embedding)
+        if not keys or not query_vector:
+            return {"context": "", "matches": []}
+        with self._connect() as conn:
+            with conn.cursor() as cur:
+                cur.execute(
+                    """
+                    SELECT chunk_id, source_type, resource_id, chunk_index, content, metadata,
+                           1 - (embedding_vector <=> %s::vector) AS similarity
+                    FROM a12_resource_index_chunk
+                    WHERE resource_key = ANY(%s)
+                      AND embedding_vector IS NOT NULL
+                      AND COALESCE((metadata->>'available')::boolean, TRUE) IS TRUE
+                      AND COALESCE((metadata->>'allow_ai')::boolean, TRUE) IS TRUE
+                    ORDER BY embedding_vector <=> %s::vector
+                    LIMIT %s
+                    """,
+                    (query_vector, keys, query_vector, top_k),
+                )
+                rows = cur.fetchall()
+        matches = [
+            {
+                "resource_id": f"{row[1]}:{row[2]}",
+                "chunk_id": row[0],
+                "chunk_index": row[3],
+                "content": row[4][:1500],
+                "metadata": row[5] or {},
+                "score": round(float(row[6] or 0.0), 6),
+                "match_type": "pgvector_cosine",
+            }
+            for row in rows
+        ]
+        context = "\n\n".join(
+            f"[{item['resource_id']}#{item['chunk_id']} score={item['score']}]\n{item['content']}" for item in matches
+        )[:limit]
+        return {"query": query, "context": context, "matches": matches}
 
     def _build_metadata(self, request: ResourceIndexSyncRequest) -> dict[str, Any]:
         metadata = dict(request.metadata or {})
@@ -235,7 +330,15 @@ class ResourceIndexStore:
         })
         return metadata
 
-    def _replace_index(self, request: ResourceIndexSyncRequest, metadata: dict[str, Any], fingerprint: str, text: str, chunks: list[str]) -> None:
+    def _replace_index(
+        self,
+        request: ResourceIndexSyncRequest,
+        metadata: dict[str, Any],
+        fingerprint: str,
+        text: str,
+        chunks: list[str],
+        embeddings: list[list[float]] | None = None,
+    ) -> None:
         key = resource_key(request.source_type, request.resource_id)
         if self.available:
             with self._connect() as conn:
@@ -270,10 +373,19 @@ class ResourceIndexStore:
                         chunk_id = f"{key}:{index}"
                         cur.execute(
                             """
-                            INSERT INTO a12_resource_index_chunk(chunk_id, resource_key, source_type, resource_id, chunk_index, content, metadata)
-                            VALUES(%s, %s, %s, %s, %s, %s, %s::jsonb)
+                            INSERT INTO a12_resource_index_chunk(chunk_id, resource_key, source_type, resource_id, chunk_index, content, embedding_vector, metadata)
+                            VALUES(%s, %s, %s, %s, %s, %s, %s::vector, %s::jsonb)
                             """,
-                            (chunk_id, key, request.source_type, request.resource_id, index, chunk, json.dumps(metadata, ensure_ascii=False)),
+                            (
+                                chunk_id,
+                                key,
+                                request.source_type,
+                                request.resource_id,
+                                index,
+                                chunk,
+                                embedding_to_pgvector(self._embedding_at(embeddings, index)),
+                                json.dumps(metadata, ensure_ascii=False),
+                            ),
                         )
         else:
             data = self._read_fallback()
@@ -299,6 +411,7 @@ class ResourceIndexStore:
                     chunk_index=index,
                     content=chunk,
                     metadata=metadata,
+                    embedding=self._embedding_at(embeddings, index),
                 ))
                 for index, chunk in enumerate(chunks)
             ]
@@ -359,11 +472,11 @@ class ResourceIndexStore:
                 with conn.cursor() as cur:
                     cur.execute(
                         """
-                        SELECT chunk_id, source_type, resource_id, chunk_index, content, metadata
+                        SELECT chunk_id, source_type, resource_id, chunk_index, content, embedding_vector::text, metadata
                         FROM a12_resource_index_chunk
                         WHERE resource_key = ANY(%s)
-                          AND (metadata->>'available')::boolean IS TRUE
-                          AND (metadata->>'allow_ai')::boolean IS TRUE
+                          AND COALESCE((metadata->>'available')::boolean, TRUE) IS TRUE
+                          AND COALESCE((metadata->>'allow_ai')::boolean, TRUE) IS TRUE
                         ORDER BY resource_key, chunk_index
                         """,
                         (keys,),
@@ -375,7 +488,8 @@ class ResourceIndexStore:
                             resource_id=row[2],
                             chunk_index=row[3],
                             content=row[4],
-                            metadata=row[5] or {},
+                            embedding=self._parse_pgvector(row[5]),
+                            metadata=row[6] or {},
                         )
                         for row in cur.fetchall()
                     ]
@@ -387,6 +501,23 @@ class ResourceIndexStore:
                 continue
             chunks.extend(IndexedChunk(**chunk) for chunk in data.get("chunks", {}).get(key, []))
         return chunks
+
+    def _default_embedding_dimensions(self) -> int:
+        model = (self.settings.embedding_model or "").lower()
+        if "3-large" in model:
+            return 3072
+        return 1536
+
+    def _parse_pgvector(self, value: str | None) -> list[float] | None:
+        if not value:
+            return None
+        return [float(item) for item in value.strip("[]").split(",") if item]
+
+    def _embedding_at(self, embeddings: list[list[float]] | None, index: int) -> list[float] | None:
+        if not embeddings or index >= len(embeddings):
+            return None
+        embedding = embeddings[index]
+        return embedding if len(embedding) == self.embedding_dimensions else None
 
     def _read_fallback(self) -> dict[str, Any]:
         if not FALLBACK_INDEX_PATH.exists():

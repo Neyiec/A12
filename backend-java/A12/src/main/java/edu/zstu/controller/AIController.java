@@ -10,6 +10,7 @@ import edu.zstu.vo.TaskVO;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.http.MediaType;
 import org.springframework.web.bind.annotation.*;
+import org.springframework.web.multipart.MultipartFile;
 import org.springframework.web.servlet.mvc.method.annotation.SseEmitter;
 
 import java.io.IOException;
@@ -55,6 +56,30 @@ public class AIController {
                                               @RequestBody ConversationDTO dto) {
         try {
             return Result.success(aiService.sendMessage(id, dto));
+        } catch (RuntimeException e) { return Result.error(400, e.getMessage()); }
+    }
+
+    @PostMapping(value = "/sessions/{id}/audio-messages", consumes = MediaType.MULTIPART_FORM_DATA_VALUE)
+    public Result<ConversationVO> sendAudioMessage(@PathVariable String id,
+                                                   @RequestParam("file") MultipartFile file,
+                                                   @RequestParam(required = false) String language,
+                                                   @RequestParam(required = false) String message,
+                                                   @RequestParam(required = false) String resource_ids,
+                                                   @RequestParam(required = false) Boolean enable_rag,
+                                                   @RequestParam(required = false) Boolean enable_web,
+                                                   @RequestParam(required = false) Integer slide_count,
+                                                   @RequestParam(required = false) String known_context,
+                                                   @RequestParam(required = false) String context_summary) {
+        try {
+            ConversationDTO dto = new ConversationDTO();
+            dto.setMessage(message);
+            dto.setResource_ids(resource_ids);
+            dto.setEnable_rag(enable_rag);
+            dto.setEnable_web(enable_web);
+            dto.setSlide_count(slide_count);
+            dto.setKnown_context(known_context);
+            dto.setContext_summary(context_summary);
+            return Result.success(aiService.sendAudioMessage(id, file, language, dto));
         } catch (RuntimeException e) { return Result.error(400, e.getMessage()); }
     }
 

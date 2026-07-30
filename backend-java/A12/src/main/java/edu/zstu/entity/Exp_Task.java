@@ -25,6 +25,11 @@ public class Exp_Task {
     private String file_status; //文件状态(available/expired/cleaned)
     private String quality_report; //json字符串 质量报告
     private String error_msg;
+    private Integer progress;
+    private Integer retry_count;
+    private String worker_id;
+    private LocalDateTime started_at;
     private LocalDateTime created_at;
+    private LocalDateTime updated_at;
     private LocalDateTime completed_at;
 }

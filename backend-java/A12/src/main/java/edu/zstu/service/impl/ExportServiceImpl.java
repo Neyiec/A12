@@ -13,6 +13,7 @@ import edu.zstu.service.ExportService;
 import edu.zstu.utils.CurrentHolder;
 import edu.zstu.utils.PageResult;
 import edu.zstu.vo.ExportTaskVO;
+import lombok.extern.slf4j.Slf4j;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
@@ -20,6 +21,7 @@ import java.time.LocalDateTime;
 import java.util.List;
 import java.util.Map;
 
+@Slf4j
 @Service
 public class ExportServiceImpl implements ExportService {
     private final ExpTaskMapper taskMapper;
@@ -35,6 +37,7 @@ public class ExportServiceImpl implements ExportService {
 
     @Override
     public Map<String, Object> precheckExport(String id, ExportPrecheckDTO dto) {
+        log.info("precheckExport projectId={}, snapshotVersion={}, exportType={}", id, dto.getSnapshot_version(), dto.getExport_type());
         Ws_Project project = requireProject(parseId(id));
         assertProjectReadable(project);
         return Map.of("passed", true, "warnings", List.of(), "errors", List.of(),
@@ -44,6 +47,7 @@ public class ExportServiceImpl implements ExportService {
     @Override
     @Transactional
     public ExportTaskVO createExportTask(ExportTaskDTO dto) {
+        log.info("createExportTask projectId={}, snapshotVersion={}, exportType={}", dto.getProject_id(), dto.getSnapshot_version(), dto.getExport_type());
         Integer userId = requireLogin();
         Ws_Project project = requireProject(dto.getProject_id());
         assertProjectReadable(project);
@@ -56,6 +60,10 @@ public class ExportServiceImpl implements ExportService {
         task.setExport_type(dto.getExport_type());
         task.setStatus("success");
         task.setConfig(dto.getConfig() == null ? "{}" : dto.getConfig());
+        task.setProgress(100);
+        task.setRetry_count(0);
+        task.setWorker_id("java-sync");
+        task.setStarted_at(LocalDateTime.now());
         task.setFile_name(project.getProject_name() + "." + normalizeExt(dto.getExport_type()));
         task.setFile_url("/exports/project-" + dto.getProject_id() + "-v" + task.getSnapshot_version() + "." + normalizeExt(dto.getExport_type()));
         task.setFile_size(0L);
@@ -63,6 +71,7 @@ public class ExportServiceImpl implements ExportService {
         task.setQuality_report("{\"check_items\":[],\"error_count\":0,\"warning_count\":0,\"overall_result\":\"passed\"}");
         task.setCompleted_at(LocalDateTime.now());
         taskMapper.insert(task);
+        log.info("createExportTask success taskId={}, userId={}, projectId={}, status={}", task.getId(), userId, task.getProject_id(), task.getStatus());
         businessLogService.record("operation", "export", "create_task", "export_task", task.getId(),
                 Map.of("project_id", dto.getProject_id(), "export_type", dto.getExport_type()));
         return toVO(task);
@@ -70,6 +79,7 @@ public class ExportServiceImpl implements ExportService {
 
     @Override
     public PageResult<ExportTaskVO> listExportTasks(TaskQueryDTO dto) {
+        log.info("listExportTasks status={}, page={}, size={}", dto.getStatus(), dto.getPage(), dto.getSize());
         Integer userId = requireLogin();
         int page = dto.getPage() <= 0 ? 1 : dto.getPage();
         int size = dto.getSize() <= 0 ? 10 : dto.getSize();
@@ -84,19 +94,23 @@ public class ExportServiceImpl implements ExportService {
 
     @Override
     public ExportTaskVO getExportTask(String id) {
+        log.info("getExportTask taskId={}", id);
         return toVO(requireOwnedTask(id));
     }
 
     @Override
     @Transactional
     public ExportTaskVO cancelExport(String id) {
+        log.info("cancelExport taskId={}", id);
         Exp_Task task = requireOwnedTask(id);
         if (!List.of("queued", "generating", "checking").contains(task.getStatus())) {
             throw new RuntimeException("当前状态不可取消");
         }
         task.setStatus("cancelled");
+        task.setProgress(0);
         task.setCompleted_at(LocalDateTime.now());
         taskMapper.update(task);
+        log.info("cancelExport success taskId={}, status={}", task.getId(), task.getStatus());
         businessLogService.record("operation", "export", "cancel_task", "export_task", task.getId());
         return toVO(taskMapper.findById(task.getId()));
     }
@@ -104,9 +118,11 @@ public class ExportServiceImpl implements ExportService {
     @Override
     @Transactional
     public ExportTaskVO retryExport(String id) {
+        log.info("retryExport taskId={}", id);
         Exp_Task old = requireOwnedTask(id);
         ExportTaskDTO dto = new ExportTaskDTO(old.getProject_id(), old.getSnapshot_version(), old.getExport_type(), old.getConfig());
         ExportTaskVO task = createExportTask(dto);
+        log.info("retryExport success newTaskId={}, sourceTaskId={}", task.getId(), old.getId());
         businessLogService.record("operation", "export", "retry_task", "export_task", task.getId(),
                 Map.of("source_task_id", old.getId()));
         return task;
@@ -114,17 +130,20 @@ public class ExportServiceImpl implements ExportService {
 
     @Override
     public Map<String, Object> getQualityReport(String id) {
+        log.info("getQualityReport taskId={}", id);
         Exp_Task task = requireOwnedTask(id);
         return Map.of("quality_report", task.getQuality_report() == null ? "{}" : task.getQuality_report());
     }
 
     @Override
     public ExportTaskVO getArtifact(String id) {
+        log.info("getArtifact taskId={}", id);
         return getExportTask(id);
     }
 
     @Override
     public Map<String, Object> createPreviewUrl(String id) {
+        log.info("createPreviewUrl taskId={}", id);
         Exp_Task task = requireOwnedTask(id);
         businessLogService.record("browse", "export", "preview_url", "export_task", task.getId());
         return Map.of("preview_url", task.getFile_url(), "expires_at", LocalDateTime.now().plusMinutes(30));
@@ -132,6 +151,7 @@ public class ExportServiceImpl implements ExportService {
 
     @Override
     public Map<String, Object> createDownloadUrl(String id) {
+        log.info("createDownloadUrl taskId={}", id);
         Exp_Task task = requireOwnedTask(id);
         String url = task.getDownload_url() == null ? task.getFile_url() : task.getDownload_url();
         businessLogService.record("download", "export", "download_url", "export_task", task.getId());
@@ -183,3 +203,5 @@ public class ExportServiceImpl implements ExportService {
         return vo;
     }
 }
+
+

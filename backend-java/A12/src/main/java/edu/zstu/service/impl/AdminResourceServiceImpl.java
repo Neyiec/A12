@@ -45,7 +45,7 @@ public class AdminResourceServiceImpl implements AdminResourceService {
 
     @Override
     public PageResult<ResourceVO> listResources(String resourceType, Integer status, int page, int size) {
-        log.info("listResources called");
+        log.info("listResources resourceType={}, status={}, page={}, size={}", resourceType, status, page, size);
         PageHelper.startPage(page, size);
         List<Adm_Resource> list = resourceMapper.findByQuery(resourceType, status);
         PageInfo<Adm_Resource> info = new PageInfo<>(list);
@@ -59,6 +59,7 @@ public class AdminResourceServiceImpl implements AdminResourceService {
     @Override
     @Transactional
     public Map<String, Object> createUploadSession(ResourceDTO dto, Integer adminId) {
+        log.info("createUploadSession adminId={}, resourceType={}, title={}", adminId, dto.getResource_type(), dto.getTitle());
         if (dto.getResource_type() == null || dto.getTitle() == null) {
             throw new RuntimeException("缺少必填字段: resource_type, title");
         }
@@ -72,8 +73,11 @@ public class AdminResourceServiceImpl implements AdminResourceService {
         resourceMapper.insert(resource);
 
         // 生成 OSS 签名上传 URL
-        String objectKey = "public/" + dto.getResource_type() + "/" + resource.getId() + "_" + UUID.randomUUID();
+        String fileType = detectFileType(dto.getFile_type(), dto.getFile_name(), dto.getFile_url(), dto.getTitle());
+        String objectKey = "public/" + dto.getResource_type() + "/" + resource.getId() + "_" + UUID.randomUUID()
+                + extensionForFileType(fileType, dto.getFile_name(), dto.getFile_url(), dto.getTitle());
         URL signedUrl = ossUtil.generateUploadUrl(objectKey, 120);
+        log.info("createUploadSession signedUrlCreated resourceId={}, objectKey={}", resource.getId(), objectKey);
 
         // 暂存 objectKey（用于 complete 时拼接 file_url）
         resource.setFile_url(ossUtil.getObjectUrl(objectKey));
@@ -91,7 +95,7 @@ public class AdminResourceServiceImpl implements AdminResourceService {
     @Override
     @Transactional
     public ResourceVO completeUpload(Integer id, Integer adminId) {
-        log.info("completeUpload called");
+        log.info("completeUpload uploadId={}, adminId={}", id, adminId);
         Adm_Resource resource = resourceMapper.findById(id);
         if (resource == null) throw new RuntimeException("上传会话不存在");
         if (resource.getStatus() != 0) throw new RuntimeException("上传会话状态异常");
@@ -104,6 +108,7 @@ public class AdminResourceServiceImpl implements AdminResourceService {
 
         resource.setStatus(1);
         resourceMapper.updateStatus(id, 1);
+        log.info("completeUpload success resourceId={}, objectKey={}", id, objectKey);
         businessLogService.record("operation", "admin_resource", "complete_upload", "resource", id);
         syncPublicResourceIndex(resourceMapper.findById(id));
         return toResourceVO(resource);
@@ -111,7 +116,7 @@ public class AdminResourceServiceImpl implements AdminResourceService {
 
     @Override
     public ResourceVO getResource(Integer id) {
-        log.info("getResource called");
+        log.info("getResource resourceId={}", id);
         Adm_Resource r = resourceMapper.findById(id);
         if (r == null) throw new RuntimeException("资源不存在");
         return toResourceVO(r);
@@ -120,7 +125,7 @@ public class AdminResourceServiceImpl implements AdminResourceService {
     @Override
     @Transactional
     public ResourceVO updateResource(Integer id, ResourceDTO dto, Integer adminId) {
-        log.info("updateResource called");
+        log.info("updateResource resourceId={}, adminId={}, title={}, subject={}, grade={}", id, adminId, dto.getTitle(), dto.getSubject(), dto.getGrade());
         Adm_Resource r = resourceMapper.findById(id);
         if (r == null) throw new RuntimeException("资源不存在");
 
@@ -132,6 +137,7 @@ public class AdminResourceServiceImpl implements AdminResourceService {
         if (dto.getTemplate_data() != null) r.setTemplate_data(dto.getTemplate_data());
         if (dto.getThumbnail() != null) r.setThumbnail(dto.getThumbnail());
         resourceMapper.update(r);
+        log.info("updateResource success resourceId={}, status={}", id, r.getStatus());
         businessLogService.record("operation", "admin_resource", "update", "resource", id);
         if (r.getStatus() == 1) {
             syncPublicResourceIndex(resourceMapper.findById(id));
@@ -142,11 +148,12 @@ public class AdminResourceServiceImpl implements AdminResourceService {
     @Override
     @Transactional
     public ResourceVO updateStatus(Integer id, ItemStatusDTO dto, Integer adminId) {
-        log.info("updateStatus called");
+        log.info("updateStatus resourceId={}, adminId={}, status={}", id, adminId, dto.getStatus());
         Adm_Resource r = resourceMapper.findById(id);
         if (r == null) throw new RuntimeException("资源不存在");
         resourceMapper.updateStatus(id, dto.getStatus());
         r.setStatus(dto.getStatus());
+        log.info("updateStatus success resourceId={}, status={}", id, dto.getStatus());
         businessLogService.record("operation", "admin_resource", "update_status", "resource", id,
                 Map.of("status", dto.getStatus()));
         updatePublicResourceAvailability(r);
@@ -155,6 +162,7 @@ public class AdminResourceServiceImpl implements AdminResourceService {
 
     @Override
     public Map<String, Object> getProcessingStatus(Integer id) {
+        log.info("getProcessingStatus resourceId={}", id);
         Adm_Resource r = resourceMapper.findById(id);
         if (r == null) throw new RuntimeException("资源不存在");
 
@@ -170,6 +178,7 @@ public class AdminResourceServiceImpl implements AdminResourceService {
 
     @Override
     public Map<String, Object> bootstrapAiResourceIndex(boolean forceReparse) {
+        log.info("bootstrapAiResourceIndex forceReparse={}", forceReparse);
         List<Map<String, Object>> resources = new ArrayList<>();
         for (Adm_Resource resource : resourceMapper.findActive()) {
             if (resource.getFile_url() != null && !resource.getFile_url().isBlank()) {
@@ -181,7 +190,9 @@ public class AdminResourceServiceImpl implements AdminResourceService {
                 resources.add(personalResourcePayload(material, forceReparse));
             }
         }
+        log.info("bootstrapAiResourceIndex callPython resourceCount={}, forceReparse={}", resources.size(), forceReparse);
         Map<String, Object> response = pythonPptClient.bootstrapResourceIndex(resources, forceReparse);
+        log.info("bootstrapAiResourceIndex pythonResponseKeys={}", response.keySet());
         applyBootstrapStatuses(response);
         return response;
     }
@@ -192,6 +203,7 @@ public class AdminResourceServiceImpl implements AdminResourceService {
         }
         try {
             resourceMapper.updateAiIndexStatus(resource.getId(), "indexing", null);
+            log.info("syncPublicResourceIndex callPython resourceId={}", resource.getId());
             Map<String, Object> response = pythonPptClient.syncResourceIndex(publicResourcePayload(resource, false));
             Object data = response.get("data");
             String status = extractPythonStatus(data);
@@ -229,13 +241,15 @@ public class AdminResourceServiceImpl implements AdminResourceService {
         metadata.put("grade", resource.getGrade());
         metadata.put("resource_type", resource.getResource_type());
         metadata.put("description", resource.getDescription());
+        String fileType = detectFileType(resource.getFile_url(), resource.getTitle(), resource.getResource_type());
+        metadata.put("detected_file_type", fileType);
 
         Map<String, Object> payload = new LinkedHashMap<>();
         payload.put("source_type", "public");
         payload.put("resource_id", String.valueOf(resource.getId()));
         payload.put("title", resource.getTitle());
         payload.put("file_url", resource.getFile_url());
-        payload.put("file_type", resource.getResource_type());
+        payload.put("file_type", fileType);
         payload.put("file_size", resource.getFile_size());
         payload.put("uploaded_by", String.valueOf(resource.getUploaded_by()));
         payload.put("owner_user_id", null);
@@ -244,6 +258,70 @@ public class AdminResourceServiceImpl implements AdminResourceService {
         payload.put("metadata", metadata);
         payload.put("force_reparse", forceReparse);
         return payload;
+    }
+
+    private String detectFileType(String... values) {
+        if (values == null) return "other";
+        for (String value : values) {
+            String direct = normalizeKnownFileType(value);
+            if (!"other".equals(direct)) {
+                return direct;
+            }
+            String ext = extensionFromValue(value);
+            String fromExtension = normalizeKnownFileType(ext);
+            if (!"other".equals(fromExtension)) {
+                return fromExtension;
+            }
+        }
+        return "other";
+    }
+
+    private String normalizeKnownFileType(String value) {
+        if (value == null || value.isBlank()) return "other";
+        String clean = value.trim().toLowerCase(Locale.ROOT);
+        if (clean.contains("/")) {
+            clean = clean.substring(clean.indexOf('/') + 1);
+        }
+        clean = clean.replace(".", "");
+        return switch (clean) {
+            case "doc", "docx" -> "word";
+            case "pdf" -> "pdf";
+            case "ppt", "pptx", "powerpoint" -> "ppt";
+            case "txt", "text", "md", "markdown", "csv" -> "txt";
+            case "jpg", "jpeg", "png", "gif", "bmp", "webp", "image" -> "image";
+            case "mp3", "wav", "m4a", "aac", "ogg", "audio" -> "audio";
+            case "mp4", "avi", "mov", "mkv", "webm", "wmv", "flv", "video" -> "video";
+            default -> "other";
+        };
+    }
+
+    private String extensionForFileType(String fileType, String... values) {
+        for (String value : values) {
+            String ext = extensionFromValue(value);
+            if (!ext.isBlank() && !"other".equals(normalizeKnownFileType(ext))) {
+                return "." + ext;
+            }
+        }
+        return switch (fileType == null ? "other" : fileType) {
+            case "word" -> ".docx";
+            case "pdf" -> ".pdf";
+            case "ppt" -> ".pptx";
+            case "txt" -> ".txt";
+            case "image" -> ".png";
+            case "audio" -> ".mp3";
+            case "video" -> ".mp4";
+            default -> "";
+        };
+    }
+
+    private String extensionFromValue(String value) {
+        if (value == null || value.isBlank()) return "";
+        String clean = value.split("\\?", 2)[0].split("#", 2)[0].toLowerCase(Locale.ROOT);
+        int slash = Math.max(clean.lastIndexOf('/'), clean.lastIndexOf('\\'));
+        String name = slash >= 0 ? clean.substring(slash + 1) : clean;
+        int dot = name.lastIndexOf('.');
+        if (dot < 0 || dot == name.length() - 1) return "";
+        return name.substring(dot + 1);
     }
 
     private Map<String, Object> personalResourcePayload(Res_Material material, boolean forceReparse) {
@@ -320,3 +398,5 @@ public class AdminResourceServiceImpl implements AdminResourceService {
         return vo;
     }
 }
+
+

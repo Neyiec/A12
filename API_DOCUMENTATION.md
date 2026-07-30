@@ -88,7 +88,8 @@
 | `user_type` | String | 用户类型: `teacher` / `admin` |
 | `roles` | String(JSON) | 角色列表 |
 | `permissions` | String(JSON) | 权限列表 |
-| `created_at` | LocalDateTime | 登录时间 |
+| `last_login_at` | LocalDateTime | 本次登录写入后的最后登录时间 |
+| `created_at` | LocalDateTime | 账号创建时间 |
 
 ## API-05 POST /api/v1/auth/initial-password-change
 
@@ -177,6 +178,12 @@
 | `roles` | String(JSON) | 角色列表 |
 | `permissions` | String(JSON) | 权限列表 |
 | `is_active` | int | 是否激活: 1是/0否 |
+| `email_verified` | Integer | 邮箱是否已验证: 1是/0否 |
+| `phone_verified` | Integer | 手机号是否已验证: 1是/0否 |
+| `last_login_at` | LocalDateTime | 最后登录时间 |
+| `last_login_ip` | String | 最后登录IP |
+| `password_changed_at` | LocalDateTime | 密码最后修改时间 |
+| `deleted_at` | LocalDateTime | 软删除时间，正常账号为 `null` |
 | `created_at` | LocalDateTime | 创建时间 |
 | `updated_at` | LocalDateTime | 更新时间 |
 
@@ -227,7 +234,7 @@
 
 **后端 DTO**: `TaskCreateDTO { title, subject, grade, status, uploaded_refs, plan_json, messages, resource_ids, enable_rag, enable_web, slide_count }`
 
-**响应 VO**: `Result<TaskVO>` — 含 Java 会话ID `conversation_id`。Python 会话ID 会在 API-13 调用后写入 `python_session_id`。
+**响应 VO**: `Result<TaskVO>` — 含 Java 会话ID `conversation_id`。Python 会话ID 会在 API-13 调用后写入 `python_session_id`。`resource_ids/enable_rag/enable_web/slide_count` 会保存为本会话默认生成选项；后续 API-13/API-13A 没传这些字段时自动沿用，传了则以本轮请求为准。
 
 ---
 
@@ -253,7 +260,31 @@
 
 **后端 DTO**: `ConversationDTO { title, status, messages, context_summary, message, resource_ids, enable_rag, enable_web, slide_count, known_context }`
 
-**响应 VO**: `Result<ConversationVO>` — 更新后的会话信息。若 Python 返回澄清问题，`last_question` 有值；若生成完成，`TaskVO.plan_json` 会保存 Python 返回的大纲。
+**响应 VO**: `Result<ConversationVO>` — 更新后的会话信息。若 Python 返回澄清问题，`last_question` 有值；若生成完成，`TaskVO.plan_json` 会保存 Python 返回的大纲。`enable_rag/enable_web` 为本轮覆盖开关；不传时沿用 API-12 创建会话时保存的默认开关。
+
+---
+
+## API-13A POST /api/v1/ai/sessions/{id}/audio-messages
+
+**功能**: 语音输入对话编排接口。前端上传教师语音到 Java，Java 先调用 Python `/api/v1/python/audio/asr` 转写文本，再把转写文本作为本轮 `message` 复用 API-13 的对话生成逻辑。前端不需要自己串联 Python ASR 和大纲对话接口。
+
+**请求类型**: `multipart/form-data`
+
+**路径参数**: `id` — 会话ID
+
+| 字段 | 类型 | 必填 | 说明 |
+|---|---|---|---|
+| `file` | File | **是** | 语音文件，建议 `wav/mp3/m4a/webm` |
+| `language` | String | 否 | 语音语言，例如 `zh` |
+| `message` | String | 否 | 手动补充文本；如果同时传，会拼接在语音转写文本前面 |
+| `resource_ids` | String(JSON) | 否 | Python 资料ID列表，例如 `["res_xxx"]` |
+| `enable_rag` | Boolean | 否 | 是否启用 Python RAG 检索 |
+| `enable_web` | Boolean | 否 | 是否启用 Python 联网搜索 |
+| `slide_count` | int | 否 | 期望页数 |
+| `known_context` | String(JSON) | 否 | 已知上下文，例如 `{"title":"光合作用","subject":"生物","grade":"七年级"}` |
+| `context_summary` | String | 否 | 前端或 Java 侧摘要 |
+
+**响应 VO**: `Result<ConversationVO>` — 与 API-13 一致。Java 会把最终转写后的文本写入会话消息历史。
 
 ---
 
@@ -345,8 +376,9 @@
 | `status` | String | 否 | 默认 `draft` |
 | `snapshots` | String(JSON) | 否 | 版本快照列表 |
 | `edit_history` | String(JSON) | 否 | 编辑历史 |
+| `permissions` | String(JSON) | 否 | 初始授权用户ID列表，一般创建时不传 |
 
-**后端 DTO**: `ProjectCreateDTO { project_name, project_type, status, snapshots, edit_history }`
+**后端 DTO**: `ProjectCreateDTO { project_name, project_type, status, snapshots, edit_history, permissions }`
 
 **响应 VO**: `Result<ProjectVO>`
 
@@ -396,6 +428,9 @@
 | `project_type` | String | 否 | 新类型 |
 | `status` | String | 否 | 新状态 |
 | `current_version` | int | **是** | 当前版本号（乐观锁，防止覆盖） |
+| `snapshots` | String(JSON) | 否 | 兼容旧字段，新的版本快照主要写入 `ws_version.snapshot_data` |
+| `edit_history` | String(JSON) | 否 | 编辑历史 |
+| `permissions` | String(JSON) | 否 | 授权用户ID列表 |
 
 **后端 DTO**: `ProjectCreateDTO`
 
@@ -446,7 +481,7 @@
 
 ## API-27 DELETE /api/v1/projects/{id}
 
-**功能**: 校验权限、保留期和关联导出任务后永久删除
+**功能**: 校验权限后软删除项目。后端写入 `deleted_at`，项目从普通查询中隐藏，页面和版本历史会保留，可通过 API-26 恢复。
 
 **路径参数**: `id` — 项目ID
 
@@ -518,7 +553,7 @@
 
 ## API-31 POST /api/v1/projects/{id}/versions
 
-**功能**: 保存不可变项目版本并返回版本编号
+**功能**: 保存不可变项目版本并返回版本编号。后端会把当前项目元数据和页面列表写入 `ws_version.snapshot_data`，用于后续恢复。
 
 **路径参数**: `id` — 项目ID
 
@@ -547,7 +582,16 @@
 
 **后端 DTO**: `PageQuery { page, size }`
 
-**响应 VO**: `Result<PageResult<{version_id, version_number, description, created_at}>>`
+**响应 VO**: `Result<PageResult<VersionVO>>`
+
+| VersionVO 字段 | 类型 | 说明 |
+|---|---|---|
+| `version_id` | int | 版本记录ID |
+| `version_number` | int | 项目内版本号 |
+| `description` | String | 版本说明 |
+| `snapshot_data` | String(JSON) | 版本快照，包含项目元数据和页面列表 |
+| `created_by` | Integer | 创建人ID |
+| `created_at` | LocalDateTime | 创建时间 |
 
 ---
 
@@ -568,7 +612,7 @@
 
 ## API-34 POST /api/v1/projects/{id}/versions/{versionId}/restore
 
-**功能**: 基于历史版本创建新的当前版本，不修改原历史记录
+**功能**: 基于历史版本快照恢复项目元数据和页面列表，并创建新的当前版本号，不修改原历史记录。
 
 **路径参数**: `id` — 项目ID, `versionId` — 源版本ID
 
@@ -848,7 +892,12 @@
 | `file_status` | String | 文件状态: `available`/`expired`/`cleaned` |
 | `quality_report` | String(JSON) | 质量报告 |
 | `error_msg` | String | 错误信息 |
+| `progress` | Integer | 任务进度: 0-100 |
+| `retry_count` | Integer | 重试次数 |
+| `worker_id` | String | 执行节点标识 |
+| `started_at` | LocalDateTime | 开始时间 |
 | `created_at` | LocalDateTime | 创建时间 |
+| `updated_at` | LocalDateTime | 更新时间 |
 | `completed_at` | LocalDateTime | 完成时间 |
 
 ---
@@ -1200,8 +1249,9 @@
 
 ## API-84 POST /api/v1/admin/public-resources/uploads
 **功能**: 创建公共资源上传会话。该接口只创建 MySQL 记录和 OSS 上传 URL，资源状态为待完成，Python 此时不会解析。
-**请求体 (JSON)**: resource_type(**是**), title(**是**), file_url(**是**), file_size(**是**)
-**后端 DTO**: `ResourceDTO { resource_type, title, subject, grade, file_url, template_data, thumbnail, description, status }`
+**请求体 (JSON)**: resource_type(**是**), title(**是**), file_name(建议传), file_type(建议传), file_size(**是**)
+**后端 DTO**: `ResourceDTO { resource_type, title, subject, grade, file_name, file_type, file_url, template_data, thumbnail, description, status }`
+**说明**: `resource_type` 是业务分类，不是文件类型。前端应传 `file_name/file_type`，Java 会保留 OSS objectKey 后缀，并在完成上传后把真实 `file_type` 传给 Python，避免公共资源入库时被识别为 `other`。
 **响应 VO**: `Result<{upload_id, upload_url, expires_at}>`
 
 ---
@@ -1245,14 +1295,14 @@
 ---
 
 ## API-89-1 POST /api/v1/admin/public-resources/ai-index/bootstrap
-**功能**: 初始化或修复 Python 资源索引库。Java 遍历 MySQL 中所有 `adm_resource.status=1` 的公共资源，以及 `res_material.status=1 AND allow_ai=1` 的个人资源，批量推送给 Python。Python 侧保证幂等，同一资源默认只解析保存一次。
+**功能**: 初始化或修复 Python 资源索引库。Java 遍历 MySQL 中所有 `adm_resource.status=1` 的公共资源，以及 `res_material.status=1 AND allow_ai=1` 的个人资源，批量推送给 Python。Python 侧保证幂等，同一资源默认只解析保存一次。公共资源的 `adm_resource.resource_type` 是业务分类，Java 会额外根据 `file_url` 后缀推断真实 `file_type` 后传给 Python。
 
 **查询参数**: `force_reparse`，Boolean，默认 `false`。为 `true` 时即使资源已索引也会重新下载 URL 并解析。
 
 **资源ID约定**:
 | 资源来源 | Python resource_id 格式 | MySQL 表 | 说明 |
 |---|---|---|---|
-| 公共资源 | `public:{adm_resource.id}` | `adm_resource` | metadata 包含 `uploaded_by/resource_id/available/file_url/mysql_table` |
+| 公共资源 | `public:{adm_resource.id}` | `adm_resource` | metadata 包含 `uploaded_by/resource_id/available/file_url/mysql_table/resource_type/detected_file_type` |
 | AI可用个人资源 | `personal:{res_material.id}` | `res_material` | metadata 包含 `owner_user_id/uploaded_by/allow_ai/available/file_url/mysql_table` |
 
 **响应 VO**: `Result<{total, indexed, skipped, failed, results}>`
@@ -1445,13 +1495,20 @@
 |---|---|---|
 | `id` | long | 日志ID |
 | `user_id` | Integer | 操作者ID |
-| `log_type` | String | 日志类型: `operation`/`download`/`browse`/`audit` |
+| `log_type` | String | 日志类型: `operation`/`download`/`browse`/`audit`/`system` |
 | `module` | String | 所属模块 |
 | `action` | String | 操作动作 |
 | `target_type` | String | 目标类型 |
 | `target_id` | Integer | 目标ID |
 | `detail` | String(JSON) | 详细信息 |
 | `ip` | String | IP地址 |
+| `request_id` | String | 请求ID，来自 `X-Request-Id` |
+| `method` | String | HTTP方法 |
+| `path` | String | 请求路径 |
+| `user_agent` | String | User-Agent |
+| `status` | String | 处理状态 |
+| `error_message` | String | 错误信息 |
+| `duration_ms` | Integer | 耗时毫秒 |
 | `created_at` | LocalDateTime | 创建时间 |
 
 ---
@@ -1561,19 +1618,23 @@
 
 # 十五、Python PPT 生成服务
 
-> 说明: Python 服务主要承接 AI 大纲生成、整套 PPT 制作和单页 PPT 修改。返回的 PPT 页面内容均为 HTML 字符串，Java 后端可作为业务网关转发调用，也可由前端在受信任场景下直接调用。
+> 说明: Python 服务主要承接 AI 大纲生成、整套 PPT 制作、整套课件迭代修改和单页 PPT 修改。返回的 PPT 页面内容均为 HTML 字符串，Java 后端可作为业务网关转发调用，也可由前端在受信任场景下直接调用。
 > 建议基础路径: `/api/v1/python`
-> 当前 A12-PY 已实现接口: 健康检查、资料上传、模板列表、大纲生成、对话式 SSE 大纲生成、对话会话查询、教师画像查询、大纲修改/重生成、整套 PPT 生成、单页 PPT 修改、HTML 校验、PPTX 导出。
-> 质量策略: 整套 PPT 生成采用 LandPPT 标准高质量链路，包括模板风格基因提取、全局视觉宪法、每页创意 brief、单页 HTML 生成、HTML 清理校验和多轮修复重试。未配置 `OPENAI_API_KEY` 时仅使用本地 fallback 模板，质量不能等同 LandPPT AI 生成效果。
+> 当前 A12-PY 已实现接口: 健康检查、语音输入 ASR、资料上传、模板列表、大纲生成、对话式 SSE 大纲生成、对话会话查询、教师画像查询、大纲修改/重生成、整套 PPT 生成、整套课件迭代修改、单页 PPT 修改、HTML 校验、高保真 PPTX 导出、Word 教案生成、DOCX 导出、动画/小游戏 HTML5 互动模块生成。
+> 质量策略: 整套 PPT 生成采用 LandPPT 标准高质量链路，包括模板风格基因提取、全局视觉宪法、每页创意 brief、单页 HTML 生成、HTML 清理校验和多轮修复重试。未配置 `OPENAI_API_KEY` 时仅使用本地 fallback 模板，质量不能等同 AI 生成效果。
 
 **调用顺序建议**
 1. 先调用 API-134 获取模板列表，前端让用户选择 `templates[n].theme`
-2. 如果用户上传 PDF/Word/TXT，先调用 API-135，保存返回的 `resource_id`
-3. 推荐调用 API-137A 进行对话式 SSE 大纲生成；如果前端不需要多轮澄清，也可以调用 API-136 一次性生成
-4. 用户修改大纲后可直接传给下一步；如果要让 AI 按新要求重生成/修订大纲，调用 API-137
-5. 然后调用 API-138，把 API-136、API-137 或 API-137A 返回的 `data.outline` 原样放入 `outline`，并传入前端选中的 `theme`
-6. 如果用户要改某一页，调用 API-139，把该页 `html` 放入 `current_html`
-7. 用户在线编辑完成后，调用 API-141 导出 PPTX 下载文件
+2. 如果用户使用语音输入，先调用 API-134A 得到转写文本，再作为对话 `message` 或普通大纲要求提交
+3. 如果用户上传 PDF/Word/PPT/图片/视频/音频/TXT，先调用 API-135，保存返回的 `resource_id`
+4. 推荐调用 API-137A 进行对话式 SSE 大纲生成；如果前端不需要多轮澄清，也可以调用 API-136 一次性生成
+5. 用户修改大纲后可直接传给下一步；如果要让 AI 按新要求重生成/修订大纲，调用 API-137
+6. 调用 API-142 生成配套 Word 教案 JSON，前端可预览和编辑；确认后调用 API-143 导出 DOCX
+7. 如果用户要求动画/小游戏，调用 API-144 生成 HTML5 互动模块，再作为新增页或某页素材插入课件
+8. 然后调用 API-138，把 API-136、API-137 或 API-137A 返回的 `data.outline` 原样放入 `outline`，并传入前端选中的 `theme`
+9. 如果用户要整体修改课件，调用 API-139A，把当前整套 `slides` 和修改要求传入
+10. 如果用户只要改某一页，调用 API-139，把该页 `html` 放入 `current_html`
+11. 用户在线编辑完成后，调用 API-141 导出 PPTX 下载文件，默认 `high_fidelity`
 
 **主题 theme 可填值**
 `theme` 应从 API-134 返回的模板列表中选择，建议直接使用 `theme` 字段（即模板 JSON 文件名，不含 `.json`）。不传默认使用 `素白风`。
@@ -1594,8 +1655,36 @@
 | `service` | String | 服务名称，固定建议为 `a12-python-ppt-service` |
 | `version` | String | Python 服务版本号 |
 | `model_ready` | Boolean | AI 模型或外部模型网关是否可用 |
+| `asr_model` | String | 语音转写模型，默认 `whisper-1` |
 | `quality_pipeline` | Boolean | 是否启用 LandPPT 高质量生成流水线 |
 | `max_html_retries` | int | 单页 HTML 最大修复重试次数 |
+
+---
+
+## API-134A POST /api/v1/python/audio/asr
+
+**功能**: 语音输入 ASR。前端上传教师语音，Python 调用 Whisper 兼容接口转写为文本，前端可把返回文本填入对话框或直接作为 API-137A 的 `message`。
+
+**请求类型**: `multipart/form-data`
+
+| 字段 | 类型 | 必填 | 说明 |
+|---|---|---|---|
+| `file` | File | **是** | 音频文件，建议 `wav/mp3/m4a/webm` |
+| `language` | String | 否 | 语音语言，例如 `zh`；不传则模型自动识别 |
+
+**响应 VO**: `Result<AsrVO>`
+
+| AsrVO 字段 | 类型 | 说明 |
+|---|---|---|
+| `text` | String | 转写文本 |
+| `language` | String | 请求指定的语言 |
+| `model` | String | ASR 模型，默认 `whisper-1`，可通过 Python `.env` 的 `ASR_MODEL` 调整 |
+| `status` | String | `completed/unavailable/failed` |
+| `error_message` | String | 失败原因 |
+| `filename` | String | 原始文件名 |
+| `content_type` | String | MIME 类型 |
+
+**Java 编排说明**: 前端语音对话推荐调用 API-13A，由 Java 调用 `PythonPptClient.transcribeAudio(...)` 完成 ASR 后继续进入 AI 对话；本 Python 接口保留为细粒度能力接口和内部调试接口。
 
 ---
 
@@ -1626,13 +1715,13 @@
 
 ## API-135 POST /api/v1/python/resources/upload
 
-**功能**: 上传生成大纲前的参考资料，支持 PDF、Word、TXT/Markdown 等文件。接口会保存文件并抽取文本，返回 `resource_id` 供大纲生成时使用。
+**功能**: 上传生成大纲前的参考资料，支持 PDF、Word、PPT、图片、视频、音频、TXT/Markdown 等文件。接口会保存文件并执行多模态解析，返回 `resource_id` 供大纲生成时使用。
 
 **请求类型**: `multipart/form-data`
 
 | 字段 | 类型 | 必填 | 说明 |
 |---|---|---|---|
-| `file` | File | **是** | 用户上传的 PDF/Word/TXT 文件 |
+| `file` | File | **是** | 用户上传的 PDF/Word/PPT/图片/视频/音频/TXT 文件 |
 
 **响应 VO**: `Result<ResourceUploadVO>`
 
@@ -1657,7 +1746,7 @@
 | `resource_id` | String | **是** | MySQL 资源 ID，例如 `12` |
 | `title` | String | **是** | 资源标题 |
 | `file_url` | String | **是** | MySQL 保存的文件 URL |
-| `file_type` | String | 否 | `pdf/word/txt/...` |
+| `file_type` | String | 否 | `pdf/word/ppt/txt/image/audio/video`；不传或传业务类型时，Python 会根据 `file_url` 后缀兜底识别 |
 | `file_size` | long | 否 | 文件大小，用于判断是否变化 |
 | `uploaded_by` | String | 否 | 上传人 ID |
 | `owner_user_id` | String | 否 | 个人资源所属用户 ID |
@@ -1667,6 +1756,19 @@
 | `force_reparse` | Boolean | 否 | 是否强制重新解析 |
 
 **metadata 固定包含**: `source/source_type/resource_id/resource_key/mysql_table/uploaded_by/owner_user_id/available/allow_ai/file_url/file_type/file_size/title`
+
+**多模态解析能力**:
+| 类型 | 解析方式 | 输出到 RAG 的内容 |
+|---|---|---|
+| `pdf` | PyPDF2 文本抽取 | 按页文本 |
+| `word` | python-docx | 段落、表格文本 |
+| `ppt` | python-pptx + 视觉模型 | 每页文本、PPT 内嵌图片视觉摘要 |
+| `image` | OCR + 视觉模型 | 图片文字、图表/场景/知识点摘要 |
+| `video` | OpenCV/ffmpeg 抽关键帧 + 视觉模型 | 关键帧画面文字、场景和知识点摘要 |
+| `audio` | Whisper 兼容音频转写 | 音频转写文本 |
+| `txt` | 文本读取 | 原始文本 |
+
+**解析 metadata 额外包含**: `parse.modality`、`parse.parser`、`parse.normalized_file_type`、`parse.text_length`，PPT/视频还会包含 `slide_count/image_count/keyframe_count/vision_summary_count` 等统计字段。
 
 **响应 VO**: `Result<{resource_key, status, text_length, chunk_count, error_message}>`
 
@@ -2067,6 +2169,40 @@ while (true) {
 
 ---
 
+## API-139A POST /api/v1/python/presentations/modify
+
+**功能**: 整套课件级别的迭代修改。用于教师提出“整套统一换风格”“整体减少文字”“增加一页案例”“删除第 3 页”“把活动页提前”“统一所有页字体和配色”等全局或跨页修改要求。Python 会先生成课件级修改计划，再并发修改受影响页面，返回新的整套 slides。
+
+**请求体 (JSON)**
+| 字段 | 类型 | 必填 | 说明 |
+|---|---|---|---|
+| `presentation_id` | String | 否 | 当前课件 ID |
+| `title` | String | 否 | 课件标题，默认 `A12 PPT` |
+| `slides` | List<Object> | **是** | 当前整套 PPT slides，每项至少包含 `slide_no/title/html` |
+| `instruction` | String | **是** | 整套修改要求，例如 `整体减少文字，统一成素白风，并在第4页后增加一个生活案例页` |
+| `outline` | Object(JSON) | 否 | 当前大纲，用于理解页面逻辑和新增页内容 |
+| `theme` | String | 否 | 当前主题，建议传 API-134 返回的 `theme` |
+| `keep_style` | Boolean | 否 | 是否尽量保持当前风格，默认 `true` |
+| `max_modified_slides` | int | 否 | 限制最多重写多少页，适合快速预览；不传则由模型决定 |
+
+**响应 VO**: `Result<PresentationModifyVO>`
+
+| PresentationModifyVO 字段 | 类型 | 说明 |
+|---|---|---|
+| `presentation_id` | String | 课件 ID |
+| `title` | String | 修改后的标题 |
+| `slide_count` | int | 修改后页数 |
+| `slides` | List<Object> | 修改后的整套 slides，可直接用于前端预览/在线编辑/导出 PPTX |
+| `html` | String | 合并后的整套 HTML 播放容器 |
+| `change_summary` | String | 整套修改摘要 |
+| `operations` | List<Object> | 修改计划，包含 `modify/add/delete/reorder` 操作 |
+| `modified_slide_nos` | List<int> | 实际重写 HTML 的页码 |
+| `metadata` | Object(JSON) | 模型、主题、风格保持等信息 |
+
+**Java 代理说明**: `PythonPptClient.modifyPresentation(...)` 已提供 JSON 调用方法。
+
+---
+
 ## API-140 POST /api/v1/python/presentations/html/validate
 
 **功能**: 校验 PPT HTML 字符串是否满足前端渲染要求
@@ -2106,7 +2242,7 @@ while (true) {
 
 ## API-141 POST /api/v1/python/presentations/export/pptx
 
-**功能**: 将前端最终确认/编辑后的 HTML PPT slides 导出为 PPTX 文件下载
+**功能**: 将前端最终确认/编辑后的 HTML PPT slides 导出为 PPTX 文件下载。默认使用高保真导出：通过浏览器把每页 HTML 渲染为整页图片，再写入 PPTX，以最大程度保留 HTML 视觉效果、复杂 CSS、背景、图表和互动模块的静态首屏。若浏览器运行时不可用，会自动降级为可编辑文本版导出。
 
 **请求体 (JSON)**
 | 字段 | 类型 | 必填 | 说明 |
@@ -2114,8 +2250,99 @@ while (true) {
 | `title` | String | 否 | PPT 标题，默认 `A12 PPT` |
 | `filename` | String | 否 | 下载文件名，例如 `光合作用.pptx` |
 | `slides` | List<Object> | **是** | 最终 slides 列表，每项至少包含 `html`，建议包含 `title` |
+| `fidelity` | String | 否 | `high_fidelity` 或 `editable_text`，默认 `high_fidelity` |
 
 **响应**: `application/vnd.openxmlformats-officedocument.presentationml.presentation` 文件流
+
+**导出模式说明**:
+| fidelity | 说明 | 优点 | 限制 |
+|---|---|---|---|
+| `high_fidelity` | Chromium 渲染 HTML 截图，每页作为整页图片写入 PPTX | 视觉最接近前端 HTML 预览，适合最终交付 | PPTX 内文字不可逐字编辑，动画/小游戏导出为静态首屏 |
+| `editable_text` | 从 HTML 抽取标题和文本，用 PowerPoint 文本框重建 | 文本可编辑 | 视觉还原度较低 |
+
+**部署说明**: 高保真导出依赖 Python 包 `playwright` 和 Chromium 运行时。部署后需执行 `python -m playwright install chromium`。如果没有安装浏览器，接口不会失败，会退回 `editable_text`。
+
+---
+
+## API-142 POST /api/v1/python/lesson-plans/generate
+
+**功能**: 根据已生成/已编辑的大纲和 PPT slides 生成配套 Word 教案 JSON。前端可先展示给教师在线修改，再调用 API-143 导出 `.docx`。
+
+**请求体 (JSON)**
+| 字段 | 类型 | 必填 | 说明 |
+|---|---|---|---|
+| `title` | String | **是** | 课程/教案标题 |
+| `subject` | String | 否 | 学科 |
+| `grade` | String | 否 | 年级 |
+| `duration_minutes` | int | 否 | 课时分钟数 |
+| `teaching_goals` | String | 否 | 教学目标 |
+| `outline` | Object(JSON) | 否 | API-136/API-137A 返回的 `outline` |
+| `slides` | List<Object> | 否 | API-136/API-137A 返回的 `slides` 或最终 PPT slides 摘要 |
+| `requirements` | String | 否 | 对教案的额外要求，例如“增加课堂活动和分层作业” |
+| `reference_text` | String | 否 | 参考资料文本或教师补充说明 |
+| `language` | String | 否 | 默认 `zh-CN` |
+
+**响应 VO**: `Result<LessonPlanGenerateVO>`
+
+| LessonPlanGenerateVO 字段 | 类型 | 说明 |
+|---|---|---|
+| `lesson_plan_id` | String | Python 生成的教案 ID |
+| `title` | String | 教案标题 |
+| `lesson_plan` | Object(JSON) | 可编辑教案结构 |
+
+**lesson_plan 推荐结构**: `title/subject/grade/duration_minutes/teaching_goals/key_points/difficult_points/teaching_methods/teaching_resources/lesson_process/classroom_activities/blackboard_design/homework/assessment/reflection`。
+
+---
+
+## API-143 POST /api/v1/python/lesson-plans/export/docx
+
+**功能**: 将前端确认后的教案 JSON 导出为标准 `.docx` 文件下载。
+
+**请求体 (JSON)**
+| 字段 | 类型 | 必填 | 说明 |
+|---|---|---|---|
+| `title` | String | 否 | 文件标题，默认 `A12 教案` |
+| `filename` | String | 否 | 下载文件名，例如 `光合作用教案.docx` |
+| `lesson_plan` | Object(JSON) | **是** | API-142 返回或前端编辑后的教案 JSON |
+
+**响应**: `application/vnd.openxmlformats-officedocument.wordprocessingml.document` 文件流
+
+**Java 代理说明**: `PythonPptClient.generateLessonPlan(...)` 和 `PythonPptClient.exportLessonPlanDocx(...)` 已提供调用方法；Java 可在导出任务中保存返回的二进制文件，也可由前端直接调 Python 下载。
+
+---
+
+## API-144 POST /api/v1/python/interactive-modules/generate
+
+**功能**: 专门生成动画/互动小游戏 HTML5 模块。用于满足“生成知识点相关动画创意、互动小游戏”等要求。返回的 `html` 可作为独立页面预览，也可以插入某一页 PPT HTML 中；导出 PPTX 时高保真模式会保留该模块静态首屏。
+
+**请求体 (JSON)**
+| 字段 | 类型 | 必填 | 说明 |
+|---|---|---|---|
+| `title` | String | **是** | 模块标题 |
+| `topic` | String | **是** | 知识主题，例如 `光合作用过程` |
+| `module_type` | String | 否 | `animation` / `quiz_game` / `matching_game` / `timeline_game` / `simulation`，默认 `animation` |
+| `subject` | String | 否 | 学科 |
+| `grade` | String | 否 | 年级 |
+| `knowledge_points` | List<String> | 否 | 需要表现或考察的知识点 |
+| `requirements` | String | 否 | 额外要求，例如 `适合小组抢答，带计分和重置按钮` |
+| `theme` | String | 否 | 视觉主题，建议与 PPT 模板一致 |
+| `embed_mode` | String | 否 | `standalone` 或 `slide_fragment`，默认 `standalone` |
+| `language` | String | 否 | 默认 `zh-CN` |
+
+**响应 VO**: `Result<InteractiveModuleVO>`
+
+| InteractiveModuleVO 字段 | 类型 | 说明 |
+|---|---|---|
+| `module_id` | String | 互动模块 ID |
+| `title` | String | 模块标题 |
+| `module_type` | String | 模块类型 |
+| `topic` | String | 知识主题 |
+| `html` | String | 完整 HTML5 模块，含 CSS/JS，可直接预览或嵌入 PPT 页 |
+| `embed_mode` | String | 嵌入模式 |
+| `usage_suggestions` | List<String> | 课堂使用建议 |
+| `metadata` | Object(JSON) | 模型、主题、是否独立页等信息 |
+
+**Java 代理说明**: `PythonPptClient.generateInteractiveModule(...)` 已提供 JSON 调用方法。
 
 ---
 

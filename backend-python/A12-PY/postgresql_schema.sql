@@ -2,7 +2,12 @@
 -- A12-PY PostgreSQL schema
 -- Recommended database/account: postgres
 -- Default DSN example: postgresql://postgres:postgres@127.0.0.1:5432/postgres
+-- pgvector is required for real RAG vector similarity retrieval.
+-- Default embedding dimension is 1536 for text-embedding-3-small. If you use
+-- text-embedding-3-large, set EMBEDDING_DIMENSIONS=3072 and adjust vector(1536).
 -- =============================================
+
+CREATE EXTENSION IF NOT EXISTS vector;
 
 DROP TABLE IF EXISTS a12_resource_index_chunk CASCADE;
 DROP TABLE IF EXISTS a12_resource_index CASCADE;
@@ -170,8 +175,7 @@ CREATE INDEX idx_a12_resource_index_metadata_gin ON a12_resource_index USING GIN
 
 -- =============================================
 -- Resource chunks for RAG retrieval
--- This implementation stores chunks and metadata. It can be replaced by pgvector later
--- by adding an embedding vector column without changing Java synchronization contracts.
+-- embedding_vector uses pgvector cosine similarity retrieval.
 -- =============================================
 CREATE TABLE a12_resource_index_chunk (
   chunk_id TEXT PRIMARY KEY,
@@ -180,6 +184,7 @@ CREATE TABLE a12_resource_index_chunk (
   resource_id TEXT NOT NULL,
   chunk_index INTEGER NOT NULL,
   content TEXT NOT NULL,
+  embedding_vector vector(1536) DEFAULT NULL,
   metadata JSONB NOT NULL DEFAULT '{}'::jsonb,
   created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
 );
@@ -188,3 +193,6 @@ COMMENT ON TABLE a12_resource_index_chunk IS 'Parsed resource chunks used by RAG
 
 CREATE INDEX idx_a12_resource_chunk_resource ON a12_resource_index_chunk (resource_key, chunk_index);
 CREATE INDEX idx_a12_resource_chunk_metadata_gin ON a12_resource_index_chunk USING GIN (metadata);
+CREATE INDEX idx_a12_resource_chunk_embedding_hnsw
+  ON a12_resource_index_chunk
+  USING hnsw (embedding_vector vector_cosine_ops);

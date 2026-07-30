@@ -49,7 +49,7 @@ public class ProjectServiceImpl implements ProjectService {
     @Override
     @Transactional
     public ProjectVO createProject(ProjectCreateDTO dto, Integer userId) {
-        log.info("createProject called");
+        log.info("createProject userId={}, projectName={}, projectType={}", userId, dto.getProject_name(), dto.getProject_type());
         if (dto.getProject_name() == null || dto.getProject_name().isBlank())
             throw new RuntimeException("项目名称不能为空");
         if (dto.getProject_type() == null || dto.getProject_type().isBlank())
@@ -61,6 +61,7 @@ public class ProjectServiceImpl implements ProjectService {
         project.setStatus(dto.getStatus() != null ? dto.getStatus() : "draft");
         project.setCurrent_version(1);
         if (projectMapper.insert(project) <= 0) throw new RuntimeException("创建项目失败");
+        log.info("createProject success userId={}, projectId={}", userId, project.getId());
         businessLogService.record("operation", "project", "create", "project", project.getId(),
                 Map.of("project_name", project.getProject_name(), "project_type", project.getProject_type()));
 
@@ -71,7 +72,7 @@ public class ProjectServiceImpl implements ProjectService {
 
     @Override
     public PageResult<ProjectVO> listProjects(ProjectQueryDTO dto, Integer userId) {
-        log.info("listProjects called");
+        log.info("listProjects userId={}, status={}, page={}, size={}", userId, dto.getStatus(), dto.getPage(), dto.getSize());
         dto.setUser_id(userId);
         PageHelper.startPage(dto.getPage(), dto.getSize());
         List<Ws_Project> list = projectMapper.findByQuery(dto);
@@ -88,7 +89,7 @@ public class ProjectServiceImpl implements ProjectService {
 
     @Override
     public ProjectVO getProject(String id, Integer userId) {
-        log.info("getProject called");
+        log.info("getProject userId={}, projectId={}", userId, id);
         Ws_Project project = projectMapper.findById(Integer.valueOf(id));
         if (project == null) throw new RuntimeException("项目不存在");
         checkPermission(project, userId);
@@ -98,20 +99,24 @@ public class ProjectServiceImpl implements ProjectService {
     @Override
     @Transactional
     public ProjectVO updateProject(String id, ProjectCreateDTO dto, Integer userId) {
-        log.info("updateProject called");
+        log.info("updateProject userId={}, projectId={}, requestVersion={}", userId, id, dto.getCurrent_version());
         Ws_Project p = findProject(id);
         checkPermission(p, userId);
         checkEditable(p);
         if (dto.getCurrent_version() == null || dto.getCurrent_version() != p.getCurrent_version())
             throw new RuntimeException("版本冲突，请刷新后重试");
+        int expectedVersion = p.getCurrent_version();
         if (dto.getProject_name() != null) p.setProject_name(dto.getProject_name());
         if (dto.getProject_type() != null) p.setProject_type(dto.getProject_type());
         if (dto.getStatus() != null) p.setStatus(dto.getStatus());
         if (dto.getSnapshots() != null) p.setSnapshots(dto.getSnapshots());
         if (dto.getEdit_history() != null) p.setEdit_history(dto.getEdit_history());
         if (dto.getPermissions() != null) p.setPermissions(dto.getPermissions());
-        p.setCurrent_version(p.getCurrent_version() + 1);
-        projectMapper.update(p);
+        p.setCurrent_version(expectedVersion + 1);
+        if (projectMapper.updateWithVersion(p, expectedVersion) <= 0) {
+            throw new RuntimeException("鐗堟湰鍐茬獊锛岃鍒锋柊鍚庨噸璇?");
+        }
+        log.info("updateProject success userId={}, projectId={}, newVersion={}", userId, p.getId(), p.getCurrent_version());
         businessLogService.record("operation", "project", "update", "project", p.getId(),
                 Map.of("current_version", p.getCurrent_version()));
         return toProjectVO(p);
@@ -120,7 +125,7 @@ public class ProjectServiceImpl implements ProjectService {
     @Override
     @Transactional
     public ProjectVO addPermission(String id, ProjectPermissionDTO dto, Integer userId) {
-        log.info("addPermission called");
+        log.info("addPermission userId={}, projectId={}, targetUserId={}", userId, id, dto.getUser_id());
         Ws_Project p = findProject(id);
         // 仅项目拥有者可添加授权
         if (p.getUser_id() != userId) throw new RuntimeException("仅项目创建者可添加授权");
@@ -149,7 +154,7 @@ public class ProjectServiceImpl implements ProjectService {
     @Override
     @Transactional
     public ProjectVO copyProject(String id, ProjectCopyDTO dto, Integer userId) {
-        log.info("copyProject called");
+        log.info("copyProject userId={}, sourceProjectId={}, newName={}", userId, id, dto.getNew_name());
         Ws_Project src = findProject(id);
         checkPermission(src, userId);
         Ws_Project np = new Ws_Project();
@@ -167,6 +172,7 @@ public class ProjectServiceImpl implements ProjectService {
             newPage.setProject_id(np.getId());
             pageMapper.insert(newPage);
         }
+        log.info("copyProject success userId={}, sourceProjectId={}, newProjectId={}", userId, src.getId(), np.getId());
         businessLogService.record("operation", "project", "copy", "project", np.getId(),
                 Map.of("source_project_id", src.getId()));
         return toProjectVO(np);
@@ -177,7 +183,7 @@ public class ProjectServiceImpl implements ProjectService {
     @Override
     @Transactional
     public ProjectVO archiveProject(String id, Integer userId) {
-        log.info("archiveProject called");
+        log.info("archiveProject userId={}, projectId={}", userId, id);
         Ws_Project p = findProject(id);
         checkPermission(p, userId);
         projectMapper.updateStatus(p.getId(), "archived");
@@ -189,11 +195,13 @@ public class ProjectServiceImpl implements ProjectService {
     @Override
     @Transactional
     public ProjectVO restoreProject(String id, Integer userId) {
-        log.info("restoreProject called");
-        Ws_Project p = findProject(id);
+        log.info("restoreProject userId={}, projectId={}", userId, id);
+        Ws_Project p = projectMapper.findByIdIncludingDeleted(Integer.valueOf(id));
+        if (p == null) throw new RuntimeException("椤圭洰涓嶅瓨鍦?");
         checkPermission(p, userId);
-        projectMapper.updateStatus(p.getId(), "draft");
+        projectMapper.restoreById(p.getId(), "draft");
         p.setStatus("draft");
+        p.setDeleted_at(null);
         businessLogService.record("operation", "project", "restore", "project", p.getId());
         return toProjectVO(p);
     }
@@ -201,19 +209,17 @@ public class ProjectServiceImpl implements ProjectService {
     @Override
     @Transactional
     public void deleteProject(String id, Integer userId) {
-        log.info("deleteProject called");
+        log.info("deleteProject userId={}, projectId={}", userId, id);
         Ws_Project p = findProject(id);
         checkPermission(p, userId);
         int projectId = p.getId();
-        pageMapper.deleteByProjectId(projectId);
-        versionMapper.deleteByProjectId(projectId);
-        projectMapper.deleteById(projectId);
+        projectMapper.softDeleteById(projectId);
         businessLogService.record("operation", "project", "delete", "project", projectId);
     }
 
     @Override
     public PageVO aiRevision(String id, AiRevisionDTO dto, Integer userId) {
-        log.info("aiRevision called");
+        log.info("aiRevision userId={}, projectId={}", userId, id);
         Ws_Project p = findProject(id);
         checkPermission(p, userId);
         checkEditable(p);
@@ -224,7 +230,7 @@ public class ProjectServiceImpl implements ProjectService {
     @Override
     @Transactional
     public PageVO addComponent(String id, PageDTO dto, Integer userId) {
-        log.info("addComponent called");
+        log.info("addComponent userId={}, projectId={}, pageType={}", userId, id, dto.getPage_type());
         Ws_Project p = findProject(id);
         checkPermission(p, userId);
         checkEditable(p);
@@ -241,7 +247,7 @@ public class ProjectServiceImpl implements ProjectService {
     @Override
     @Transactional
     public PageVO updateComponent(String id, String componentId, PageDTO dto, Integer userId) {
-        log.info("updateComponent called");
+        log.info("updateComponent userId={}, projectId={}, componentId={}", userId, id, componentId);
         Ws_Project p = findProject(id);
         checkPermission(p, userId);
         checkEditable(p);
@@ -260,6 +266,7 @@ public class ProjectServiceImpl implements ProjectService {
     @Override
     @Transactional
     public Map<String, Object> saveVersion(String id, VersionCreateDTO dto, Integer userId) {
+        log.info("saveVersion userId={}, projectId={}", userId, id);
         Ws_Project p = findProject(id);
         checkPermission(p, userId);
         checkEditable(p);
@@ -268,7 +275,10 @@ public class ProjectServiceImpl implements ProjectService {
         v.setProject_id(Integer.valueOf(id));
         v.setVersion_number(nextNum);
         v.setDescription(dto.getDescription());
+        v.setSnapshot_data(buildProjectSnapshot(p));
+        v.setCreated_by(userId);
         versionMapper.insert(v);
+        log.info("saveVersion success userId={}, projectId={}, versionId={}, versionNumber={}", userId, id, v.getId(), v.getVersion_number());
         businessLogService.record("operation", "project", "save_version", "project_version", v.getId(),
                 Map.of("project_id", Integer.valueOf(id), "version_number", v.getVersion_number()));
         Map<String, Object> r = new HashMap<>();
@@ -279,7 +289,7 @@ public class ProjectServiceImpl implements ProjectService {
 
     @Override
     public PageResult<VersionVO> listVersions(String id, PageQuery pageQuery, Integer userId) {
-        log.info("listVersions called");
+        log.info("listVersions userId={}, projectId={}, page={}, size={}", userId, id, pageQuery.getPage(), pageQuery.getSize());
         Ws_Project p = findProject(id);
         checkPermission(p, userId);
         PageHelper.startPage(pageQuery.getPage(), pageQuery.getSize());
@@ -291,6 +301,8 @@ public class ProjectServiceImpl implements ProjectService {
             vo.setVersion_id(v.getId());
             vo.setVersion_number(v.getVersion_number());
             vo.setDescription(v.getDescription());
+            vo.setSnapshot_data(v.getSnapshot_data());
+            vo.setCreated_by(v.getCreated_by());
             vo.setCreated_at(v.getCreated_at());
             return vo;
         }).toList();
@@ -303,6 +315,7 @@ public class ProjectServiceImpl implements ProjectService {
 
     @Override
     public Map<String, Object> versionDiff(String id, String versionId, Integer compareVersionId, Integer userId) {
+        log.info("versionDiff userId={}, projectId={}, versionId={}, compareVersionId={}", userId, id, versionId, compareVersionId);
         Ws_Project p = findProject(id);
         checkPermission(p, userId);
         Ws_Version v1 = versionMapper.findById(Integer.valueOf(versionId));
@@ -318,11 +331,12 @@ public class ProjectServiceImpl implements ProjectService {
     @Override
     @Transactional
     public ProjectVO restoreVersion(String id, String versionId, Integer userId) {
-        log.info("restoreVersion called");
+        log.info("restoreVersion userId={}, projectId={}, versionId={}", userId, id, versionId);
         Ws_Project p = findProject(id);
         checkPermission(p, userId);
         Ws_Version v = versionMapper.findById(Integer.valueOf(versionId));
         if (v == null) throw new RuntimeException("版本不存在");
+        restoreSnapshot(p, v.getSnapshot_data());
         p.setCurrent_version(p.getCurrent_version() + 1);
         projectMapper.update(p);
         businessLogService.record("operation", "project", "restore_version", "project", p.getId(),
@@ -358,4 +372,45 @@ public class ProjectServiceImpl implements ProjectService {
     private ProjectVO toProjectVO(Ws_Project p) {
         ProjectVO vo = new ProjectVO(); BeanUtil.copyProperties(p, vo); return vo;
     }
+
+    private String buildProjectSnapshot(Ws_Project project) {
+        Map<String, Object> projectData = new LinkedHashMap<>();
+        projectData.put("project_name", project.getProject_name());
+        projectData.put("project_type", project.getProject_type());
+        projectData.put("status", project.getStatus());
+        projectData.put("current_version", project.getCurrent_version());
+        projectData.put("snapshots", project.getSnapshots());
+        projectData.put("edit_history", project.getEdit_history());
+        projectData.put("permissions", project.getPermissions());
+
+        Map<String, Object> snapshot = new LinkedHashMap<>();
+        snapshot.put("project", projectData);
+        snapshot.put("pages", pageMapper.findByProjectId(project.getId()));
+        return JSONUtil.toJsonStr(snapshot);
+    }
+
+    private void restoreSnapshot(Ws_Project project, String snapshotData) {
+        if (snapshotData == null || snapshotData.isBlank()) return;
+        var snapshot = JSONUtil.parseObj(snapshotData);
+        var projectSnapshot = snapshot.getJSONObject("project");
+        if (projectSnapshot != null) {
+            project.setProject_name(projectSnapshot.getStr("project_name", project.getProject_name()));
+            project.setProject_type(projectSnapshot.getStr("project_type", project.getProject_type()));
+            project.setStatus(projectSnapshot.getStr("status", project.getStatus()));
+            project.setSnapshots(projectSnapshot.getStr("snapshots"));
+            project.setEdit_history(projectSnapshot.getStr("edit_history"));
+            project.setPermissions(projectSnapshot.getStr("permissions"));
+        }
+
+        var pages = snapshot.getJSONArray("pages");
+        if (pages == null) return;
+        pageMapper.deleteByProjectId(project.getId());
+        for (Object item : pages) {
+            Ws_Page page = JSONUtil.toBean(JSONUtil.parseObj(item), Ws_Page.class);
+            page.setId(0);
+            page.setProject_id(project.getId());
+            pageMapper.insert(page);
+        }
+    }
 }
+

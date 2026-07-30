@@ -3,6 +3,7 @@ import json
 import re
 from typing import Any, AsyncIterator, Literal, TypedDict
 
+from langchain_core.messages import AIMessage, BaseMessage, HumanMessage
 from langgraph.graph import END, START, StateGraph
 
 from ..llm import LLMClient
@@ -10,6 +11,7 @@ from ..models import OutlineChatStreamRequest, OutlineGenerateRequest
 from ..presentation import PPTGenerator
 from ..presentation.json_utils import extract_json
 from ..tools import rag_search, web_search
+from .message_utils import message_text, messages_to_dicts, normalize_messages
 from .postgres_store import postgres_memory_store
 from .session_store import outline_session_store
 
@@ -18,7 +20,7 @@ class OutlineChatState(TypedDict, total=False):
     user_id: str
     session_id: str
     request: OutlineChatStreamRequest
-    messages: list[dict[str, str]]
+    messages: list[BaseMessage]
     intent: dict[str, Any]
     teacher_profile: dict[str, Any] | None
     tool_context: dict[str, Any]
@@ -69,7 +71,7 @@ class OutlineChatWorkflow:
             "user_id": user_id,
             "session_id": session_id,
             "request": request,
-            "messages": saved.get("messages", []),
+            "messages": normalize_messages(saved.get("messages", [])),
             "intent": {**saved.get("intent", {}), **request.known_context},
             "outline": saved.get("outline", {}),
             "final_prompt": saved.get("final_prompt", ""),
@@ -109,7 +111,6 @@ class OutlineChatWorkflow:
 
             elif node_name == "build_prompt":
                 yield {"event": "stage", "data": {"name": "build_prompt", "message": "Built final outline prompt"}}
-                yield {"event": "prompt", "data": {"prompt": final_state.get("final_prompt", "")}}
 
             elif node_name == "generate_outline":
                 if final_state.get("error"):
@@ -152,9 +153,9 @@ class OutlineChatWorkflow:
         request = state["request"]
         user_id = state["user_id"]
         session_id = state["session_id"]
-        messages = list(state.get("messages", []))
-        messages.extend(message.model_dump() for message in request.history)
-        messages.append({"role": "user", "content": request.message})
+        messages = normalize_messages(state.get("messages", []))
+        messages.extend(HumanMessage(content=message.content) if message.role == "user" else AIMessage(content=message.content) for message in request.history)
+        messages.append(HumanMessage(content=request.message))
 
         outline_session_store.append_message(user_id, session_id, "user", request.message, {
             "resource_ids": request.resource_ids,
@@ -180,15 +181,15 @@ class OutlineChatWorkflow:
         updates: dict[str, Any] = {"messages": messages, "intent": intent}
         if question:
             updates["clarification_question"] = question
-            messages.append({"role": "assistant", "content": question})
+            messages.append(AIMessage(content=question))
         return updates
 
     async def _tools_node(self, state: OutlineChatState) -> dict[str, Any]:
         intent = state["intent"]
-        query = " ".join(str(intent.get(key, "")) for key in ["title", "subject", "grade", "requirements"])
+        query = self._build_rag_query(state)
         tool_context: dict[str, Any] = {}
         if intent.get("enable_rag") and intent.get("resource_ids"):
-            tool_context["rag"] = rag_search(list(intent.get("resource_ids") or []), query)
+            tool_context["rag"] = await rag_search(list(intent.get("resource_ids") or []), query)
         if intent.get("enable_web"):
             tool_context["web"] = await web_search(query, max_results=5)
         return {"tool_context": tool_context}
@@ -247,7 +248,7 @@ Requirements:
             return {"error": str(exc)}
 
     async def _memory_node(self, state: OutlineChatState) -> dict[str, Any]:
-        user_text = "\n".join(message["content"] for message in state.get("messages", []) if message.get("role") == "user")[-6000:]
+        user_text = "\n".join(message_text(message) for message in state.get("messages", []) if isinstance(message, HumanMessage))[-6000:]
         evaluation = await self._evaluate_teacher_style(user_text, state.get("intent", {}))
         if not evaluation.get("should_store"):
             return {"memory_result": {"stored": False, "reason": evaluation.get("reason", "No stable teacher-style preference found")}}
@@ -276,7 +277,7 @@ Requirements:
     def _after_generate(self, state: OutlineChatState) -> Literal["memory", "failed"]:
         return "failed" if state.get("error") else "memory"
 
-    async def _extract_intent_with_model(self, messages: list[dict[str, str]], known: dict[str, Any]) -> dict[str, Any]:
+    async def _extract_intent_with_model(self, messages: list[BaseMessage], known: dict[str, Any]) -> dict[str, Any]:
         if not self.llm.available:
             return {}
         prompt = f"""
@@ -287,7 +288,7 @@ Known fields:
 {json.dumps(known, ensure_ascii=False, default=str)}
 
 Conversation:
-{json.dumps(messages[-12:], ensure_ascii=False)}
+{json.dumps(messages_to_dicts(messages[-12:]), ensure_ascii=False)}
 
 Allowed fields:
 title, subject, grade, duration_minutes, teaching_goals, knowledge_points,
@@ -359,6 +360,24 @@ Do not invent uncertain fields.
         if isinstance(merged.get("knowledge_points"), str):
             merged["knowledge_points"] = [item.strip() for item in re.split(r"[，,、\n]", merged["knowledge_points"]) if item.strip()]
         return merged
+
+    def _build_rag_query(self, state: OutlineChatState) -> str:
+        intent = state.get("intent", {})
+        latest_user_text = ""
+        for message in reversed(state.get("messages", [])):
+            if isinstance(message, HumanMessage):
+                latest_user_text = message_text(message)
+                break
+        parts = [
+            latest_user_text,
+            str(intent.get("title") or ""),
+            str(intent.get("subject") or ""),
+            str(intent.get("grade") or ""),
+            str(intent.get("teaching_goals") or ""),
+            " ".join(str(item) for item in intent.get("knowledge_points") or []),
+            str(intent.get("requirements") or ""),
+        ]
+        return "\n".join(part for part in parts if part).strip()
 
     def _clarification_question(self, intent: dict[str, Any]) -> str:
         missing = []
@@ -442,7 +461,7 @@ Return strict JSON:
         return {
             "user_id": state["user_id"],
             "session_id": state["session_id"],
-            "messages": state.get("messages", []),
+            "messages": messages_to_dicts(state.get("messages", [])),
             "intent": state.get("intent", {}),
             "final_prompt": state.get("final_prompt", ""),
             "outline": state.get("outline", {}),

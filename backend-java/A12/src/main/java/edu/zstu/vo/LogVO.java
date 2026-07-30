@@ -22,5 +22,12 @@ public class LogVO {
     private Integer target_id;
     private String detail;
     private String ip;
+    private String request_id;
+    private String method;
+    private String path;
+    private String user_agent;
+    private String status;
+    private String error_message;
+    private Integer duration_ms;
     private LocalDateTime created_at;
 }

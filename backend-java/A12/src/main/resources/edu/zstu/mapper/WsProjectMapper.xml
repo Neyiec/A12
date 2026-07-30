@@ -13,25 +13,30 @@
         <result column="snapshots" property="snapshots"/>
         <result column="edit_history" property="edit_history"/>
         <result column="permissions" property="permissions"/>
+        <result column="deleted_at" property="deleted_at"/>
         <result column="created_at" property="created_at"/>
         <result column="updated_at" property="updated_at"/>
     </resultMap>
 
     <sql id="Base_Columns">
         id, user_id, task_id, project_name, project_type, status,
-        current_version, snapshots, edit_history, permissions, created_at, updated_at
+        current_version, snapshots, edit_history, permissions, deleted_at, created_at, updated_at
     </sql>
 
     <select id="findById" resultMap="BaseResultMap">
+        SELECT <include refid="Base_Columns"/> FROM ws_project WHERE id = #{id} AND deleted_at IS NULL
+    </select>
+
+    <select id="findByIdIncludingDeleted" resultMap="BaseResultMap">
         SELECT <include refid="Base_Columns"/> FROM ws_project WHERE id = #{id}
     </select>
 
     <select id="findByUserId" resultMap="BaseResultMap">
-        SELECT <include refid="Base_Columns"/> FROM ws_project WHERE user_id = #{userId} ORDER BY updated_at DESC
+        SELECT <include refid="Base_Columns"/> FROM ws_project WHERE user_id = #{userId} AND deleted_at IS NULL ORDER BY updated_at DESC
     </select>
 
     <select id="findAll" resultMap="BaseResultMap">
-        SELECT <include refid="Base_Columns"/> FROM ws_project
+        SELECT <include refid="Base_Columns"/> FROM ws_project WHERE deleted_at IS NULL
     </select>
 
     <insert id="insert" useGeneratedKeys="true" keyProperty="id">
@@ -51,13 +56,39 @@
             <if test="snapshots != null">snapshots = #{snapshots},</if>
             <if test="edit_history != null">edit_history = #{edit_history},</if>
             <if test="permissions != null">permissions = #{permissions},</if>
+            <if test="deleted_at != null">deleted_at = #{deleted_at},</if>
             updated_at = NOW()
         </set>
         WHERE id = #{id}
     </update>
 
+    <update id="updateWithVersion">
+        UPDATE ws_project
+        <set>
+            <if test="project.project_name != null">project_name = #{project.project_name},</if>
+            <if test="project.project_type != null">project_type = #{project.project_type},</if>
+            <if test="project.status != null">status = #{project.status},</if>
+            <if test="project.current_version != null">current_version = #{project.current_version},</if>
+            <if test="project.snapshots != null">snapshots = #{project.snapshots},</if>
+            <if test="project.edit_history != null">edit_history = #{project.edit_history},</if>
+            <if test="project.permissions != null">permissions = #{project.permissions},</if>
+            updated_at = NOW()
+        </set>
+        WHERE id = #{project.id}
+          AND current_version = #{expectedVersion}
+          AND deleted_at IS NULL
+    </update>
+
     <update id="updateStatus">
         UPDATE ws_project SET status = #{status}, updated_at = NOW() WHERE id = #{id}
+    </update>
+
+    <update id="softDeleteById">
+        UPDATE ws_project SET deleted_at = NOW(), status = 'archived', updated_at = NOW() WHERE id = #{id}
+    </update>
+
+    <update id="restoreById">
+        UPDATE ws_project SET deleted_at = NULL, status = #{status}, updated_at = NOW() WHERE id = #{id}
     </update>
 
     <delete id="deleteById">
@@ -66,6 +97,7 @@
     <select id="findByQuery" resultMap="BaseResultMap" parameterType="edu.zstu.dto.ProjectQueryDTO">
         SELECT <include refid="Base_Columns"/> FROM ws_project
         <where>
+            deleted_at IS NULL
             <if test="user_id != null">AND user_id = #{user_id}</if>
             <if test="project_type != null">AND project_type = #{project_type}</if>
             <if test="status != null">AND status = #{status}</if>

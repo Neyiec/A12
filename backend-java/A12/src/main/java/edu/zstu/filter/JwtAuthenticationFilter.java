@@ -11,6 +11,7 @@ import org.springframework.core.annotation.Order;
 import org.springframework.data.redis.core.StringRedisTemplate;
 import org.springframework.stereotype.Component;
 import org.springframework.util.AntPathMatcher;
+import lombok.extern.slf4j.Slf4j;
 
 import java.io.IOException;
 import java.util.concurrent.TimeUnit;
@@ -23,6 +24,7 @@ import java.util.concurrent.TimeUnit;
  * ③ 续期 Redis TTL → 7 天
  * ④ 将 userId 放入请求属性，供 Controller 使用
  */
+@Slf4j
 @Component
 @Order(Ordered.HIGHEST_PRECEDENCE + 10)
 public class JwtAuthenticationFilter implements Filter {
@@ -54,6 +56,7 @@ public class JwtAuthenticationFilter implements Filter {
         // 提取令牌
         String authHeader = req.getHeader("Authorization");
         if (authHeader == null || !authHeader.startsWith("Bearer ")) {
+            log.warn("jwt auth missing Authorization path={}, method={}", req.getRequestURI(), req.getMethod());
             writeUnauthorized(res, "请先登录");
             return;
         }
@@ -62,11 +65,13 @@ public class JwtAuthenticationFilter implements Filter {
         // 校验 JWT 签名
                 Claims claims = jwtUtil.parseToken(token);
         if (claims == null) {
+            log.warn("jwt auth invalid token path={}, method={}", req.getRequestURI(), req.getMethod());
             writeUnauthorized(res, "令牌无效");
             return;
         }
         String userId = claims.get("user_id", String.class);
         if (userId == null) {
+            log.warn("jwt auth missing userId path={}, method={}", req.getRequestURI(), req.getMethod());
             writeUnauthorized(res, "令牌无效");
             return;
         }
@@ -75,6 +80,7 @@ public class JwtAuthenticationFilter implements Filter {
         String redisKey = "token:user:" + userId;
         String storedToken = redisTemplate.opsForValue().get(redisKey);
         if (storedToken == null || !storedToken.equals(token)) {
+            log.warn("jwt auth token expired or replaced userId={}, path={}, method={}", userId, req.getRequestURI(), req.getMethod());
             writeUnauthorized(res, "令牌已过期或已被替换");
             return;
         }
@@ -83,6 +89,7 @@ public class JwtAuthenticationFilter implements Filter {
         redisTemplate.expire(redisKey, 7, TimeUnit.DAYS);
 
         CurrentHolder.setCurrentId(Integer.parseInt(userId));
+        log.debug("jwt auth success userId={}, path={}, method={}", userId, req.getRequestURI(), req.getMethod());
 
         chain.doFilter(request, response);
         CurrentHolder.remove();
@@ -103,3 +110,4 @@ public class JwtAuthenticationFilter implements Filter {
         res.getWriter().write("{\"code\":401,\"message\":\"" + msg + "\",\"data\":null}");
     }
 }
+

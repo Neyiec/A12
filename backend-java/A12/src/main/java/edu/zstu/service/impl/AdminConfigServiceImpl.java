@@ -18,6 +18,7 @@ import edu.zstu.utils.PageResult;
 import edu.zstu.utils.RedisCacheUtil;
 import edu.zstu.vo.ConfigVO;
 import edu.zstu.vo.LogVO;
+import lombok.extern.slf4j.Slf4j;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
@@ -27,6 +28,7 @@ import java.util.List;
 import java.util.Map;
 import java.util.stream.Collectors;
 
+@Slf4j
 @Service
 public class AdminConfigServiceImpl implements AdminConfigService {
 
@@ -50,6 +52,7 @@ public class AdminConfigServiceImpl implements AdminConfigService {
 
     @Override
     public List<ConfigVO> listAiConfigs(String configGroup) {
+        log.info("listAiConfigs configGroup={}", configGroup);
         String key = configGroup != null && !configGroup.isBlank()
                 ? "config:group:" + configGroup
                 : "config:all";
@@ -70,6 +73,7 @@ public class AdminConfigServiceImpl implements AdminConfigService {
     @Override
     @Transactional
     public ConfigVO createAiConfig(ConfigDTO dto) {
+        log.info("createAiConfig group={}, key={}", dto.getConfig_group(), dto.getConfig_key());
         // 参数校验
         if (dto.getConfig_group() == null || dto.getConfig_group().isBlank()) {
             throw new RuntimeException("config_group 不能为空");
@@ -141,6 +145,7 @@ public class AdminConfigServiceImpl implements AdminConfigService {
     @Override
     @Transactional
     public Map<String, Object> publishAiConfig(Integer id) {
+        log.info("publishAiConfig configId={}", id);
         Sys_Config config = configMapper.findById(id);
         if (config == null) {
             throw new RuntimeException("配置不存在");
@@ -164,6 +169,7 @@ public class AdminConfigServiceImpl implements AdminConfigService {
     @Override
     @Transactional
     public ConfigVO rollbackAiConfig(Integer id, RollbackDTO dto) {
+        log.info("rollbackAiConfig configId={}, targetVersion={}", id, dto.getTarget_version());
         Sys_Config config = configMapper.findById(id);
         if (config == null) {
             throw new RuntimeException("配置不存在");
@@ -202,6 +208,7 @@ public class AdminConfigServiceImpl implements AdminConfigService {
 
     @Override
     public List<ConfigVO> listSecurityPolicies() {
+        log.info("listSecurityPolicies");
         return redisCacheUtil.getOrLoad("config:group:security",
                 new com.fasterxml.jackson.core.type.TypeReference<List<ConfigVO>>() {},
                 Duration.ofMinutes(10),
@@ -211,6 +218,7 @@ public class AdminConfigServiceImpl implements AdminConfigService {
     @Override
     @Transactional
     public ConfigVO updateSecurityPolicy(String id, SecurityPolicyDTO dto) {
+        log.info("updateSecurityPolicy configId={}, requestVersion={}", id, dto.getVersion());
         Sys_Config config = configMapper.findById(Integer.parseInt(id));
         if (config == null || !"security".equals(config.getConfig_group())) throw new RuntimeException("安全策略不存在");
         if (dto.getVersion() != config.getVersion()) throw new RuntimeException("版本冲突，请刷新后重试");
@@ -229,6 +237,7 @@ public class AdminConfigServiceImpl implements AdminConfigService {
     @Override
     @Transactional
     public Map<String, Object> publishSecurityPolicy(String id) {
+        log.info("publishSecurityPolicy configId={}", id);
         Sys_Config config = configMapper.findById(Integer.parseInt(id));
         if (config == null || !"security".equals(config.getConfig_group())) throw new RuntimeException("安全策略不存在");
         configMapper.updateStatus(config.getId(), "published");
@@ -239,6 +248,7 @@ public class AdminConfigServiceImpl implements AdminConfigService {
 
     @Override
     public PageResult<LogVO> listAuditLogs(LogQueryDTO dto) {
+        log.info("listAuditLogs type={}, module={}, userId={}, page={}, size={}", dto.getLog_type(), dto.getModule(), dto.getUser_id(), dto.getPage(), dto.getSize());
         return redisCacheUtil.getOrLoad(logCacheKey("audit", dto),
                 new com.fasterxml.jackson.core.type.TypeReference<PageResult<LogVO>>() {},
                 Duration.ofSeconds(20),
@@ -247,6 +257,7 @@ public class AdminConfigServiceImpl implements AdminConfigService {
 
     @Override
     public PageResult<LogVO> listSystemLogs(LogQueryDTO dto) {
+        log.info("listSystemLogs type={}, module={}, userId={}, page={}, size={}", dto.getLog_type(), dto.getModule(), dto.getUser_id(), dto.getPage(), dto.getSize());
         return redisCacheUtil.getOrLoad(logCacheKey("system", dto),
                 new com.fasterxml.jackson.core.type.TypeReference<PageResult<LogVO>>() {},
                 Duration.ofSeconds(20),
@@ -255,6 +266,7 @@ public class AdminConfigServiceImpl implements AdminConfigService {
 
     @Override
     public Map<String, Object> getDashboard() {
+        log.info("getDashboard");
         return redisCacheUtil.getOrLoad("admin:dashboard",
                 new com.fasterxml.jackson.core.type.TypeReference<Map<String, Object>>() {},
                 Duration.ofSeconds(60),
@@ -268,6 +280,7 @@ public class AdminConfigServiceImpl implements AdminConfigService {
 
     @Override
     public PageResult<Map<String, Object>> listAlerts(String level, String source, String status, int page, int size) {
+        log.info("listAlerts level={}, source={}, status={}, page={}, size={}", level, source, status, page, size);
         int p = page <= 0 ? 1 : page;
         int s = size <= 0 ? 10 : size;
         return new PageResult<>(0, p, s, List.of());
@@ -275,17 +288,20 @@ public class AdminConfigServiceImpl implements AdminConfigService {
 
     @Override
     public Map<String, Object> getAlert(String id) {
+        log.info("getAlert alertId={}", id);
         return Map.of("id", id, "level", "info", "source", "system", "title", "告警不存在",
                 "detail", "当前系统未接入告警存储", "status", "resolved");
     }
 
     @Override
     public void acknowledgeAlert(String id) {
+        log.info("acknowledgeAlert alertId={}", id);
         businessLogService.record("operation", "admin_alert", "acknowledge", "alert", Integer.parseInt(id));
     }
 
     @Override
     public void resolveAlert(String id, String resolution) {
+        log.info("resolveAlert alertId={}, hasResolution={}", id, resolution != null && !resolution.isBlank());
         if (resolution == null || resolution.isBlank()) throw new RuntimeException("resolution 不能为空");
         businessLogService.record("operation", "admin_alert", "resolve", "alert", Integer.parseInt(id),
                 Map.of("resolution", resolution));
@@ -343,3 +359,5 @@ public class AdminConfigServiceImpl implements AdminConfigService {
         return vo;
     }
 }
+
+
