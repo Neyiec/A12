@@ -75,8 +75,20 @@ const showFeatured = computed(() => activeTab.value === '精选' && matchesFilte
 
 /** 复制社区内容并进入个人创作工作台。 */
 const reuse = async (item) => {
+  if (item.testCaseId) {
+    ElMessage.success('测试案例已载入创作工作台')
+    router.push({
+      path: '/main/workspace',
+      query: {
+        ...(route.query.preview ? { preview: '1' } : {}),
+        testCase: item.testCaseId,
+        templateTitle: item.title,
+      },
+    })
+    return
+  }
   if (!item.id) {
-    ElMessage.info('示例内容仅用于预览，连接社区服务后可创建派生项目')
+    ElMessage.info('该内容暂时无法创建派生项目')
     return
   }
   try {
@@ -87,11 +99,17 @@ const reuse = async (item) => {
   } catch { ElMessage.error('无法创建派生项目，请稍后重试') }
 }
 const toggleFavorite = async (item) => {
-  if (!item.id) return ElMessage.info('示例内容暂不支持收藏')
-  const next = !favoriteIds.value.has(item.id)
+  const favoriteKey = item.id || item.testCaseId
+  if (!favoriteKey) return ElMessage.info('该内容暂不支持收藏')
+  const next = !favoriteIds.value.has(favoriteKey)
+  if (item.testCaseId) {
+    const updated = new Set(favoriteIds.value); next ? updated.add(favoriteKey) : updated.delete(favoriteKey); favoriteIds.value = updated
+    ElMessage.success(next ? '已收藏测试案例' : '已取消收藏')
+    return
+  }
   try {
     if (next) await favoriteCommunityItem(item.id); else await unfavoriteCommunityItem(item.id)
-    const updated = new Set(favoriteIds.value); next ? updated.add(item.id) : updated.delete(item.id); favoriteIds.value = updated
+    const updated = new Set(favoriteIds.value); next ? updated.add(favoriteKey) : updated.delete(favoriteKey); favoriteIds.value = updated
   } catch { ElMessage.error('收藏状态未能更新') }
 }
 const unwrap = (value) => value?.data || value
@@ -113,16 +131,23 @@ onMounted(loadCommunity)
       <p>教师共创社区 / Community</p>
       <h1>把好课的经验，变成下一堂课的起点</h1>
       <span>检索公开可用的 Skill 与教学案例；复用后生成独立草稿，不会修改社区原件。</span>
-      <el-input v-model="keyword" :prefix-icon="Search" placeholder="搜索知识点、学科、课型或 Skill" clearable size="large" @keyup.enter="submitSearch">
-        <template #append><el-button type="primary" class="community-search-button" @click="submitSearch">搜索</el-button></template>
-      </el-input>
+      <div class="community-search-row">
+        <el-input v-model="keyword" :prefix-icon="Search" placeholder="搜索知识点、学科、课型或 Skill" clearable size="large" @keyup.enter="submitSearch">
+          <template #append><el-button type="primary" class="community-search-button" @click="submitSearch">搜索</el-button></template>
+        </el-input>
+        <el-button type="primary" class="submission-button" @click="openSubmission">我要投稿</el-button>
+      </div>
     </header>
 
     <div class="community-toolbar">
       <div class="tab-list"><button v-for="tab in tabs" :key="tab" :class="{ active: activeTab === tab }" @click="activeTab = tab">{{ tab }}</button></div>
+      <div class="toolbar-controls">
+        <el-button text @click="openCollections">收藏与浏览</el-button>
+        <el-button text @click="openReports">举报进度</el-button>
       <div class="filters">
         <el-select v-model="selectedStage" aria-label="筛选学段"><el-option label="全部学段" value="全部学段" /><el-option label="初中" value="初中" /><el-option label="高中" value="高中" /></el-select>
         <el-select v-model="selectedSubject" aria-label="筛选学科"><el-option label="全部学科" value="全部学科" /><el-option label="数学" value="数学" /><el-option label="物理" value="物理" /><el-option label="语文" value="语文" /><el-option label="生物" value="生物" /></el-select>
+      </div>
       </div>
     </div>
 
@@ -142,17 +167,16 @@ onMounted(loadCommunity)
 
     <section v-loading="loading" class="community-grid" aria-label="社区内容">
       <article v-for="card in filteredCards" :key="card.title" class="community-card">
-        <div class="card-top"><span>{{ card.type }}</span><el-button text circle :type="favoriteIds.has(card.id) ? 'warning' : undefined" aria-label="收藏" @click="toggleFavorite(card)"><el-icon><Star /></el-icon></el-button></div>
+        <div class="card-top"><span>{{ card.type }}</span><el-button text circle :type="favoriteIds.has(card.id || card.testCaseId) ? 'warning' : undefined" aria-label="收藏" @click="toggleFavorite(card)"><el-icon><Star /></el-icon></el-button></div>
         <div class="card-icon"><el-icon><CollectionTag /></el-icon></div>
         <h3>{{ card.title }}</h3>
         <p>{{ card.subject }} · {{ card.tag }}</p>
-        <footer><span><el-icon><User /></el-icon>{{ card.author }}</span><button @click="reuse(card)">{{ card.uses }} 次使用 →</button></footer>
+        <footer><span><el-icon><User /></el-icon>{{ card.author }}</span><button @click="reuse(card)">{{ card.testCaseId ? '进入工作台 →' : `${card.uses} 次使用 →` }}</button></footer>
       </article>
       <el-empty v-if="filteredCards.length === 0" class="community-empty" description="没有符合当前筛选条件的 Skill 或教学案例" />
     </section>
     <p class="source-note">所有内容均标记来源、版本与授权信息；个人私有素材不会写回社区或进入公共索引。</p>
   </div>
-    <div class="community-actions"><el-button type="primary" @click="openSubmission">我要投稿</el-button><el-button @click="openCollections">收藏与浏览</el-button><el-button @click="openReports">举报进度</el-button></div>
     <el-dialog v-model="submissionVisible" title="投稿到教师社区" width="min(700px, 92vw)"><el-form label-position="top"><div class="submission-grid"><el-form-item label="标题"><el-input v-model="submission.title" /></el-form-item><el-form-item label="内容类型"><el-select v-model="submission.content_type"><el-option label="教学案例" value="lesson_case" /><el-option label="Skill" value="skill" /></el-select></el-form-item><el-form-item label="学科"><el-input v-model="submission.subject" /></el-form-item><el-form-item label="学段"><el-input v-model="submission.grade" /></el-form-item></div><el-form-item label="简介"><el-input v-model="submission.description" type="textarea" :rows="2" /></el-form-item><el-form-item label="正文 / 结构化内容"><el-input v-model="submission.content_data" type="textarea" :rows="7" /></el-form-item></el-form><div class="draft-list"><span>我的投稿草稿</span><el-button v-for="item in submissions" :key="item.id" text @click="submission = { ...submission, ...item }">{{ item.title }}</el-button></div><template #footer><el-button @click="saveSubmission(false)">保存草稿</el-button><el-button type="primary" @click="saveSubmission(true)">提交审核</el-button></template></el-dialog>
     <el-dialog v-model="collectionVisible" title="我的收藏与最近浏览" width="min(680px, 92vw)"><section class="collection-section"><h3>我的收藏</h3><p v-for="item in favorites" :key="item.id">{{ item.title }}</p><el-empty v-if="!favorites.length" description="暂无收藏" /></section><section class="collection-section"><h3>最近浏览</h3><p v-for="item in recentViews" :key="item.item_id || item.id"><span>{{ item.title || item.item_title || `内容 #${item.item_id}` }}</span><el-button text size="small" @click="removeView(item)">删除</el-button></p><el-empty v-if="!recentViews.length" description="暂无浏览记录" /></section></el-dialog>
     <el-dialog v-model="reportVisible" title="举报与处理进度" width="min(600px, 92vw)"><el-form label-position="top"><el-form-item label="内容 ID"><el-input v-model="reportForm.target_id" inputmode="numeric" /></el-form-item><el-form-item label="举报原因"><el-input v-model="reportForm.reason" /></el-form-item><el-form-item label="补充说明"><el-input v-model="reportForm.comment" type="textarea" :rows="3" /></el-form-item></el-form><el-button type="primary" @click="reportItem">提交举报</el-button><div class="report-list"><p v-for="report in reports" :key="report.id">#{{ report.id }} · {{ report.status || '处理中' }} · {{ report.reason || report.comment }}</p><el-empty v-if="!reports.length" description="暂无举报记录" /></div></el-dialog>
@@ -161,11 +185,12 @@ onMounted(loadCommunity)
 
 <style scoped>
 .community-page { width: min(1180px, calc(100% - 48px)); margin: 0 auto; padding: 40px 0 60px; }
-.community-hero { max-width: 780px; padding: 26px 0 20px; }.community-hero > p { margin: 0 0 10px; color: var(--zh-text-theme); font-size: 12px; font-weight: 600; letter-spacing: .08em; }
+.community-hero { width: 100%; padding: 26px 0 20px; }.community-hero > p { margin: 0 0 10px; color: var(--zh-text-theme); font-size: 12px; font-weight: 600; letter-spacing: .08em; }
 .community-hero h1 { max-width: 680px; margin: 0; font-size: clamp(32px, 4vw, 48px); line-height: 1.18; letter-spacing: var(--zh-tracking-tight); text-wrap: balance; }
 .community-hero > span { display: block; max-width: 650px; margin-top: 16px; color: var(--zh-text-secondary); line-height: 1.7; }
-.community-hero :deep(.el-input) { max-width: 650px; margin-top: 28px; }.community-hero :deep(.el-input__wrapper) { padding-left: 16px; }.community-hero :deep(.el-input-group__append) { padding: 0; background: var(--zh-background-button); box-shadow: none; }.community-hero :deep(.community-search-button) { width: 76px; min-width: 76px; height: 40px; margin: 0; border: 0; border-radius: 0 var(--zh-radius8) var(--zh-radius8) 0; color: var(--zh-text-white) !important; font-weight: 600; letter-spacing: var(--zh-tracking-normal); white-space: nowrap; transition: background 200ms cubic-bezier(.4, 0, .2, 1), transform 200ms cubic-bezier(.4, 0, .2, 1); }.community-hero :deep(.community-search-button:hover), .community-hero :deep(.community-search-button:focus-visible) { color: var(--zh-text-white) !important; background: var(--zh-background-button-hover); }.community-hero :deep(.community-search-button:active) { color: var(--zh-text-white) !important; background: var(--zh-background-button-hover); transform: scale(.98); }
+.community-search-row { width: 100%; display: flex; align-items: center; gap: 12px; margin-top: 28px; }.community-search-row :deep(.el-input) { width: min(650px, calc(100% - 140px)); flex: 0 1 650px; }.community-search-row>.submission-button { min-width: 112px; margin: 0 0 0 auto; color: var(--zh-text-white); font-weight: 600; }.community-hero :deep(.el-input__wrapper) { padding-left: 16px; }.community-hero :deep(.el-input-group__append) { padding: 0; background: var(--zh-background-button); box-shadow: none; }.community-hero :deep(.community-search-button) { width: 76px; min-width: 76px; height: 40px; margin: 0; border: 0; border-radius: 0 var(--zh-radius8) var(--zh-radius8) 0; color: var(--zh-text-white) !important; font-weight: 600; letter-spacing: var(--zh-tracking-normal); white-space: nowrap; transition: background 200ms cubic-bezier(.4, 0, .2, 1), transform 200ms cubic-bezier(.4, 0, .2, 1); }.community-hero :deep(.community-search-button:hover), .community-hero :deep(.community-search-button:focus-visible) { color: var(--zh-text-white) !important; background: var(--zh-background-button-hover); }.community-hero :deep(.community-search-button:active) { color: var(--zh-text-white) !important; background: var(--zh-background-button-hover); transform: scale(.98); }
 .community-toolbar { display: flex; align-items: center; justify-content: space-between; gap: 16px; margin-top: 24px; border-bottom: 1px solid var(--zh-line-border); }
+.toolbar-controls { display: flex; align-items: center; justify-content: flex-end; gap: 4px; }.filters { display: flex; gap: 8px; margin-left: 8px; }.submission-button { min-width: 104px; color: var(--zh-text-white); font-weight: 600; }.submission-button:hover, .submission-button:focus-visible { color: var(--zh-text-white); background: var(--zh-background-button-hover); border-color: var(--zh-background-button-hover); }
 .tab-list { display: flex; gap: 20px; }.tab-list button { padding: 14px 2px; border: 0; border-bottom: 2px solid transparent; color: var(--zh-text-caption); background: transparent; cursor: pointer; }.tab-list button.active { color: var(--zh-text-theme); border-color: var(--zh-line-theme); font-weight: 600; }
 .filters { display: flex; gap: 8px; }.filters :deep(.el-select) { width: 120px; }
 .featured-case { display: grid; grid-template-columns: minmax(0, 1.05fr) minmax(320px, .95fr); margin-top: 28px; overflow: hidden; border-radius: var(--zh-radius16); background: var(--zh-background-capsule); box-shadow: var(--zh-shadow1); }
@@ -182,6 +207,6 @@ onMounted(loadCommunity)
 .community-card h3 { min-height: 44px; margin: 18px 0 8px; font-size: 15px; line-height: 1.5; }.community-card > p { margin: 0 0 28px; color: var(--zh-text-caption); font-size: 12px; }.community-card footer { gap: 8px; border-top: 1px solid var(--zh-line-parting); padding-top: 12px; font-size: 11px; }.community-card footer span { min-width: 0; display: flex; align-items: center; gap: 4px; overflow: hidden; color: var(--zh-text-caption); text-overflow: ellipsis; white-space: nowrap; }.community-card footer button { flex: none; border: 0; color: var(--zh-text-link); background: transparent; cursor: pointer; font-size: 11px; }
 .source-note { margin: 20px 0 0; color: var(--zh-text-caption); font-size: 11px; text-align: center; }
 @media (max-width: 980px) { .community-grid { grid-template-columns: repeat(2, 1fr); }.featured-case { grid-template-columns: 1fr; }.feature-visual { min-height: 240px; } }
-@media (max-width: 600px) { .community-toolbar { align-items: stretch; flex-direction: column; }.filters { padding-bottom: 12px; }.community-grid { grid-template-columns: 1fr; } }
+@media (max-width: 600px) { .community-search-row { align-items: stretch; flex-direction: column; }.community-search-row :deep(.el-input) { width: 100%; flex-basis: auto; }.community-search-row>.submission-button { width: 100%; margin-left: 0; }.community-toolbar { align-items: stretch; flex-direction: column; }.filters { padding-bottom: 12px; }.community-grid { grid-template-columns: 1fr; } }
 .community-actions{display:flex;justify-content:center;gap:8px;margin-top:24px}.submission-grid{display:grid;grid-template-columns:2fr 1fr 1fr 1fr;gap:10px}.submission-grid :deep(.el-form-item){margin-bottom:0}.draft-list{display:flex;align-items:center;gap:4px;overflow:auto;padding:10px;border-radius:var(--zh-radius8);background:var(--zh-background-light);font-size:12px}.draft-list span{flex:none;color:var(--zh-text-caption)}.collection-section{margin-bottom:20px}.collection-section h3{font-size:14px}.collection-section p{display:flex;justify-content:space-between;padding:8px 0;border-bottom:1px solid var(--zh-line-parting);color:var(--zh-text-secondary);font-size:13px}.report-list{margin-top:16px;padding-top:12px;border-top:1px solid var(--zh-line-border)}.report-list p{padding:8px 0;border-bottom:1px solid var(--zh-line-parting);color:var(--zh-text-secondary);font-size:12px}.detail-meta{color:var(--zh-text-caption);font-size:12px}.detail-content{max-height:360px;overflow:auto;padding:14px;border-radius:var(--zh-radius8);background:var(--zh-background-light);font:12px/1.65 var(--zh-font-code);white-space:pre-wrap}@media(max-width:600px){.submission-grid{grid-template-columns:1fr}.community-actions{flex-wrap:wrap}}
 </style>

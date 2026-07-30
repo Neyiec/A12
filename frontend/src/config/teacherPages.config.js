@@ -21,14 +21,14 @@ export const RESOURCE_PAGE = {
 
 export const COMMUNITY_PAGE = {
   featured: {
-    type: '精选案例', title: '勾股定理：从测量到证明', description: '用校园测量任务引出直角三角形关系，包含动态演示、分组实验与分层练习。',
-    author: '周明远 · 杭州第二中学', meta: '八年级数学 · 探究课', uses: '1,286 次复用', stage: '初中', subject: '数学', updatedAt: '2026-07-25',
+    testCaseId: 'pythagorean-lab', type: '测试案例', title: '勾股定理：从测量到证明', description: '可直接载入创作工作台的临时测试案例，包含情境导入、观察猜想、公式推导与互动练习。',
+    author: '系统测试案例', meta: '八年级数学 · 探究课', uses: '可直接进入工作台', stage: '初中', subject: '数学', updatedAt: '2026-07-29',
   },
   cards: [
-    { type: 'Skill', title: '概念课问题链生成器', subject: '通用', stage: '通用', author: '智核教研组', uses: '842', tag: '问题链', updatedAt: '2026-07-24' },
-    { type: '案例', title: '串联与并联电路互动实验', subject: '物理', stage: '初中', author: '陈思远', uses: '637', tag: '互动实验', updatedAt: '2026-07-26' },
-    { type: 'Skill', title: '文言文情境导入设计', subject: '语文', stage: '高中', author: '许清禾', uses: '491', tag: '情境导入', updatedAt: '2026-07-22' },
-    { type: '案例', title: '光合作用证据推理课堂', subject: '生物', stage: '初中', author: '林若岚', uses: '368', tag: '证据推理', updatedAt: '2026-07-23' },
+    { testCaseId: 'concept-question-chain', type: 'Skill', title: '概念课问题链生成器', subject: '通用', stage: '通用', author: '系统测试案例', uses: 0, tag: '问题链', updatedAt: '2026-07-29' },
+    { testCaseId: 'circuit-interaction', type: '案例', title: '串联与并联电路互动实验', subject: '物理', stage: '初中', author: '系统测试案例', uses: 0, tag: '互动实验', updatedAt: '2026-07-29' },
+    { testCaseId: 'classical-chinese-intro', type: 'Skill', title: '文言文情境导入设计', subject: '语文', stage: '高中', author: '系统测试案例', uses: 0, tag: '情境导入', updatedAt: '2026-07-29' },
+    { testCaseId: 'photosynthesis-evidence', type: '案例', title: '光合作用证据推理课堂', subject: '生物', stage: '初中', author: '系统测试案例', uses: 0, tag: '证据推理', updatedAt: '2026-07-29' },
   ],
 }
 
@@ -39,9 +39,9 @@ export const EXPORT_PAGE = {
     { label: '平均生成时间', value: '1m 46s', detail: '最近 30 次任务' },
   ],
   tasks: [
-    { project: '《背影》公开课', format: 'PPTX + Word', version: 'v1.4', time: '今天 10:08', status: '成功', quality: '校验通过', size: '24.8 MB' },
-    { project: '勾股定理互动教学', format: '成果包', version: 'v2.1', time: '昨天 17:42', status: '部分成功', quality: '1 项提示', size: '38.2 MB' },
-    { project: '光合作用实验活动', format: 'PPTX', version: 'v1.0', time: '7 月 23 日', status: '已过期', quality: '校验通过', size: '16.5 MB' },
+    { id: 'test-export-pythagorean', isTest: true, project: '勾股定理互动教学课件', format: 'HTML 互动课件', artifactType: 'html', version: 'v1.0', time: '今天 10:08', status: '成功', quality: '校验通过', size: '12 KB', subject: '八年级数学', pages: 6 },
+    { id: 'test-export-classical', isTest: true, project: '《背影》公开课教学设计', format: 'Markdown 教案', artifactType: 'md', version: 'v1.0', time: '今天 09:42', status: '成功', quality: '校验通过', size: '3 KB', subject: '八年级语文', pages: 4 },
+    { id: 'test-export-photosynthesis', isTest: true, project: '光合作用实验活动成果清单', format: 'JSON 成果清单', artifactType: 'json', version: 'v1.0', time: '昨天 16:20', status: '成功', quality: '校验通过', size: '2 KB', subject: '七年级生物', pages: 5 },
   ],
 }
 
