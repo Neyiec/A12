@@ -33,7 +33,13 @@ const submit = async () => {
     if (!isSuccess(res)) return ElMessage.error(res.message || '密码修改失败')
     Object.assign(form, { current_password: '', new_password: '', confirmPassword: '' })
     ElMessage.success('密码已修改，请妥善保管新密码')
-  } catch { /* 由请求层处理网络错误 */ } finally { saving.value = false }
+  } catch (error) {
+    const message = error?.response?.data?.message
+      || (error?.code === 'ECONNABORTED' ? '请求超时，请稍后重试' : '')
+      || error?.message
+      || '密码修改失败，请稍后重试'
+    ElMessage.error(message)
+  } finally { saving.value = false }
 }
 const signOut = async () => {
   try {
