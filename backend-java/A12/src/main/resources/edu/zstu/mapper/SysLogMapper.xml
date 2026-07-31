@@ -7,14 +7,18 @@
         <result column="action" property="action"/><result column="target_type" property="target_type"/>
         <result column="target_id" property="target_id"/><result column="detail" property="detail"/>
         <result column="ip" property="ip"/><result column="create_at" property="create_at"/>
+        <result column="request_id" property="request_id"/><result column="method" property="method"/>
+        <result column="path" property="path"/><result column="user_agent" property="user_agent"/>
+        <result column="status" property="status"/><result column="error_message" property="error_message"/>
+        <result column="duration_ms" property="duration_ms"/>
     </resultMap>
-    <sql id="Base_Columns">id, user_id, log_type, module, action, target_type, target_id, detail, ip, created_at AS create_at</sql>
+    <sql id="Base_Columns">id, user_id, log_type, module, action, target_type, target_id, detail, ip, request_id, method, path, user_agent, status, error_message, duration_ms, created_at AS create_at</sql>
     <select id="findById" resultMap="BaseResultMap">SELECT <include refid="Base_Columns"/> FROM sys_log WHERE id = #{id}</select>
     <select id="findAll" resultMap="BaseResultMap">SELECT <include refid="Base_Columns"/> FROM sys_log ORDER BY created_at DESC</select>
     <select id="findByUserId" resultMap="BaseResultMap">SELECT <include refid="Base_Columns"/> FROM sys_log WHERE user_id = #{userId}</select>
     <select id="findByTypeAndTime" resultMap="BaseResultMap">SELECT <include refid="Base_Columns"/> FROM sys_log WHERE log_type = #{logType} AND created_at BETWEEN #{startTime} AND #{endTime}</select>
     <insert id="insert" useGeneratedKeys="true" keyProperty="id">
-        INSERT INTO sys_log(user_id, log_type, module, action, target_type, target_id, detail, ip, created_at)
-        VALUES(#{user_id}, #{log_type}, #{module}, #{action}, #{target_type}, #{target_id}, #{detail}, #{ip}, NOW())
+        INSERT INTO sys_log(user_id, log_type, module, action, target_type, target_id, detail, ip, request_id, method, path, user_agent, status, error_message, duration_ms, created_at)
+        VALUES(#{user_id}, #{log_type}, #{module}, #{action}, #{target_type}, #{target_id}, #{detail}, #{ip}, #{request_id}, #{method}, #{path}, #{user_agent}, #{status}, #{error_message}, #{duration_ms}, NOW())
     </insert>
 </mapper>

@@ -6,15 +6,17 @@
         <result column="project_id" property="project_id"/>
         <result column="version_number" property="version_number"/>
         <result column="description" property="description"/>
+        <result column="snapshot_data" property="snapshot_data"/>
+        <result column="created_by" property="created_by"/>
         <result column="created_at" property="created_at"/>
     </resultMap>
-    <sql id="Base_Columns">id, project_id, version_number, description, created_at</sql>
+    <sql id="Base_Columns">id, project_id, version_number, description, snapshot_data, created_by, created_at</sql>
     <select id="findById" resultMap="BaseResultMap">SELECT <include refid="Base_Columns"/> FROM ws_version WHERE id = #{id}</select>
     <select id="findByProjectId" resultMap="BaseResultMap">SELECT <include refid="Base_Columns"/> FROM ws_version WHERE project_id = #{projectId} ORDER BY version_number DESC</select>
     <select id="findMaxVersionNumber" resultType="int">SELECT COALESCE(MAX(version_number), 0) FROM ws_version WHERE project_id = #{projectId}</select>
     <insert id="insert" useGeneratedKeys="true" keyProperty="id">
-        INSERT INTO ws_version(project_id, version_number, description, created_at)
-        VALUES(#{project_id}, #{version_number}, #{description}, NOW())
+        INSERT INTO ws_version(project_id, version_number, description, snapshot_data, created_by, created_at)
+        VALUES(#{project_id}, #{version_number}, #{description}, #{snapshot_data}, #{created_by}, NOW())
     </insert>
     <delete id="deleteByProjectId">DELETE FROM ws_version WHERE project_id = #{projectId}</delete>
 </mapper>

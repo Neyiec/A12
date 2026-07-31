@@ -1,10 +1,15 @@
-from fastapi import FastAPI, File, Query, UploadFile
+from fastapi import FastAPI, File, Form, Query, UploadFile
 from fastapi.middleware.cors import CORSMiddleware
 import json
+import tempfile
+from pathlib import Path
 
 from fastapi.responses import FileResponse, StreamingResponse
 
 from a12_ppt.config import get_settings
+from a12_ppt.asr import transcribe_audio
+from a12_ppt.interactive import InteractiveModuleGenerator
+from a12_ppt.lesson_plan import LessonPlanGenerator, export_lesson_plan_to_docx
 from a12_ppt.presentation import (
     DEFAULT_THEME,
     PPTGenerator,
@@ -14,11 +19,15 @@ from a12_ppt.presentation import (
 )
 from a12_ppt.models import (
     HtmlValidateRequest,
+    InteractiveModuleGenerateRequest,
+    LessonPlanExportRequest,
+    LessonPlanGenerateRequest,
     OutlineChatStreamRequest,
     OutlineGenerateRequest,
     OutlineUpdateRequest,
     PresentationExportRequest,
     PresentationGenerateRequest,
+    PresentationModifyRequest,
     ResourceIndexBootstrapRequest,
     ResourceIndexMetadataRequest,
     ResourceIndexSyncRequest,
@@ -41,6 +50,8 @@ app.add_middleware(
     allow_headers=["*"],
 )
 generator = PPTGenerator()
+interactive_generator = InteractiveModuleGenerator()
+lesson_plan_generator = LessonPlanGenerator()
 outline_chat_workflow = OutlineChatWorkflow(generator)
 
 
@@ -51,11 +62,34 @@ async def health() -> Result:
         "service": settings.app_name,
         "version": settings.app_version,
         "model_ready": bool(settings.openai_api_key),
+        "embedding_ready": bool(settings.embedding_api_key),
+        "embedding_model": settings.embedding_model,
+        "asr_model": settings.asr_model,
         "quality_pipeline": settings.enable_quality_pipeline,
         "quality_preset": settings.quality_preset,
         "max_slide_concurrency": settings.max_slide_concurrency,
         "max_html_retries": settings.max_html_retries,
     })
+
+
+@app.post("/api/v1/python/audio/asr")
+async def transcribe_audio_input(
+    file: UploadFile = File(...),
+    language: str | None = Form(default=None),
+) -> Result:
+    suffix = Path(file.filename or "audio.wav").suffix or ".wav"
+    with tempfile.NamedTemporaryFile(delete=False, suffix=suffix) as temp:
+        temp_path = Path(temp.name)
+        temp.write(await file.read())
+    try:
+        result = await transcribe_audio(temp_path, language)
+        result.update({
+            "filename": file.filename,
+            "content_type": file.content_type or "",
+        })
+        return Result(data=result)
+    finally:
+        temp_path.unlink(missing_ok=True)
 
 
 @app.post("/api/v1/python/resources/upload")
@@ -148,6 +182,11 @@ async def modify_slide(request: SlideModifyRequest) -> Result:
     return Result(data=await generator.modify_slide(request))
 
 
+@app.post("/api/v1/python/presentations/modify")
+async def modify_presentation(request: PresentationModifyRequest) -> Result:
+    return Result(data=await generator.modify_presentation(request))
+
+
 @app.post("/api/v1/python/presentations/html/validate")
 async def validate_ppt_html(request: HtmlValidateRequest) -> Result:
     return Result(data=validate_html(request.html, request.strict))
@@ -155,11 +194,31 @@ async def validate_ppt_html(request: HtmlValidateRequest) -> Result:
 
 @app.post("/api/v1/python/presentations/export/pptx")
 async def export_pptx(request: PresentationExportRequest):
-    output = export_html_slides_to_pptx(request.title, request.slides, request.filename)
+    output = await export_html_slides_to_pptx(request.title, request.slides, request.filename, request.fidelity)
     return FileResponse(
         path=str(output),
         filename=output.name,
         media_type="application/vnd.openxmlformats-officedocument.presentationml.presentation",
+    )
+
+
+@app.post("/api/v1/python/interactive-modules/generate")
+async def generate_interactive_module(request: InteractiveModuleGenerateRequest) -> Result:
+    return Result(data=await interactive_generator.generate(request))
+
+
+@app.post("/api/v1/python/lesson-plans/generate")
+async def generate_lesson_plan(request: LessonPlanGenerateRequest) -> Result:
+    return Result(data=await lesson_plan_generator.generate(request))
+
+
+@app.post("/api/v1/python/lesson-plans/export/docx")
+async def export_lesson_plan_docx(request: LessonPlanExportRequest):
+    output = export_lesson_plan_to_docx(request.title, request.lesson_plan, request.filename)
+    return FileResponse(
+        path=str(output),
+        filename=output.name,
+        media_type="application/vnd.openxmlformats-officedocument.wordprocessingml.document",
     )
 
 

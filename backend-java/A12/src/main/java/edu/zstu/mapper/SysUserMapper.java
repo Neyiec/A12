@@ -17,6 +17,7 @@ public interface SysUserMapper {
     int update(Sys_User user);
     int updateActiveStatus(@Param("id") Integer id, @Param("isActive") Integer isActive);
     int changePassword(@Param("newPasswordHash") String newPasswordHash, @Param("username") String username);
+    int updateLastLogin(@Param("id") Integer id, @Param("lastLoginIp") String lastLoginIp);
     int deleteById(@Param("id") Integer id);
     List<Sys_User> findByQuery(UserQueryDTO dto);
 }

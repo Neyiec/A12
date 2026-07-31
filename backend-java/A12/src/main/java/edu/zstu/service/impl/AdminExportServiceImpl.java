@@ -8,6 +8,7 @@ import edu.zstu.service.BusinessLogService;
 import edu.zstu.utils.CurrentHolder;
 import edu.zstu.utils.PageResult;
 import edu.zstu.utils.RedisCacheUtil;
+import lombok.extern.slf4j.Slf4j;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
@@ -16,6 +17,7 @@ import java.time.Duration;
 import java.util.List;
 import java.util.Map;
 
+@Slf4j
 @Service
 public class AdminExportServiceImpl implements AdminExportService {
     private final SysConfigMapper configMapper;
@@ -31,6 +33,7 @@ public class AdminExportServiceImpl implements AdminExportService {
 
     @Override
     public PageResult<Map<String, Object>> listTemplates(String exportType, String status, int page, int size) {
+        log.info("listTemplates exportType={}, status={}, page={}, size={}", exportType, status, page, size);
         String key = "config:template:list:" + blankToAll(exportType) + ":" + blankToAll(status) + ":p" + page + ":s" + size;
         return redisCacheUtil.getOrLoad(key,
                 new com.fasterxml.jackson.core.type.TypeReference<PageResult<Map<String, Object>>>() {},
@@ -51,6 +54,7 @@ public class AdminExportServiceImpl implements AdminExportService {
     @Override
     @Transactional
     public Map<String, Object> createTemplate(ExportTemplateCreateDTO dto) {
+        log.info("createTemplate name={}, exportType={}", dto.getName(), dto.getExport_type());
         if (dto.getName() == null || dto.getName().isBlank()) throw new RuntimeException("模板名称不能为空");
         if (dto.getExport_type() == null || dto.getExport_type().isBlank()) throw new RuntimeException("导出类型不能为空");
         if (dto.getTemplate_data() == null || dto.getTemplate_data().isBlank()) throw new RuntimeException("模板数据不能为空");
@@ -65,6 +69,7 @@ public class AdminExportServiceImpl implements AdminExportService {
         config.setStatus("draft");
         configMapper.insert(config);
         evictTemplateCache(config);
+        log.info("createTemplate success templateId={}, version={}", config.getId(), config.getVersion());
         businessLogService.record("operation", "admin_export_template", "create", "config", config.getId(),
                 Map.of("name", dto.getName(), "export_type", dto.getExport_type()));
         return Map.of("id", config.getId(), "version", config.getVersion());
@@ -73,6 +78,7 @@ public class AdminExportServiceImpl implements AdminExportService {
     @Override
     @Transactional
     public Map<String, Object> updateTemplate(String id, ExportTemplateCreateDTO dto) {
+        log.info("updateTemplate templateId={}, newName={}, exportType={}", id, dto.getName(), dto.getExport_type());
         Sys_Config config = requireConfig(id);
         if (dto.getName() != null && !dto.getName().isBlank()) {
             String exportType = dto.getExport_type() == null || dto.getExport_type().isBlank()
@@ -87,6 +93,7 @@ public class AdminExportServiceImpl implements AdminExportService {
         config.setUpdated_by(CurrentHolder.getCurrentId());
         configMapper.update(config);
         evictTemplateCache(config);
+        log.info("updateTemplate success templateId={}, version={}", config.getId(), config.getVersion());
         businessLogService.record("operation", "admin_export_template", "update", "config", config.getId(),
                 Map.of("version", config.getVersion()));
         return Map.of("id", config.getId(), "version", config.getVersion());
@@ -95,10 +102,12 @@ public class AdminExportServiceImpl implements AdminExportService {
     @Override
     @Transactional
     public void updateTemplateStatus(String id, String status) {
+        log.info("updateTemplateStatus templateId={}, status={}", id, status);
         if (!"published".equals(status) && !"unpublished".equals(status)) throw new RuntimeException("无效状态");
         Sys_Config config = requireConfig(id);
         configMapper.updateStatus(Integer.parseInt(id), status);
         evictTemplateCache(config);
+        log.info("updateTemplateStatus success templateId={}, status={}", id, status);
         businessLogService.record("operation", "admin_export_template", "update_status", "config", Integer.parseInt(id),
                 Map.of("status", status));
     }
@@ -127,3 +136,5 @@ public class AdminExportServiceImpl implements AdminExportService {
         return value == null || value.isBlank() ? "all" : value;
     }
 }
+
+

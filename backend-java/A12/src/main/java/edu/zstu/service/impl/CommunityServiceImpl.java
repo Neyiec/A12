@@ -61,7 +61,7 @@ public class CommunityServiceImpl implements CommunityService {
 
     @Override
     public PageResult<ContentVO> listItems(ContentQueryDTO dto) {
-        log.info("listItems called");
+        log.info("listItems contentType={}, subject={}, grade={}, status={}, keyword={}, page={}, size={}", dto.getContent_type(), dto.getSubject(), dto.getGrade(), dto.getStatus(), dto.getKeyword(), dto.getPage(), dto.getSize());
         return redisCacheUtil.getOrLoad(publicListKey(dto),
                 new com.fasterxml.jackson.core.type.TypeReference<PageResult<ContentVO>>() {},
                 Duration.ofMinutes(3), () -> {
@@ -74,7 +74,7 @@ public class CommunityServiceImpl implements CommunityService {
 
     @Override
     public ContentVO getItem(Integer id) {
-        log.info("getItem called");
+        log.info("getItem itemId={}", id);
         ContentVO vo = cachedContent(id);
         if (vo == null) throw new RuntimeException("内容不存在");
         return vo;
@@ -83,25 +83,36 @@ public class CommunityServiceImpl implements CommunityService {
     @Override
     @Transactional
     public void favorite(Integer itemId, Integer userId) {
-        log.info("favorite called");
+        log.info("favorite userId={}, itemId={}", userId, itemId);
         Com_Content c = contentMapper.findById(itemId);
         if (c == null) throw new RuntimeException("内容不存在");
-        Com_Interaction exist = interactionMapper.findByUserAndTarget(userId, "favorite", c.getContent_type(), itemId);
-        if (exist != null) return;
-        Com_Interaction inter = new Com_Interaction();
-        inter.setUser_id(userId);
-        inter.setAction_type("favorite");
-        inter.setTarget_type(c.getContent_type());
-        inter.setTarget_id(itemId);
-        interactionMapper.insert(inter);
-        redisCacheUtil.deleteByPattern("community:favorites:" + userId + ":*");
-        businessLogService.record("operation", "community", "favorite", "content", itemId);
+        String lockKey = "lock:community:favorite:" + userId + ":" + itemId;
+        Boolean locked = redisTemplate.opsForValue().setIfAbsent(lockKey, "1", Duration.ofSeconds(5));
+        if (!Boolean.TRUE.equals(locked)) {
+            log.info("favorite skipped by concurrent lock userId={}, itemId={}", userId, itemId);
+            return;
+        }
+        try {
+            Com_Interaction exist = interactionMapper.findByUserAndTarget(userId, "favorite", c.getContent_type(), itemId);
+            if (exist != null) return;
+            Com_Interaction inter = new Com_Interaction();
+            inter.setUser_id(userId);
+            inter.setAction_type("favorite");
+            inter.setTarget_type(c.getContent_type());
+            inter.setTarget_id(itemId);
+            interactionMapper.insert(inter);
+            redisCacheUtil.deleteByPattern("community:favorites:" + userId + ":*");
+            log.info("favorite success userId={}, itemId={}", userId, itemId);
+            businessLogService.record("operation", "community", "favorite", "content", itemId);
+        } finally {
+            redisTemplate.delete(lockKey);
+        }
     }
 
     @Override
     @Transactional
     public void unfavorite(Integer itemId, Integer userId) {
-        log.info("unfavorite called");
+        log.info("unfavorite userId={}, itemId={}", userId, itemId);
         Com_Content c = contentMapper.findById(itemId);
         if (c == null) throw new RuntimeException("内容不存在");
         interactionMapper.deleteByUserAndTarget(userId, c.getContent_type(), itemId, "favorite");
@@ -111,7 +122,7 @@ public class CommunityServiceImpl implements CommunityService {
 
     @Override
     public PageResult<ContentVO> listFavorites(int page, int size, Integer userId) {
-        log.info("listFavorites called");
+        log.info("listFavorites userId={}, page={}, size={}", userId, page, size);
         return redisCacheUtil.getOrLoad("community:favorites:" + userId + ":p" + page + ":s" + size,
                 new com.fasterxml.jackson.core.type.TypeReference<PageResult<ContentVO>>() {},
                 Duration.ofMinutes(3), () -> {
@@ -129,7 +140,7 @@ public class CommunityServiceImpl implements CommunityService {
     @Override
     @Transactional
     public void recordView(Integer itemId, Integer userId) {
-        log.info("recordView called");
+        log.info("recordView userId={}, itemId={}", userId, itemId);
         Com_Content c = contentMapper.findById(itemId);
         if (c == null) throw new RuntimeException("内容不存在");
         interactionMapper.deleteByUserAndTarget(userId, c.getContent_type(), itemId, "view");
@@ -143,12 +154,13 @@ public class CommunityServiceImpl implements CommunityService {
         redisTemplate.expire(recentViewsKey(userId), Duration.ofDays(30));
         incrementCachedCounter(itemId, "view");
         redisCacheUtil.deleteByPattern("community:recent:" + userId + ":*");
+        log.info("recordView success userId={}, itemId={}", userId, itemId);
         businessLogService.record("browse", "community", "view", "content", itemId);
     }
 
     @Override
     public PageResult<RecentViewVO> listRecentViews(int page, int size, Integer userId) {
-        log.info("listRecentViews called");
+        log.info("listRecentViews userId={}, page={}, size={}", userId, page, size);
         return redisCacheUtil.getOrLoad("community:recent:" + userId + ":p" + page + ":s" + size,
                 new com.fasterxml.jackson.core.type.TypeReference<PageResult<RecentViewVO>>() {},
                 Duration.ofMinutes(3), () -> loadRecentViews(page, size, userId));
@@ -157,7 +169,7 @@ public class CommunityServiceImpl implements CommunityService {
     @Override
     @Transactional
     public void removeRecentView(Integer itemId, Integer userId) {
-        log.info("removeRecentView called");
+        log.info("removeRecentView userId={}, itemId={}", userId, itemId);
         List<Com_Interaction> views = interactionMapper.findRecentViewsByUser(userId);
         for (Com_Interaction v : views) {
             if (Objects.equals(v.getTarget_id(), itemId) && "view".equals(v.getAction_type())) {
@@ -173,7 +185,7 @@ public class CommunityServiceImpl implements CommunityService {
     @Override
     @Transactional
     public ProjectVO reuseItem(Integer id, InteractionDTO dto, Integer userId) {
-        log.info("reuseItem called");
+        log.info("reuseItem userId={}, itemId={}, targetVersion={}", userId, id, dto.getTarget_version());
         Com_Content c = contentMapper.findById(id);
         if (c == null) throw new RuntimeException("内容不存在");
         if (!"public".equals(c.getStatus())) throw new RuntimeException("该内容不可复用");
@@ -191,6 +203,7 @@ public class CommunityServiceImpl implements CommunityService {
         inter.setTarget_project_id(project.getId());
         interactionMapper.insert(inter);
         incrementCachedCounter(id, "use");
+        log.info("reuseItem success userId={}, itemId={}, targetProjectId={}", userId, id, project.getId());
         businessLogService.record("operation", "community", "reuse", "content", id,
                 Map.of("target_project_id", project.getId()));
         return project;
@@ -199,7 +212,7 @@ public class CommunityServiceImpl implements CommunityService {
     @Override
     @Transactional
     public ContentVO createSubmission(ContentDTO dto, Integer userId) {
-        log.info("createSubmission called");
+        log.info("createSubmission userId={}, title={}, contentType={}", userId, dto.getTitle(), dto.getContent_type());
         if (dto.getContent_type() == null || dto.getTitle() == null || dto.getLicense() == null)
             throw new RuntimeException("缺少必填字段: content_type, title, license");
         Com_Content c = new Com_Content();
@@ -212,6 +225,7 @@ public class CommunityServiceImpl implements CommunityService {
         c.setIs_top(0);
         contentMapper.insert(c);
         evictContentCache(c.getId());
+        log.info("createSubmission success userId={}, contentId={}", userId, c.getId());
         businessLogService.record("operation", "community", "create_submission", "content", c.getId(),
                 Map.of("title", c.getTitle(), "content_type", c.getContent_type()));
         return toContentVO(c);
@@ -219,7 +233,7 @@ public class CommunityServiceImpl implements CommunityService {
 
     @Override
     public PageResult<ContentVO> listSubmissions(ContentQueryDTO dto, Integer userId) {
-        log.info("listSubmissions called");
+        log.info("listSubmissions userId={}, status={}, page={}, size={}", userId, dto.getStatus(), dto.getPage(), dto.getSize());
         PageHelper.startPage(dto.getPage(), dto.getSize());
         List<Com_Content> list = contentMapper.findByAuthorAndStatus(userId, dto.getStatus());
         PageInfo<Com_Content> info = new PageInfo<>(list);
@@ -228,7 +242,7 @@ public class CommunityServiceImpl implements CommunityService {
 
     @Override
     public ContentVO getSubmission(Integer id, Integer userId) {
-        log.info("getSubmission called");
+        log.info("getSubmission userId={}, contentId={}", userId, id);
         Com_Content c = contentMapper.findById(id);
         if (c == null) throw new RuntimeException("投稿不存在");
         if (!Objects.equals(c.getAuthor_id(), userId)) throw new RuntimeException("无权查看");
@@ -238,7 +252,7 @@ public class CommunityServiceImpl implements CommunityService {
     @Override
     @Transactional
     public ContentVO updateSubmission(Integer id, ContentDTO dto, Integer userId) {
-        log.info("updateSubmission called");
+        log.info("updateSubmission userId={}, contentId={}", userId, id);
         Com_Content c = contentMapper.findById(id);
         if (c == null) throw new RuntimeException("投稿不存在");
         if (!Objects.equals(c.getAuthor_id(), userId)) throw new RuntimeException("无权修改");
@@ -261,6 +275,7 @@ public class CommunityServiceImpl implements CommunityService {
     @Override
     @Transactional
     public Map<String, Object> saveSubmissionVersion(Integer id, String description, Integer userId) {
+        log.info("saveSubmissionVersion userId={}, contentId={}, hasDescription={}", userId, id, description != null && !description.isBlank());
         Com_Content c = contentMapper.findById(id);
         if (c == null) throw new RuntimeException("投稿不存在");
         if (!Objects.equals(c.getAuthor_id(), userId)) throw new RuntimeException("无权操作");
@@ -279,7 +294,7 @@ public class CommunityServiceImpl implements CommunityService {
     @Override
     @Transactional
     public void submitForReview(Integer id, ReviewSubmissionDTO dto, Integer userId) {
-        log.info("submitForReview called");
+        log.info("submitForReview userId={}, contentId={}", userId, id);
         Com_Content c = contentMapper.findById(id);
         if (c == null) throw new RuntimeException("投稿不存在");
         if (!Objects.equals(c.getAuthor_id(), userId)) throw new RuntimeException("无权操作");
@@ -302,7 +317,7 @@ public class CommunityServiceImpl implements CommunityService {
     @Override
     @Transactional
     public int createReport(AuditDTO dto, Integer userId) {
-        log.info("createReport called");
+        log.info("createReport userId={}, targetType={}, targetId={}", userId, dto.getTarget_type(), dto.getTarget_id());
         Adm_Audit audit = new Adm_Audit();
         audit.setAudit_type("report");
         audit.setTarget_type(dto.getTarget_type());
@@ -319,7 +334,7 @@ public class CommunityServiceImpl implements CommunityService {
 
     @Override
     public PageResult<AuditVO> listReports(String status, int page, int size, Integer userId) {
-        log.info("listReports called");
+        log.info("listReports userId={}, status={}, page={}, size={}", userId, status, page, size);
         PageHelper.startPage(page, size);
         List<Adm_Audit> list = status != null && !status.isBlank()
                 ? auditMapper.findByReporterAndStatus(userId, status)
@@ -335,7 +350,7 @@ public class CommunityServiceImpl implements CommunityService {
 
     @Override
     public AuditVO getReport(Integer id, Integer userId) {
-        log.info("getReport called");
+        log.info("getReport userId={}, reportId={}", userId, id);
         Adm_Audit a = auditMapper.findById(id);
         if (a == null) throw new RuntimeException("举报不存在");
         if (!Objects.equals(a.getReporter_id(), userId)) throw new RuntimeException("无权查看");
@@ -483,3 +498,4 @@ public class CommunityServiceImpl implements CommunityService {
         redisCacheUtil.deleteByPattern("community:recent:*");
     }
 }
+

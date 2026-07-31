@@ -19,6 +19,10 @@ uvicorn main:app --host 0.0.0.0 --port 8001 --reload
 OPENAI_API_KEY=你的模型服务 Key
 OPENAI_BASE_URL=https://api.openai.com/v1
 OPENAI_MODEL=gpt-4o-mini
+EMBEDDING_API_KEY=不填则复用 OPENAI_API_KEY
+EMBEDDING_BASE_URL=不填则复用 OPENAI_BASE_URL
+EMBEDDING_MODEL=text-embedding-3-small
+EMBEDDING_DIMENSIONS=
 REQUEST_TIMEOUT_SECONDS=90
 MAX_SLIDE_CONCURRENCY=8
 MAX_HTML_RETRIES=1
@@ -103,7 +107,7 @@ QUALITY_PRESET=fast
 
 Current package layout:
 
-- `a12_ppt/llm/`: shared large-model client. All model calls should go through `LLMClient`.
+- `a12_ppt/llm/`: shared LangChain `ChatOpenAI` / `OpenAIEmbeddings` factories, `LLMClient`, and `EmbeddingClient`. All model and embedding calls should go through this package.
 - `a12_ppt/presentation/`: outline generation, HTML PPT generation, template loading, HTML validation, and PPTX export.
 - `a12_ppt/resources/`: uploaded file text extraction, MySQL URL resource indexing, metadata update, deletion, and RAG chunk retrieval.
 - `a12_ppt/outline_chat/`: LangGraph-based ChatGPT-style outline conversation workflow, session storage, PostgreSQL long memory, and teacher-style profile memory.

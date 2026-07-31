@@ -23,6 +23,11 @@ class Settings:
     openai_api_key: str
     openai_base_url: str
     openai_model: str
+    embedding_api_key: str
+    embedding_base_url: str
+    embedding_model: str
+    embedding_dimensions: int | None
+    asr_model: str
     request_timeout_seconds: float
     max_slide_concurrency: int
     max_html_retries: int
@@ -45,6 +50,11 @@ def get_settings() -> Settings:
         openai_api_key=os.getenv("OPENAI_API_KEY", ""),
         openai_base_url=os.getenv("OPENAI_BASE_URL", "https://api.openai.com/v1"),
         openai_model=os.getenv("OPENAI_MODEL", "gpt-4o-mini"),
+        embedding_api_key=os.getenv("EMBEDDING_API_KEY") or os.getenv("OPENAI_API_KEY", ""),
+        embedding_base_url=os.getenv("EMBEDDING_BASE_URL") or os.getenv("OPENAI_BASE_URL", "https://api.openai.com/v1"),
+        embedding_model=os.getenv("EMBEDDING_MODEL", "text-embedding-3-small"),
+        embedding_dimensions=int(os.getenv("EMBEDDING_DIMENSIONS")) if os.getenv("EMBEDDING_DIMENSIONS") else None,
+        asr_model=os.getenv("ASR_MODEL", "whisper-1"),
         request_timeout_seconds=request_timeout_seconds,
         max_slide_concurrency=int(os.getenv("MAX_SLIDE_CONCURRENCY", "8")),
         max_html_retries=int(os.getenv("MAX_HTML_RETRIES", "1")),

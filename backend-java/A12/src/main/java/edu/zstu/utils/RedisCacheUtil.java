@@ -6,12 +6,14 @@ import org.springframework.data.redis.core.Cursor;
 import org.springframework.data.redis.core.ScanOptions;
 import org.springframework.data.redis.core.StringRedisTemplate;
 import org.springframework.stereotype.Component;
+import lombok.extern.slf4j.Slf4j;
 
 import java.time.Duration;
 import java.util.HashSet;
 import java.util.Set;
 import java.util.function.Supplier;
 
+@Slf4j
 @Component
 public class RedisCacheUtil {
     private final StringRedisTemplate redisTemplate;
@@ -28,6 +30,7 @@ public class RedisCacheUtil {
             try {
                 return objectMapper.readValue(cached, type);
             } catch (Exception ignored) {
+                log.warn("redis cache deserialize failed, key={}", key, ignored);
                 redisTemplate.delete(key);
             }
         }
@@ -42,6 +45,7 @@ public class RedisCacheUtil {
             try {
                 return objectMapper.readValue(cached, type);
             } catch (Exception ignored) {
+                log.warn("redis cache deserialize failed, key={}", key, ignored);
                 redisTemplate.delete(key);
             }
         }
@@ -53,7 +57,9 @@ public class RedisCacheUtil {
     public void put(String key, Object value, Duration ttl) {
         try {
             redisTemplate.opsForValue().set(key, objectMapper.writeValueAsString(value), ttl);
+            log.debug("redis cache put key={}, ttlSeconds={}", key, ttl.toSeconds());
         } catch (Exception ignored) {
+            log.warn("redis cache put failed, key={}", key, ignored);
         }
     }
 
@@ -65,6 +71,7 @@ public class RedisCacheUtil {
         Set<String> keys = keysByPattern(pattern);
         if (!keys.isEmpty()) {
             redisTemplate.delete(keys);
+            log.info("redis cache deleteByPattern pattern={}, count={}", pattern, keys.size());
         }
     }
 

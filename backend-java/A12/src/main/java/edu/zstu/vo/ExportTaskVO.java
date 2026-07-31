@@ -28,6 +28,11 @@ public class ExportTaskVO {
     private String file_status;
     private String quality_report;
     private String error_msg;
+    private Integer progress;
+    private Integer retry_count;
+    private String worker_id;
+    private LocalDateTime started_at;
     private LocalDateTime created_at;
+    private LocalDateTime updated_at;
     private LocalDateTime completed_at;
 }

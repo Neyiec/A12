@@ -11,6 +11,7 @@ import org.springframework.core.Ordered;
 import org.springframework.core.annotation.Order;
 import org.springframework.stereotype.Component;
 import org.springframework.util.AntPathMatcher;
+import lombok.extern.slf4j.Slf4j;
 
 import java.io.IOException;
 import java.time.Duration;
@@ -20,6 +21,7 @@ import java.time.Duration;
  * 拦截 /api/v1/admin/** 路径，校验当前用户是否为 admin 类型
  * 在校验 JWT Token 之后执行（@Order 高于 JwtAuthenticationFilter 的数字表示在其之后执行）
  */
+@Slf4j
 @Component
 @Order(Ordered.HIGHEST_PRECEDENCE + 20)
 public class AdminAuthFilter implements Filter {
@@ -57,6 +59,7 @@ public class AdminAuthFilter implements Filter {
         // 从 CurrentHolder 获取当前用户 ID（由 JwtAuthenticationFilter 设置）
         Integer userId = CurrentHolder.getCurrentId();
         if (userId == null) {
+            log.warn("admin auth missing current user path={}, method={}", req.getRequestURI(), req.getMethod());
             writeForbidden(res, "未登录");
             return;
         }
@@ -67,10 +70,12 @@ public class AdminAuthFilter implements Filter {
             return user == null ? "" : user.getUser_type();
         });
         if (!"admin".equals(userType)) {
+            log.warn("admin auth forbidden userId={}, userType={}, path={}, method={}", userId, userType, req.getRequestURI(), req.getMethod());
             writeForbidden(res, "无管理员权限");
             return;
         }
 
+        log.debug("admin auth success userId={}, path={}, method={}", userId, req.getRequestURI(), req.getMethod());
         chain.doFilter(request, response);
     }
 
@@ -80,3 +85,4 @@ public class AdminAuthFilter implements Filter {
         res.getWriter().write("{\"code\":403,\"message\":\"" + msg + "\",\"data\":null}");
     }
 }
+

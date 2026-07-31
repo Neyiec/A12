@@ -42,7 +42,7 @@ public class AdminUserServiceImpl implements AdminUserService {
 
     @Override
     public PageResult<UserVO> listUsers(UserQueryDTO dto) {
-        log.info("listUsers called");
+        log.info("listUsers keyword={}, userType={}, isActive={}, page={}, size={}", dto.getKeyword(), dto.getUser_type(), dto.getIs_active(), dto.getPage(), dto.getSize());
         PageHelper.startPage(dto.getPage(), dto.getSize());
         List<Sys_User> list = userMapper.findByQuery(dto);
         PageInfo<Sys_User> info = new PageInfo<>(list);
@@ -58,7 +58,7 @@ public class AdminUserServiceImpl implements AdminUserService {
 
     @Override
     public UserVO getUser(Integer id) {
-        log.info("getUser called");
+        log.info("getUser userId={}", id);
         Sys_User u = userMapper.findById(id);
         if (u == null) throw new RuntimeException("用户不存在");
         return toUserVO(u);
@@ -69,12 +69,13 @@ public class AdminUserServiceImpl implements AdminUserService {
     @Override
     @Transactional
     public UserVO updateUserStatus(Integer id, UserStatusDTO dto) {
-        log.info("updateUserStatus called");
+        log.info("updateUserStatus userId={}, isActive={}", id, dto.getIs_active());
         Sys_User u = userMapper.findById(id);
         if (u == null) throw new RuntimeException("用户不存在");
         userMapper.updateActiveStatus(id, dto.getIs_active());
         u.setIs_active(dto.getIs_active());
         evictUserCache(u);
+        log.info("updateUserStatus success userId={}, isActive={}", id, dto.getIs_active());
         businessLogService.record("operation", "admin_user", "update_status", "user", id,
                 Map.of("is_active", dto.getIs_active()));
         return toUserVO(u);
@@ -85,7 +86,7 @@ public class AdminUserServiceImpl implements AdminUserService {
     @Override
     @Transactional
     public UserVO createUser(UserDTO dto) {
-        log.info("createUser called");
+        log.info("createUser username={}, userType={}, roles={}", dto.getUsername(), dto.getUser_type(), dto.getRoles());
         if (dto.getUsername() == null || dto.getReal_name() == null ||
             dto.getUser_type() == null || dto.getRoles() == null) {
             throw new RuntimeException("缺少必填字段: username, real_name, user_type, roles");
@@ -102,6 +103,7 @@ public class AdminUserServiceImpl implements AdminUserService {
         userMapper.insert(user);
         evictUserCache(user);
         redisCacheUtil.delete("admin:roles");
+        log.info("createUser success userId={}, username={}", user.getId(), user.getUsername());
         businessLogService.record("operation", "admin_user", "create", "user", user.getId(),
                 Map.of("username", user.getUsername(), "user_type", user.getUser_type()));
         return toUserVO(user);
@@ -112,6 +114,7 @@ public class AdminUserServiceImpl implements AdminUserService {
     @Override
     @Transactional
     public Map<String, Object> batchCreateUsers(BatchCreateUsersDTO dto) {
+        log.info("batchCreateUsers called");
         List<Map<String, Object>> results = new ArrayList<>();
         List<Map<String, Object>> userList;
 
@@ -167,6 +170,7 @@ public class AdminUserServiceImpl implements AdminUserService {
 
     @Override
     public List<Map<String, Object>> listRoles() {
+        log.info("listRoles");
         return redisCacheUtil.getOrLoad("admin:roles",
                 new com.fasterxml.jackson.core.type.TypeReference<List<Map<String, Object>>>() {},
                 Duration.ofMinutes(10), this::loadRoles);
@@ -205,13 +209,14 @@ public class AdminUserServiceImpl implements AdminUserService {
     @Override
     @Transactional
     public UserVO assignRoles(Integer id, AssignRolesDTO dto) {
-        log.info("assignRoles called");
+        log.info("assignRoles userId={}, roles={}", id, dto.getRoles());
         Sys_User u = userMapper.findById(id);
         if (u == null) throw new RuntimeException("用户不存在");
         u.setRoles(dto.getRoles());
         userMapper.update(u);
         evictUserCache(u);
         redisCacheUtil.delete("admin:roles");
+        log.info("assignRoles success userId={}", id);
         businessLogService.record("operation", "admin_user", "assign_roles", "user", id,
                 Map.of("roles", dto.getRoles()));
         return toUserVO(u);
@@ -222,7 +227,7 @@ public class AdminUserServiceImpl implements AdminUserService {
     @Override
     @Transactional
     public void updateRolePermissions(Integer id, RolePermissionsDTO dto) {
-        log.info("updateRolePermissions called");
+        log.info("updateRolePermissions roleId={}", id);
         // 查找所有拥有该角色的用户
         List<Sys_User> all = userMapper.findAll();
         for (Sys_User u : all) {
@@ -240,6 +245,7 @@ public class AdminUserServiceImpl implements AdminUserService {
             } catch (Exception ignored) {
             }
         }
+        log.info("updateRolePermissions success roleId={}", id);
         businessLogService.record("operation", "admin_user", "update_role_permissions", "role", id,
                 Map.of("permissions", dto.getPermissions()));
         redisCacheUtil.delete("admin:roles");
@@ -271,3 +277,7 @@ public class AdminUserServiceImpl implements AdminUserService {
         if (user.getEmail() != null) redisCacheUtil.delete("user:lookup:email:" + user.getEmail());
     }
 }
+
+
+
+

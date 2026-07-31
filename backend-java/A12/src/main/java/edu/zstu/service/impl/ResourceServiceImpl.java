@@ -51,11 +51,13 @@ public class ResourceServiceImpl implements ResourceService {
 
     @Override
     public UploadTokenVO createUploadToken(UploadTokenDTO dto, Integer userId) {
+        log.info("createUploadToken userId={}, fileName={}", userId, dto.getFile_name());
         if (dto.getFile_name() == null || dto.getFile_name().isBlank()) {
             throw new RuntimeException("文件名不能为空");
         }
         String objectKey = "uploads/" + userId + "/" + UUID.randomUUID() + "/" + dto.getFile_name();
         URL signedUrl = ossUtil.generateUploadUrl(objectKey, 60);
+        log.info("createUploadToken success userId={}, objectKey={}", userId, objectKey);
 
         UploadTokenVO vo = new UploadTokenVO();
         vo.setObject_key(objectKey);
@@ -67,6 +69,7 @@ public class ResourceServiceImpl implements ResourceService {
     @Override
     @Transactional
     public MaterialVO confirmUpload(ResourceUploadConfirmDTO dto, Integer userId) {
+        log.info("confirmUpload userId={}, fileName={}, replaceTargetId={}", userId, dto.getFile_name(), dto.getReplace_target_id());
         if (!ossUtil.doesObjectExist(dto.getObject_key())) {
             throw new RuntimeException("文件上传尚未完成或文件不存在于OSS");
         }
@@ -100,6 +103,7 @@ public class ResourceServiceImpl implements ResourceService {
         material.setAi_index_status("disabled");
 
         materialMapper.insert(material);
+        log.info("confirmUpload success userId={}, materialId={}, fileType={}", userId, material.getId(), material.getFile_type());
         businessLogService.record("operation", "resource", "confirm_upload", "material", material.getId(),
                 Map.of("file_name", material.getFile_name(), "file_type", material.getFile_type()));
         return toMaterialVO(material);
@@ -107,6 +111,7 @@ public class ResourceServiceImpl implements ResourceService {
 
     @Override
     public PageResult<MaterialVO> listResources(MaterialQueryDTO dto, Integer userId) {
+        log.info("listResources userId={}, fileType={}, page={}, size={}", userId, dto.getFile_type(), dto.getPage(), dto.getSize());
         dto.setUser_id(userId);
         PageHelper.startPage(dto.getPage(), dto.getSize());
         List<Res_Material> list = materialMapper.findByQuery(dto);
@@ -123,6 +128,7 @@ public class ResourceServiceImpl implements ResourceService {
 
     @Override
     public MaterialVO getResource(Integer id, Integer userId) {
+        log.info("getResource userId={}, materialId={}", userId, id);
         Res_Material m = materialMapper.findById(id);
         if (m == null || m.getStatus() != 1) throw new RuntimeException("资源不存在");
         if (m.getUser_id() != userId) throw new RuntimeException("无权访问该资源");
@@ -132,12 +138,14 @@ public class ResourceServiceImpl implements ResourceService {
     @Override
     @Transactional
     public MaterialVO updateResource(Integer id, MaterialDTO dto, Integer userId) {
+        log.info("updateResource userId={}, materialId={}, allowAi={}, accessType={}", userId, id, dto.getAllow_ai(), dto.getAccess_type());
         Res_Material m = materialMapper.findById(id);
         if (m == null || m.getStatus() != 1) throw new RuntimeException("资源不存在");
         if (m.getUser_id() != userId) throw new RuntimeException("无权修改该资源");
         BeanUtil.copyProperties(dto, m, "id", "user_id", "file_url", "file_type", "file_size", "status",
                 "ai_index_status", "ai_indexed_at", "ai_index_error");
         materialMapper.update(m);
+        log.info("updateResource success userId={}, materialId={}", userId, id);
         businessLogService.record("operation", "resource", "update", "material", id);
         syncOrUpdatePersonalIndex(m);
         return toMaterialVO(materialMapper.findById(id));
@@ -146,17 +154,20 @@ public class ResourceServiceImpl implements ResourceService {
     @Override
     @Transactional
     public void deleteResource(Integer id, Integer userId) {
+        log.info("deleteResource userId={}, materialId={}", userId, id);
         Res_Material m = materialMapper.findById(id);
         if (m == null) throw new RuntimeException("资源不存在");
         if (m.getUser_id() != userId) throw new RuntimeException("无权删除该资源");
         materialMapper.softDelete(id);
         deletePersonalResourceIndex(id);
+        log.info("deleteResource success userId={}, materialId={}", userId, id);
         businessLogService.record("operation", "resource", "delete", "material", id);
     }
 
     @Override
     @Transactional
     public void batchAction(ResourceBatchActionDTO dto, Integer userId) {
+        log.info("batchAction userId={}, action={}, target={}", userId, dto.getAction(), dto.getTarget());
         if (dto.getAction() == null || dto.getAction().isBlank()) throw new RuntimeException("批量操作不能为空");
         List<Integer> ids = parseIds(dto.getResource_ids());
         for (Integer id : ids) {
@@ -180,6 +191,7 @@ public class ResourceServiceImpl implements ResourceService {
                 default -> throw new RuntimeException("不支持的批量操作: " + dto.getAction());
             }
         }
+        log.info("batchAction success userId={}, action={}, count={}", userId, dto.getAction(), ids.size());
         businessLogService.record("operation", "resource", "batch_" + dto.getAction(), "material", null,
                 Map.of("resource_ids", ids, "target", dto.getTarget() == null ? "" : dto.getTarget()));
     }
@@ -187,6 +199,7 @@ public class ResourceServiceImpl implements ResourceService {
     @Override
     @Transactional
     public MaterialVO setPermission(Integer id, MaterialDTO dto, Integer userId) {
+        log.info("setPermission userId={}, materialId={}, accessType={}, allowAi={}", userId, id, dto.getAccess_type(), dto.getAllow_ai());
         Res_Material m = materialMapper.findById(id);
         if (m == null || m.getStatus() != 1) throw new RuntimeException("资源不存在");
         if (m.getUser_id() != userId) throw new RuntimeException("无权操作该资源");
@@ -197,6 +210,7 @@ public class ResourceServiceImpl implements ResourceService {
         }
         materialMapper.update(m);
         syncOrUpdatePersonalIndex(materialMapper.findById(id));
+        log.info("setPermission success userId={}, materialId={}, accessType={}, allowAi={}", userId, id, m.getAccess_type(), m.getAllow_ai());
         businessLogService.record("operation", "resource", "set_permission", "material", id,
                 Map.of("access_type", m.getAccess_type(), "allow_ai", m.getAllow_ai()));
         return toMaterialVO(materialMapper.findById(id));
@@ -204,6 +218,7 @@ public class ResourceServiceImpl implements ResourceService {
 
     @Override
     public Map<String, Object> getDownloadUrl(Integer id, Integer userId) {
+        log.info("getDownloadUrl userId={}, materialId={}", userId, id);
         Res_Material m = materialMapper.findById(id);
         if (m == null || m.getStatus() != 1) throw new RuntimeException("资源不存在");
         if (m.getUser_id() != userId) throw new RuntimeException("无权下载该资源");
@@ -214,6 +229,7 @@ public class ResourceServiceImpl implements ResourceService {
         Map<String, Object> result = new HashMap<>();
         result.put("download_url", signedUrl.toString());
         result.put("expires_at", LocalDateTime.now().plusMinutes(60));
+        log.info("getDownloadUrl success userId={}, materialId={}, objectKey={}", userId, id, objectKey);
         businessLogService.record("download", "resource", "download_url", "material", id);
         return result;
     }
@@ -355,3 +371,5 @@ public class ResourceServiceImpl implements ResourceService {
         return vo;
     }
 }
+
+

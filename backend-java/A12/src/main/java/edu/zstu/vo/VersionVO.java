@@ -12,5 +12,7 @@ public class VersionVO {
     private int version_id;
     private int version_number;
     private String description;
+    private String snapshot_data;
+    private Integer created_by;
     private LocalDateTime created_at;
 }

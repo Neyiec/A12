@@ -16,13 +16,16 @@ import edu.zstu.service.PythonPptClient;
 import edu.zstu.utils.CurrentHolder;
 import edu.zstu.vo.ConversationVO;
 import edu.zstu.vo.TaskVO;
+import lombok.extern.slf4j.Slf4j;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
+import org.springframework.web.multipart.MultipartFile;
 
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 
+@Slf4j
 @Service
 public class AIServiceImpl implements AIService {
     private final AiConversationMapper conversationMapper;
@@ -46,6 +49,7 @@ public class AIServiceImpl implements AIService {
     @Override
     @Transactional
     public TaskVO createSession(TaskCreateDTO dto) {
+        log.info("createSession title={}, subject={}, grade={}", dto.getTitle(), dto.getSubject(), dto.getGrade());
         Integer userId = requireLogin();
         if (isBlank(dto.getTitle())) throw new RuntimeException("会话标题不能为空");
         if (isBlank(dto.getSubject())) throw new RuntimeException("学科不能为空");
@@ -68,8 +72,8 @@ public class AIServiceImpl implements AIService {
         task.setSubject(dto.getSubject());
         task.setGrade(dto.getGrade());
         task.setStatus("planning");
-        task.setUploaded_refs(defaultJson(dto.getUploaded_refs(), "[]"));
-        task.setPlan_json(defaultJson(dto.getPlan_json(), "{\"version\":1,\"title\":\"" + escapeJson(dto.getTitle()) + "\",\"slides\":[]}"));
+        task.setUploaded_refs(defaultJson(firstNotBlank(dto.getUploaded_refs(), dto.getResource_ids()), "[]"));
+        task.setPlan_json(defaultJson(dto.getPlan_json(), initialPlanJson(dto)));
         task.setPlan_confirm_status("pending");
         task.setExec_steps("[]");
         task.setReflections("[]");
@@ -80,6 +84,7 @@ public class AIServiceImpl implements AIService {
         task.setError_message(null);
         taskMapper.insert(task);
 
+        log.info("createSession success userId={}, conversationId={}, taskId={}", userId, conversation.getId(), task.getId());
         businessLogService.record("operation", "ai", "create_session", "ai_task", task.getId(),
                 Map.of("conversation_id", conversation.getId(), "title", dto.getTitle(), "generation_mode", "python"));
         return toTaskVO(task);
@@ -88,15 +93,18 @@ public class AIServiceImpl implements AIService {
     @Override
     @Transactional
     public ConversationVO sendMessage(String id, ConversationDTO dto) {
+        log.info("sendMessage conversationId={}, enableRag={}, enableWeb={}, slideCount={}", id, dto.getEnable_rag(), dto.getEnable_web(), dto.getSlide_count());
         AI_Conversation conversation = requireConversation(id);
         AI_Task task = requireTaskByConversation(id);
         Integer userId = requireLogin();
         if (conversation.getUser_id() != userId) throw new RuntimeException("无权操作该会话");
 
-        String userMessage = firstNotBlank(dto.getMessage(), dto.getMessages());
+        String userMessage = firstNotBlank(dto.getMessage(), latestUserMessage(dto.getMessages()));
         if (isBlank(userMessage)) throw new RuntimeException("消息内容不能为空");
 
+        log.info("sendMessage callPythonOutline userId={}, conversationId={}, taskId={}", userId, conversation.getId(), task.getId());
         PythonPptClient.OutlineChatResult pythonResult = callPythonOutline(userId, conversation, task, dto, userMessage);
+        log.info("sendMessage pythonResult conversationId={}, taskId={}, status={}, pythonSessionId={}, outlineId={}", conversation.getId(), task.getId(), pythonResult.status, pythonResult.pythonSessionId, pythonResult.outlineId);
 
         if (dto.getTitle() != null) conversation.setTitle(dto.getTitle());
         if (dto.getStatus() != null) conversation.setStatus(dto.getStatus());
@@ -115,7 +123,30 @@ public class AIServiceImpl implements AIService {
     }
 
     @Override
+    @Transactional
+    public ConversationVO sendAudioMessage(String id, MultipartFile file, String language, ConversationDTO dto) {
+        if (file == null || file.isEmpty()) {
+            throw new RuntimeException("语音文件不能为空");
+        }
+        ConversationDTO actualDto = dto == null ? new ConversationDTO() : dto;
+        Map<String, Object> asrResponse = pythonPptClient.transcribeAudio(
+                readFileBytes(file),
+                file.getOriginalFilename(),
+                file.getContentType(),
+                language
+        );
+        String transcript = extractAsrText(asrResponse);
+        if (isBlank(transcript)) {
+            throw new RuntimeException("语音转文字失败，未返回有效文本");
+        }
+        actualDto.setMessage(mergeVoiceMessage(actualDto.getMessage(), transcript));
+        log.info("sendAudioMessage conversationId={}, filename={}, transcriptLength={}", id, file.getOriginalFilename(), transcript.length());
+        return sendMessage(id, actualDto);
+    }
+
+    @Override
     public TaskVO getPlan(String id) {
+        log.info("getPlan conversationId={}", id);
         AI_Task task = requireTaskByConversation(id);
         assertTaskOwner(task);
         return toTaskVO(task);
@@ -124,6 +155,7 @@ public class AIServiceImpl implements AIService {
     @Override
     @Transactional
     public void confirmPlan(String id, PlanConfirmationDTO dto) {
+        log.info("confirmPlan conversationId={}, action={}, planVersion={}", id, dto.getAction(), dto.getPlan_version());
         AI_Task task = requireTaskByConversation(id);
         assertTaskOwner(task);
         String action = dto.getAction();
@@ -136,6 +168,7 @@ public class AIServiceImpl implements AIService {
             task.setReflections("[{\"action\":\"" + escapeJson(action) + "\",\"comment\":\"" + escapeJson(dto.getComment()) + "\"}]");
         }
         taskMapper.update(task);
+        log.info("confirmPlan success taskId={}, action={}, status={}", task.getId(), action, task.getStatus());
         businessLogService.record("operation", "ai", "plan_confirmation", "ai_task", task.getId(),
                 Map.of("action", action, "plan_version", dto.getPlan_version()));
     }
@@ -143,18 +176,21 @@ public class AIServiceImpl implements AIService {
     @Override
     @Transactional
     public TaskVO createRun(String id) {
+        log.info("createRun conversationId={}", id);
         AI_Task task = requireTaskByConversation(id);
         assertTaskOwner(task);
         if (!"confirmed".equals(task.getPlan_confirm_status())) throw new RuntimeException("请先确认教学设计大纲");
         task.setStatus("executing");
         task.setExec_steps("[{\"step\":\"python_outline_ready\",\"status\":\"completed\"},{\"step\":\"presentation_generate\",\"status\":\"waiting_for_python_api\"}]");
         taskMapper.update(task);
+        log.info("createRun success taskId={}, status={}", task.getId(), task.getStatus());
         businessLogService.record("operation", "ai", "create_run", "ai_task", task.getId());
         return toTaskVO(taskMapper.findById(task.getId()));
     }
 
     @Override
     public TaskVO getRun(String runId) {
+        log.info("getRun runId={}", runId);
         AI_Task task = taskMapper.findById(parseId(runId));
         if (task == null) throw new RuntimeException("执行任务不存在");
         assertTaskOwner(task);
@@ -169,16 +205,101 @@ public class AIServiceImpl implements AIService {
             payload.put("session_id", conversation.getPython_session_id());
         }
         payload.put("message", userMessage);
-        payload.put("resource_ids", parseJsonOrDefault(dto.getResource_ids(), List.of()));
-        payload.put("enable_rag", Boolean.TRUE.equals(dto.getEnable_rag()));
-        payload.put("enable_web", Boolean.TRUE.equals(dto.getEnable_web()));
-        payload.put("slide_count", dto.getSlide_count() == null ? 8 : dto.getSlide_count());
-        payload.put("known_context", parseJsonOrDefault(dto.getKnown_context(), Map.of(
-                "title", task.getTitle(),
-                "subject", task.getSubject(),
-                "grade", task.getGrade()
-        )));
+        payload.put("resource_ids", requestResourceIds(dto, task));
+        payload.put("enable_rag", requestBoolean(dto.getEnable_rag(), task, "enable_rag"));
+        payload.put("enable_web", requestBoolean(dto.getEnable_web(), task, "enable_web"));
+        payload.put("slide_count", requestSlideCount(dto, task));
+        payload.put("known_context", buildKnownContext(task, dto.getKnown_context()));
         return pythonPptClient.streamOutlineChat(payload);
+    }
+
+    private Object requestResourceIds(ConversationDTO dto, AI_Task task) {
+        if (!isBlank(dto.getResource_ids())) {
+            return parseJsonOrDefault(dto.getResource_ids(), List.of());
+        }
+        return parseJsonOrDefault(task.getUploaded_refs(), List.of());
+    }
+
+    private boolean requestBoolean(Boolean value, AI_Task task, String key) {
+        if (value != null) {
+            return value;
+        }
+        Object options = planOption(task, key);
+        return options instanceof Boolean bool && bool;
+    }
+
+    private int requestSlideCount(ConversationDTO dto, AI_Task task) {
+        if (dto.getSlide_count() != null) {
+            return dto.getSlide_count();
+        }
+        Object option = planOption(task, "slide_count");
+        if (option instanceof Number number) {
+            return number.intValue();
+        }
+        if (option instanceof String text) {
+            try {
+                return Integer.parseInt(text);
+            } catch (NumberFormatException ignored) {
+                return 8;
+            }
+        }
+        return 8;
+    }
+
+    @SuppressWarnings("unchecked")
+    private Object planOption(AI_Task task, String key) {
+        Object parsed = parseJsonOrDefault(task.getPlan_json(), Map.of());
+        if (parsed instanceof Map<?, ?> map) {
+            Object options = map.get("generation_options");
+            if (options instanceof Map<?, ?> optionMap) {
+                return optionMap.get(key);
+            }
+        }
+        return null;
+    }
+
+    private Map<String, Object> buildKnownContext(AI_Task task, String knownContextJson) {
+        Map<String, Object> knownContext = new LinkedHashMap<>();
+        knownContext.put("title", task.getTitle());
+        knownContext.put("subject", task.getSubject());
+        knownContext.put("grade", task.getGrade());
+        Object parsed = parseJsonOrDefault(knownContextJson, Map.of());
+        if (parsed instanceof Map<?, ?> map) {
+            for (Map.Entry<?, ?> entry : map.entrySet()) {
+                if (entry.getKey() != null && entry.getValue() != null && !String.valueOf(entry.getValue()).isBlank()) {
+                    knownContext.put(String.valueOf(entry.getKey()), entry.getValue());
+                }
+            }
+        }
+        return knownContext;
+    }
+
+    private byte[] readFileBytes(MultipartFile file) {
+        try {
+            return file.getBytes();
+        } catch (Exception e) {
+            throw new RuntimeException("读取语音文件失败: " + e.getMessage(), e);
+        }
+    }
+
+    private String extractAsrText(Map<String, Object> response) {
+        if (response == null) {
+            return "";
+        }
+        Object data = response.get("data");
+        if (data instanceof Map<?, ?> map) {
+            Object text = map.get("text");
+            return text == null ? "" : String.valueOf(text).trim();
+        }
+        Object text = response.get("text");
+        return text == null ? "" : String.valueOf(text).trim();
+    }
+
+    private String mergeVoiceMessage(String manualMessage, String transcript) {
+        if (isBlank(manualMessage)) {
+            return transcript;
+        }
+        return manualMessage.trim() + "\n" + transcript.trim();
     }
 
     private void updateTaskFromPythonResult(AI_Task task, PythonPptClient.OutlineChatResult result) {
@@ -246,6 +367,30 @@ public class AIServiceImpl implements AIService {
         return second;
     }
 
+    private String latestUserMessage(String messagesJson) {
+        if (isBlank(messagesJson)) return messagesJson;
+        try {
+            Object parsed = objectMapper.readValue(messagesJson, new TypeReference<Object>() {});
+            if (parsed instanceof List<?> list) {
+                for (int i = list.size() - 1; i >= 0; i--) {
+                    Object item = list.get(i);
+                    if (item instanceof Map<?, ?> message) {
+                        Object role = message.get("role");
+                        Object content = message.get("content");
+                        if ((role == null || "user".equals(String.valueOf(role))) && content != null && !String.valueOf(content).isBlank()) {
+                            return String.valueOf(content);
+                        }
+                    } else if (item instanceof String text && !text.isBlank()) {
+                        return text;
+                    }
+                }
+            }
+        } catch (Exception ignored) {
+            return messagesJson;
+        }
+        return messagesJson;
+    }
+
     private boolean isBlank(String value) {
         return value == null || value.isBlank();
     }
@@ -256,6 +401,24 @@ public class AIServiceImpl implements AIService {
             return objectMapper.readValue(value, new TypeReference<Object>() {});
         } catch (Exception ignored) {
             return fallback;
+        }
+    }
+
+    private String initialPlanJson(TaskCreateDTO dto) {
+        Map<String, Object> plan = new LinkedHashMap<>();
+        plan.put("version", 1);
+        plan.put("title", dto.getTitle());
+        plan.put("slides", List.of());
+        Map<String, Object> options = new LinkedHashMap<>();
+        options.put("resource_ids", parseJsonOrDefault(firstNotBlank(dto.getResource_ids(), dto.getUploaded_refs()), List.of()));
+        options.put("enable_rag", Boolean.TRUE.equals(dto.getEnable_rag()));
+        options.put("enable_web", Boolean.TRUE.equals(dto.getEnable_web()));
+        options.put("slide_count", dto.getSlide_count() == null ? 8 : dto.getSlide_count());
+        plan.put("generation_options", options);
+        try {
+            return objectMapper.writeValueAsString(plan);
+        } catch (Exception e) {
+            return "{\"version\":1,\"title\":\"" + escapeJson(dto.getTitle()) + "\",\"slides\":[]}";
         }
     }
 
@@ -290,3 +453,5 @@ public class AIServiceImpl implements AIService {
         return vo;
     }
 }
+
+

@@ -22,5 +22,6 @@ public class LoginVO {
     private String user_type;
     private String roles;
     private String permissions;
+    private LocalDateTime last_login_at;
     private LocalDateTime created_at;
 }

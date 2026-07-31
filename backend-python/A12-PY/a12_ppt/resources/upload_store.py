@@ -1,3 +1,4 @@
+import json
 import re
 import uuid
 from dataclasses import dataclass
@@ -5,6 +6,7 @@ from pathlib import Path
 
 from fastapi import UploadFile
 
+from .parsers import parse_resource_file
 
 DATA_DIR = Path(__file__).resolve().parents[2] / "data" / "resources"
 DATA_DIR.mkdir(parents=True, exist_ok=True)
@@ -33,9 +35,15 @@ async def save_upload(file: UploadFile) -> ResourceRecord:
     file_path = resource_dir / filename
     content = await file.read()
     file_path.write_bytes(content)
-    text = extract_text(file_path)
+    parsed = await parse_resource_file(file_path, file.content_type, filename)
+    text = parsed.text
     text_path = resource_dir / "content.txt"
     text_path.write_text(text, encoding="utf-8")
+    metadata_path = resource_dir / "metadata.json"
+    metadata_path.write_text(
+        json.dumps(parsed.metadata, ensure_ascii=False, indent=2),
+        encoding="utf-8",
+    )
     return ResourceRecord(
         resource_id=resource_id,
         filename=filename,
@@ -69,14 +77,12 @@ def build_rag_context(resource_ids: list[str], limit: int = 12000) -> str:
 
 
 def extract_text(path: Path) -> str:
-    suffix = path.suffix.lower()
-    if suffix == ".pdf":
-        return _extract_pdf(path)
-    if suffix in {".docx", ".doc"}:
-        return _extract_docx(path)
-    if suffix in {".txt", ".md", ".csv"}:
-        return path.read_text(encoding="utf-8", errors="ignore")
-    return ""
+    import asyncio
+
+    try:
+        return asyncio.run(parse_resource_file(path)).text
+    except RuntimeError:
+        return ""
 
 
 def _extract_pdf(path: Path) -> str:
