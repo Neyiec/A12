@@ -1,0 +1,2470 @@
+﻿# API 接口文档
+
+
+> 项目: A12 — 智能备课与教学成果管理平台  
+> 基础路径: `/api/v1`  
+> 统一响应格式: `Result<T>` (code=200 成功, message 描述, data 实际数据体)  
+> 分页响应: `PageResult<T>` (total 总数, page 当前页, size 每页条数, records 列表)
+
+---
+
+# 一、认证模块
+
+## API-01 POST /api/v1/auth/register
+
+**功能**: 注册教师账号。先通过 API-02 发送验证码到邮箱，再将验证码连同注册信息提交至此接口。服务端校验验证码后创建账号（直接激活，is_active=1）
+
+**请求体 (JSON)**
+| 字段 | 类型 | 必填 | 说明 |
+|---|---|---|---|
+| `username` | String | **是** | 登录用户名 |
+| `password` | String | **是** | 密码（前端传明文，后端哈希后存储） |
+| `real_name` | String | **是** | 真实姓名 |
+| `phone` | String | **是** | 手机号 |
+| `email` | String | **是** | 邮箱 |
+| `avatar` | String | 否 | 头像 URL |
+| `code` | String | **是** | 验证码 |
+
+
+**后端 DTO**: ``
+
+**响应 VO**: `Result<UserVO>` — 注册成功返回用户信息
+
+---
+
+## API-02 POST /api/v1/auth/verification-codes
+
+**功能**: 发送邮箱验证码
+
+**请求体 (JSON)**
+| 字段 | 类型 | 必填 | 说明 |
+|---|---|---|---|
+| `username` | String | **是** | 注册场景填邮箱，密码重置场景填用户名 |
+| `scene` | String | **是** | 场景: `register` / `password_reset` |
+| `channel` | String | **是** | 发送渠道: 仅支持 `email` |
+
+**后端 DTO**: 暂无独立 DTO
+
+**响应 VO**: `Result<Void>` — 仅返回成功/失败状态
+
+---
+
+## API-03 POST /api/v1/auth/verify
+
+**功能**: 校验验证码（目前仅用于密码重置场景；注册场景的验证码校验在 API-01 中完成）
+
+**请求体 (JSON)**
+| 字段 | 类型 | 必填 | 说明 |
+|---|---|---|---|
+| `username` | String | **是** | 账号 |
+| `code` | String | **是** | 验证码 |
+**后端 DTO**: 暂无独立 DTO
+
+**响应 VO**: `Result<Void>`
+
+---
+
+## API-04 POST /api/v1/auth/login
+
+**功能**: 统一验证三类账号（教师/审核员/后台管理员）
+
+**请求体 (JSON)**
+| 字段 | 类型 | 必填 | 说明 |
+|---|---|---|---|
+| `username` | String | **是** | 账号 |
+| `password` | String | **是** | 密码（前端传明文，后端哈希后存储） |
+
+**后端 DTO**: `LoginDTO { username, password }`
+
+**响应 VO**: `Result<LoginVO>` — 含 token、用户基本信息、角色权限
+
+| LoginVO 字段 | 类型 | 说明 |
+|---|---|---|
+| `token` | String | 会话令牌 |
+| `user_id` | int | 用户ID |
+| `username` | String | 用户名 |
+| `real_name` | String | 真实姓名 |
+| `avatar` | String | 头像URL |
+| `user_type` | String | 用户类型: `teacher` / `admin` |
+| `roles` | String(JSON) | 角色列表 |
+| `permissions` | String(JSON) | 权限列表 |
+| `last_login_at` | LocalDateTime | 本次登录写入后的最后登录时间 |
+| `created_at` | LocalDateTime | 账号创建时间 |
+
+## API-05 POST /api/v1/auth/initial-password-change
+
+**功能**: 批量创建账号后首次登录需强制改密
+
+**请求体 (JSON)**
+| 字段 | 类型 | 必填 | 说明 |
+|---|---|---|---|
+| `username` | String | **是** | 账号 |
+| `initial_password` | String | **是** | 初始密码（前端传明文，后端哈希后校验） |
+| `new_password` | String | **是** | 新密码（前端传明文，后端哈希后存储） |
+
+**后端 DTO**: 暂无独立 DTO
+
+**响应 VO**: `Result<LoginVO>` — 改密成功后签发正常会话
+
+---
+
+## API-06 POST /api/v1/auth/password-reset
+
+**功能**: 通过验证码重置密码
+
+**请求体 (JSON)**
+| 字段 | 类型 | 必填 | 说明 |
+|---|---|---|---|
+| `username` | String | **是** | 账号 |
+| `code` | String | **是** | 密码重置验证码 |
+| `new_password` | String | **是** | 新密码（前端传明文，后端哈希后存储） |
+
+**后端 DTO**: 暂无独立 DTO
+
+**响应 VO**: `Result<Void>` — 成功后撤销所有已有会话
+
+---
+
+## API-07 POST /api/v1/users/me/password-change
+
+**功能**: 已登录用户修改当前密码
+
+**请求体 (JSON)**
+| 字段 | 类型 | 必填 | 说明 |
+|---|---|---|---|
+| `current_password` | String | **是** | 当前密码（前端传明文，后端哈希后校验） |
+| `new_password` | String | **是** | 新密码（前端传明文，后端哈希后存储） |
+
+**后端 DTO**: 暂无独立 DTO
+
+**响应 VO**: `Result<Void>` — 更新密码后按策略撤销其他会话
+
+---
+
+## API-08 POST /api/v1/auth/logout
+
+**功能**: 退出登录，撤销当前会话
+
+**请求头**: `Authorization: Bearer <token>`
+
+**后端参数**: 无请求体，从请求头获取token
+
+**响应 VO**: `Result<Void>`
+
+---
+
+# 二、用户模块
+
+
+## API-09 GET /api/v1/users/me
+
+**功能**: 获取当前用户、角色、权限、联系方式和账号状态
+
+**请求头**: `Authorization: Bearer <token>`
+
+**后端参数**: 无（从SecurityContext获取当前用户）
+
+**响应 VO**: `Result<UserVO>`
+
+| UserVO 字段 | 类型 | 说明 |
+|---|---|---|
+| `id` | int | 用户ID |
+| `username` | String | 用户名 |
+| `real_name` | String | 真实姓名 |
+| `phone` | String | 手机号 |
+| `email` | String | 邮箱 |
+| `avatar` | String | 头像URL |
+| `user_type` | String | 用户类型 |
+| `roles` | String(JSON) | 角色列表 |
+| `permissions` | String(JSON) | 权限列表 |
+| `is_active` | int | 是否激活: 1是/0否 |
+| `email_verified` | Integer | 邮箱是否已验证: 1是/0否 |
+| `phone_verified` | Integer | 手机号是否已验证: 1是/0否 |
+| `last_login_at` | LocalDateTime | 最后登录时间 |
+| `last_login_ip` | String | 最后登录IP |
+| `password_changed_at` | LocalDateTime | 密码最后修改时间 |
+| `deleted_at` | LocalDateTime | 软删除时间，正常账号为 `null` |
+| `created_at` | LocalDateTime | 创建时间 |
+| `updated_at` | LocalDateTime | 更新时间 |
+
+---
+
+## API-10 GET /api/v1/users/by-username
+
+**功能**: 根据用户名查询用户ID和基本信息
+
+**查询参数**: username(String, 必填) — 用户名
+
+**响应 VO**: Result<{id: int, username: String, real_name: String, email: String}>
+
+---
+
+## API-11 GET /api/v1/users/by-email
+
+**功能**: 根据邮箱查询用户ID和基本信息
+
+**查询参数**: email(String, 必填) — 邮箱
+
+**响应 VO**: Result<{id: int, username: String, real_name: String, email: String}>
+
+---
+
+# 三、AI 教学引擎
+
+> 当前定位: Java AI 模块保留为业务网关和任务记录层。真正的大纲生成、RAG/联网增强、长期记忆、教师画像和 HTML PPT 生成由 Python 服务承担。Java 负责登录态、权限、任务状态、项目关联、审计日志，并转发 Python 接口。
+> MySQL 建表语句已按该定位更新到 `table_created.txt`；如果旧库已建表，可使用 `mysql_ai_gateway_migration.sql` 做无损增量迁移。
+
+## API-12 POST /api/v1/ai/sessions
+
+**功能**: 创建 Java 侧备课会话和 AI 任务记录。此接口不直接调用模型，只创建业务壳子，后续消息会转发 Python 对话式大纲接口。
+
+**请求体 (JSON)**
+| 字段 | 类型 | 必填 | 说明 |
+|---|---|---|---|
+| `title` | String | **是** | 会话标题 |
+| `subject` | String | **是** | 学科 |
+| `grade` | String | **是** | 年级 |
+| `messages` | String(JSON) | 否 | 初始对话消息 |
+| `uploaded_refs` | String(JSON) | 否 | 参考资料ID列表 |
+| `status` | String | 否 | 默认 `active` |
+| `resource_ids` | String(JSON) | 否 | Python 上传资料返回的 resource_id 列表，例如 `["res_xxx"]` |
+| `enable_rag` | Boolean | 否 | 后续默认是否启用 RAG |
+| `enable_web` | Boolean | 否 | 后续默认是否启用联网 |
+| `slide_count` | int | 否 | 期望页数，默认 8 |
+
+**后端 DTO**: `TaskCreateDTO { title, subject, grade, status, uploaded_refs, plan_json, messages, resource_ids, enable_rag, enable_web, slide_count }`
+
+**响应 VO**: `Result<TaskVO>` — 含 Java 会话ID `conversation_id`。Python 会话ID 会在 API-13 调用后写入 `python_session_id`。`resource_ids/enable_rag/enable_web/slide_count` 会保存为本会话默认生成选项；后续 API-13/API-13A 没传这些字段时自动沿用，传了则以本轮请求为准。
+
+---
+
+## API-13 POST /api/v1/ai/sessions/{id}/messages
+
+**功能**: 对话中补充需求、回答澄清问题或提交反馈。Java 会把本轮消息转发给 Python `/api/v1/python/outlines/chat/stream`，聚合 SSE 结果后写回 `ai_conversation` 和 `ai_task`。
+
+**路径参数**: `id` — 会话ID
+
+**请求体 (JSON)**
+| 字段 | 类型 | 必填 | 说明 |
+|---|---|---|---|
+| `message` | String | 推荐 | 用户本轮自然语言输入；新前端建议传这个字段 |
+| `messages` | String(JSON/String) | 否 | 兼容旧字段；当 `message` 为空时作为本轮输入 |
+| `resource_ids` | String(JSON) | 否 | Python 资料ID列表，例如 `["res_xxx"]` |
+| `enable_rag` | Boolean | 否 | 是否启用 Python RAG 检索 |
+| `enable_web` | Boolean | 否 | 是否启用 Python 联网搜索 |
+| `slide_count` | int | 否 | 期望页数 |
+| `known_context` | String(JSON) | 否 | 已知上下文，例如 `{"title":"光合作用","subject":"生物","grade":"七年级"}` |
+| `title` | String | 否 | 更新会话标题 |
+| `status` | String | 否 | 更新会话状态 |
+| `context_summary` | String | 否 | 前端或 Java 侧摘要 |
+
+**后端 DTO**: `ConversationDTO { title, status, messages, context_summary, message, resource_ids, enable_rag, enable_web, slide_count, known_context }`
+
+**响应 VO**: `Result<ConversationVO>` — 更新后的会话信息。若 Python 返回澄清问题，`last_question` 有值；若生成完成，`TaskVO.plan_json` 会保存 Python 返回的大纲。`enable_rag/enable_web` 为本轮覆盖开关；不传时沿用 API-12 创建会话时保存的默认开关。
+
+---
+
+## API-13A POST /api/v1/ai/sessions/{id}/audio-messages
+
+**功能**: 语音输入对话编排接口。前端上传教师语音到 Java，Java 先调用 Python `/api/v1/python/audio/asr` 转写文本，再把转写文本作为本轮 `message` 复用 API-13 的对话生成逻辑。前端不需要自己串联 Python ASR 和大纲对话接口。
+
+**请求类型**: `multipart/form-data`
+
+**路径参数**: `id` — 会话ID
+
+| 字段 | 类型 | 必填 | 说明 |
+|---|---|---|---|
+| `file` | File | **是** | 语音文件，建议 `wav/mp3/m4a/webm` |
+| `language` | String | 否 | 语音语言，例如 `zh` |
+| `message` | String | 否 | 手动补充文本；如果同时传，会拼接在语音转写文本前面 |
+| `resource_ids` | String(JSON) | 否 | Python 资料ID列表，例如 `["res_xxx"]` |
+| `enable_rag` | Boolean | 否 | 是否启用 Python RAG 检索 |
+| `enable_web` | Boolean | 否 | 是否启用 Python 联网搜索 |
+| `slide_count` | int | 否 | 期望页数 |
+| `known_context` | String(JSON) | 否 | 已知上下文，例如 `{"title":"光合作用","subject":"生物","grade":"七年级"}` |
+| `context_summary` | String | 否 | 前端或 Java 侧摘要 |
+
+**响应 VO**: `Result<ConversationVO>` — 与 API-13 一致。Java 会把最终转写后的文本写入会话消息历史。
+
+---
+
+## API-14 GET /api/v1/ai/sessions/{id}/plan
+
+**功能**: 获取当前教学设计大纲及版本。大纲内容来自 Python 生成结果，Java 存在 `ai_task.plan_json`。
+
+**路径参数**: `id` — 会话ID
+
+**后端参数**: 无请求体
+
+**响应 VO**: `Result<TaskVO>` — 其中的 `plan_json`、`python_session_id`、`python_outline_id` 和 `plan_confirm_status` 字段包含大纲和 Python 关联信息。
+
+---
+
+## API-15 POST /api/v1/ai/sessions/{id}/plan-confirmations
+
+**功能**: 确认、退回或补充教学设计大纲
+
+**路径参数**: `id` — 会话ID
+
+**请求体 (JSON)**
+| 字段 | 类型 | 必填 | 说明 |
+|---|---|---|---|
+| `action` | String | **是** | 操作: `confirm` / `reject` / `supplement` |
+| `comment` | String | 否 | 退回或补充说明 |
+| `plan_version` | int | **是** | 大纲版本号（防并发冲突） |
+
+**后端 DTO**: 暂无独立 DTO
+
+**响应 VO**: `Result<Void>`
+
+---
+
+## API-16 POST /api/v1/ai/sessions/{id}/runs
+
+**功能**: 标记 Java 侧执行任务。当前不在 Java 内部生成 PPT，后续整套 PPT HTML 应调用 Python API-138。
+
+**路径参数**: `id` — 会话ID
+
+**后端参数**: 无请求体
+
+**响应 VO**: `Result<TaskVO>` — 含任务ID，status 转为 `executing`，`exec_steps` 标记等待 Python PPT 生成。
+
+---
+
+## API-17 GET /api/v1/ai/runs/{runId}
+
+**功能**: 查询生成、反思及失败状态
+
+**路径参数**: `runId` — 执行任务ID
+
+**后端参数**: 无请求体
+
+**响应 VO**: `Result<TaskVO>`
+
+---
+
+## API-18 GET /api/v1/ai/runs/{runId}/events
+
+**功能**: 通过 SSE 接收阶段、进度和预览更新，支持断线续传
+
+**路径参数**: `runId` — 执行任务ID
+
+**查询参数**:
+| 字段 | 类型 | 必填 | 说明 |
+|---|---|---|---|
+| `lastEventId` | String | 否 | 断线续传时携带最后收到的 eventId |
+
+**后端 DTO**: 无，流式返回
+
+**响应**: 返回 `text/event-stream`（SSE），包含阶段进度和预览数据
+
+---
+
+# 四、项目模块
+
+> **权限说明**：所有需要对项目进行写操作的接口，均需校验当前用户是否为项目拥有者（user_id == currentId）或被授权用户（currentId 存在于 permissions JSON 数组中）。
+
+## API-20 POST /api/v1/projects
+
+**功能**: 创建个人教学项目或社区派生项目
+
+**请求体 (JSON)**
+| 字段 | 类型 | 必填 | 说明 |
+|---|---|---|---|
+| `project_name` | String | **是** | 项目名称 |
+| `project_type` | String | **是** | 类型: `ppt` / `word` / `h5` / `mixed` |
+| `status` | String | 否 | 默认 `draft` |
+| `snapshots` | String(JSON) | 否 | 版本快照列表 |
+| `edit_history` | String(JSON) | 否 | 编辑历史 |
+| `permissions` | String(JSON) | 否 | 初始授权用户ID列表，一般创建时不传 |
+
+**后端 DTO**: `ProjectCreateDTO { project_name, project_type, status, snapshots, edit_history, permissions }`
+
+**响应 VO**: `Result<ProjectVO>`
+
+---
+
+## API-21 GET /api/v1/projects
+
+**功能**: 按名称、课程、成果类型、状态和更新时间分页查询项目
+
+**查询参数**:
+| 字段 | 类型 | 必填 | 说明 |
+|---|---|---|---|
+| `keyword` | String | 否 | 名称/课程关键字模糊搜索 |
+| `project_type` | String | 否 | 筛选类型: `ppt`/`word`/`h5`/`mixed` |
+| `status` | String | 否 | 筛选状态: `draft`/`editing`/`confirmed`/`exported` |
+| `user_id` | Integer | 否 | 筛选用户（后端自动设为当前用户） |
+| `page` | int | 否 | 默认1 |
+| `size` | int | 否 | 默认10 |
+
+**后端 DTO**: `ProjectQueryDTO extends PageQuery { user_id, project_type, status, keyword }`
+
+**响应 VO**: `Result<PageResult<ProjectVO>>`
+
+---
+
+## API-22 GET /api/v1/projects/{id}
+
+**功能**: 获取项目内容、元数据、当前版本和权限
+**权限**: 仅项目拥有者或被授权用户可以查看
+
+**路径参数**: `id` — 项目ID
+
+**响应 VO**: `Result<ProjectVO>`
+
+---
+
+## API-23 PATCH /api/v1/projects/{id}
+
+**功能**: 修改项目名称、类型、状态等元数据，使用版本号防并发覆盖
+
+**路径参数**: `id` — 项目ID
+
+**请求体 (JSON)**
+| 字段 | 类型 | 必填 | 说明 |
+|---|---|---|---|
+| `project_name` | String | 否 | 新名称 |
+| `project_type` | String | 否 | 新类型 |
+| `status` | String | 否 | 新状态 |
+| `current_version` | int | **是** | 当前版本号（乐观锁，防止覆盖） |
+| `snapshots` | String(JSON) | 否 | 兼容旧字段，新的版本快照主要写入 `ws_version.snapshot_data` |
+| `edit_history` | String(JSON) | 否 | 编辑历史 |
+| `permissions` | String(JSON) | 否 | 授权用户ID列表 |
+
+**后端 DTO**: `ProjectCreateDTO`
+
+**响应 VO**: `Result<ProjectVO>`
+
+---
+
+## API-24 POST /api/v1/projects/{id}/copies
+
+**功能**: 复制有权访问的项目并创建新的私有项目
+
+**路径参数**: `id` — 源项目ID
+
+**请求体 (JSON)**
+| 字段 | 类型 | 必填 | 说明 |
+|---|---|---|---|
+| `new_name` | String | 否 | 新项目名称（默认原名称+副本） |
+
+**后端 DTO**: 暂无独立 DTO
+
+**响应 VO**: `Result<ProjectVO>` — 新项目的完整信息
+
+---
+
+## API-25 POST /api/v1/projects/{id}/archive
+
+**功能**: 归档项目，禁止继续编辑
+
+**路径参数**: `id` — 项目ID
+
+**后端参数**: 无请求体
+
+**响应 VO**: `Result<ProjectVO>` — 状态更新为 `archived`
+
+---
+
+## API-26 POST /api/v1/projects/{id}/restore
+
+**功能**: 将归档或可恢复删除状态的项目恢复为可用
+
+**路径参数**: `id` — 项目ID
+
+**后端参数**: 无请求体
+
+**响应 VO**: `Result<ProjectVO>`
+
+---
+
+## API-27 DELETE /api/v1/projects/{id}
+
+**功能**: 校验权限后软删除项目。后端写入 `deleted_at`，项目从普通查询中隐藏，页面和版本历史会保留，可通过 API-26 恢复。
+
+**路径参数**: `id` — 项目ID
+
+**后端参数**: 无请求体
+
+**响应 VO**: `Result<Void>`
+
+---
+
+## API-28 POST /api/v1/projects/{id}/ai-revisions
+
+**功能**: 对指定页面或组件执行自然语言修改
+
+**路径参数**: `id` — 项目ID
+
+**请求体 (JSON)**
+| 字段 | 类型 | 必填 | 说明 |
+|---|---|---|---|
+| `target_type` | String | **是** | 修改目标: `page` / `component` |
+| `target_id` | String | **是** | 目标标识 |
+| `instruction` | String | **是** | 自然语言修改指令 |
+| `context` | String(JSON) | 否 | 附加上下文 |
+
+**后端 DTO**: 暂无独立 DTO
+
+**响应 VO**: `Result<PageVO>` — 修改后的页面内容
+
+---
+
+## API-29 POST /api/v1/projects/{id}/components
+
+**功能**: 插入文本、图片、音视频、表格、H5或学科工具组件
+
+**路径参数**: `id` — 项目ID
+
+**请求体 (JSON)**
+| 字段 | 类型 | 必填 | 说明 |
+|---|---|---|---|
+| `page_id` | int | **是** | 目标页面ID |
+| `page_order` | int | **是** | 页面顺序 |
+| `page_type` | String | **是** | 页面类型: `cover`/`toc`/`content`/`summary` |
+| `page_title` | String | 否 | 页面标题 |
+| `page_content` | String(JSON) | 否 | 页面内容 |
+| `components` | String(JSON) | 否 | 组件列表 |
+
+**后端 DTO**: `PageDTO { page_order, page_type, page_title, page_content, components }`
+
+**响应 VO**: `Result<PageVO>`
+
+---
+
+## API-30 PATCH /api/v1/projects/{id}/components/{componentId}
+
+**功能**: 修改组件内容、位置和样式
+
+**路径参数**: `id` — 项目ID, `componentId` — 组件ID
+
+**请求体 (JSON)**
+| 字段 | 类型 | 必填 | 说明 |
+|---|---|---|---|
+| `page_content` | String(JSON) | 否 | 更新的页面内容 |
+| `components` | String(JSON) | 否 | 更新的组件列表 |
+
+**后端 DTO**: `PageDTO`
+
+**响应 VO**: `Result<PageVO>`
+
+---
+
+## API-31 POST /api/v1/projects/{id}/versions
+
+**功能**: 保存不可变项目版本并返回版本编号。后端会把当前项目元数据和页面列表写入 `ws_version.snapshot_data`，用于后续恢复。
+
+**路径参数**: `id` — 项目ID
+
+**请求体 (JSON)**
+| 字段 | 类型 | 必填 | 说明 |
+|---|---|---|---|
+| `description` | String | 否 | 版本说明 |
+
+**后端 DTO**: 暂无独立 DTO
+
+**响应 VO**: `Result<{version_id: int, version_number: int}>`
+
+---
+
+## API-32 GET /api/v1/projects/{id}/versions
+
+**功能**: 分页查询项目历史版本、创建人、说明和创建时间
+
+**路径参数**: `id` — 项目ID
+
+**查询参数**:
+| 字段 | 类型 | 必填 | 说明 |
+|---|---|---|---|
+| `page` | int | 否 | 默认1 |
+| `size` | int | 否 | 默认10 |
+
+**后端 DTO**: `PageQuery { page, size }`
+
+**响应 VO**: `Result<PageResult<VersionVO>>`
+
+| VersionVO 字段 | 类型 | 说明 |
+|---|---|---|
+| `version_id` | int | 版本记录ID |
+| `version_number` | int | 项目内版本号 |
+| `description` | String | 版本说明 |
+| `snapshot_data` | String(JSON) | 版本快照，包含项目元数据和页面列表 |
+| `created_by` | Integer | 创建人ID |
+| `created_at` | LocalDateTime | 创建时间 |
+
+---
+
+## API-33 GET /api/v1/projects/{id}/versions/{versionId}/diff
+
+**功能**: 将目标版本与指定版本或当前版本进行差异比较
+
+**路径参数**: `id` — 项目ID, `versionId` — 目标版本ID
+
+**查询参数**:
+| 字段 | 类型 | 必填 | 说明 |
+|---|---|---|---|
+| `compare_version_id` | Integer | 否 | 对比版本ID（不传则比较当前版本） |
+
+**响应 VO**: `Result<{differences: Array, summary: String}>`
+
+---
+
+## API-34 POST /api/v1/projects/{id}/versions/{versionId}/restore
+
+**功能**: 基于历史版本快照恢复项目元数据和页面列表，并创建新的当前版本号，不修改原历史记录。
+
+**路径参数**: `id` — 项目ID, `versionId` — 源版本ID
+
+**后端参数**: 无请求体
+
+**响应 VO**: `Result<ProjectVO>` — 恢复后的项目（current_version 递增）
+
+---
+
+## API-35 POST /api/v1/projects/{id}/permissions
+
+**功能**: 添加项目授权用户。仅项目创建者（拥有者）可以调用，将被授权用户的ID加入到项目的 `permissions` JSON 数组中（去重）。
+
+**路径参数**: `id` — 项目ID
+
+**请求体 (JSON)**
+| 字段 | 类型 | 必填 | 说明 |
+|---|---|---|---|
+| `user_id` | Integer | **是** | 要授权的用户ID（需已注册） |
+
+**后端 DTO**: `ProjectPermissionDTO { user_id }`
+
+**响应 VO**: `Result<ProjectVO>` — 更新后的项目信息（含最新的 `permissions` 列表）
+
+---
+
+# 五、个人资源库
+
+## API-36 POST /api/v1/resources/upload-tokens
+ 
+ **功能**: 获取 OSS 签名上传 URL。后端生成唯一 objectKey 并返回签名 PUT URL，前端拿到 URL 后直传阿里云 OSS
+ 
+ **请求体 (JSON)**
+ | 字段 | 类型 | 必填 | 说明 |
+ |---|---|---|---|
+ | `file_name` | String | **是** | 文件名 |
+ | `file_type` | String | 否 | 文件类型: `word`/`pdf`/`ppt`/`txt`/`image`/`audio`/`video`（不传则根据扩展名自动检测） |
+ | `description` | String | 否 | 文件描述 |
+ | `replace_target_id` | Integer | 否 | 要替换的资源ID（替换时后端会清理旧文件并软删除旧记录） |
+ 
+ **后端 DTO**: `UploadTokenDTO { file_name, file_type, description, replace_target_id }`
+ 
+ **响应 VO**: `Result<UploadTokenVO>`
+ 
+ | UploadTokenVO 字段 | 类型 | 说明 |
+ |---|---|---|
+ | `object_key` | String | OSS 对象键 |
+ | `upload_url` | String | 签名 PUT URL（有效期60分钟） |
+ | `expires_at` | LocalDateTime | URL 过期时间 |
+ 
+ ---
+ 
+## API-37 POST /api/v1/resources/uploaded-files
+ 
+ **功能**: 前端直传 OSS 成功后通知后端确认。后端验证文件已存在于 OSS，创建个人资源记录并存入 MySQL。个人资源默认 `allow_ai=0`，不会立刻进入 Python 向量/索引库；用户后续开启“允许 AI 使用”后，Java 会通知 Python 解析 URL 并保存索引。
+ 
+ **请求体 (JSON)**
+ | 字段 | 类型 | 必填 | 说明 |
+ |---|---|---|---|
+ | `object_key` | String | **是** | API-36 返回的 object_key |
+ | `file_name` | String | **是** | 文件名 |
+ | `file_size` | long | **是** | 文件大小（字节） |
+ | `file_type` | String | 否 | 文件类型，不传则根据扩展名自动检测 |
+ | `description` | String | 否 | 文件描述 |
+ | `replace_target_id` | Integer | 否 | 要替换的资源ID |
+ 
+ **后端 DTO**: `ResourceUploadConfirmDTO { object_key, file_name, file_size, file_type, description, replace_target_id }`
+ 
+ **响应 VO**: `Result<MaterialVO>` — 资源元数据，包含 `ai_index_status / ai_indexed_at / ai_index_error`
+ 
+ ---
+ 
+## API-38 GET /api/v1/resources
+
+**功能**: 按名称、课程、章节、知识点、标签、类型和时间分页检索资源
+
+**查询参数**:
+| 字段 | 类型 | 必填 | 说明 |
+|---|---|---|---|
+| `keyword` | String | 否 | 名称关键字 |
+| `file_type` | String | 否 | 筛选文件类型 |
+| `user_id` | Integer | 否 | 筛选用户（后端自动设为当前用户） |
+| `page` | int | 否 | 默认1 |
+| `size` | int | 否 | 默认10 |
+
+**后端 DTO**: `MaterialQueryDTO extends PageQuery { user_id, file_type, keyword }`
+
+**响应 VO**: `Result<PageResult<MaterialVO>>`
+
+---
+
+## API-39 GET /api/v1/resources/{id}
+
+**功能**: 获取资源元数据、分类、解析状态和当前权限摘要
+
+**路径参数**: `id` — 资源ID
+
+**响应 VO**: `Result<MaterialVO>`
+
+---
+
+## API-40 PATCH /api/v1/resources/{id}
+
+**功能**: 编辑资源名称、标签、课程、分类或所在目录
+
+**路径参数**: `id` — 资源ID
+
+**请求体 (JSON)** — 以下均为选填
+| 字段 | 类型 | 必填 | 说明 |
+|---|---|---|---|
+| `file_name` | String | 否 | 新文件名 |
+| `description` | String | 否 | 新描述 |
+| `categories` | String(JSON) | 否 | 新分类 |
+| `tags` | String(JSON) | 否 | 新标签 |
+
+**后端 DTO**: `MaterialDTO`（仅传递更新的字段）
+
+**响应 VO**: `Result<MaterialVO>`
+
+---
+
+## API-41 DELETE /api/v1/resources/{id}
+
+**功能**: 删除资源并触发 Python 删除对应资源索引。个人资源索引键为 `personal:{id}`。
+
+**路径参数**: `id` — 资源ID
+
+**后端参数**: 无请求体
+
+**响应 VO**: `Result<Void>`
+
+---
+
+## API-42 POST /api/v1/resources/batch-actions
+
+**功能**: 按幂等键批量移动、分类或删除资源
+
+**请求体 (JSON)**
+| 字段 | 类型 | 必填 | 说明 |
+|---|---|---|---|
+| `idempotent_key` | String | **是** | 幂等键 |
+| `action` | String | **是** | 操作: `move` / `categorize` / `delete` / `allow_ai` / `deny_ai` |
+| `resource_ids` | Array[int] | **是** | 资源ID列表 |
+| `target` | String | 否 | 移动/分类的目标值 |
+
+**后端 DTO**: 暂无独立 DTO
+
+**响应 VO**: `Result<{results: Array<{id: int, success: boolean, error: String}>>}`
+
+---
+
+## API-43 GET /api/v1/resources/{id}/permission
+
+**功能**: 获取资源私有/共享状态、共享对象及访问权限
+
+**路径参数**: `id` — 资源ID
+
+**响应 VO**: `Result<{access_type: String, authorized_users: String(JSON), allow_ai: int}>`
+
+---
+
+## API-44 PUT /api/v1/resources/{id}/permission
+
+**功能**: 设置资源私有状态、共享对象及访问权限。`allow_ai` 从 `0` 改为 `1` 时，Java 会调用 Python `/api/v1/python/resources/index/sync` 解析并保存索引；从 `1` 改为 `0` 时，不重复解析，只把索引 metadata 里的 `available/allow_ai` 改为 `false`。
+
+**路径参数**: `id` — 资源ID
+
+**请求体 (JSON)**
+| 字段 | 类型 | 必填 | 说明 |
+|---|---|---|---|
+| `access_type` | String | **是** | `private` / `shared` / `authorized` |
+| `authorized_users` | String(JSON) | 否 | 授权用户ID列表 |
+| `allow_ai` | int | 否 | 允许AI访问: 1/0 |
+
+**后端 DTO**: `MaterialDTO { access_type, authorized_users, allow_ai }`
+
+**响应 VO**: `Result<MaterialVO>`
+
+---
+
+## API-45 GET /api/v1/resources/{id}/audit-logs
+
+**功能**: 查看权限和元数据修改记录
+
+**路径参数**: `id` — 资源ID
+
+**查询参数**:
+| 字段 | 类型 | 必填 | 说明 |
+|---|---|---|---|
+| `page` | int | 否 | 默认1 |
+| `size` | int | 否 | 默认10 |
+
+**响应 VO**: `Result<PageResult<LogVO>>`
+
+---
+
+## API-46 POST /api/v1/resources/{id}/download-url
+
+**功能**: 校验权限并生成短时下载地址
+
+**路径参数**: `id` — 资源ID
+**后端参数**: 无请求体
+**响应 VO**: `Result<{download_url: String, expires_at: LocalDateTime}>`
+
+---
+
+# 六、成果导出中心
+
+## API-47 POST /api/v1/projects/{id}/export-prechecks
+
+**功能**: 检查项目快照、素材、字体、兼容性、版权和敏感信息
+
+**路径参数**: `id` — 项目ID
+**请求体 (JSON)**
+| 字段 | 类型 | 必填 | 说明 |
+|---|---|---|---|
+| `snapshot_version` | Integer | **是** | 绑定的快照版本号 |
+| `export_type` | String | **是** | 导出类型: `pptx` / `word` / `package` |
+**响应 VO**: `Result<{passed: boolean, warnings: Array, errors: Array}>`
+
+---
+
+## API-48 POST /api/v1/export-tasks
+
+**功能**: 绑定项目快照、模板版本和导出参数，创建异步导出任务
+
+**请求体 (JSON)**
+| 字段 | 类型 | 必填 | 说明 |
+|---|---|---|---|
+| `project_id` | int | **是** | 项目ID |
+| `snapshot_version` | Integer | **是** | 快照版本 |
+| `export_type` | String | **是** | 导出类型: `pptx` / `word` / `package` |
+| `config` | String(JSON) | 否 | 导出配置参数 |
+
+**后端 DTO**: `ExportTaskDTO { project_id, snapshot_version, export_type, config }`
+**响应 VO**: `Result<ExportTaskVO>`
+
+---
+
+## API-49 GET /api/v1/export-tasks
+
+**功能**: 分页查询本人或获授权的导出任务
+
+**查询参数**:
+| 字段 | 类型 | 必填 | 说明 |
+|---|---|---|---|
+| `status` | String | 否 | 筛选状态 |
+| `export_type` | String | 否 | 筛选导出类型 |
+| `page` | int | 否 | 默认1 |
+| `size` | int | 否 | 默认10 |
+
+**响应 VO**: `Result<PageResult<ExportTaskVO>>`
+
+---
+
+## API-50 GET /api/v1/export-tasks/{id}
+
+**功能**: 查看进度、失败原因、质量状态和文件状态
+
+**路径参数**: `id` — 导出任务ID
+**响应 VO**: `Result<ExportTaskVO>`
+
+| ExportTaskVO 字段 | 类型 | 说明 |
+|---|---|---|
+| `id` | int | 任务ID |
+| `user_id` | int | 用户ID |
+| `project_id` | int | 项目ID |
+| `snapshot_version` | Integer | 快照版本 |
+| `export_type` | String | 导出类型 |
+| `status` | String | 状态: `queued`/`generating`/`checking`/`success`/`partial`/`failed`/`cancelled` |
+| `config` | String(JSON) | 导出配置 |
+| `file_name` | String | 文件名 |
+| `file_url` | String | 文件URL |
+| `file_size` | long | 文件大小 |
+| `download_url` | String | 下载地址 |
+| `url_expire_at` | LocalDateTime | 链接过期时间 |
+| `file_status` | String | 文件状态: `available`/`expired`/`cleaned` |
+| `quality_report` | String(JSON) | 质量报告 |
+| `error_msg` | String | 错误信息 |
+| `progress` | Integer | 任务进度: 0-100 |
+| `retry_count` | Integer | 重试次数 |
+| `worker_id` | String | 执行节点标识 |
+| `started_at` | LocalDateTime | 开始时间 |
+| `created_at` | LocalDateTime | 创建时间 |
+| `updated_at` | LocalDateTime | 更新时间 |
+| `completed_at` | LocalDateTime | 完成时间 |
+
+---
+
+## API-51 POST /api/v1/export-tasks/{id}/cancel
+**功能**: 取消排队中或生成中的任务
+**路径参数**: `id` — 导出任务ID
+**响应 VO**: `Result<ExportTaskVO>`
+
+---
+
+## API-52 POST /api/v1/export-tasks/{id}/retry
+**功能**: 按原快照和参数重新执行
+**路径参数**: `id` — 导出任务ID
+**响应 VO**: `Result<ExportTaskVO>`
+
+---
+
+## API-53 GET /api/v1/export-tasks/{id}/quality-report
+**功能**: 获取导出质量报告、警告和降级项
+**路径参数**: `id` — 导出任务ID
+**响应 VO**: `Result<{quality_report: String(JSON)}>`
+
+---
+
+## API-54 GET /api/v1/export-artifacts/{id}
+**功能**: 获取成果文件元数据、文件状态、缩略图清单和可预览类型
+**路径参数**: `id` — 成果文件ID
+**响应 VO**: `Result<ExportTaskVO>`
+
+---
+
+## API-55 POST /api/v1/export-artifacts/{id}/preview-url
+**功能**: 生成成果缩略图或预览文件的短时访问地址
+**路径参数**: `id` — 成果文件ID
+**响应 VO**: `Result<{preview_url: String, expires_at: LocalDateTime}>`
+
+---
+
+## API-56 POST /api/v1/export-artifacts/{id}/download-url
+**功能**: 生成成果文件的短时下载链接
+**路径参数**: `id` — 成果文件ID
+**响应 VO**: `Result<{download_url: String, expires_at: LocalDateTime}>`
+
+---
+
+# 七、社区模块
+
+## API-57 GET /api/v1/community/items
+**功能**: 检索公开可用的 Skill 和教学案例
+
+**查询参数**:
+| 字段 | 类型 | 必填 | 说明 |
+|---|---|---|---|
+| `content_type` | String | 否 | 内容类型: `skill` / `lesson_case` |
+| `subject` | String | 否 | 学科 |
+| `grade` | String | 否 | 年级 |
+| `keyword` | String | 否 | 关键字搜索 |
+| `page` | int | 否 | 默认1 |
+| `size` | int | 否 | 默认10 |
+
+**后端 DTO**: `ContentQueryDTO extends PageQuery { content_type, subject, grade, status, keyword }`
+**响应 VO**: `Result<PageResult<ContentVO>>`
+
+---
+
+## API-58 GET /api/v1/community/items/{id}
+**功能**: 获取用途、变量、示例、作者、版本和授权信息
+**路径参数**: `id` — 内容ID
+**响应 VO**: `Result<ContentVO>`
+
+| ContentVO 字段 | 类型 | 说明 |
+|---|---|---|
+| `id` | int | 内容ID |
+| `content_type` | String | 内容类型 |
+| `author_id` | int | 作者ID |
+| `title` | String | 标题 |
+| `description` | String | 描述 |
+| `subject` | String | 学科 |
+| `grade` | String | 年级 |
+| `lesson_type` | String | 课型 |
+| `content_data` | String(JSON) | 内容数据 |
+| `input_variables` | String(JSON) | 输入变量 |
+| `example_effect` | String | 示例效果 |
+| `version` | int | 版本号 |
+| `version_history` | String(JSON) | 版本历史 |
+| `license` | String | 授权信息 |
+| `status` | String | 状态 |
+| `is_top` | int | 是否置顶 |
+| `view_count` | int | 浏览数 |
+| `use_count` | int | 使用数 |
+| `created_at` | LocalDateTime | 创建时间 |
+| `updated_at` | LocalDateTime | 更新时间 |
+
+---
+
+## API-59 PUT /api/v1/community/items/{id}/favorite
+**功能**: 收藏指定社区内容
+**路径参数**: `id` — 内容ID
+**响应 VO**: `Result<Void>`
+
+---
+
+## API-60 DELETE /api/v1/community/items/{id}/favorite
+**功能**: 取消收藏
+**路径参数**: `id` — 内容ID
+**响应 VO**: `Result<Void>`
+
+---
+
+## API-61 POST /api/v1/community/items/{id}/view-events
+**功能**: 记录浏览事件（按用户和内容幂等更新）
+**路径参数**: `id` — 内容ID
+**响应 VO**: `Result<Void>`
+
+---
+
+## API-62 GET /api/v1/community/favorites
+**功能**: 分页查询当前用户收藏的公开可用内容
+**查询参数**: page(默认1), size(默认10)
+**响应 VO**: `Result<PageResult<ContentVO>>`
+
+---
+
+## API-63 GET /api/v1/community/recent-views
+**功能**: 分页查询当前用户最近浏览记录
+**查询参数**: page(默认1), size(默认10)
+**响应 VO**: `Result<PageResult<{item: ContentVO, viewed_at: LocalDateTime}>>`
+
+---
+
+## API-64 DELETE /api/v1/community/recent-views/{itemId}
+**功能**: 移除指定最近浏览记录
+**路径参数**: `itemId` — 内容ID
+**响应 VO**: `Result<Void>`
+
+---
+
+## API-65 POST /api/v1/community/items/{id}/reuse
+**功能**: 校验内容状态、版本和授权，复制到个人空间并返回派生项目
+**路径参数**: `id` — 内容ID
+**请求体 (JSON)**
+| 字段 | 类型 | 必填 | 说明 |
+|---|---|---|---|
+| `target_version` | Integer | 否 | 复用指定版本（默认最新） |
+| `new_project_name` | String | 否 | 派生项目名称 |
+**后端 DTO**: `InteractionDTO { action_type, target_type, target_id, target_version, bind_materials }`
+**响应 VO**: `Result<ProjectVO>`
+
+---
+
+## API-66 POST /api/v1/community/submissions
+**功能**: 创建投稿草稿
+**请求体 (JSON)**
+| 字段 | 类型 | 必填 | 说明 |
+|---|---|---|---|
+| `content_type` | String | **是** | `skill` / `lesson_case` |
+| `title` | String | **是** | 标题 |
+| `description` | String | 否 | 描述 |
+| `subject` | String | 否 | 学科 |
+| `grade` | String | 否 | 年级 |
+| `lesson_type` | String | 否 | 课型 |
+| `content_data` | String(JSON) | 否 | 内容数据 |
+| `input_variables` | String(JSON) | 否 | 输入变量 |
+| `example_effect` | String | 否 | 示例效果 |
+| `license` | String | **是** | 授权协议 |
+**后端 DTO**: `ContentDTO { content_type, title, description, subject, grade, lesson_type, content_data, input_variables, example_effect, license }`
+**响应 VO**: `Result<ContentVO>`
+
+---
+
+## API-67 GET /api/v1/community/submissions
+**功能**: 分页查询当前教师的投稿及审核状态
+**查询参数**: status(否), page(否), size(否)
+**后端 DTO**: `ContentQueryDTO extends PageQuery { status }`
+**响应 VO**: `Result<PageResult<ContentVO>>`
+
+---
+
+## API-68 GET /api/v1/community/submissions/{id}
+**功能**: 获取投稿草稿、版本、审核状态和退回意见
+**路径参数**: `id` — 投稿ID
+**响应 VO**: `Result<ContentVO>`
+
+---
+
+## API-69 PATCH /api/v1/community/submissions/{id}
+**功能**: 修改草稿或退回修改状态的投稿
+**路径参数**: `id` — 投稿ID
+**请求体**: 与 API-66 相同结构，全选填
+**后端 DTO**: `ContentDTO`
+**响应 VO**: `Result<ContentVO>`
+
+---
+
+## API-70 POST /api/v1/community/submissions/{id}/versions
+**功能**: 保存投稿不可变版本
+**路径参数**: `id` — 投稿ID
+**请求体**: description(否)
+**响应 VO**: `Result<{version_id, version_number}>`
+
+---
+
+## API-71 POST /api/v1/community/submissions/{id}/submit
+**功能**: 提交审核（首期MVP由功能开关禁用）
+**路径参数**: `id` — 投稿ID
+**请求体 (JSON)**
+| 字段 | 类型 | 必填 | 说明 |
+|---|---|---|---|
+| `source_declaration` | String | **是** | 来源声明 |
+| `notes` | String | 否 | 审核备注 |
+**响应 VO**: `Result<Void>`
+
+---
+
+## API-72 POST /api/v1/community/reports
+**功能**: 创建举报记录
+**请求体 (JSON)**
+| 字段 | 类型 | 必填 | 说明 |
+|---|---|---|---|
+| `target_type` | String | **是** | 举报对象类型 |
+| `target_id` | int | **是** | 举报对象ID |
+| `reason` | String | **是** | 举报原因 |
+| `description` | String | 否 | 详细描述 |
+**后端 DTO**: `AuditDTO { audit_type, target_type, target_id, reason, action, comment }`
+**响应 VO**: `Result<{report_id: int}>`
+
+---
+
+## API-73 GET /api/v1/community/reports
+**功能**: 分页查询本人举报及处理状态
+**查询参数**: status(否), page(否), size(否)
+**响应 VO**: `Result<PageResult<AuditVO>>`
+
+---
+
+## API-74 GET /api/v1/community/reports/{id}
+**功能**: 获取举报受理状态及处理结果
+**路径参数**: `id` — 举报ID
+**响应 VO**: `Result<AuditVO>`
+
+---
+
+# 八、后台 — 用户权限模块
+
+## API-75 GET /api/v1/admin/users
+**功能**: 按角色、账号状态和关键词分页查询用户
+**查询参数**: keyword(否), user_type(否), is_active(否), page(默认1), size(默认10)
+**后端 DTO**: `UserQueryDTO extends PageQuery { keyword, user_type, is_active }`
+**响应 VO**: `Result<PageResult<UserVO>>`
+
+---
+
+## API-76 GET /api/v1/admin/users/{id}
+**功能**: 获取用户状态、角色、权限摘要及安全状态
+**路径参数**: `id` — 用户ID
+**响应 VO**: `Result<UserVO>`
+
+---
+
+## API-77 PATCH /api/v1/admin/users/{id}/status
+**功能**: 启用、停用或锁定用户账号
+**路径参数**: `id` — 用户ID
+**请求体 (JSON)**
+| 字段 | 类型 | 必填 | 说明 |
+|---|---|---|---|
+| `is_active` | int | **是** | 0=停用, 1=启用, -1=锁定 |
+**响应 VO**: `Result<UserVO>`
+
+---
+
+## API-78 POST /api/v1/admin/users
+**功能**: 创建单个后台账号
+**请求体 (JSON)**
+| 字段 | 类型 | 必填 | 说明 |
+|---|---|---|---|
+| `username` | String | **是** | 用户名 |
+| `password` | String | **是** | 密码（前端传明文，后端哈希后存储） |
+| `real_name` | String | **是** | 真实姓名 |
+| `phone` | String | 否 | 手机号 |
+| `email` | String | 否 | 邮箱 |
+| `user_type` | String | **是** | `admin` |
+| `roles` | String(JSON) | **是** | 角色列表 |
+**后端 DTO**: `UserDTO { username, password, real_name, phone, email, avatar, user_type, roles, permissions, is_active }`
+**响应 VO**: `Result<UserVO>`
+
+---
+
+## API-79 POST /api/v1/admin/users/batch
+**功能**: 批量创建后台账号
+**请求体 (JSON)**
+| 字段 | 类型 | 必填 | 说明 |
+|---|---|---|---|
+| `idempotent_key` | String | **是** | 幂等键 |
+| `users` | Array | **是** | 用户列表（每个同API-78结构，密码传明文，后端哈希后存储） |
+**响应 VO**: `Result<{results: Array<{username, success, initial_credentials, error}>>}`
+
+---
+
+## API-80 GET /api/v1/admin/roles
+**功能**: 查询后台角色、权限集合及审核范围
+**响应 VO**: `Result<Array<{role_id, role_name, permissions, audit_scope}>>`
+
+---
+
+## API-81 PUT /api/v1/admin/users/{id}/roles
+**功能**: 分配系统管理员或内容审核员角色
+**路径参数**: `id` — 用户ID
+**请求体 (JSON)**: `roles`(String JSON) **是**
+**响应 VO**: `Result<UserVO>`
+
+---
+
+## API-82 PUT /api/v1/admin/roles/{id}/permissions
+**功能**: 配置后台功能权限及审核范围
+**路径参数**: `id` — 角色ID
+**请求体 (JSON)**: `permissions`(String JSON) **是**
+**响应 VO**: `Result<Void>`
+
+---
+
+# 九、后台 — 公共资源模块
+
+## API-83 GET /api/v1/admin/public-resources
+**功能**: 分页查询公共资源
+**查询参数**: resource_type(否), status(否), page(默认1), size(默认10)
+**响应 VO**: `Result<PageResult<ResourceVO>>`
+
+| ResourceVO 字段 | 类型 | 说明 |
+|---|---|---|
+| `id` | int | 资源ID |
+| `resource_type` | String | 资源类型 |
+| `title` | String | 标题 |
+| `subject` | String | 学科 |
+| `grade` | String | 年级 |
+| `file_url` | String | 文件URL |
+| `template_data` | String(JSON) | 模板数据 |
+| `thumbnail` | String | 缩略图 |
+| `description` | String | 描述 |
+| `status` | int | 状态 |
+| `uploaded_by` | Integer | 上传者ID |
+| `ai_index_status` | String | Python资源索引状态: `pending/indexing/completed/failed/disabled` |
+| `ai_indexed_at` | LocalDateTime | Python索引完成时间 |
+| `ai_index_error` | String | Python索引失败原因 |
+| `created_at` | LocalDateTime | 创建时间 |
+| `updated_at` | LocalDateTime | 更新时间 |
+
+---
+
+## API-84 POST /api/v1/admin/public-resources/uploads
+**功能**: 创建公共资源上传会话。该接口只创建 MySQL 记录和 OSS 上传 URL，资源状态为待完成，Python 此时不会解析。
+**请求体 (JSON)**: resource_type(**是**), title(**是**), file_name(建议传), file_type(建议传), file_size(**是**)
+**后端 DTO**: `ResourceDTO { resource_type, title, subject, grade, file_name, file_type, file_url, template_data, thumbnail, description, status }`
+**说明**: `resource_type` 是业务分类，不是文件类型。前端应传 `file_name/file_type`，Java 会保留 OSS objectKey 后缀，并在完成上传后把真实 `file_type` 传给 Python，避免公共资源入库时被识别为 `other`。
+**响应 VO**: `Result<{upload_id, upload_url, expires_at}>`
+
+---
+
+## API-85 POST /api/v1/admin/public-resources/uploads/{id}/complete
+**功能**: 完成上传并触发 Python 资源解析和索引保存。Java 会读取 MySQL 中的 `file_url/uploaded_by/id/status` 等字段，向 Python 发送同步请求；Python 使用 `public:{id}` 作为唯一资源键，已解析过且 URL/大小未变化时只跳过解析并更新 metadata。
+**路径参数**: `id` — 上传会话ID
+**响应 VO**: `Result<ResourceVO>`
+
+---
+
+## API-86 GET /api/v1/admin/public-resources/{id}
+**功能**: 获取公共资源详情
+**路径参数**: `id` — 资源ID
+**响应 VO**: `Result<ResourceVO>`
+
+---
+
+## API-87 PATCH /api/v1/admin/public-resources/{id}
+**功能**: 更新公共资源元数据
+**路径参数**: `id` — 资源ID
+**请求体**: title(否), subject(否), grade(否), description(否)
+**后端 DTO**: `ResourceDTO`
+**响应 VO**: `Result<ResourceVO>`
+
+---
+
+## API-88 PUT /api/v1/admin/public-resources/{id}/status
+**功能**: 启用/停用公共资源。该接口不会重复解析文件，只会把 Python 索引 metadata 中的 `available/allow_ai` 同步为对应状态。
+**路径参数**: `id` — 资源ID
+**请求体**: status(int) **是** 0=停用 1=启用
+**响应 VO**: `Result<ResourceVO>`
+
+---
+
+## API-89 GET /api/v1/admin/public-resources/{id}/processing-status
+**功能**: 查询处理状态
+**路径参数**: `id` — 资源ID
+**响应 VO**: `Result<{security_check, parse_status, index_status, error_msg}>`
+
+---
+
+## API-89-1 POST /api/v1/admin/public-resources/ai-index/bootstrap
+**功能**: 初始化或修复 Python 资源索引库。Java 遍历 MySQL 中所有 `adm_resource.status=1` 的公共资源，以及 `res_material.status=1 AND allow_ai=1` 的个人资源，批量推送给 Python。Python 侧保证幂等，同一资源默认只解析保存一次。公共资源的 `adm_resource.resource_type` 是业务分类，Java 会额外根据 `file_url` 后缀推断真实 `file_type` 后传给 Python。
+
+**查询参数**: `force_reparse`，Boolean，默认 `false`。为 `true` 时即使资源已索引也会重新下载 URL 并解析。
+
+**资源ID约定**:
+| 资源来源 | Python resource_id 格式 | MySQL 表 | 说明 |
+|---|---|---|---|
+| 公共资源 | `public:{adm_resource.id}` | `adm_resource` | metadata 包含 `uploaded_by/resource_id/available/file_url/mysql_table/resource_type/detected_file_type` |
+| AI可用个人资源 | `personal:{res_material.id}` | `res_material` | metadata 包含 `owner_user_id/uploaded_by/allow_ai/available/file_url/mysql_table` |
+
+**响应 VO**: `Result<{total, indexed, skipped, failed, results}>`
+
+---
+
+# 十、后台 — 内容审核与举报处理
+
+## API-90 GET /api/v1/admin/moderation/tasks
+**功能**: 按状态、对象类型和审核员查询审核任务
+**查询参数**: status(否), target_type(否), handler_id(否), page(默认1), size(默认10)
+**响应 VO**: `Result<PageResult<AuditVO>>`
+
+---
+
+## API-91 GET /api/v1/admin/moderation/tasks/{id}
+**功能**: 获取待审内容、投稿人、来源版本、授权信息和检测结果
+**路径参数**: `id` — 审核任务ID
+**响应 VO**: `Result<AuditVO>`
+
+---
+
+## API-92 POST /api/v1/admin/moderation/tasks/{id}/decisions
+**功能**: 提交审核决定
+**路径参数**: `id` — 审核任务ID
+**请求体 (JSON)**
+| 字段 | 类型 | 必填 | 说明 |
+|---|---|---|---|
+| `action` | String | **是** | `approve` / `reject` / `rework` |
+| `comment` | String | 否 | 审核意见 |
+**后端 DTO**: `AuditDTO { audit_type, target_type, target_id, reason, action, comment }`
+**响应 VO**: `Result<Void>`
+
+---
+
+## API-93 PUT /api/v1/admin/community-items/{id}/status
+**功能**: 上架/下架/停用社区内容
+**路径参数**: `id` — 社区内容ID
+**请求体**: status(String) **是** `published`/`unpublished`/`disabled`
+**响应 VO**: `Result<ContentVO>`
+
+---
+
+## API-94 PUT /api/v1/admin/community-items/{id}/recommendation
+**功能**: 设置推荐或置顶
+**路径参数**: `id` — 社区内容ID
+**请求体 (JSON)**
+| 字段 | 类型 | 必填 | 说明 |
+|---|---|---|---|
+| `is_top` | int | **是** | 0=取消, 1=推荐, 2=置顶 |
+| `expires_at` | LocalDateTime | 否 | 到期时间 |
+**响应 VO**: `Result<ContentVO>`
+
+---
+
+## API-95 GET /api/v1/admin/reports
+**功能**: 分页查询举报
+**查询参数**: status(否): `pending`/`processing`/`resolved`, page(否), size(否)
+**响应 VO**: `Result<PageResult<AuditVO>>`
+
+---
+
+## API-96 GET /api/v1/admin/reports/{id}
+**功能**: 查看举报详情
+**路径参数**: `id` — 举报ID
+**响应 VO**: `Result<AuditVO>`
+
+---
+
+## API-97 POST /api/v1/admin/reports/{id}/resolution
+**功能**: 提交举报处理结论
+**路径参数**: `id` — 举报ID
+**请求体 (JSON)**
+| 字段 | 类型 | 必填 | 说明 |
+|---|---|---|---|
+| `action` | String | **是** | `dismiss`/`warn`/`remove`/`ban` |
+| `comment` | String | 否 | 处理说明 |
+**后端 DTO**: `AuditDTO`
+**响应 VO**: `Result<Void>`
+
+---
+
+# 十一、后台 — 导出模板模块
+
+## API-98 GET /api/v1/admin/export-templates
+**功能**: 分页查询导出模板
+**查询参数**: export_type(否), status(否), page(否), size(否)
+**响应 VO**: `Result<PageResult<{id, name, export_type, version, status, created_at, updated_at}>>`
+
+---
+
+## API-99 POST /api/v1/admin/export-templates
+**功能**: 创建导出模板及首个版本
+**请求体 (JSON)**: name(**是**), export_type(**是**), template_data(**是**), description(否)
+**响应 VO**: `Result<{id, version}>`
+
+---
+
+## API-100 PATCH /api/v1/admin/export-templates/{id}
+**功能**: 更新模板元数据或创建新版本
+**路径参数**: `id` — 模板ID
+**请求体**: name(否), template_data(否), description(否)
+**响应 VO**: `Result<{id, version}>`
+
+---
+
+## API-101 PUT /api/v1/admin/export-templates/{id}/status
+**功能**: 发布或停用模板版本
+**路径参数**: `id` — 模板ID
+**请求体**: status(String) **是** `published`/`unpublished`
+**响应 VO**: `Result<Void>`
+
+---
+
+# 十二、后台 — AI配置模块
+
+## API-102 GET /api/v1/admin/ai-configs
+**功能**: 查询模型、工具和运行参数配置
+**查询参数**: config_group(否)
+**响应 VO**: `Result<Array<ConfigVO>>`
+
+| ConfigVO 字段 | 类型 | 说明 |
+|---|---|---|
+| `id` | int | 配置ID |
+| `config_group` | String | 分组: `ai_model`/`platform`/`security`/`template`/`sensitive_word` |
+| `config_key` | String | 配置键 |
+| `config_value` | String | 配置值 |
+| `description` | String | 描述 |
+| `updated_by` | Integer | 更新人 |
+| `updated_at` | LocalDateTime | 更新时间 |
+
+---
+
+## API-103 POST /api/v1/admin/ai-configs
+**功能**: 创建AI配置版本
+**请求体 (JSON)**: config_group(**是**), config_key(**是**), config_value(**是**), description(否)
+**后端 DTO**: `ConfigDTO { config_group, config_key, config_value, description }`
+**响应 VO**: `Result<ConfigVO>`
+
+---
+
+## API-121 POST /api/v1/admin/ai-configs/{id}/publish
+**功能**: 发布AI配置版本
+**路径参数**: `id` — 配置ID
+**响应 VO**: `Result<{node_status: Array<{node, status}>>}`
+
+---
+
+## API-122 POST /api/v1/admin/ai-configs/{id}/rollback
+**功能**: 回滚到指定历史配置
+**路径参数**: `id` — 配置ID
+**请求体 (JSON)**: target_version(int **是**), reason(String **是**)
+**响应 VO**: `Result<ConfigVO>`
+
+---
+
+# 十三、后台 — 安全策略
+
+## API-123 GET /api/v1/admin/security-policies
+**功能**: 获取安全策略及当前生效版本
+**响应 VO**: `Result<Array<ConfigVO>>`
+
+---
+
+## API-124 PUT /api/v1/admin/security-policies/{id}
+**功能**: 更新安全策略（版本号防并发覆盖）
+**路径参数**: `id` — 策略ID
+**请求体 (JSON)**: config_value(**是**), version(int **是**)
+**后端 DTO**: `ConfigDTO`
+**响应 VO**: `Result<ConfigVO>`
+
+---
+
+## API-125 POST /api/v1/admin/security-policies/{id}/publish
+**功能**: 发布安全策略
+**路径参数**: `id` — 策略ID
+**响应 VO**: `Result<{published: boolean}>`
+
+---
+
+# 十四、后台 — 日志与看板
+
+## API-126 GET /api/v1/admin/audit-logs
+**功能**: 查询脱敏后的业务审计日志
+**查询参数**: user_id(否), log_type(否), module(否), start_time(否), end_time(否), page(默认1), size(默认10)
+**后端 DTO**: `LogQueryDTO extends PageQuery { user_id, log_type, module, start_time, end_time }`
+**响应 VO**: `Result<PageResult<LogVO>>`
+
+| LogVO 字段 | 类型 | 说明 |
+|---|---|---|
+| `id` | long | 日志ID |
+| `user_id` | Integer | 操作者ID |
+| `log_type` | String | 日志类型: `operation`/`download`/`browse`/`audit`/`system` |
+| `module` | String | 所属模块 |
+| `action` | String | 操作动作 |
+| `target_type` | String | 目标类型 |
+| `target_id` | Integer | 目标ID |
+| `detail` | String(JSON) | 详细信息 |
+| `ip` | String | IP地址 |
+| `request_id` | String | 请求ID，来自 `X-Request-Id` |
+| `method` | String | HTTP方法 |
+| `path` | String | 请求路径 |
+| `user_agent` | String | User-Agent |
+| `status` | String | 处理状态 |
+| `error_message` | String | 错误信息 |
+| `duration_ms` | Integer | 耗时毫秒 |
+| `created_at` | LocalDateTime | 创建时间 |
+
+---
+
+## API-127 GET /api/v1/admin/system-logs
+**功能**: 查询脱敏后的系统运行及异常日志
+**查询参数**: log_type(否), module(否), start_time(否), end_time(否), page(默认1), size(默认10)
+**后端 DTO**: `LogQueryDTO`
+**响应 VO**: `Result<PageResult<LogVO>>`
+
+---
+
+## API-128 GET /api/v1/admin/dashboard
+**功能**: 查询业务指标
+**响应 VO**: `Result<{user_count, resource_count, ai_task_count, export_task_count, moderation_pending_count}>`
+
+---
+
+## API-129 GET /api/v1/admin/alerts
+**功能**: 分页查询告警
+**查询参数**: level(否), source(否), status(否), page(默认1), size(默认10)
+**响应 VO**: `Result<PageResult<{id, level, source, title, status, created_at, resolved_at}>>`
+
+---
+
+## API-130 GET /api/v1/admin/alerts/{id}
+**功能**: 获取告警详情
+**路径参数**: `id` — 告警ID
+**响应 VO**: `Result<{id, level, source, title, detail, status, acknowledged_by, resolved_by, created_at, acknowledged_at, resolved_at}>`
+
+---
+
+## API-131 POST /api/v1/admin/alerts/{id}/acknowledge
+**功能**: 确认告警
+**路径参数**: `id` — 告警ID
+**响应 VO**: `Result<Void>`
+
+---
+
+## API-132 POST /api/v1/admin/alerts/{id}/resolve
+**功能**: 解决告警
+**路径参数**: `id` — 告警ID
+**请求体**: resolution(String **是**)
+**响应 VO**: `Result<Void>`
+
+---
+
+# 附录: 统一响应结构
+
+### Result（通用响应）
+```json
+{
+  "code": 200,
+  "message": "success",
+  "data": { ... }
+}
+```
+| 字段 | 类型 | 说明 |
+|---|---|---|
+| `code` | int | 200成功，其他为错误码 |
+| `message` | String | 描述信息 |
+| `data` | T | 数据体（类型见各API说明） |
+
+### PageResult（分页响应）
+```json
+{
+  "total": 100,
+  "page": 1,
+  "size": 10,
+  "records": [ ... ]
+}
+```
+| 字段 | 类型 | 说明 |
+|---|---|---|
+| `total` | long | 总记录数 |
+| `page` | int | 当前页码 |
+| `size` | int | 每页条数 |
+| `records` | List<T> | 当前页数据列表 |
+
+---
+
+# 附录: 常见 HTTP 状态码
+
+| 状态码 | 说明 |
+|---|---|
+| 200 | 请求成功 |
+| 400 | 请求参数错误 |
+| 401 | 未认证 / Token 无效 |
+| 403 | 无权限访问 |
+| 404 | 资源不存在 |
+| 409 | 版本冲突（乐观锁） |
+| 422 | 业务校验不通过 |
+| 429 | 请求频率限制 |
+| 500 | 服务器内部错误 |
+
+---
+
+# 附录: 全局请求头
+
+| 请求头 | 必填 | 说明 |
+|---|---|---|
+| `Authorization` | 需认证的接口必填 | `Bearer <token>` |
+| `Content-Type` | POST/PATCH/PUT 必填 | `application/json` |
+| `Idempotent-Key` | 幂等敏感操作可选 | 防重复提交 |
+
+---
+
+# 十五、Python PPT 生成服务
+
+> 说明: Python 服务主要承接 AI 大纲生成、整套 PPT 制作、整套课件迭代修改和单页 PPT 修改。返回的 PPT 页面内容均为 HTML 字符串，Java 后端可作为业务网关转发调用，也可由前端在受信任场景下直接调用。
+> 建议基础路径: `/api/v1/python`
+> 当前 A12-PY 已实现接口: 健康检查、语音输入 ASR、资料上传、模板列表、大纲生成、对话式 SSE 大纲生成、对话会话查询、教师画像查询、大纲修改/重生成、整套 PPT 生成、整套课件迭代修改、单页 PPT 修改、HTML 校验、高保真 PPTX 导出、Word 教案生成、DOCX 导出、动画/小游戏 HTML5 互动模块生成。
+> 质量策略: 整套 PPT 生成采用 LandPPT 标准高质量链路，包括模板风格基因提取、全局视觉宪法、每页创意 brief、单页 HTML 生成、HTML 清理校验和多轮修复重试。未配置 `OPENAI_API_KEY` 时仅使用本地 fallback 模板，质量不能等同 AI 生成效果。
+
+**调用顺序建议**
+1. 先调用 API-134 获取模板列表，前端让用户选择 `templates[n].theme`
+2. 如果用户使用语音输入，先调用 API-134A 得到转写文本，再作为对话 `message` 或普通大纲要求提交
+3. 如果用户上传 PDF/Word/PPT/图片/视频/音频/TXT，先调用 API-135，保存返回的 `resource_id`
+4. 推荐调用 API-137A 进行对话式 SSE 大纲生成；如果前端不需要多轮澄清，也可以调用 API-136 一次性生成
+5. 用户修改大纲后可直接传给下一步；如果要让 AI 按新要求重生成/修订大纲，调用 API-137
+6. 调用 API-142 生成配套 Word 教案 JSON，前端可预览和编辑；确认后调用 API-143 导出 DOCX
+7. 如果用户要求动画/小游戏，调用 API-144 生成 HTML5 互动模块，再作为新增页或某页素材插入课件
+8. 然后调用 API-138，把 API-136、API-137 或 API-137A 返回的 `data.outline` 原样放入 `outline`，并传入前端选中的 `theme`
+9. 如果用户要整体修改课件，调用 API-139A，把当前整套 `slides` 和修改要求传入
+10. 如果用户只要改某一页，调用 API-139，把该页 `html` 放入 `current_html`
+11. 用户在线编辑完成后，调用 API-141 导出 PPTX 下载文件，默认 `high_fidelity`
+
+**主题 theme 可填值**
+`theme` 应从 API-134 返回的模板列表中选择，建议直接使用 `theme` 字段（即模板 JSON 文件名，不含 `.json`）。不传默认使用 `素白风`。
+
+当前模板库包含: `Toy风`、`中国风`、`中式书卷风`、`五彩斑斓的黑`、`吉卜力风`、`商务`、`大气红`、`宣纸风`、`拟态风`、`日落大道`、`星月夜风`、`星月蓝`、`森林绿`、`模糊玻璃`、`清新笔记`、`清新风`、`科技风`、`竹简风`、`简约答辩风`、`素白风`、`终端风`、`莫奈风`、`赛博朋克风`、`速度黄`、`饺子风`。
+
+## API-133 GET /api/v1/python/health
+
+**功能**: Python 服务健康检查，用于前端或 Java 后端确认 AI/PPT 服务是否可用
+
+**后端参数**: 无请求体
+
+**响应 VO**: `Result<PythonHealthVO>`
+
+| PythonHealthVO 字段 | 类型 | 说明 |
+|---|---|---|
+| `status` | String | 服务状态: `ok` / `degraded` |
+| `service` | String | 服务名称，固定建议为 `a12-python-ppt-service` |
+| `version` | String | Python 服务版本号 |
+| `model_ready` | Boolean | AI 模型或外部模型网关是否可用 |
+| `asr_model` | String | 语音转写模型，默认 `whisper-1` |
+| `quality_pipeline` | Boolean | 是否启用 LandPPT 高质量生成流水线 |
+| `max_html_retries` | int | 单页 HTML 最大修复重试次数 |
+
+---
+
+## API-134A POST /api/v1/python/audio/asr
+
+**功能**: 语音输入 ASR。前端上传教师语音，Python 调用 Whisper 兼容接口转写为文本，前端可把返回文本填入对话框或直接作为 API-137A 的 `message`。
+
+**请求类型**: `multipart/form-data`
+
+| 字段 | 类型 | 必填 | 说明 |
+|---|---|---|---|
+| `file` | File | **是** | 音频文件，建议 `wav/mp3/m4a/webm` |
+| `language` | String | 否 | 语音语言，例如 `zh`；不传则模型自动识别 |
+
+**响应 VO**: `Result<AsrVO>`
+
+| AsrVO 字段 | 类型 | 说明 |
+|---|---|---|
+| `text` | String | 转写文本 |
+| `language` | String | 请求指定的语言 |
+| `model` | String | ASR 模型，默认 `whisper-1`，可通过 Python `.env` 的 `ASR_MODEL` 调整 |
+| `status` | String | `completed/unavailable/failed` |
+| `error_message` | String | 失败原因 |
+| `filename` | String | 原始文件名 |
+| `content_type` | String | MIME 类型 |
+
+**Java 编排说明**: 前端语音对话推荐调用 API-13A，由 Java 调用 `PythonPptClient.transcribeAudio(...)` 完成 ASR 后继续进入 AI 对话；本 Python 接口保留为细粒度能力接口和内部调试接口。
+
+---
+
+## API-134 GET /api/v1/python/templates
+
+**功能**: 获取 Python PPT 服务可用模板列表，前端主题下拉框应使用此接口返回值
+
+**后端参数**: 无请求体
+
+**响应 VO**: `Result<TemplateListVO>`
+
+| TemplateListVO 字段 | 类型 | 说明 |
+|---|---|---|
+| `total` | int | 模板总数 |
+| `default_theme` | String | 默认模板，当前为 `素白风` |
+| `templates` | List<TemplateVO> | 模板列表 |
+
+| TemplateVO 字段 | 类型 | 说明 |
+|---|---|---|
+| `theme` | String | 生成 PPT 时传入的主题值，直接放入 API-138 的 `theme` |
+| `template_name` | String | 模板展示名称 |
+| `description` | String | 模板描述 |
+| `aliases` | List<String> | 可匹配别名 |
+| `is_default` | Boolean | 是否默认模板 |
+| `filename` | String | 模板文件名 |
+
+---
+
+## API-135 POST /api/v1/python/resources/upload
+
+**功能**: 上传生成大纲前的参考资料，支持 PDF、Word、PPT、图片、视频、音频、TXT/Markdown 等文件。接口会保存文件并执行多模态解析，返回 `resource_id` 供大纲生成时使用。
+
+**请求类型**: `multipart/form-data`
+
+| 字段 | 类型 | 必填 | 说明 |
+|---|---|---|---|
+| `file` | File | **是** | 用户上传的 PDF/Word/PPT/图片/视频/音频/TXT 文件 |
+
+**响应 VO**: `Result<ResourceUploadVO>`
+
+| ResourceUploadVO 字段 | 类型 | 说明 |
+|---|---|---|
+| `resource_id` | String | 资料ID，大纲生成时放入 `resource_ids` |
+| `filename` | String | 原始文件名 |
+| `content_type` | String | 文件 MIME 类型 |
+| `text_length` | int | 抽取出的文本长度 |
+| `text_preview` | String | 文本预览 |
+
+---
+
+## API-135-1 POST /api/v1/python/resources/index/sync
+
+**功能**: 从 Java 传入的 MySQL 资源 URL 解析文件并保存到 Python RAG 索引库。接口幂等：`source_type + resource_id` 组成唯一键；如果 `file_url/file_size` 未变化且已经解析完成，则不会重复解析，只更新 metadata。
+
+**请求体 (JSON)**
+| 字段 | 类型 | 必填 | 说明 |
+|---|---|---|---|
+| `source_type` | String | **是** | `public` 或 `personal` |
+| `resource_id` | String | **是** | MySQL 资源 ID，例如 `12` |
+| `title` | String | **是** | 资源标题 |
+| `file_url` | String | **是** | MySQL 保存的文件 URL |
+| `file_type` | String | 否 | `pdf/word/ppt/txt/image/audio/video`；不传或传业务类型时，Python 会根据 `file_url` 后缀兜底识别 |
+| `file_size` | long | 否 | 文件大小，用于判断是否变化 |
+| `uploaded_by` | String | 否 | 上传人 ID |
+| `owner_user_id` | String | 否 | 个人资源所属用户 ID |
+| `available` | Boolean | 否 | 是否可用 |
+| `allow_ai` | Boolean | 否 | 是否允许 AI 检索 |
+| `metadata` | Object | 否 | 学科、年级、标签、权限等扩展元数据 |
+| `force_reparse` | Boolean | 否 | 是否强制重新解析 |
+
+**metadata 固定包含**: `source/source_type/resource_id/resource_key/mysql_table/uploaded_by/owner_user_id/available/allow_ai/file_url/file_type/file_size/title`
+
+**多模态解析能力**:
+| 类型 | 解析方式 | 输出到 RAG 的内容 |
+|---|---|---|
+| `pdf` | PyPDF2 文本抽取 | 按页文本 |
+| `word` | python-docx | 段落、表格文本 |
+| `ppt` | python-pptx + 视觉模型 | 每页文本、PPT 内嵌图片视觉摘要 |
+| `image` | OCR + 视觉模型 | 图片文字、图表/场景/知识点摘要 |
+| `video` | OpenCV/ffmpeg 抽关键帧 + 视觉模型 | 关键帧画面文字、场景和知识点摘要 |
+| `audio` | Whisper 兼容音频转写 | 音频转写文本 |
+| `txt` | 文本读取 | 原始文本 |
+
+**解析 metadata 额外包含**: `parse.modality`、`parse.parser`、`parse.normalized_file_type`、`parse.text_length`，PPT/视频还会包含 `slide_count/image_count/keyframe_count/vision_summary_count` 等统计字段。
+
+**响应 VO**: `Result<{resource_key, status, text_length, chunk_count, error_message}>`
+
+---
+
+## API-135-2 POST /api/v1/python/resources/index/bootstrap
+
+**功能**: 批量初始化资源索引库。由 Java 遍历 MySQL 公共资源和 AI 可用个人资源后调用。
+
+**请求体 (JSON)**: `{ "resources": [API-135-1 的资源对象], "force_reparse": false }`
+
+**响应 VO**: `Result<{total, indexed, skipped, failed, results}>`
+
+---
+
+## API-135-3 PATCH /api/v1/python/resources/index/metadata
+
+**功能**: 更新资源索引 metadata，不重新解析文件。用于公共资源停用、个人资源关闭 `allow_ai` 等场景。
+
+**请求体 (JSON)**: `source_type`、`resource_id` 必填，`available`、`allow_ai`、`metadata` 选填。
+
+**响应 VO**: `Result<{resource_key, status, available, allow_ai}>`
+
+---
+
+## API-135-4 DELETE /api/v1/python/resources/index/{source_type}/{resource_id}
+
+**功能**: 删除资源索引及其 chunks。用于个人资源删除、替换旧文件等场景。
+
+**路径参数**: `source_type=public|personal`，`resource_id=MySQL资源ID`
+
+**响应 VO**: `Result<{resource_key, status}>`
+
+---
+
+## API-136 POST /api/v1/python/outlines/generate
+
+**功能**: 根据课程信息、教学目标和用户补充要求生成 PPT/教学设计大纲
+
+**最小可用请求**
+```json
+{
+  "title": "光合作用",
+  "subject": "生物",
+  "grade": "七年级",
+  "slide_count": 8
+}
+```
+
+**完整请求示例**
+```json
+{
+  "session_id": 101,
+  "title": "光合作用",
+  "subject": "生物",
+  "grade": "七年级",
+  "duration_minutes": 45,
+  "teaching_goals": "理解光合作用的条件、过程和意义，能够解释植物制造有机物的基本过程。",
+  "knowledge_points": ["叶绿体", "二氧化碳", "水", "光能", "氧气释放"],
+  "requirements": "适合初中课堂，语言通俗，加入课堂提问和总结页。",
+  "reference_text": "这里放教材、教案、上传文档解析后的参考文本，可为空。",
+  "slide_count": 8,
+  "resource_ids": ["res_xxxxxx"],
+  "enable_rag": true,
+  "enable_web": false,
+  "language": "zh-CN"
+}
+```
+
+**请求体 (JSON)**
+| 字段 | 类型 | 必填 | 说明 |
+|---|---|---|---|
+| `session_id` | long | 否 | Java 后端已有会话ID，没有就不传 |
+| `title` | String | **是** | PPT/课程标题，例如 `光合作用` |
+| `subject` | String | **是** | 学科，例如 `语文` / `数学` / `英语` / `生物` |
+| `grade` | String | **是** | 年级，例如 `七年级` / `高一` |
+| `duration_minutes` | int | 否 | 课程时长，单位分钟，例如 `45` |
+| `teaching_goals` | String | 否 | 教学目标，一段自然语言即可 |
+| `knowledge_points` | List<String> | 否 | 知识点数组，例如 `["叶绿体", "光能", "氧气释放"]` |
+| `requirements` | String | 否 | 用户额外要求，例如 `风格活泼，加入课堂互动` |
+| `reference_text` | String | 否 | 教材、资料、上传文件解析后的纯文本；没有资料可不传 |
+| `resource_ids` | List<String> | 否 | RAG资源ID列表。临时上传资料使用 API-135 返回的 `res_xxx`；公共资源使用 `public:{adm_resource.id}`；个人AI资源使用 `personal:{res_material.id}` |
+| `enable_rag` | Boolean | 否 | 是否启用资料/RAG增强；为 `true` 时会合并上传资料文本 |
+| `enable_web` | Boolean | 否 | 是否启用联网增强开关；当前会传入模型提示词 |
+| `slide_count` | int | 否 | 期望页数，建议 `6-15`，默认 `8` |
+| `language` | String | 否 | 输出语言，默认 `zh-CN` |
+| `regenerate_instruction` | String | 否 | 重生成大纲时的附加要求 |
+
+**后端 DTO**: `OutlineGenerateDTO { session_id, title, subject, grade, duration_minutes, teaching_goals, knowledge_points, requirements, reference_text, resource_ids, enable_rag, enable_web, slide_count, language, regenerate_instruction }`
+
+**响应 VO**: `Result<OutlineGenerateVO>`
+
+| OutlineGenerateVO 字段 | 类型 | 说明 |
+|---|---|---|
+| `outline_id` | String | Python 服务生成的大纲ID |
+| `title` | String | 大纲标题 |
+| `summary` | String | 大纲摘要 |
+| `slide_count` | int | 建议 PPT 页数 |
+| `outline` | Object(JSON) | 结构化大纲内容 |
+| `slides` | List<OutlineSlideVO> | 分页大纲 |
+
+| OutlineSlideVO 字段 | 类型 | 说明 |
+|---|---|---|
+| `slide_no` | int | 页码，从 1 开始 |
+| `title` | String | 单页标题 |
+| `content_points` | List<String> | 页面核心要点 |
+| `teaching_intent` | String | 教学意图 |
+| `visual_suggestion` | String | 版式或配图建议 |
+
+---
+
+## API-137 POST /api/v1/python/outlines/update
+
+**功能**: 用户在已有大纲基础上修改或重生成大纲，可附带新要求、资料ID、RAG/联网开关。
+
+**请求体 (JSON)**
+| 字段 | 类型 | 必填 | 说明 |
+|---|---|---|---|
+| `outline` | Object(JSON) | **是** | 当前大纲对象 |
+| `instruction` | String | **是** | 修改/重生成要求 |
+| `resource_ids` | List<String> | 否 | 参考资料ID列表 |
+| `enable_rag` | Boolean | 否 | 是否合并资料增强 |
+| `enable_web` | Boolean | 否 | 是否开启联网增强开关 |
+
+**响应 VO**: `Result<OutlineGenerateVO>`
+
+---
+
+## API-137A POST /api/v1/python/outlines/chat/stream
+
+**功能**: ChatGPT 式对话生成大纲。后端先解析用户手动输入、历史对话和上传资料内容；如果缺少关键信息，通过 SSE 返回澄清问题；用户回复后带同一个 `session_id` 再次调用，后端会合并原始数据和新回复，构造更贴近用户意图的最终 prompt，再生成结构化大纲并流式返回。
+
+**请求类型**: `application/json`
+
+**响应类型**: `text/event-stream`
+
+**最小请求**
+```json
+{
+  "user_id": "10001",
+  "message": "帮我做一个七年级生物光合作用8页PPT，加入课堂互动"
+}
+```
+
+**完整请求示例**
+```json
+{
+  "user_id": "10001",
+  "session_id": "outline_chat_xxxxxx",
+  "message": "用户本轮输入或对澄清问题的回复",
+  "history": [
+    {"role": "user", "content": "帮我做一个光合作用PPT"},
+    {"role": "assistant", "content": "请补充年级和学科。"}
+  ],
+  "known_context": {
+    "title": "光合作用",
+    "subject": "生物"
+  },
+  "resource_ids": ["res_xxxxxx"],
+  "enable_rag": true,
+  "enable_web": false,
+  "slide_count": 8,
+  "language": "zh-CN"
+}
+```
+
+**请求体 (JSON)**
+| 字段 | 类型 | 必填 | 说明 |
+|---|---|---|---|
+| `user_id` | String | **是** | 当前用户ID，用于 PostgreSQL 长期记忆、会话归属和教师画像关联 |
+| `session_id` | String | 否 | 对话会话ID；首次不传，后端通过 `session` 事件返回 |
+| `message` | String | **是** | 用户本轮自然语言输入，也可以是对后端澄清问题的回复 |
+| `history` | List<Message> | 否 | 前端已有对话历史；后端也会维护进程内会话状态 |
+| `known_context` | Object(JSON) | 否 | 前端已知或用户已编辑确认的信息，例如 `title`、`subject`、`grade` |
+| `resource_ids` | List<String> | 否 | RAG资源ID列表。临时上传资料使用 API-135 返回的 `res_xxx`；公共资源使用 `public:{adm_resource.id}`；个人AI资源使用 `personal:{res_material.id}` |
+| `enable_rag` | Boolean | 否 | 是否调用 RAG 检索工具 |
+| `enable_web` | Boolean | 否 | 是否调用联网搜索工具 |
+| `slide_count` | int | 否 | 期望页数，默认 `8` |
+| `language` | String | 否 | 输出语言，默认 `zh-CN` |
+
+**SSE 事件**
+| event | data 说明 |
+|---|---|
+| `session` | 返回 `user_id` 和 `session_id` |
+| `stage` | 当前节点进度，如 `parse_input`、`tools`、`build_prompt`、`generate_outline` |
+| `question` | 信息不足时返回澄清问题；前端展示给用户并等待下一轮回复 |
+| `tool_result` | RAG/联网工具返回摘要 |
+| `prompt` | 合并多轮上下文和工具结果后的最终大纲 prompt |
+| `progress` | 模型生成期间的保活进度 |
+| `outline_delta` | 单页大纲增量，前端可逐页追加显示 |
+| `final` | 完整 `OutlineGenerateVO`，包含 `outline_id`、`outline`、`slides` |
+| `error` | 节点异常 |
+| `done` | 本轮完成 |
+
+**前端 SSE 读取示例**
+```javascript
+const resp = await fetch("http://127.0.0.1:8001/api/v1/python/outlines/chat/stream", {
+  method: "POST",
+  headers: { "Content-Type": "application/json" },
+  body: JSON.stringify({
+    user_id,
+    session_id,
+    message: userInput,
+    resource_ids: resourceIds,
+    enable_rag: true,
+    enable_web: false,
+    slide_count: 8
+  })
+});
+
+const reader = resp.body.getReader();
+const decoder = new TextDecoder("utf-8");
+let buffer = "";
+
+while (true) {
+  const { value, done } = await reader.read();
+  if (done) break;
+  buffer += decoder.decode(value, { stream: true });
+  const chunks = buffer.split("\n\n");
+  buffer = chunks.pop() || "";
+  for (const chunk of chunks) {
+    const event = chunk.match(/^event: (.+)$/m)?.[1];
+    const dataText = chunk.match(/^data: (.+)$/m)?.[1];
+    const data = dataText ? JSON.parse(dataText) : {};
+    if (event === "question") showQuestion(data.question);
+    if (event === "outline_delta") appendOutlineSlide(data.slide);
+    if (event === "final") saveOutline(data.outline);
+  }
+}
+```
+
+**后端实现说明**: 对话大纲工作流位于 `a12_ppt/outline_chat`，工具调用位于 `a12_ppt/tools`，当前工具包括 RAG 检索和联网搜索。依赖中已加入 `langgraph`，节点边界按 StateGraph 方式拆分。长期记忆、会话、教师画像使用 PostgreSQL，建表脚本位于 A12-PY 目录的 `postgresql_schema.sql`。
+
+---
+
+## API-137B GET /api/v1/python/outlines/chat/sessions
+
+**功能**: 根据 `user_id` 查询该用户最近的大纲对话会话，用于前端后续继续对话。
+
+**Query 参数**
+| 字段 | 类型 | 必填 | 说明 |
+|---|---|---|---|
+| `user_id` | String | **是** | 用户ID |
+| `limit` | int | 否 | 返回数量，默认 `20`，最大 `100` |
+
+**响应 VO**: `Result<OutlineChatSessionListVO>`
+
+| 字段 | 类型 | 说明 |
+|---|---|---|
+| `user_id` | String | 用户ID |
+| `sessions` | List<Object> | 会话列表，包含 `session_id`、`title`、`intent`、`status`、`updated_at` |
+
+---
+
+## API-137C GET /api/v1/python/teacher-style/profile
+
+**功能**: 根据 `user_id` 查询教师长期教学风格画像。
+
+**Query 参数**
+| 字段 | 类型 | 必填 | 说明 |
+|---|---|---|---|
+| `user_id` | String | **是** | 用户ID |
+
+**响应 VO**: `Result<TeacherStyleProfileVO>`
+
+| 字段 | 类型 | 说明 |
+|---|---|---|
+| `user_id` | String | 用户ID |
+| `profile` | Object(JSON) | PostgreSQL 中存储的教师画像；没有则为 `null` |
+| `postgres_available` | Boolean | 当前 PostgreSQL 是否可用 |
+
+---
+
+## API-138 POST /api/v1/python/presentations/generate
+
+**功能**: 根据已确认的大纲生成整套 PPT，返回每页 PPT 的 HTML 字符串
+
+**最小可用请求**
+```json
+{
+  "title": "光合作用",
+  "outline": {
+    "title": "光合作用",
+    "slides": [
+      {
+        "slide_no": 1,
+        "title": "光合作用",
+        "content_points": ["课程导入", "植物为什么需要阳光", "本节课学习目标"],
+        "teaching_intent": "激发兴趣并建立问题情境",
+        "visual_suggestion": "封面式大标题，配合重点关键词"
+      }
+    ]
+  },
+  "theme": "科技风"
+}
+```
+
+**实际调用建议**
+前端或 Java 后端通常不需要自己拼 `outline`，直接把 API-136 或 API-137 返回的 `data.outline` 原样传入即可:
+```json
+{
+  "session_id": 101,
+  "outline_id": "outline_xxxxxx",
+  "title": "光合作用",
+  "outline": "{这里放 API-136 或 API-137 返回的 data.outline 对象，不是字符串}",
+  "theme": "科技风",
+  "aspect_ratio": "16:9",
+  "language": "zh-CN",
+  "asset_policy": "placeholder"
+}
+```
+
+**请求体 (JSON)**
+| 字段 | 类型 | 必填 | 说明 |
+|---|---|---|---|
+| `session_id` | long | 否 | Java 后端已有会话ID，没有就不传 |
+| `outline_id` | String | 否 | API-136/API-137 返回的 `data.outline_id` |
+| `title` | String | **是** | PPT 标题，通常和大纲标题一致 |
+| `outline` | Object(JSON) | **是** | API-136/API-137 返回的 `data.outline` 对象，注意不是 JSON 字符串 |
+| `theme` | String | 否 | 模板主题，必须优先使用 API-134 返回的 `templates[n].theme`；不传默认 `素白风` |
+| `aspect_ratio` | String | 否 | 页面比例: 当前建议固定填 `16:9` |
+| `language` | String | 否 | 输出语言，默认 `zh-CN` |
+| `asset_policy` | String | 否 | 素材策略: `none` / `placeholder` / `generate`；当前建议填 `placeholder` |
+
+**后端 DTO**: `PresentationGenerateDTO { session_id, outline_id, title, outline, theme, aspect_ratio, language, asset_policy }`
+
+**响应 VO**: `Result<PresentationGenerateVO>`
+
+| PresentationGenerateVO 字段 | 类型 | 说明 |
+|---|---|---|
+| `presentation_id` | String | Python 服务生成的 PPT ID |
+| `title` | String | PPT 标题 |
+| `slide_count` | int | 实际生成页数 |
+| `slides` | List<PptSlideHtmlVO> | 每页 PPT HTML |
+| `html` | String | 可选，整套 PPT 合并后的 HTML 字符串 |
+
+| PptSlideHtmlVO 字段 | 类型 | 说明 |
+|---|---|---|
+| `slide_no` | int | 页码，从 1 开始 |
+| `title` | String | 单页标题 |
+| `html` | String | 单页 PPT 的 HTML 字符串 |
+| `notes` | String | 可选，讲稿或备注 |
+| `metadata` | Object(JSON) | 可选，版式、主题、生成参数等扩展信息 |
+
+---
+
+## API-139 POST /api/v1/python/presentations/slides/modify
+
+**功能**: 根据修改指令重写或局部调整单页 PPT，返回修改后的单页 HTML 字符串
+
+**最小可用请求**
+```json
+{
+  "slide_no": 2,
+  "current_html": "<!DOCTYPE html><html lang=\"zh-CN\">...</html>",
+  "instruction": "把这一页改成左右对比布局，颜色更活泼一些"
+}
+```
+
+**完整请求示例**
+```json
+{
+  "presentation_id": "ppt_xxxxxx",
+  "slide_no": 2,
+  "current_html": "<!DOCTYPE html><html lang=\"zh-CN\">...</html>",
+  "instruction": "增加一个课堂提问区，突出重点词“叶绿体”，整体保持科技风。",
+  "outline_context": {
+    "title": "光合作用",
+    "current_slide_title": "光合作用的条件"
+  },
+  "theme": "科技风",
+  "keep_style": true
+}
+```
+
+**请求体 (JSON)**
+| 字段 | 类型 | 必填 | 说明 |
+|---|---|---|---|
+| `presentation_id` | String | 否 | API-138 返回的 `data.presentation_id` |
+| `slide_no` | int | **是** | 要修改的页码，例如 `2` |
+| `current_html` | String | **是** | 当前页 HTML，取 API-138 返回的 `data.slides[n].html` |
+| `instruction` | String | **是** | 用户修改要求，例如 `改成时间线布局，并压缩文字` |
+| `outline_context` | Object(JSON) | 否 | PPT 或当前页上下文，用于让模型理解整体内容 |
+| `theme` | String | 否 | 模板主题，例如 `科技风` |
+| `keep_style` | Boolean | 否 | 是否尽量保持原有视觉风格，默认 `true` |
+
+**后端 DTO**: `SlideModifyDTO { presentation_id, slide_no, current_html, instruction, outline_context, theme, keep_style }`
+
+**响应 VO**: `Result<SlideModifyVO>`
+
+| SlideModifyVO 字段 | 类型 | 说明 |
+|---|---|---|
+| `presentation_id` | String | PPT ID，透传请求值 |
+| `slide_no` | int | 被修改页码 |
+| `html` | String | 修改后的单页 PPT HTML 字符串 |
+| `change_summary` | String | 修改摘要 |
+| `metadata` | Object(JSON) | 可选，修改原因、版式信息、模型信息等 |
+
+---
+
+## API-139A POST /api/v1/python/presentations/modify
+
+**功能**: 整套课件级别的迭代修改。用于教师提出“整套统一换风格”“整体减少文字”“增加一页案例”“删除第 3 页”“把活动页提前”“统一所有页字体和配色”等全局或跨页修改要求。Python 会先生成课件级修改计划，再并发修改受影响页面，返回新的整套 slides。
+
+**请求体 (JSON)**
+| 字段 | 类型 | 必填 | 说明 |
+|---|---|---|---|
+| `presentation_id` | String | 否 | 当前课件 ID |
+| `title` | String | 否 | 课件标题，默认 `A12 PPT` |
+| `slides` | List<Object> | **是** | 当前整套 PPT slides，每项至少包含 `slide_no/title/html` |
+| `instruction` | String | **是** | 整套修改要求，例如 `整体减少文字，统一成素白风，并在第4页后增加一个生活案例页` |
+| `outline` | Object(JSON) | 否 | 当前大纲，用于理解页面逻辑和新增页内容 |
+| `theme` | String | 否 | 当前主题，建议传 API-134 返回的 `theme` |
+| `keep_style` | Boolean | 否 | 是否尽量保持当前风格，默认 `true` |
+| `max_modified_slides` | int | 否 | 限制最多重写多少页，适合快速预览；不传则由模型决定 |
+
+**响应 VO**: `Result<PresentationModifyVO>`
+
+| PresentationModifyVO 字段 | 类型 | 说明 |
+|---|---|---|
+| `presentation_id` | String | 课件 ID |
+| `title` | String | 修改后的标题 |
+| `slide_count` | int | 修改后页数 |
+| `slides` | List<Object> | 修改后的整套 slides，可直接用于前端预览/在线编辑/导出 PPTX |
+| `html` | String | 合并后的整套 HTML 播放容器 |
+| `change_summary` | String | 整套修改摘要 |
+| `operations` | List<Object> | 修改计划，包含 `modify/add/delete/reorder` 操作 |
+| `modified_slide_nos` | List<int> | 实际重写 HTML 的页码 |
+| `metadata` | Object(JSON) | 模型、主题、风格保持等信息 |
+
+**Java 代理说明**: `PythonPptClient.modifyPresentation(...)` 已提供 JSON 调用方法。
+
+---
+
+## API-140 POST /api/v1/python/presentations/html/validate
+
+**功能**: 校验 PPT HTML 字符串是否满足前端渲染要求
+
+**最小可用请求**
+```json
+{
+  "html": "<!DOCTYPE html><html lang=\"zh-CN\">...</html>"
+}
+```
+
+**完整请求示例**
+```json
+{
+  "html": "<!DOCTYPE html><html lang=\"zh-CN\">...</html>",
+  "strict": false
+}
+```
+
+**请求体 (JSON)**
+| 字段 | 类型 | 必填 | 说明 |
+|---|---|---|---|
+| `html` | String | **是** | 待校验的 PPT HTML 字符串，通常取单页 `slides[n].html` |
+| `strict` | Boolean | 否 | 是否启用严格校验，默认 `false`；前端一般不传 |
+
+**后端 DTO**: `PptHtmlValidateDTO { html, strict }`
+
+**响应 VO**: `Result<PptHtmlValidateVO>`
+
+| PptHtmlValidateVO 字段 | 类型 | 说明 |
+|---|---|---|
+| `valid` | Boolean | 是否通过校验 |
+| `errors` | List<String> | 错误列表 |
+| `warnings` | List<String> | 警告列表 |
+
+---
+
+## API-141 POST /api/v1/python/presentations/export/pptx
+
+**功能**: 将前端最终确认/编辑后的 HTML PPT slides 导出为 PPTX 文件下载。默认使用高保真导出：通过浏览器把每页 HTML 渲染为整页图片，再写入 PPTX，以最大程度保留 HTML 视觉效果、复杂 CSS、背景、图表和互动模块的静态首屏。若浏览器运行时不可用，会自动降级为可编辑文本版导出。
+
+**请求体 (JSON)**
+| 字段 | 类型 | 必填 | 说明 |
+|---|---|---|---|
+| `title` | String | 否 | PPT 标题，默认 `A12 PPT` |
+| `filename` | String | 否 | 下载文件名，例如 `光合作用.pptx` |
+| `slides` | List<Object> | **是** | 最终 slides 列表，每项至少包含 `html`，建议包含 `title` |
+| `fidelity` | String | 否 | `high_fidelity` 或 `editable_text`，默认 `high_fidelity` |
+
+**响应**: `application/vnd.openxmlformats-officedocument.presentationml.presentation` 文件流
+
+**导出模式说明**:
+| fidelity | 说明 | 优点 | 限制 |
+|---|---|---|---|
+| `high_fidelity` | Chromium 渲染 HTML 截图，每页作为整页图片写入 PPTX | 视觉最接近前端 HTML 预览，适合最终交付 | PPTX 内文字不可逐字编辑，动画/小游戏导出为静态首屏 |
+| `editable_text` | 从 HTML 抽取标题和文本，用 PowerPoint 文本框重建 | 文本可编辑 | 视觉还原度较低 |
+
+**部署说明**: 高保真导出依赖 Python 包 `playwright` 和 Chromium 运行时。部署后需执行 `python -m playwright install chromium`。如果没有安装浏览器，接口不会失败，会退回 `editable_text`。
+
+---
+
+## API-142 POST /api/v1/python/lesson-plans/generate
+
+**功能**: 根据已生成/已编辑的大纲和 PPT slides 生成配套 Word 教案 JSON。前端可先展示给教师在线修改，再调用 API-143 导出 `.docx`。
+
+**请求体 (JSON)**
+| 字段 | 类型 | 必填 | 说明 |
+|---|---|---|---|
+| `title` | String | **是** | 课程/教案标题 |
+| `subject` | String | 否 | 学科 |
+| `grade` | String | 否 | 年级 |
+| `duration_minutes` | int | 否 | 课时分钟数 |
+| `teaching_goals` | String | 否 | 教学目标 |
+| `outline` | Object(JSON) | 否 | API-136/API-137A 返回的 `outline` |
+| `slides` | List<Object> | 否 | API-136/API-137A 返回的 `slides` 或最终 PPT slides 摘要 |
+| `requirements` | String | 否 | 对教案的额外要求，例如“增加课堂活动和分层作业” |
+| `reference_text` | String | 否 | 参考资料文本或教师补充说明 |
+| `language` | String | 否 | 默认 `zh-CN` |
+
+**响应 VO**: `Result<LessonPlanGenerateVO>`
+
+| LessonPlanGenerateVO 字段 | 类型 | 说明 |
+|---|---|---|
+| `lesson_plan_id` | String | Python 生成的教案 ID |
+| `title` | String | 教案标题 |
+| `lesson_plan` | Object(JSON) | 可编辑教案结构 |
+
+**lesson_plan 推荐结构**: `title/subject/grade/duration_minutes/teaching_goals/key_points/difficult_points/teaching_methods/teaching_resources/lesson_process/classroom_activities/blackboard_design/homework/assessment/reflection`。
+
+---
+
+## API-143 POST /api/v1/python/lesson-plans/export/docx
+
+**功能**: 将前端确认后的教案 JSON 导出为标准 `.docx` 文件下载。
+
+**请求体 (JSON)**
+| 字段 | 类型 | 必填 | 说明 |
+|---|---|---|---|
+| `title` | String | 否 | 文件标题，默认 `A12 教案` |
+| `filename` | String | 否 | 下载文件名，例如 `光合作用教案.docx` |
+| `lesson_plan` | Object(JSON) | **是** | API-142 返回或前端编辑后的教案 JSON |
+
+**响应**: `application/vnd.openxmlformats-officedocument.wordprocessingml.document` 文件流
+
+**Java 代理说明**: `PythonPptClient.generateLessonPlan(...)` 和 `PythonPptClient.exportLessonPlanDocx(...)` 已提供调用方法；Java 可在导出任务中保存返回的二进制文件，也可由前端直接调 Python 下载。
+
+---
+
+## API-144 POST /api/v1/python/interactive-modules/generate
+
+**功能**: 专门生成动画/互动小游戏 HTML5 模块。用于满足“生成知识点相关动画创意、互动小游戏”等要求。返回的 `html` 可作为独立页面预览，也可以插入某一页 PPT HTML 中；导出 PPTX 时高保真模式会保留该模块静态首屏。
+
+**请求体 (JSON)**
+| 字段 | 类型 | 必填 | 说明 |
+|---|---|---|---|
+| `title` | String | **是** | 模块标题 |
+| `topic` | String | **是** | 知识主题，例如 `光合作用过程` |
+| `module_type` | String | 否 | `animation` / `quiz_game` / `matching_game` / `timeline_game` / `simulation`，默认 `animation` |
+| `subject` | String | 否 | 学科 |
+| `grade` | String | 否 | 年级 |
+| `knowledge_points` | List<String> | 否 | 需要表现或考察的知识点 |
+| `requirements` | String | 否 | 额外要求，例如 `适合小组抢答，带计分和重置按钮` |
+| `theme` | String | 否 | 视觉主题，建议与 PPT 模板一致 |
+| `embed_mode` | String | 否 | `standalone` 或 `slide_fragment`，默认 `standalone` |
+| `language` | String | 否 | 默认 `zh-CN` |
+
+**响应 VO**: `Result<InteractiveModuleVO>`
+
+| InteractiveModuleVO 字段 | 类型 | 说明 |
+|---|---|---|
+| `module_id` | String | 互动模块 ID |
+| `title` | String | 模块标题 |
+| `module_type` | String | 模块类型 |
+| `topic` | String | 知识主题 |
+| `html` | String | 完整 HTML5 模块，含 CSS/JS，可直接预览或嵌入 PPT 页 |
+| `embed_mode` | String | 嵌入模式 |
+| `usage_suggestions` | List<String> | 课堂使用建议 |
+| `metadata` | Object(JSON) | 模型、主题、是否独立页等信息 |
+
+**Java 代理说明**: `PythonPptClient.generateInteractiveModule(...)` 已提供 JSON 调用方法。
+
+---
+
+### 前端一套完整调用示例
+
+**1. 获取模板列表**
+```javascript
+const templateResp = await fetch("http://127.0.0.1:8001/api/v1/python/templates")
+  .then(res => res.json());
+
+const selectedTheme = templateResp.data.templates.find(t => t.theme === "素白风")?.theme
+  || templateResp.data.default_theme;
+```
+
+**2. 可选上传资料**
+```javascript
+const formData = new FormData();
+formData.append("file", fileInput.files[0]);
+
+const uploadResp = await fetch("http://127.0.0.1:8001/api/v1/python/resources/upload", {
+  method: "POST",
+  body: formData
+}).then(res => res.json());
+
+const resourceIds = [uploadResp.data.resource_id];
+```
+
+**3. 生成大纲**
+```javascript
+const outlineResp = await fetch("http://127.0.0.1:8001/api/v1/python/outlines/generate", {
+  method: "POST",
+  headers: { "Content-Type": "application/json" },
+  body: JSON.stringify({
+    title: "光合作用",
+    subject: "生物",
+    grade: "七年级",
+    slide_count: 8,
+    teaching_goals: "理解光合作用的条件、过程和意义",
+    resource_ids: resourceIds,
+    enable_rag: true,
+    enable_web: false
+  })
+}).then(res => res.json());
+```
+
+**4. 可选按用户新要求修订大纲**
+```javascript
+const updatedOutlineResp = await fetch("http://127.0.0.1:8001/api/v1/python/outlines/update", {
+  method: "POST",
+  headers: { "Content-Type": "application/json" },
+  body: JSON.stringify({
+    outline: outlineResp.data.outline,
+    instruction: "第 3 页增加课堂互动，第 7 页增加总结练习",
+    resource_ids: resourceIds,
+    enable_rag: true,
+    enable_web: false
+  })
+}).then(res => res.json());
+```
+
+**5. 用确认后的大纲生成 PPT**
+```javascript
+const finalOutline = updatedOutlineResp?.data?.outline || outlineResp.data.outline;
+
+const pptResp = await fetch("http://127.0.0.1:8001/api/v1/python/presentations/generate", {
+  method: "POST",
+  headers: { "Content-Type": "application/json" },
+  body: JSON.stringify({
+    title: finalOutline.title,
+    outline_id: outlineResp.data.outline_id,
+    outline: finalOutline,
+    theme: selectedTheme,
+    aspect_ratio: "16:9",
+    asset_policy: "placeholder"
+  })
+}).then(res => res.json());
+
+const firstSlideHtml = pptResp.data.slides[0].html;
+```
+
+**6. 修改某一页**
+```javascript
+const editResp = await fetch("http://127.0.0.1:8001/api/v1/python/presentations/slides/modify", {
+  method: "POST",
+  headers: { "Content-Type": "application/json" },
+  body: JSON.stringify({
+    presentation_id: pptResp.data.presentation_id,
+    slide_no: 1,
+    current_html: pptResp.data.slides[0].html,
+    instruction: "把封面标题放大，增加课堂导入问题，整体保持当前模板风格",
+    theme: selectedTheme,
+    keep_style: true
+  })
+}).then(res => res.json());
+```
+
+**7. 导出 PPTX**
+```javascript
+const finalSlides = pptResp.data.slides.map(slide =>
+  slide.slide_no === editResp.data.slide_no
+    ? { ...slide, html: editResp.data.html }
+    : slide
+);
+
+const pptxBlob = await fetch("http://127.0.0.1:8001/api/v1/python/presentations/export/pptx", {
+  method: "POST",
+  headers: { "Content-Type": "application/json" },
+  body: JSON.stringify({
+    title: pptResp.data.title,
+    filename: "光合作用.pptx",
+    slides: finalSlides
+  })
+}).then(res => res.blob());
+```
+
+### Python 服务统一错误码建议
+
+| code | message | 说明 |
+|---|---|---|
+| 40001 | `invalid_outline_input` | 大纲生成参数不完整或格式错误 |
+| 40002 | `invalid_ppt_html` | PPT HTML 字符串格式不合法 |
+| 50001 | `outline_generate_failed` | 大纲生成失败 |
+| 50002 | `presentation_generate_failed` | PPT 生成失败 |
+| 50003 | `slide_modify_failed` | 单页 PPT 修改失败 |
+| 50301 | `model_unavailable` | 模型服务不可用或超时 |

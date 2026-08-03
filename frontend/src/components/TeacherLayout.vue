@@ -141,6 +141,7 @@ onMounted(async () => {
           </button>
         </div>
       </header>
+      
       <router-view v-slot="{ Component, route: viewRoute }">
         <Transition :name="viewTransitionName" mode="out-in" appear>
           <div
