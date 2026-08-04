@@ -17,7 +17,7 @@ import {
   Promotion,
 } from '@element-plus/icons-vue'
 import { TEACHER_HOME } from '../config/teacherHome.config.js'
-import { archiveProject, copyProject, createAiSession, createProject, deleteProject, listProjects, listResources, restoreProject, uploadResource } from '../apis/teacher'
+import { archiveProject, copyProject, createAiSession, createProject, deleteProject, listProjects, listResources, restoreProject, sendAiSessionMessage, uploadResource } from '../apis/teacher'
 
 const router = useRouter()
 const route = useRoute()
@@ -160,20 +160,48 @@ const openSessionDialog = async () => {
   await loadAvailableResources()
 }
 
+const handleSessionEnter = (event) => {
+  event.preventDefault()
+  if (!sessionCreating.value) createSessionFromPrompt()
+}
+
 const createSessionFromPrompt = async () => {
+  if (sessionCreating.value) return
   if (!sessionForm.title.trim() || !sessionForm.subject.trim() || !sessionForm.grade.trim()) return ElMessage.warning('请完整填写备课信息')
   sessionCreating.value = true
   try {
+    const initialMessage = prompt.value.trim()
+    const knownContext = {
+      title: sessionForm.title.trim(),
+      subject: sessionForm.subject.trim(),
+      grade: sessionForm.grade.trim(),
+    }
     const result = await createAiSession({
       title: sessionForm.title.trim(), subject: sessionForm.subject.trim(), grade: sessionForm.grade.trim(), status: 'active',
-      messages: JSON.stringify([{ role: 'user', content: prompt.value.trim() }]), uploaded_refs: JSON.stringify(selectedResourceIds.value),
+      messages: JSON.stringify([]), uploaded_refs: JSON.stringify(selectedResourceIds.value),
     })
     const task = result?.data || result
     const sessionId = task?.conversation_id || task?.id
     if (!sessionId) throw new Error(result?.message || '创建备课会话失败')
+
+    // UI-07 创建会话后立即提交原始指令，AI 才能判断意图是否需要澄清。
+    const conversationResult = await sendAiSessionMessage(sessionId, {
+      message: initialMessage,
+      messages: JSON.stringify([{ role: 'user', content: initialMessage }]),
+      known_context: JSON.stringify(knownContext),
+    })
+    const conversation = conversationResult?.data || conversationResult || {}
+    const initialClarification = conversation.last_question || conversation.clarification_question || null
+    const workspaceQuery = {
+      ...(route.query.preview ? { preview: '1' } : {}),
+      sessionId,
+      taskId: task.id,
+    }
+    if (initialClarification) workspaceQuery.initialClarification = JSON.stringify(initialClarification)
+
     sessionDialogVisible.value = false
-    ElMessage.success('备课会话已创建，正在生成教学大纲')
-    router.push({ path: '/main/workspace', query: { ...(route.query.preview ? { preview: '1' } : {}), sessionId, taskId: task.id } })
+    ElMessage.success(initialClarification ? '备课会话已创建，请先补充教学意图' : '备课会话已创建，正在生成教学大纲')
+    router.push({ path: '/main/workspace', query: workspaceQuery })
   } catch (error) { ElMessage.error(error?.message || '创建备课会话失败，请稍后重试') } finally { sessionCreating.value = false }
 }
 
@@ -330,8 +358,8 @@ onMounted(loadProjects)
       <template #footer><el-button @click="voiceDialogVisible = false">取消</el-button><el-tooltip content="等待语音识别服务接入"><span><el-button type="primary" disabled>开始录音</el-button></span></el-tooltip></template>
     </el-dialog>
     <el-dialog v-model="sessionDialogVisible" title="创建 AI 备课会话" width="min(600px, 92vw)" destroy-on-close>
-      <el-form label-position="top" class="session-form">
-        <div class="session-fields"><el-form-item label="备课主题" required><el-input v-model="sessionForm.title" maxlength="40" show-word-limit /></el-form-item><el-form-item label="学科" required><el-input v-model="sessionForm.subject" placeholder="例如：数学" /></el-form-item><el-form-item label="年级" required><el-input v-model="sessionForm.grade" placeholder="例如：八年级" /></el-form-item></div>
+      <el-form label-position="top" class="session-form" @submit.prevent="createSessionFromPrompt">
+        <div class="session-fields"><el-form-item label="备课主题" required><el-input v-model="sessionForm.title" maxlength="40" show-word-limit @keydown.enter="handleSessionEnter" /></el-form-item><el-form-item label="学科" required><el-input v-model="sessionForm.subject" placeholder="例如：数学" @keydown.enter="handleSessionEnter" /></el-form-item><el-form-item label="年级" required><el-input v-model="sessionForm.grade" placeholder="例如：八年级" @keydown.enter="handleSessionEnter" /></el-form-item></div>
         <el-form-item label="本次需求"><div class="prompt-preview">{{ prompt }}</div></el-form-item>
         <el-form-item label="引用个人资源（可选）"><el-checkbox-group v-model="selectedResourceIds" v-loading="resourcesLoading" class="resource-picker"><el-checkbox v-for="item in availableResources" :key="item.id" :value="item.id">{{ item.file_name }}</el-checkbox><span v-if="!resourcesLoading && !availableResources.length" class="empty-resources">暂无可选资源</span></el-checkbox-group></el-form-item>
       </el-form>
