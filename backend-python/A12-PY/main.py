@@ -1,4 +1,4 @@
-from fastapi import FastAPI, File, Form, Query, UploadFile
+from fastapi import FastAPI, File, Form, HTTPException, Query, UploadFile
 from fastapi.middleware.cors import CORSMiddleware
 import json
 import tempfile
@@ -19,9 +19,12 @@ from a12_ppt.presentation import (
 )
 from a12_ppt.models import (
     HtmlValidateRequest,
+    IntentRecognizeRequest,
     InteractiveModuleGenerateRequest,
     LessonPlanExportRequest,
     LessonPlanGenerateRequest,
+    OutlineChatSessionCreateRequest,
+    OutlineChatSessionUpdateRequest,
     OutlineChatStreamRequest,
     OutlineGenerateRequest,
     OutlineUpdateRequest,
@@ -139,6 +142,11 @@ async def generate_outline(request: OutlineGenerateRequest) -> Result:
     return Result(data=await generator.generate_outline(request))
 
 
+@app.post("/api/v1/python/intent/recognize")
+async def recognize_intent(request: IntentRecognizeRequest) -> Result:
+    return Result(data=await outline_chat_workflow.recognize_intent(request))
+
+
 @app.post("/api/v1/python/outlines/chat/stream")
 async def stream_outline_chat(request: OutlineChatStreamRequest):
     async def event_source():
@@ -156,6 +164,36 @@ async def list_outline_chat_sessions(user_id: str = Query(..., min_length=1), li
         "user_id": user_id,
         "sessions": outline_session_store.list_sessions(user_id, limit=limit),
     })
+
+
+@app.post("/api/v1/python/outlines/chat/sessions")
+async def create_outline_chat_session(request: OutlineChatSessionCreateRequest) -> Result:
+    session = outline_session_store.create(request.user_id.strip(), request.title.strip() if request.title else None)
+    return Result(data=session)
+
+
+@app.get("/api/v1/python/outlines/chat/sessions/{session_id}")
+async def get_outline_chat_session(session_id: str, user_id: str = Query(..., min_length=1)) -> Result:
+    session = outline_session_store.get(user_id.strip(), session_id)
+    if not session:
+        raise HTTPException(status_code=404, detail="Outline chat session not found")
+    return Result(data=session)
+
+
+@app.patch("/api/v1/python/outlines/chat/sessions/{session_id}")
+async def update_outline_chat_session(session_id: str, request: OutlineChatSessionUpdateRequest, user_id: str = Query(..., min_length=1)) -> Result:
+    session = outline_session_store.update_title(user_id.strip(), session_id, request.title.strip())
+    if not session:
+        raise HTTPException(status_code=404, detail="Outline chat session not found")
+    return Result(data=session)
+
+
+@app.delete("/api/v1/python/outlines/chat/sessions/{session_id}")
+async def delete_outline_chat_session(session_id: str, user_id: str = Query(..., min_length=1)) -> Result:
+    deleted = outline_session_store.delete(user_id.strip(), session_id)
+    if not deleted:
+        raise HTTPException(status_code=404, detail="Outline chat session not found")
+    return Result(data={"user_id": user_id, "session_id": session_id, "deleted": True})
 
 
 @app.get("/api/v1/python/teacher-style/profile")
@@ -194,11 +232,12 @@ async def validate_ppt_html(request: HtmlValidateRequest) -> Result:
 
 @app.post("/api/v1/python/presentations/export/pptx")
 async def export_pptx(request: PresentationExportRequest):
-    output = await export_html_slides_to_pptx(request.title, request.slides, request.filename, request.fidelity)
+    output = await export_html_slides_to_pptx(request.title, request.slides, request.filename, request.fidelity, request.package_static_assets)
+    media_type = "application/zip" if output.suffix.lower() == ".zip" else "application/vnd.openxmlformats-officedocument.presentationml.presentation"
     return FileResponse(
         path=str(output),
         filename=output.name,
-        media_type="application/vnd.openxmlformats-officedocument.presentationml.presentation",
+        media_type=media_type,
     )
 
 

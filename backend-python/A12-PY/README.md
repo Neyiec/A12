@@ -42,8 +42,13 @@ QUALITY_PRESET=fast
 - `POST /api/v1/python/resources/upload`
 - `GET /api/v1/python/templates`
 - `POST /api/v1/python/outlines/generate`
+- `POST /api/v1/python/intent/recognize`
 - `POST /api/v1/python/outlines/chat/stream`
 - `GET /api/v1/python/outlines/chat/sessions`
+- `POST /api/v1/python/outlines/chat/sessions`
+- `GET /api/v1/python/outlines/chat/sessions/{session_id}`
+- `PATCH /api/v1/python/outlines/chat/sessions/{session_id}`
+- `DELETE /api/v1/python/outlines/chat/sessions/{session_id}`
 - `GET /api/v1/python/teacher-style/profile`
 - `POST /api/v1/python/outlines/update`
 - `POST /api/v1/python/presentations/generate`

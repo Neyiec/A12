@@ -24,6 +24,7 @@ class OutlineGenerateRequest(BaseModel):
     slide_count: int | None = Field(default=8, ge=1, le=30)
     language: str = "zh-CN"
     regenerate_instruction: str | None = None
+    interactive_policy: dict[str, Any] = Field(default_factory=dict)
 
 
 class PresentationGenerateRequest(BaseModel):
@@ -89,11 +90,36 @@ class OutlineChatStreamRequest(BaseModel):
     language: str = "zh-CN"
 
 
+class IntentRecognizeRequest(BaseModel):
+    user_id: str | None = None
+    session_id: str | None = None
+    title: str | None = None
+    message: str = Field(..., min_length=1)
+    history: list[OutlineChatMessage] = Field(default_factory=list)
+    known_context: dict[str, Any] = Field(default_factory=dict)
+    resource_ids: list[str] = Field(default_factory=list)
+    enable_web: bool = False
+    enable_rag: bool = False
+    slide_count: int | None = Field(default=8, ge=1, le=30)
+    language: str = "zh-CN"
+    input_type: Literal["text", "audio"] = "text"
+
+
+class OutlineChatSessionCreateRequest(BaseModel):
+    user_id: str = Field(..., min_length=1)
+    title: str | None = None
+
+
+class OutlineChatSessionUpdateRequest(BaseModel):
+    title: str = Field(..., min_length=1, max_length=255)
+
+
 class PresentationExportRequest(BaseModel):
     title: str = "A12 PPT"
     slides: list[dict[str, Any]]
     filename: str | None = None
     fidelity: Literal["high_fidelity", "editable_text"] = "high_fidelity"
+    package_static_assets: bool = True
 
 
 class LessonPlanGenerateRequest(BaseModel):

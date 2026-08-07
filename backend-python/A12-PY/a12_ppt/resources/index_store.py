@@ -275,23 +275,29 @@ class ResourceIndexStore:
     ) -> dict[str, Any]:
         keys = [resource_id for resource_id in resource_ids if ":" in resource_id]
         query_vector = embedding_to_pgvector(query_embedding)
-        if not keys or not query_vector:
+        if not query_vector:
             return {"context": "", "matches": []}
+        key_filter = "AND resource_key = ANY(%s)" if keys else ""
+        params: tuple[Any, ...]
+        if keys:
+            params = (query_vector, keys, query_vector, top_k)
+        else:
+            params = (query_vector, query_vector, top_k)
         with self._connect() as conn:
             with conn.cursor() as cur:
                 cur.execute(
-                    """
+                    f"""
                     SELECT chunk_id, source_type, resource_id, chunk_index, content, metadata,
                            1 - (embedding_vector <=> %s::vector) AS similarity
                     FROM a12_resource_index_chunk
-                    WHERE resource_key = ANY(%s)
-                      AND embedding_vector IS NOT NULL
+                    WHERE embedding_vector IS NOT NULL
+                      {key_filter}
                       AND COALESCE((metadata->>'available')::boolean, TRUE) IS TRUE
                       AND COALESCE((metadata->>'allow_ai')::boolean, TRUE) IS TRUE
                     ORDER BY embedding_vector <=> %s::vector
                     LIMIT %s
                     """,
-                    (query_vector, keys, query_vector, top_k),
+                    params,
                 )
                 rows = cur.fetchall()
         matches = [
@@ -465,21 +471,21 @@ class ResourceIndexStore:
 
     def _load_chunks(self, resource_ids: list[str]) -> list[IndexedChunk]:
         keys = [resource_id for resource_id in resource_ids if ":" in resource_id]
-        if not keys:
-            return []
         if self.available:
             with self._connect() as conn:
                 with conn.cursor() as cur:
+                    key_filter = "AND resource_key = ANY(%s)" if keys else ""
+                    params: tuple[Any, ...] = (keys,) if keys else ()
                     cur.execute(
-                        """
+                        f"""
                         SELECT chunk_id, source_type, resource_id, chunk_index, content, embedding_vector::text, metadata
                         FROM a12_resource_index_chunk
-                        WHERE resource_key = ANY(%s)
-                          AND COALESCE((metadata->>'available')::boolean, TRUE) IS TRUE
+                        WHERE COALESCE((metadata->>'available')::boolean, TRUE) IS TRUE
+                          {key_filter}
                           AND COALESCE((metadata->>'allow_ai')::boolean, TRUE) IS TRUE
                         ORDER BY resource_key, chunk_index
                         """,
-                        (keys,),
+                        params,
                     )
                     return [
                         IndexedChunk(
@@ -495,7 +501,8 @@ class ResourceIndexStore:
                     ]
         data = self._read_fallback()
         chunks: list[IndexedChunk] = []
-        for key in keys:
+        target_keys = keys or list(data.get("chunks", {}).keys())
+        for key in target_keys:
             meta = data.get("resources", {}).get(key, {})
             if not meta.get("available", True) or not meta.get("allow_ai", True):
                 continue

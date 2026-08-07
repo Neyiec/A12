@@ -143,6 +143,52 @@ class PostgresOutlineMemoryStore:
             self.available = False
             return []
 
+    def get_session(self, user_id: str, session_id: str) -> dict[str, Any] | None:
+        return self._fetch_session(user_id, session_id)
+
+    def update_session_title(self, user_id: str, session_id: str, title: str) -> dict[str, Any] | None:
+        try:
+            import psycopg
+            from psycopg.rows import dict_row
+
+            with psycopg.connect(self.settings.postgres_dsn, row_factory=dict_row) as conn:
+                with conn.cursor() as cur:
+                    cur.execute(
+                        """
+                        UPDATE a12_outline_chat_session
+                        SET title = %s, updated_at = NOW()
+                        WHERE user_id = %s AND session_id = %s
+                        RETURNING user_id, session_id, title, intent, status, last_message_at, created_at, updated_at
+                        """,
+                        (title, user_id, session_id),
+                    )
+                    row = cur.fetchone()
+                conn.commit()
+                return dict(row) if row else None
+        except Exception:
+            self.available = False
+            return None
+
+    def delete_session(self, user_id: str, session_id: str) -> bool:
+        try:
+            import psycopg
+
+            with psycopg.connect(self.settings.postgres_dsn) as conn:
+                with conn.cursor() as cur:
+                    cur.execute(
+                        """
+                        DELETE FROM a12_outline_chat_session
+                        WHERE user_id = %s AND session_id = %s
+                        """,
+                        (user_id, session_id),
+                    )
+                    deleted = cur.rowcount > 0
+                conn.commit()
+                return deleted
+        except Exception:
+            self.available = False
+            return False
+
     def get_teacher_profile(self, user_id: str) -> dict[str, Any] | None:
         try:
             import psycopg
@@ -173,9 +219,15 @@ class PostgresOutlineMemoryStore:
                 with conn.cursor() as cur:
                     cur.execute(
                         """
-                        SELECT s.intent, s.final_prompt, s.outline_data,
+                        SELECT s.user_id, s.session_id, s.title, s.intent, s.final_prompt, s.outline_data,
+                               s.status, s.last_message_at, s.created_at, s.updated_at,
                                COALESCE(
-                                 jsonb_agg(jsonb_build_object('role', m.role, 'content', m.content) ORDER BY m.created_at)
+                                 jsonb_agg(jsonb_build_object(
+                                   'role', m.role,
+                                   'content', m.content,
+                                   'metadata', m.metadata,
+                                   'created_at', m.created_at
+                                 ) ORDER BY m.created_at)
                                    FILTER (WHERE m.id IS NOT NULL),
                                  '[]'::jsonb
                                ) AS messages
@@ -191,10 +243,17 @@ class PostgresOutlineMemoryStore:
                     if not row:
                         return None
                     return {
+                        "user_id": row.get("user_id"),
+                        "session_id": row.get("session_id"),
+                        "title": row.get("title"),
                         "messages": row.get("messages") or [],
                         "intent": row.get("intent") or {},
                         "final_prompt": row.get("final_prompt") or "",
                         "outline": row.get("outline_data") or {},
+                        "status": row.get("status"),
+                        "last_message_at": row.get("last_message_at"),
+                        "created_at": row.get("created_at"),
+                        "updated_at": row.get("updated_at"),
                     }
         except Exception:
             self.available = False

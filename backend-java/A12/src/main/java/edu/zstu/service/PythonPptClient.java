@@ -73,6 +73,11 @@ public class PythonPptClient {
         return postJson("/api/v1/python/outlines/update", payload);
     }
 
+    public Map<String, Object> recognizeIntent(Map<String, Object> payload) {
+        log.info("recognizeIntent inputType={}, hasMessage={}", payload.get("input_type"), payload.containsKey("message"));
+        return postJson("/api/v1/python/intent/recognize", payload);
+    }
+
     public OutlineChatResult streamOutlineChat(Map<String, Object> payload) {
         try {
             log.info("streamOutlineChat hasSessionId={}, enableRag={}, enableWeb={}",
@@ -133,6 +138,22 @@ public class PythonPptClient {
         return getJson("/api/v1/python/outlines/chat/sessions", query);
     }
 
+    public Map<String, Object> createOutlineChatSession(Map<String, Object> payload) {
+        return postJson("/api/v1/python/outlines/chat/sessions", payload);
+    }
+
+    public Map<String, Object> getOutlineChatSession(String userId, String sessionId) {
+        return getJson("/api/v1/python/outlines/chat/sessions/" + urlEncode(sessionId), Map.of("user_id", userId));
+    }
+
+    public Map<String, Object> updateOutlineChatSession(String userId, String sessionId, Map<String, Object> payload) {
+        return patchJson("/api/v1/python/outlines/chat/sessions/" + urlEncode(sessionId) + toQueryString(Map.of("user_id", userId)), payload);
+    }
+
+    public Map<String, Object> deleteOutlineChatSession(String userId, String sessionId) {
+        return deleteJson("/api/v1/python/outlines/chat/sessions/" + urlEncode(sessionId), Map.of("user_id", userId));
+    }
+
     public Map<String, Object> teacherStyleProfile(String userId) {
         return getJson("/api/v1/python/teacher-style/profile", Map.of("user_id", userId));
     }
@@ -159,6 +180,10 @@ public class PythonPptClient {
 
     public byte[] exportPresentationPptx(Map<String, Object> payload) {
         return postBytes("/api/v1/python/presentations/export/pptx", payload, "调用Python PPTX导出服务失败");
+    }
+
+    public PythonFileResult exportPresentationFile(Map<String, Object> payload) {
+        return postFile("/api/v1/python/presentations/export/pptx", payload, "调用Python PPTX导出服务失败");
     }
 
     public Map<String, Object> generateLessonPlan(Map<String, Object> payload) {
@@ -233,6 +258,21 @@ public class PythonPptClient {
         return sendJson("PATCH", path, payload);
     }
 
+    private Map<String, Object> deleteJson(String path, Map<String, Object> query) {
+        try {
+            HttpRequest request = HttpRequest.newBuilder()
+                    .uri(URI.create(baseUrl + path + toQueryString(query)))
+                    .timeout(Duration.ofSeconds(requestTimeoutSeconds))
+                    .DELETE()
+                    .build();
+            HttpResponse<String> response = httpClient.send(request, HttpResponse.BodyHandlers.ofString());
+            log.info("deleteJson path={}, statusCode={}", path, response.statusCode());
+            return parseJsonResponse(response);
+        } catch (Exception e) {
+            throw new RuntimeException("调用Python服务失败: " + e.getMessage(), e);
+        }
+    }
+
     private Map<String, Object> sendJson(String method, String path, Map<String, Object> payload) {
         try {
             HttpResponse<String> response = sendJsonResponse(method, path, payload);
@@ -278,6 +318,10 @@ public class PythonPptClient {
     }
 
     private byte[] postBytes(String path, Map<String, Object> payload, String errorPrefix) {
+        return postFile(path, payload, errorPrefix).bytes;
+    }
+
+    private PythonFileResult postFile(String path, Map<String, Object> payload, String errorPrefix) {
         try {
             String body = objectMapper.writeValueAsString(payload == null ? Map.of() : payload);
             HttpRequest request = HttpRequest.newBuilder()
@@ -291,7 +335,15 @@ public class PythonPptClient {
             if (response.statusCode() < 200 || response.statusCode() >= 300) {
                 throw new RuntimeException("Python服务调用失败，HTTP " + response.statusCode());
             }
-            return response.body();
+            String contentType = response.headers().firstValue("content-type")
+                    .orElse("application/octet-stream")
+                    .split(";")[0]
+                    .trim();
+            String filename = response.headers().firstValue("content-disposition")
+                    .map(this::filenameFromContentDisposition)
+                    .filter(value -> value != null && !value.isBlank())
+                    .orElse(null);
+            return new PythonFileResult(response.body(), contentType, filename);
         } catch (Exception e) {
             throw new RuntimeException(errorPrefix + ": " + e.getMessage(), e);
         }
@@ -408,6 +460,37 @@ public class PythonPptClient {
         return value == null ? null : String.valueOf(value);
     }
 
+    private String filenameFromContentDisposition(String contentDisposition) {
+        if (contentDisposition == null || contentDisposition.isBlank()) {
+            return null;
+        }
+        for (String part : contentDisposition.split(";")) {
+            String clean = part.trim();
+            if (clean.startsWith("filename*=")) {
+                String value = clean.substring("filename*=".length()).trim();
+                int marker = value.indexOf("''");
+                if (marker >= 0) {
+                    value = value.substring(marker + 2);
+                }
+                return java.net.URLDecoder.decode(stripQuotes(value), StandardCharsets.UTF_8);
+            }
+            if (clean.startsWith("filename=")) {
+                return stripQuotes(clean.substring("filename=".length()).trim());
+            }
+        }
+        return null;
+    }
+
+    private String stripQuotes(String value) {
+        if (value == null) {
+            return null;
+        }
+        if (value.length() >= 2 && value.startsWith("\"") && value.endsWith("\"")) {
+            return value.substring(1, value.length() - 1);
+        }
+        return value;
+    }
+
     private void sendSseEvent(SseEmitter emitter, String event, StringBuilder data) throws IOException {
         if (data == null || data.length() == 0) {
             return;
@@ -438,5 +521,17 @@ public class PythonPptClient {
         public Object memory;
         public Map<String, Object> finalData = new LinkedHashMap<>();
         public List<Object> outlineDeltas = new ArrayList<>();
+    }
+
+    public static class PythonFileResult {
+        public final byte[] bytes;
+        public final String contentType;
+        public final String filename;
+
+        public PythonFileResult(byte[] bytes, String contentType, String filename) {
+            this.bytes = bytes;
+            this.contentType = contentType;
+            this.filename = filename;
+        }
     }
 }

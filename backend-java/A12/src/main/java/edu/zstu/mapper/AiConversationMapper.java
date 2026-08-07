@@ -10,4 +10,5 @@ public interface AiConversationMapper {
     List<AI_Conversation> findByUserId(@Param("userId") Integer userId);
     int insert(AI_Conversation conversation);
     int update(AI_Conversation conversation);
+    int deleteById(@Param("id") Integer id, @Param("userId") Integer userId);
 }

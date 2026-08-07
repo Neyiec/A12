@@ -1,13 +1,13 @@
 import asyncio
 import json
 import re
-from typing import Any, AsyncIterator, Literal, TypedDict
+from typing import Any, AsyncIterator, Literal
 
 from langchain_core.messages import AIMessage, BaseMessage, HumanMessage
-from langgraph.graph import END, START, StateGraph
+from langgraph.graph import END, START, MessagesState, StateGraph
 
 from ..llm import LLMClient
-from ..models import OutlineChatStreamRequest, OutlineGenerateRequest
+from ..models import IntentRecognizeRequest, OutlineChatStreamRequest, OutlineGenerateRequest
 from ..presentation import PPTGenerator
 from ..presentation.json_utils import extract_json
 from ..tools import rag_search, web_search
@@ -16,14 +16,14 @@ from .postgres_store import postgres_memory_store
 from .session_store import outline_session_store
 
 
-class OutlineChatState(TypedDict, total=False):
+class OutlineChatState(MessagesState, total=False):
     user_id: str
     session_id: str
     request: OutlineChatStreamRequest
-    messages: list[BaseMessage]
     intent: dict[str, Any]
     teacher_profile: dict[str, Any] | None
     tool_context: dict[str, Any]
+    interactive_policy: dict[str, Any]
     final_prompt: str
     clarification_question: str
     outline: dict[str, Any]
@@ -82,7 +82,7 @@ class OutlineChatWorkflow:
         final_state = dict(state)
         async for chunk in self.graph.astream(state, stream_mode="updates"):
             node_name, node_update = next(iter(chunk.items()))
-            final_state.update(node_update or {})
+            self._merge_stream_update(final_state, node_update or {})
 
             if node_name == "load_profile":
                 yield {"event": "stage", "data": {"name": "load_profile", "message": "Loaded long-term teacher profile"}}
@@ -117,6 +117,23 @@ class OutlineChatWorkflow:
                     yield {"event": "error", "data": {"stage": "generate_outline", "message": final_state["error"], "user_id": user_id, "session_id": session_id}}
                     yield {"event": "done", "data": {"status": "failed", "user_id": user_id, "session_id": session_id}}
                     return
+                assistant_text = self._assistant_outline_message(final_state["response"])
+                final_state["messages"] = [
+                    *normalize_messages(final_state.get("messages", [])),
+                    AIMessage(content=assistant_text),
+                ]
+                outline_session_store.append_message(
+                    user_id,
+                    session_id,
+                    "assistant",
+                    assistant_text,
+                    {
+                        "type": "outline_result",
+                        "outline_id": final_state["response"].get("outline_id"),
+                        "slide_count": final_state["response"].get("slide_count"),
+                        "title": final_state["response"].get("title"),
+                    },
+                )
                 outline_session_store.save(user_id, session_id, self._session_snapshot(final_state), status="completed")
                 postgres_memory_store.save_generation(user_id, session_id, final_state["response"], final_state.get("final_prompt", ""))
                 yield {"event": "stage", "data": {"name": "generate_outline", "message": "Generated structured outline"}}
@@ -145,6 +162,86 @@ class OutlineChatWorkflow:
                 final = event["data"]
         return final
 
+    async def recognize_intent(self, request: IntentRecognizeRequest) -> dict[str, Any]:
+        user_id = (request.user_id or "").strip()
+        session_id = ""
+        saved: dict[str, Any] = {"messages": [], "intent": {}, "final_prompt": "", "outline": {}}
+        if user_id:
+            session_id, saved = outline_session_store.load_or_create(user_id, request.session_id)
+            if request.title:
+                saved["title"] = request.title
+
+        saved_messages = normalize_messages(saved.get("messages", [])) if user_id else []
+        history_messages = [] if saved_messages else request.history
+        messages: list[BaseMessage] = [
+            HumanMessage(content=message.content) if message.role == "user" else AIMessage(content=message.content)
+            for message in history_messages
+        ]
+        new_user_message = HumanMessage(content=request.message)
+        conversation = [*saved_messages, *messages, new_user_message]
+
+        if user_id and session_id:
+            outline_session_store.append_message(user_id, session_id, "user", request.message, {
+                "type": "intent_recognition_input",
+                "input_type": request.input_type,
+                "resource_ids": request.resource_ids,
+                "enable_rag": request.enable_rag,
+                "enable_web": request.enable_web,
+            })
+
+        known_context = {**(saved.get("intent") or {}), **request.known_context}
+        extracted = await self._extract_intent_with_model(conversation, known_context)
+        model_used = bool(extracted)
+        if not extracted:
+            extracted = self._extract_intent_heuristic(request.message)
+
+        intent = self._merge_intent(known_context, extracted)
+        intent.setdefault("slide_count", request.slide_count or 8)
+        intent.setdefault("language", request.language)
+        intent["enable_web"] = request.enable_web
+        intent["enable_rag"] = request.enable_rag
+        intent["resource_ids"] = request.resource_ids
+        if user_id:
+            intent["user_id"] = user_id
+
+        interactive_policy = self._interactive_policy(intent, request.message)
+        if interactive_policy.get("needs_interactive_assets"):
+            intent["interactive_policy"] = interactive_policy
+
+        missing_fields = self._missing_required_fields(intent)
+        clarification_question = self._clarification_question(intent)
+        result = {
+            "intent": intent,
+            "need_clarification": bool(missing_fields),
+            "missing_fields": missing_fields,
+            "clarification_question": clarification_question,
+            "confidence": self._intent_confidence(intent, model_used, missing_fields),
+            "input_type": request.input_type,
+            "model_used": model_used,
+        }
+        if user_id and session_id:
+            result["user_id"] = user_id
+            result["session_id"] = session_id
+            result["postgres_available"] = postgres_memory_store.available
+            outline_session_store.append_message(
+                user_id,
+                session_id,
+                "assistant",
+                self._assistant_intent_message(result),
+                {
+                    "type": "intent_recognition_result",
+                    "intent": intent,
+                    "need_clarification": bool(missing_fields),
+                    "missing_fields": missing_fields,
+                    "confidence": result["confidence"],
+                    "input_type": request.input_type,
+                },
+            )
+            saved["intent"] = intent
+            saved["messages"] = messages_to_dicts([*conversation, AIMessage(content=self._assistant_intent_message(result))])
+            outline_session_store.save(user_id, session_id, saved, status="intent_recognized" if not missing_fields else "need_clarification")
+        return result
+
     async def _load_profile_node(self, state: OutlineChatState) -> dict[str, Any]:
         profile = postgres_memory_store.get_teacher_profile(state["user_id"])
         return {"teacher_profile": profile}
@@ -154,8 +251,13 @@ class OutlineChatWorkflow:
         user_id = state["user_id"]
         session_id = state["session_id"]
         messages = normalize_messages(state.get("messages", []))
-        messages.extend(HumanMessage(content=message.content) if message.role == "user" else AIMessage(content=message.content) for message in request.history)
-        messages.append(HumanMessage(content=request.message))
+        history_messages = [] if messages else request.history
+        new_messages: list[BaseMessage] = [
+            HumanMessage(content=message.content) if message.role == "user" else AIMessage(content=message.content)
+            for message in history_messages
+        ]
+        new_messages.append(HumanMessage(content=request.message))
+        conversation = [*messages, *new_messages]
 
         outline_session_store.append_message(user_id, session_id, "user", request.message, {
             "resource_ids": request.resource_ids,
@@ -163,7 +265,7 @@ class OutlineChatWorkflow:
             "enable_web": request.enable_web,
         })
 
-        extracted = await self._extract_intent_with_model(messages, state.get("intent", {}))
+        extracted = await self._extract_intent_with_model(conversation, state.get("intent", {}))
         if not extracted:
             extracted = self._extract_intent_heuristic(request.message)
 
@@ -174,21 +276,24 @@ class OutlineChatWorkflow:
         intent["enable_rag"] = request.enable_rag
         intent["resource_ids"] = request.resource_ids
         intent["user_id"] = user_id
+        interactive_policy = self._interactive_policy(intent, request.message)
+        if interactive_policy.get("needs_interactive_assets"):
+            intent["interactive_policy"] = interactive_policy
         if state.get("teacher_profile"):
             intent["teacher_profile"] = state["teacher_profile"]
 
         question = self._clarification_question(intent)
-        updates: dict[str, Any] = {"messages": messages, "intent": intent}
+        updates: dict[str, Any] = {"messages": new_messages, "intent": intent, "interactive_policy": interactive_policy}
         if question:
             updates["clarification_question"] = question
-            messages.append(AIMessage(content=question))
+            updates["messages"] = [*new_messages, AIMessage(content=question)]
         return updates
 
     async def _tools_node(self, state: OutlineChatState) -> dict[str, Any]:
         intent = state["intent"]
         query = self._build_rag_query(state)
         tool_context: dict[str, Any] = {}
-        if intent.get("enable_rag") and intent.get("resource_ids"):
+        if intent.get("enable_rag"):
             tool_context["rag"] = await rag_search(list(intent.get("resource_ids") or []), query)
         if intent.get("enable_web"):
             tool_context["web"] = await web_search(query, max_results=5)
@@ -209,9 +314,15 @@ Tool context:
 Requirements:
 1. Output an editable structured outline for later HTML PPT generation.
 2. Each slide must include slide_no, title, slide_type, content_points, teaching_intent, visual_suggestion.
-3. Prefer effective information from RAG resources when RAG is enabled.
-4. Reflect stable teacher preferences from teacher_profile when available.
-5. Keep slide count close to slide_count.
+3. Use uploaded reference material for formatting, tone, examples, and user-specific content adaptation.
+4. Use RAG knowledge base matches as the authoritative local knowledge supplement.
+5. Reflect stable teacher preferences from teacher_profile when available.
+6. Keep slide count close to slide_count.
+7. If interactive_policy.needs_interactive_assets is true, include top-level interactive_assets.
+   Each interactive asset must include asset_id, title, type(animation|game|simulation),
+   target_slide_no, preferred_format(html5|gif|mp4), integration(ppt_video|static_link),
+   and description. Use ppt_video only for mp4. For html5/gif assets, use static_link
+   and make the target slide include clear link text plus a short explanation.
 """.strip()
         return {"final_prompt": prompt}
 
@@ -241,6 +352,7 @@ Requirements:
                 enable_rag=bool(intent.get("enable_rag")),
                 slide_count=int(intent.get("slide_count") or 8),
                 language=str(intent.get("language") or "zh-CN"),
+                interactive_policy=dict(intent.get("interactive_policy") or state.get("interactive_policy") or {}),
             )
             response = await self.generator.generate_outline(req)
             return {"outline": response.get("outline", {}), "response": response}
@@ -292,7 +404,8 @@ Conversation:
 
 Allowed fields:
 title, subject, grade, duration_minutes, teaching_goals, knowledge_points,
-requirements, slide_count, language.
+requirements, slide_count, language, needs_animation, needs_game,
+interactive_requirements, preferred_interactive_formats.
 
 Do not invent uncertain fields.
 """.strip()
@@ -324,6 +437,11 @@ Do not invent uncertain fields.
             intent["title"] = title
         if text:
             intent["requirements"] = text
+        lowered = text.lower()
+        if any(keyword in lowered for keyword in ["animation", "animate", "html5", "gif", "mp4", "video"]) or any(keyword in text for keyword in ["动画", "动效", "演示动画", "视频"]):
+            intent["needs_animation"] = True
+        if any(keyword in lowered for keyword in ["game", "quiz", "mini game"]) or any(keyword in text for keyword in ["小游戏", "小 游戏", "互动游戏", "闯关", "配对", "答题游戏", "游戏化"]):
+            intent["needs_game"] = True
         if "光合作用" in text and "subject" not in intent:
             intent["subject"] = "生物"
         return intent
@@ -379,17 +497,70 @@ Do not invent uncertain fields.
         ]
         return "\n".join(part for part in parts if part).strip()
 
+    def _interactive_policy(self, intent: dict[str, Any], latest_message: str) -> dict[str, Any]:
+        text = " ".join(
+            str(part or "")
+            for part in [
+                latest_message,
+                intent.get("requirements"),
+                intent.get("interactive_requirements"),
+                " ".join(str(item) for item in intent.get("preferred_interactive_formats") or []),
+            ]
+        ).lower()
+        animation_keywords = ["animation", "animate", "animated", "html5", "gif", "mp4", "video", "动画", "动效", "演示动画", "视频"]
+        game_keywords = ["game", "quiz", "小游戏", "小 游戏", "互动游戏", "闯关", "配对", "答题游戏", "游戏化"]
+        needs_animation = bool(intent.get("needs_animation")) or any(keyword in text for keyword in animation_keywords)
+        needs_game = bool(intent.get("needs_game")) or any(keyword in text for keyword in game_keywords)
+        formats = [candidate for candidate in ["mp4", "html5", "gif"] if candidate in text]
+        if not formats and (needs_animation or needs_game):
+            formats = ["html5"]
+        return {
+            "needs_interactive_assets": needs_animation or needs_game,
+            "needs_animation": needs_animation,
+            "needs_game": needs_game,
+            "preferred_formats": formats,
+            "ppt_integration_rule": (
+                "Use mp4 for direct PPT video embedding when available; package html5/gif/game files under static/ "
+                "and place relative links plus textual descriptions in the PPT."
+            ),
+        }
+
     def _clarification_question(self, intent: dict[str, Any]) -> str:
-        missing = []
-        if not intent.get("title"):
-            missing.append("课程/PPT主题")
-        if not intent.get("grade"):
-            missing.append("年级或受众")
-        if not intent.get("subject"):
-            missing.append("学科")
+        missing = self._missing_required_fields(intent)
         if not missing:
             return ""
-        return "为了生成更贴近你意图的大纲，请补充：" + "、".join(missing) + "。"
+        return "为了生成更贴近你意图的大纲，请补充：" + "、".join(self._missing_field_labels(missing)) + "。"
+
+    def _missing_required_fields(self, intent: dict[str, Any]) -> list[str]:
+        missing = []
+        if not intent.get("title"):
+            missing.append("title")
+        if not intent.get("grade"):
+            missing.append("grade")
+        if not intent.get("subject"):
+            missing.append("subject")
+        return missing
+
+    def _missing_field_labels(self, fields: list[str]) -> list[str]:
+        labels = {
+            "title": "课程/PPT主题",
+            "grade": "年级或受众",
+            "subject": "学科",
+        }
+        return [labels.get(field, field) for field in fields]
+
+    def _intent_confidence(self, intent: dict[str, Any], model_used: bool, missing_fields: list[str]) -> float:
+        required_count = 3
+        filled_required = required_count - len(missing_fields)
+        useful_optional = sum(
+            1
+            for key in ["duration_minutes", "teaching_goals", "knowledge_points", "requirements", "interactive_policy"]
+            if intent.get(key)
+        )
+        score = 0.35 + filled_required * 0.15 + min(useful_optional, 4) * 0.06
+        if model_used:
+            score += 0.12
+        return round(max(0.1, min(score, 0.95)), 2)
 
     async def _evaluate_teacher_style(self, user_text: str, intent: dict[str, Any]) -> dict[str, Any]:
         if self.llm.available:
@@ -466,3 +637,36 @@ Return strict JSON:
             "final_prompt": state.get("final_prompt", ""),
             "outline": state.get("outline", {}),
         }
+
+    def _assistant_outline_message(self, response: dict[str, Any]) -> str:
+        title = str(response.get("title") or "未命名大纲")
+        summary = str(response.get("summary") or "").strip()
+        slide_count = int(response.get("slide_count") or len(response.get("slides") or []))
+        lines = [f"已生成《{title}》的大纲，共 {slide_count} 页。"]
+        if summary:
+            lines.append(summary)
+        if response.get("interactive_assets"):
+            lines.append("已规划动画/小游戏等互动资源，生成 PPT 时会作为静态资源或视频资源处理。")
+        return "\n".join(lines)
+
+    def _assistant_intent_message(self, response: dict[str, Any]) -> str:
+        intent = response.get("intent") or {}
+        title = str(intent.get("title") or "未识别主题")
+        subject = str(intent.get("subject") or "未识别学科")
+        grade = str(intent.get("grade") or "未识别年级")
+        confidence = response.get("confidence")
+        if response.get("need_clarification"):
+            return f"已识别当前意图：主题={title}，学科={subject}，年级={grade}，置信度={confidence}。{response.get('clarification_question') or ''}"
+        return f"已识别当前意图：主题={title}，学科={subject}，年级={grade}，置信度={confidence}。"
+
+    def _merge_stream_update(self, final_state: dict[str, Any], update: dict[str, Any]) -> None:
+        if not update:
+            return
+        for key, value in update.items():
+            if key == "messages":
+                final_state["messages"] = [
+                    *normalize_messages(final_state.get("messages", [])),
+                    *normalize_messages(value or []),
+                ]
+            else:
+                final_state[key] = value

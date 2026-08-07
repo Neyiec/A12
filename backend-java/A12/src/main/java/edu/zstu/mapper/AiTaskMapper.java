@@ -12,4 +12,5 @@ public interface AiTaskMapper {
     List<AI_Task> findAll();
     int insert(AI_Task task);
     int update(AI_Task task);
+    int deleteByConversationId(@Param("conversationId") Integer conversationId, @Param("userId") Integer userId);
 }

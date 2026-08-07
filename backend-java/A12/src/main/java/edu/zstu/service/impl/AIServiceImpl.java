@@ -24,6 +24,7 @@ import org.springframework.web.multipart.MultipartFile;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.stream.Collectors;
 
 @Slf4j
 @Service
@@ -54,6 +55,7 @@ public class AIServiceImpl implements AIService {
         if (isBlank(dto.getTitle())) throw new RuntimeException("会话标题不能为空");
         if (isBlank(dto.getSubject())) throw new RuntimeException("学科不能为空");
         if (isBlank(dto.getGrade())) throw new RuntimeException("年级不能为空");
+        String pythonSessionId = createPythonSessionIfAvailable(userId, dto.getTitle());
 
         AI_Conversation conversation = new AI_Conversation();
         conversation.setUser_id(userId);
@@ -61,7 +63,7 @@ public class AIServiceImpl implements AIService {
         conversation.setStatus(defaultString(dto.getStatus(), "active"));
         conversation.setMessages(defaultJson(dto.getMessages(), "[]"));
         conversation.setContext_summary(null);
-        conversation.setPython_session_id(null);
+        conversation.setPython_session_id(pythonSessionId);
         conversation.setLast_question(null);
         conversationMapper.insert(conversation);
 
@@ -77,7 +79,7 @@ public class AIServiceImpl implements AIService {
         task.setPlan_confirm_status("pending");
         task.setExec_steps("[]");
         task.setReflections("[]");
-        task.setPython_session_id(null);
+        task.setPython_session_id(pythonSessionId);
         task.setPython_outline_id(null);
         task.setPython_presentation_id(null);
         task.setGeneration_mode("python");
@@ -88,6 +90,49 @@ public class AIServiceImpl implements AIService {
         businessLogService.record("operation", "ai", "create_session", "ai_task", task.getId(),
                 Map.of("conversation_id", conversation.getId(), "title", dto.getTitle(), "generation_mode", "python"));
         return toTaskVO(task);
+    }
+
+    @Override
+    public List<ConversationVO> listSessions() {
+        Integer userId = requireLogin();
+        return conversationMapper.findByUserId(userId).stream()
+                .map(this::toConversationVO)
+                .collect(Collectors.toList());
+    }
+
+    @Override
+    public ConversationVO getSession(String id) {
+        AI_Conversation conversation = requireConversation(id);
+        Integer userId = requireLogin();
+        if (conversation.getUser_id() != userId) throw new RuntimeException("无权操作该会话");
+        return toConversationVO(conversation);
+    }
+
+    @Override
+    @Transactional
+    public ConversationVO updateSession(String id, ConversationDTO dto) {
+        AI_Conversation conversation = requireConversation(id);
+        Integer userId = requireLogin();
+        if (conversation.getUser_id() != userId) throw new RuntimeException("无权操作该会话");
+        if (dto.getTitle() != null) {
+            conversation.setTitle(dto.getTitle());
+            updatePythonSessionTitleIfAvailable(userId, conversation.getPython_session_id(), dto.getTitle());
+        }
+        if (dto.getStatus() != null) conversation.setStatus(dto.getStatus());
+        if (dto.getContext_summary() != null) conversation.setContext_summary(dto.getContext_summary());
+        conversationMapper.update(conversation);
+        return toConversationVO(conversationMapper.findById(conversation.getId()));
+    }
+
+    @Override
+    @Transactional
+    public void deleteSession(String id) {
+        AI_Conversation conversation = requireConversation(id);
+        Integer userId = requireLogin();
+        if (conversation.getUser_id() != userId) throw new RuntimeException("无权操作该会话");
+        deletePythonSessionIfAvailable(userId, conversation.getPython_session_id());
+        taskMapper.deleteByConversationId(conversation.getId(), userId);
+        conversationMapper.deleteById(conversation.getId(), userId);
     }
 
     @Override
@@ -211,6 +256,46 @@ public class AIServiceImpl implements AIService {
         payload.put("slide_count", requestSlideCount(dto, task));
         payload.put("known_context", buildKnownContext(task, dto.getKnown_context()));
         return pythonPptClient.streamOutlineChat(payload);
+    }
+
+    @SuppressWarnings("unchecked")
+    private String createPythonSessionIfAvailable(Integer userId, String title) {
+        try {
+            Map<String, Object> payload = new LinkedHashMap<>();
+            payload.put("user_id", String.valueOf(userId));
+            payload.put("title", title);
+            Map<String, Object> response = pythonPptClient.createOutlineChatSession(payload);
+            Object data = response.get("data");
+            if (data instanceof Map<?, ?> map) {
+                Object sessionId = map.get("session_id");
+                return sessionId == null ? null : String.valueOf(sessionId);
+            }
+        } catch (Exception e) {
+            log.warn("createPythonSessionIfAvailable failed, will create on first message: {}", e.getMessage());
+        }
+        return null;
+    }
+
+    private void updatePythonSessionTitleIfAvailable(Integer userId, String pythonSessionId, String title) {
+        if (isBlank(pythonSessionId)) {
+            return;
+        }
+        try {
+            pythonPptClient.updateOutlineChatSession(String.valueOf(userId), pythonSessionId, Map.of("title", title));
+        } catch (Exception e) {
+            log.warn("updatePythonSessionTitleIfAvailable failed: {}", e.getMessage());
+        }
+    }
+
+    private void deletePythonSessionIfAvailable(Integer userId, String pythonSessionId) {
+        if (isBlank(pythonSessionId)) {
+            return;
+        }
+        try {
+            pythonPptClient.deleteOutlineChatSession(String.valueOf(userId), pythonSessionId);
+        } catch (Exception e) {
+            log.warn("deletePythonSessionIfAvailable failed: {}", e.getMessage());
+        }
     }
 
     private Object requestResourceIds(ConversationDTO dto, AI_Task task) {
@@ -429,12 +514,34 @@ public class AIServiceImpl implements AIService {
             if (!isBlank(result.question)) {
                 messages.add(Map.of("role", "assistant", "content", result.question, "type", "question"));
             } else if (!isBlank(result.outlineId)) {
-                messages.add(Map.of("role", "assistant", "content", "大纲已生成", "outline_id", result.outlineId));
+                messages.add(Map.of(
+                        "role", "assistant",
+                        "content", assistantOutlineMessage(result),
+                        "outline_id", result.outlineId
+                ));
             }
             return objectMapper.writeValueAsString(messages);
         } catch (Exception e) {
             return defaultJson(oldMessages, "[]");
         }
+    }
+
+    private String assistantOutlineMessage(PythonPptClient.OutlineChatResult result) {
+        String title = isBlank(result.title) ? "未命名大纲" : result.title;
+        int slideCount = 0;
+        if (result.slides instanceof List<?> list) {
+            slideCount = list.size();
+        }
+        StringBuilder message = new StringBuilder("已生成《").append(title).append("》的大纲");
+        if (slideCount > 0) {
+            message.append("，共 ").append(slideCount).append(" 页");
+        }
+        message.append("。");
+        Object assets = result.finalData == null ? null : result.finalData.get("interactive_assets");
+        if (assets instanceof List<?> list && !list.isEmpty()) {
+            message.append("\n已规划动画/小游戏资源，生成 PPT 后导出时会随 static 目录一起打包。");
+        }
+        return message.toString();
     }
 
     private String escapeJson(String value) {
