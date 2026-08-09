@@ -1,6 +1,11 @@
+import base64
+import json
+import mimetypes
 import re
+import shutil
 import tempfile
 import uuid
+import zipfile
 from pathlib import Path
 from typing import Any
 
@@ -13,12 +18,15 @@ async def export_html_slides_to_pptx(
     slides: list[dict[str, Any]],
     filename: str | None = None,
     fidelity: str = "high_fidelity",
+    package_static_assets: bool = True,
 ) -> Path:
+    static_assets = _collect_static_assets(slides) if package_static_assets else []
     if fidelity == "high_fidelity":
         rendered = await _export_high_fidelity(title, slides, filename)
         if rendered:
-            return rendered
-    return _export_editable_text(title, slides, filename)
+            return _package_if_needed(title, rendered, static_assets, filename)
+    output = _export_editable_text(title, slides, filename)
+    return _package_if_needed(title, output, static_assets, filename)
 
 
 def export_html_slides_to_pptx_sync(title: str, slides: list[dict[str, Any]], filename: str | None = None) -> Path:
@@ -114,6 +122,195 @@ async def _render_slides_to_images(slides: list[dict[str, Any]]) -> list[Path]:
             paths.append(image_path)
         await browser.close()
     return paths
+
+
+def _package_if_needed(title: str, pptx_path: Path, static_assets: list[dict[str, Any]], filename: str | None = None) -> Path:
+    if not static_assets:
+        return pptx_path
+
+    package_id = uuid.uuid4().hex[:8]
+    package_dir = EXPORT_DIR / f"package_{package_id}"
+    static_dir = package_dir / "static"
+    static_dir.mkdir(parents=True, exist_ok=True)
+
+    packaged_assets = _write_static_assets(static_assets, static_dir)
+    _append_asset_reference_slides(pptx_path, packaged_assets, static_dir)
+
+    manifest = {
+        "title": title,
+        "pptx": pptx_path.name,
+        "static_dir": "static",
+        "assets": packaged_assets,
+    }
+    (static_dir / "manifest.json").write_text(json.dumps(manifest, ensure_ascii=False, indent=2), encoding="utf-8")
+
+    safe_name = _safe_filename(filename or f"{title}_{package_id}.zip")
+    safe_name = re.sub(r"\.pptx$", ".zip", safe_name, flags=re.I)
+    if not safe_name.lower().endswith(".zip"):
+        safe_name += ".zip"
+    zip_path = EXPORT_DIR / safe_name
+    with zipfile.ZipFile(zip_path, "w", compression=zipfile.ZIP_DEFLATED) as archive:
+        archive.write(pptx_path, pptx_path.name)
+        for path in static_dir.rglob("*"):
+            if path.is_file():
+                archive.write(path, path.relative_to(package_dir).as_posix())
+    shutil.rmtree(package_dir, ignore_errors=True)
+    return zip_path
+
+
+def _collect_static_assets(slides: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    collected: list[dict[str, Any]] = []
+    seen: set[str] = set()
+    for slide_index, slide in enumerate(slides or [], 1):
+        candidates: list[Any] = []
+        for key in ["interactive_assets", "interactive_modules", "static_assets", "assets"]:
+            value = slide.get(key)
+            if isinstance(value, list):
+                candidates.extend(value)
+            elif isinstance(value, dict):
+                candidates.append(value)
+        metadata = slide.get("metadata") or {}
+        for key in ["interactive_assets", "interactive_modules", "static_assets", "assets"]:
+            value = metadata.get(key) if isinstance(metadata, dict) else None
+            if isinstance(value, list):
+                candidates.extend(value)
+            elif isinstance(value, dict):
+                candidates.append(value)
+        if isinstance(slide.get("interactive_module"), dict):
+            candidates.append(slide["interactive_module"])
+
+        for index, raw in enumerate(candidates, 1):
+            if not isinstance(raw, dict):
+                continue
+            asset = _normalize_static_asset(raw, slide_index, index)
+            dedupe_key = asset.get("asset_id") or asset.get("filename") or f"{slide_index}_{index}"
+            if dedupe_key in seen:
+                continue
+            seen.add(dedupe_key)
+            collected.append(asset)
+    return collected
+
+
+def _normalize_static_asset(raw: dict[str, Any], slide_no: int, index: int) -> dict[str, Any]:
+    asset_id = str(raw.get("asset_id") or raw.get("module_id") or f"asset_{slide_no}_{index}")
+    asset_id = re.sub(r"[^a-zA-Z0-9_-]", "_", asset_id).strip("_") or f"asset_{slide_no}_{index}"
+    fmt = str(raw.get("preferred_format") or raw.get("format") or raw.get("type") or "html5").lower()
+    if fmt in {"animation", "game", "simulation", "quiz_game", "matching_game", "timeline_game"}:
+        fmt = "html5"
+    if fmt not in {"html5", "html", "gif", "mp4"}:
+        fmt = "html5"
+    extension = "html" if fmt in {"html5", "html"} else fmt
+    filename = _safe_filename(str(raw.get("filename") or f"{asset_id}.{extension}"))
+    if "." not in filename:
+        filename = f"{filename}.{extension}"
+    return {
+        **raw,
+        "asset_id": asset_id,
+        "title": str(raw.get("title") or raw.get("name") or f"Interactive asset {slide_no}-{index}"),
+        "description": str(raw.get("description") or raw.get("usage") or raw.get("notes") or "Supplementary classroom interactive resource."),
+        "format": "html5" if extension == "html" else extension,
+        "filename": filename,
+        "target_slide_no": int(raw.get("target_slide_no") or raw.get("slide_no") or slide_no),
+        "integration": str(raw.get("integration") or ("ppt_video" if extension == "mp4" else "static_link")),
+    }
+
+
+def _write_static_assets(assets: list[dict[str, Any]], static_dir: Path) -> list[dict[str, Any]]:
+    packaged: list[dict[str, Any]] = []
+    used_names: set[str] = set()
+    for asset in assets:
+        source_path = Path(str(asset.get("path") or asset.get("file_path") or ""))
+        has_binary_source = source_path.is_file() or bool(asset.get("bytes_base64") or asset.get("content_base64"))
+        filename = _safe_filename(str(asset.get("filename") or f"{asset.get('asset_id')}.html"))
+        if Path(filename).suffix.lower() in {".mp4", ".gif"} and not has_binary_source:
+            filename = f"{Path(filename).stem}.html"
+            asset = {**asset, "format": "html5", "integration": "static_link"}
+        filename = _unique_filename(filename, used_names)
+        output = static_dir / filename
+        if source_path.is_file():
+            shutil.copy2(source_path, output)
+        elif asset.get("bytes_base64"):
+            output.write_bytes(base64.b64decode(str(asset["bytes_base64"])))
+        elif asset.get("content_base64"):
+            output.write_bytes(base64.b64decode(str(asset["content_base64"])))
+        elif asset.get("html") or asset.get("content"):
+            output.write_text(str(asset.get("html") or asset.get("content") or ""), encoding="utf-8")
+        elif asset.get("url"):
+            output.write_text(_external_link_html(asset), encoding="utf-8")
+        else:
+            output.write_text(_asset_description_html(asset), encoding="utf-8")
+        packaged_asset = {key: value for key, value in asset.items() if key not in {"html", "content", "bytes_base64", "content_base64"}}
+        packaged_asset.update({
+            "filename": filename,
+            "relative_path": f"static/{filename}",
+            "mime_type": mimetypes.guess_type(filename)[0] or "application/octet-stream",
+        })
+        packaged.append(packaged_asset)
+    return packaged
+
+
+def _append_asset_reference_slides(pptx_path: Path, assets: list[dict[str, Any]], static_dir: Path) -> None:
+    from pptx import Presentation
+    from pptx.util import Inches, Pt
+
+    prs = Presentation(str(pptx_path))
+    for asset in assets:
+        slide = prs.slides.add_slide(prs.slide_layouts[6])
+        title_box = slide.shapes.add_textbox(Inches(0.6), Inches(0.4), Inches(12.0), Inches(0.7))
+        title_tf = title_box.text_frame
+        title_tf.text = str(asset.get("title") or "Interactive resource")
+        title_tf.paragraphs[0].font.size = Pt(26)
+        title_tf.paragraphs[0].font.bold = True
+
+        desc_box = slide.shapes.add_textbox(Inches(0.75), Inches(1.35), Inches(11.8), Inches(2.2))
+        desc_tf = desc_box.text_frame
+        desc_tf.word_wrap = True
+        desc_tf.text = str(asset.get("description") or "")
+        desc_tf.paragraphs[0].font.size = Pt(18)
+
+        path_text = str(asset.get("relative_path") or "")
+        link_box = slide.shapes.add_textbox(Inches(0.75), Inches(3.75), Inches(11.8), Inches(0.8))
+        link_tf = link_box.text_frame
+        link_tf.text = "Resource: "
+        run = link_tf.paragraphs[0].add_run()
+        run.text = path_text
+        run.font.size = Pt(18)
+        if path_text:
+            run.hyperlink.address = path_text
+
+        if asset.get("format") == "mp4":
+            video_path = static_dir / str(asset.get("filename") or "")
+            if video_path.is_file():
+                try:
+                    slide.shapes.add_movie(str(video_path), Inches(0.9), Inches(4.6), Inches(6.4), Inches(1.8), mime_type=asset.get("mime_type") or "video/mp4")
+                except Exception:
+                    pass
+    prs.save(str(pptx_path))
+
+
+def _unique_filename(filename: str, used_names: set[str]) -> str:
+    stem = Path(filename).stem
+    suffix = Path(filename).suffix
+    candidate = filename
+    index = 2
+    while candidate in used_names:
+        candidate = f"{stem}_{index}{suffix}"
+        index += 1
+    used_names.add(candidate)
+    return candidate
+
+
+def _external_link_html(asset: dict[str, Any]) -> str:
+    title = _escape(asset.get("title") or "External resource")
+    url = _escape(asset.get("url") or "#")
+    description = _escape(asset.get("description") or "")
+    return f'<!DOCTYPE html><html lang="zh-CN"><head><meta charset="UTF-8"><meta http-equiv="refresh" content="0; url={url}"><title>{title}</title></head><body><h1>{title}</h1><p>{description}</p><p><a href="{url}">{url}</a></p></body></html>'
+
+
+def _asset_description_html(asset: dict[str, Any]) -> str:
+    title = _escape(asset.get("title") or "Interactive resource")
+    description = _escape(asset.get("description") or "")
+    return f'<!DOCTYPE html><html lang="zh-CN"><head><meta charset="UTF-8"><title>{title}</title></head><body><h1>{title}</h1><p>{description}</p></body></html>'
 
 
 def extract_slide_text(html: str, slide_data: dict[str, Any], index: int) -> tuple[str, list[str]]:

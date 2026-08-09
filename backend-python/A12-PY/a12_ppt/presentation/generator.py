@@ -18,7 +18,7 @@ from .prompts import (
     style_gene_prompt,
 )
 from ..llm import LLMClient
-from ..models import OutlineGenerateRequest, OutlineUpdateRequest, PresentationGenerateRequest, PresentationModifyRequest, SlideModifyRequest
+from ..models import InteractiveModuleGenerateRequest, OutlineGenerateRequest, OutlineUpdateRequest, PresentationGenerateRequest, PresentationModifyRequest, SlideModifyRequest
 from ..resources import build_rag_context
 from .template_store import DEFAULT_THEME, get_template
 
@@ -32,6 +32,7 @@ class PPTGenerator:
         slide_count = req.slide_count or 8
         req = self._with_resource_context(req)
         outline = await self._generate_outline_with_model(req, slide_count) if self.llm.available else self._fallback_outline(req, slide_count)
+        outline = self._ensure_interactive_assets(outline, req, slide_count)
         outline["subject"] = req.subject
         outline["grade"] = req.grade
         outline["requirements"] = req.requirements
@@ -40,6 +41,7 @@ class PPTGenerator:
             "enable_web": req.enable_web,
             "enable_rag": req.enable_rag,
             "regenerate_instruction": req.regenerate_instruction,
+            "interactive_policy": req.interactive_policy,
         }
         return self._outline_response(outline)
 
@@ -79,6 +81,10 @@ slides 每项字段：slide_no, title, slide_type, content_points(list), teachin
 
     async def generate_presentation(self, req: PresentationGenerateRequest) -> dict[str, Any]:
         slides = self._normalize_slides_for_deck(self._extract_slides(req.outline) or self._fallback_outline_from_title(req.title, 6))
+        interactive_assets = self._normalize_interactive_assets((req.outline or {}).get("interactive_assets") or ((req.outline or {}).get("outline") or {}).get("interactive_assets") or [])
+        if interactive_assets:
+            interactive_assets = await self._materialize_interactive_assets(req, slides, interactive_assets)
+            slides = self._attach_interactive_assets(slides, interactive_assets)
         requested_theme = (req.theme or DEFAULT_THEME).strip()
         template = get_template(requested_theme) or {}
         template_name = str(template.get("_selected_theme") or template.get("template_name") or requested_theme)
@@ -110,6 +116,7 @@ slides 每项字段：slide_no, title, slide_type, content_points(list), teachin
                     "title": str(slide.get("title") or f"第 {slide_no} 页"),
                     "html": slide_markup,
                     "notes": self._speaker_notes(slide),
+                    "interactive_assets": slide.get("interactive_assets", []),
                     "metadata": {
                         "theme": requested_theme,
                         "requested_theme": requested_theme,
@@ -118,6 +125,7 @@ slides 每项字段：slide_no, title, slide_type, content_points(list), teachin
                         "aspect_ratio": req.aspect_ratio,
                         "quality_pipeline": self.llm.available and self.settings.enable_quality_pipeline,
                         "quality_preset": self.settings.quality_preset,
+                        "interactive_assets": slide.get("interactive_assets", []),
                     },
                 }
 
@@ -137,6 +145,7 @@ slides 每项字段：slide_no, title, slide_type, content_points(list), teachin
                 "quality_preset": self.settings.quality_preset,
                 "max_slide_concurrency": self.settings.max_slide_concurrency,
                 "max_html_retries": self.settings.max_html_retries,
+                "interactive_assets": interactive_assets,
             },
         }
 
@@ -627,8 +636,9 @@ JSON 格式:
     async def _generate_outline_with_model(self, req: OutlineGenerateRequest, slide_count: int) -> dict[str, Any]:
         prompt = f"""
 请生成教学 PPT 大纲，返回严格 JSON，不要 Markdown。
-字段：title, summary, slides。
-slides 每项字段：slide_no, title, slide_type, content_points(list), teaching_intent, visual_suggestion。
+字段：title, summary, slides, interactive_assets。
+slides 每项字段：slide_no, title, slide_type, content_points(list), teaching_intent, visual_suggestion, interactive_asset_ids(list), external_resource_notes。
+interactive_assets 每项字段：asset_id, title, type(animation|game|simulation), target_slide_no, preferred_format(html5|gif|mp4), integration(ppt_video|static_link), description。
 
 课程：{req.title}
 学科：{req.subject}
@@ -640,6 +650,7 @@ slides 每项字段：slide_no, title, slide_type, content_points(list), teachin
 是否启用联网增强：{req.enable_web}
 是否启用 RAG 增强：{req.enable_rag}
 重生成/附加要求：{req.regenerate_instruction or ""}
+互动资源策略：{json.dumps(req.interactive_policy or {}, ensure_ascii=False)}
 参考资料：{(req.reference_text or "")[:9000]}
 """.strip()
         try:
@@ -723,14 +734,40 @@ slides 每项字段：slide_no, title, slide_type, content_points(list), teachin
                 "teaching_intent": "帮助学生建立清晰认知并完成课堂迁移。",
                 "visual_suggestion": "使用层级卡片、流程线或重点数字强化理解。",
             })
+        interactive_assets = self._fallback_interactive_assets(req, slide_count)
+        for asset in interactive_assets:
+            target = int(asset.get("target_slide_no") or 0)
+            if 1 <= target <= len(slides):
+                slide = slides[target - 1]
+                slide.setdefault("interactive_asset_ids", []).append(asset["asset_id"])
+                slide["external_resource_notes"] = asset["description"]
         return {
             "title": req.title,
             "summary": f"围绕 {req.subject} {req.grade}《{req.title}》组织的教学 PPT。",
             "slides": slides,
+            "interactive_assets": interactive_assets,
         }
 
     def _fallback_outline_from_title(self, title: str, slide_count: int) -> list[dict[str, Any]]:
         return self._fallback_outline(OutlineGenerateRequest(title=title, subject="通用", grade="通用", slide_count=slide_count), slide_count)["slides"]
+
+    def _ensure_interactive_assets(self, outline: dict[str, Any], req: OutlineGenerateRequest, slide_count: int) -> dict[str, Any]:
+        if not (req.interactive_policy or {}).get("needs_interactive_assets"):
+            return outline
+        existing = self._normalize_interactive_assets(outline.get("interactive_assets") or [])
+        if existing:
+            outline["interactive_assets"] = existing
+            return outline
+        assets = self._fallback_interactive_assets(req, slide_count)
+        slides = outline.get("slides") or []
+        for asset in assets:
+            target = int(asset.get("target_slide_no") or 0)
+            if 1 <= target <= len(slides) and isinstance(slides[target - 1], dict):
+                slide = slides[target - 1]
+                slide.setdefault("interactive_asset_ids", []).append(asset["asset_id"])
+                slide["external_resource_notes"] = asset["description"]
+        outline["interactive_assets"] = assets
+        return outline
 
     def _normalize_outline(self, data: dict[str, Any], title: str) -> dict[str, Any]:
         slides = []
@@ -743,9 +780,12 @@ slides 每项字段：slide_no, title, slide_type, content_points(list), teachin
                     "content_points": item.get("content_points") or item.get("points") or [],
                     "teaching_intent": str(item.get("teaching_intent") or ""),
                     "visual_suggestion": str(item.get("visual_suggestion") or ""),
+                    "interactive_asset_ids": list(item.get("interactive_asset_ids") or []),
+                    "external_resource_notes": str(item.get("external_resource_notes") or ""),
                 })
         data["title"] = data.get("title") or title
         data["slides"] = slides
+        data["interactive_assets"] = self._normalize_interactive_assets(data.get("interactive_assets") or [])
         return data
 
     def _outline_response(self, outline: dict[str, Any]) -> dict[str, Any]:
@@ -757,7 +797,132 @@ slides 每项字段：slide_no, title, slide_type, content_points(list), teachin
             "slide_count": len(slides),
             "outline": outline,
             "slides": slides,
+            "interactive_assets": outline.get("interactive_assets", []),
         }
+
+    def _normalize_interactive_assets(self, assets: list[dict[str, Any]]) -> list[dict[str, Any]]:
+        normalized: list[dict[str, Any]] = []
+        for index, raw in enumerate(assets or [], 1):
+            if not isinstance(raw, dict):
+                continue
+            asset_type = str(raw.get("type") or raw.get("module_type") or "animation").lower()
+            if asset_type in {"quiz_game", "matching_game", "timeline_game"}:
+                asset_type = "game"
+            if asset_type not in {"animation", "game", "simulation"}:
+                asset_type = "animation"
+            preferred_format = str(raw.get("preferred_format") or raw.get("format") or "html5").lower()
+            if preferred_format not in {"html5", "gif", "mp4"}:
+                preferred_format = "html5"
+            integration = str(raw.get("integration") or ("ppt_video" if preferred_format == "mp4" else "static_link"))
+            try:
+                target_slide_no = int(raw.get("target_slide_no") or raw.get("slide_no") or index + 1)
+            except Exception:
+                target_slide_no = index + 1
+            asset_id = str(raw.get("asset_id") or raw.get("module_id") or f"interactive_{index}")
+            asset_id = re.sub(r"[^a-zA-Z0-9_-]", "_", asset_id).strip("_") or f"interactive_{index}"
+            normalized.append({
+                **raw,
+                "asset_id": asset_id,
+                "title": str(raw.get("title") or ("课堂动画" if asset_type == "animation" else "课堂小游戏")),
+                "type": asset_type,
+                "target_slide_no": max(1, target_slide_no),
+                "preferred_format": preferred_format,
+                "integration": integration,
+                "description": str(raw.get("description") or raw.get("usage") or "用于课堂演示或互动练习的补充资源。"),
+            })
+        return normalized
+
+    def _fallback_interactive_assets(self, req: OutlineGenerateRequest, slide_count: int) -> list[dict[str, Any]]:
+        policy = req.interactive_policy or {}
+        if not policy.get("needs_interactive_assets"):
+            return []
+        formats = list(policy.get("preferred_formats") or ["html5"])
+        preferred_format = str(formats[0] if formats else "html5")
+        assets: list[dict[str, Any]] = []
+        if policy.get("needs_animation"):
+            target = 3 if slide_count >= 3 else max(1, slide_count)
+            assets.append({
+                "asset_id": "animation_1",
+                "title": f"{req.title} process animation",
+                "type": "animation",
+                "target_slide_no": target,
+                "preferred_format": preferred_format if preferred_format in {"html5", "gif", "mp4"} else "html5",
+                "integration": "ppt_video" if preferred_format == "mp4" else "static_link",
+                "description": "Use this resource to demonstrate the key process dynamically; include a text note and a package-relative link in the PPT when it is not an mp4 video.",
+            })
+        if policy.get("needs_game"):
+            target = min(max(2, slide_count - 2), slide_count)
+            assets.append({
+                "asset_id": "game_1",
+                "title": f"{req.title} classroom mini game",
+                "type": "game",
+                "target_slide_no": target,
+                "preferred_format": preferred_format if preferred_format in {"html5", "gif", "mp4"} else "html5",
+                "integration": "ppt_video" if preferred_format == "mp4" else "static_link",
+                "description": "Use this resource as a playable classroom activity; package it under static/ and reference it from the PPT.",
+            })
+        return self._normalize_interactive_assets(assets)
+
+    async def _materialize_interactive_assets(
+        self,
+        req: PresentationGenerateRequest,
+        slides: list[dict[str, Any]],
+        assets: list[dict[str, Any]],
+    ) -> list[dict[str, Any]]:
+        html_assets = [asset for asset in assets if asset.get("preferred_format") == "html5" and not asset.get("html")]
+        if not html_assets:
+            return assets
+        from ..interactive import InteractiveModuleGenerator
+
+        module_generator = InteractiveModuleGenerator()
+        materialized = [dict(asset) for asset in assets]
+        for asset in materialized:
+            if asset.get("preferred_format") != "html5" or asset.get("html"):
+                continue
+            target_idx = max(0, min(len(slides) - 1, int(asset.get("target_slide_no") or 1) - 1)) if slides else 0
+            target_slide = slides[target_idx] if slides else {}
+            module_type = "animation"
+            if asset.get("type") == "game":
+                module_type = "quiz_game"
+            elif asset.get("type") == "simulation":
+                module_type = "simulation"
+            result = await module_generator.generate(InteractiveModuleGenerateRequest(
+                title=str(asset.get("title") or target_slide.get("title") or req.title),
+                topic=str(target_slide.get("title") or req.title),
+                module_type=module_type,
+                subject=str((req.outline or {}).get("subject") or "") or None,
+                grade=str((req.outline or {}).get("grade") or "") or None,
+                knowledge_points=list(target_slide.get("content_points") or []),
+                requirements=str(asset.get("description") or (req.outline or {}).get("requirements") or ""),
+                theme=req.theme,
+                embed_mode="standalone",
+                language=req.language,
+            ))
+            asset["html"] = result.get("html") or ""
+            asset["module_id"] = result.get("module_id")
+            asset["usage_suggestions"] = result.get("usage_suggestions", [])
+        return materialized
+
+    def _attach_interactive_assets(self, slides: list[dict[str, Any]], assets: list[dict[str, Any]]) -> list[dict[str, Any]]:
+        by_slide: dict[int, list[dict[str, Any]]] = {}
+        for asset in assets:
+            by_slide.setdefault(int(asset.get("target_slide_no") or 1), []).append(asset)
+        attached: list[dict[str, Any]] = []
+        for index, slide in enumerate(slides, 1):
+            item = dict(slide)
+            slide_assets = by_slide.get(index, [])
+            if slide_assets:
+                ids = list(item.get("interactive_asset_ids") or [])
+                for asset in slide_assets:
+                    if asset["asset_id"] not in ids:
+                        ids.append(asset["asset_id"])
+                item["interactive_asset_ids"] = ids
+                item["interactive_assets"] = slide_assets
+                notes = [str(asset.get("description") or "") for asset in slide_assets if asset.get("description")]
+                if notes:
+                    item["external_resource_notes"] = "\n".join(notes)
+            attached.append(item)
+        return attached
 
     def _extract_slides(self, outline: dict[str, Any]) -> list[dict[str, Any]]:
         if not isinstance(outline, dict):
@@ -778,6 +943,8 @@ slides 每项字段：slide_no, title, slide_type, content_points(list), teachin
             main = f'<div class="cover"><div class="kicker">{html.escape(deck_title)}</div><h1>{title}</h1><p>{html.escape(str(points[0])) if points else "A12 智能备课生成"}</p></div>'
         else:
             side_text = html.escape(str(slide.get("teaching_intent") or slide.get("visual_suggestion") or "围绕本页主题组织课堂讲解。"))
+            if slide.get("external_resource_notes"):
+                side_text = f"{side_text}<br><br><b>互动资源</b><br>{html.escape(str(slide.get('external_resource_notes') or ''))}"
             main = f'<header><div><div class="kicker">{html.escape(deck_title)}</div><h1>{title}</h1></div><div class="count">{slide_no:02d} / {total:02d}</div></header><main><section>{cards or "<p>围绕本页主题展开核心内容。</p>"}</section><aside>{side_text}</aside></main><footer><span>A12 智能备课</span><span>{html.escape(theme)}</span></footer>'
         style = """*{box-sizing:border-box}
 html,body{margin:0;width:100%;height:100%;background:#111827;font-family:"Microsoft YaHei",Arial,sans-serif}

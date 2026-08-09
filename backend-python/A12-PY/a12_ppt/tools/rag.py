@@ -5,24 +5,40 @@ from ..resources.similarity import keyword_score
 
 
 async def rag_search(resource_ids: list[str], query: str, limit: int = 12000) -> dict:
-    indexed_result = await resource_index_store.search_context(resource_ids, query, limit=limit)
-    indexed_context = indexed_result.get("context", "")
+    # Uploaded references enrich the retrieval query; they are not the retrieval scope.
     local_ids = [resource_id for resource_id in resource_ids if ":" not in resource_id]
     local_context = build_rag_context(local_ids, limit=limit)
+    enriched_query = _build_enriched_query(query, local_context)
+    indexed_result = await resource_index_store.search_context([], enriched_query, limit=limit)
+    indexed_context = indexed_result.get("context", "")
 
-    local_matches = _rank_local_context(local_context, query)
+    reference_matches = _rank_local_context(local_context, query)
     structured_matches = list(indexed_result.get("matches", []))
-    structured_matches.extend(local_matches)
 
-    context_parts = [indexed_context]
-    context_parts.extend(match["content"] for match in local_matches)
+    context_parts = []
+    if local_context:
+        context_parts.append("[Uploaded reference material]\n" + local_context[:4000])
+    if indexed_context:
+        context_parts.append("[RAG knowledge base matches]\n" + indexed_context)
     context = "\n\n".join(part for part in context_parts if part)[:limit]
     return {
         "query": query,
+        "enriched_query": enriched_query,
         "resource_ids": resource_ids,
+        "search_scope": "global_knowledge_base",
+        "reference_context": local_context[:4000],
+        "knowledge_context": indexed_context,
         "context": context,
         "matches": structured_matches,
+        "reference_matches": reference_matches,
     }
+
+
+def _build_enriched_query(query: str, reference_context: str, max_reference_chars: int = 4000) -> str:
+    parts = [query.strip()]
+    if reference_context.strip():
+        parts.append("Uploaded reference material for query enrichment:\n" + reference_context.strip()[:max_reference_chars])
+    return "\n\n".join(part for part in parts if part)
 
 
 def _rank_local_context(context: str, query: str, top_k: int = 5) -> list[dict]:

@@ -44,4 +44,7 @@
         <if test="error_message != null">error_message = #{error_message},</if>
         updated_at = NOW()</set> WHERE id = #{id}
     </update>
+    <delete id="deleteByConversationId">
+        DELETE FROM ai_task WHERE conversation_id = #{conversationId} AND user_id = #{userId}
+    </delete>
 </mapper>

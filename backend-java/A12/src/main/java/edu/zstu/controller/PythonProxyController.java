@@ -85,6 +85,11 @@ public class PythonProxyController {
         return callJson(() -> pythonPptClient.updateOutline(payload));
     }
 
+    @PostMapping("/intent/recognize")
+    public Map<String, Object> recognizeIntent(@RequestBody Map<String, Object> payload) {
+        return callJson(() -> pythonPptClient.recognizeIntent(payload));
+    }
+
     @PostMapping(value = "/outlines/chat/stream", produces = MediaType.TEXT_EVENT_STREAM_VALUE)
     public SseEmitter streamOutlineChat(@RequestBody Map<String, Object> payload) {
         SseEmitter emitter = new SseEmitter(0L);
@@ -96,6 +101,30 @@ public class PythonProxyController {
     public Map<String, Object> listOutlineChatSessions(@RequestParam("user_id") String userId,
                                                        @RequestParam(required = false) Integer limit) {
         return callJson(() -> pythonPptClient.listOutlineChatSessions(userId, limit));
+    }
+
+    @PostMapping("/outlines/chat/sessions")
+    public Map<String, Object> createOutlineChatSession(@RequestBody Map<String, Object> payload) {
+        return callJson(() -> pythonPptClient.createOutlineChatSession(payload));
+    }
+
+    @GetMapping("/outlines/chat/sessions/{sessionId}")
+    public Map<String, Object> getOutlineChatSession(@PathVariable String sessionId,
+                                                     @RequestParam("user_id") String userId) {
+        return callJson(() -> pythonPptClient.getOutlineChatSession(userId, sessionId));
+    }
+
+    @PatchMapping("/outlines/chat/sessions/{sessionId}")
+    public Map<String, Object> updateOutlineChatSession(@PathVariable String sessionId,
+                                                        @RequestParam("user_id") String userId,
+                                                        @RequestBody Map<String, Object> payload) {
+        return callJson(() -> pythonPptClient.updateOutlineChatSession(userId, sessionId, payload));
+    }
+
+    @DeleteMapping("/outlines/chat/sessions/{sessionId}")
+    public Map<String, Object> deleteOutlineChatSession(@PathVariable String sessionId,
+                                                        @RequestParam("user_id") String userId) {
+        return callJson(() -> pythonPptClient.deleteOutlineChatSession(userId, sessionId));
     }
 
     @GetMapping("/teacher-style/profile")
@@ -125,8 +154,9 @@ public class PythonProxyController {
 
     @PostMapping("/presentations/export/pptx")
     public ResponseEntity<byte[]> exportPresentationPptx(@RequestBody Map<String, Object> payload) {
-        byte[] bytes = pythonPptClient.exportPresentationPptx(payload);
-        return fileResponse(bytes, filename(payload, "A12 PPT.pptx"), "application/vnd.openxmlformats-officedocument.presentationml.presentation");
+        PythonPptClient.PythonFileResult file = pythonPptClient.exportPresentationFile(payload);
+        String fallback = "application/zip".equals(file.contentType) ? "A12 PPT.zip" : "A12 PPT.pptx";
+        return fileResponse(file.bytes, firstNotBlank(file.filename, filename(payload, fallback)), file.contentType);
     }
 
     @PostMapping("/lesson-plans/generate")
@@ -168,6 +198,10 @@ public class PythonProxyController {
     private String filename(Map<String, Object> payload, String fallback) {
         Object filename = payload == null ? null : payload.get("filename");
         return filename == null || String.valueOf(filename).isBlank() ? fallback : String.valueOf(filename);
+    }
+
+    private String firstNotBlank(String first, String second) {
+        return first == null || first.isBlank() ? second : first;
     }
 
     private ResponseEntity<byte[]> fileResponse(byte[] bytes, String filename, String contentType) {

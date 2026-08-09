@@ -24,4 +24,7 @@
         <if test="last_question != null">last_question = #{last_question},</if>
         updated_at = NOW()</set> WHERE id = #{id}
     </update>
+    <delete id="deleteById">
+        DELETE FROM ai_conversation WHERE id = #{id} AND user_id = #{userId}
+    </delete>
 </mapper>

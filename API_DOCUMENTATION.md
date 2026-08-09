@@ -234,7 +234,71 @@
 
 **后端 DTO**: `TaskCreateDTO { title, subject, grade, status, uploaded_refs, plan_json, messages, resource_ids, enable_rag, enable_web, slide_count }`
 
-**响应 VO**: `Result<TaskVO>` — 含 Java 会话ID `conversation_id`。Python 会话ID 会在 API-13 调用后写入 `python_session_id`。`resource_ids/enable_rag/enable_web/slide_count` 会保存为本会话默认生成选项；后续 API-13/API-13A 没传这些字段时自动沿用，传了则以本轮请求为准。
+**响应 VO**: `Result<TaskVO>` — 含 Java 会话ID `conversation_id`。Java 会尽量同步创建 Python 大纲对话会话并写入 `python_session_id`；如果 Python 服务暂时不可用，会在 API-13 首次发送消息时自动创建。`resource_ids/enable_rag/enable_web/slide_count` 会保存为本会话默认生成选项；后续 API-13/API-13A 没传这些字段时自动沿用，传了则以本轮请求为准。
+
+---
+
+## API-12A GET /api/v1/ai/sessions
+
+**功能**: 查询当前登录用户的 AI 备课会话列表，用于 ChatGPT 式左侧历史会话栏。
+
+**请求头**: `Authorization: Bearer <token>`
+
+**响应 VO**: `Result<List<ConversationVO>>`
+
+| ConversationVO 字段 | 类型 | 说明 |
+|---|---|---|
+| `id` | int | Java 会话ID，后续发送消息、读取详情、重命名、删除都使用该 ID |
+| `user_id` | int | 用户ID |
+| `title` | String | 会话标题 |
+| `status` | String | `active` / `completed` / `archived` 等 |
+| `messages` | String(JSON) | 轻量消息历史，数组元素包含 `role/content`，可直接用于恢复对话页面 |
+| `context_summary` | String | Python intent 或前端摘要 |
+| `python_session_id` | String | Python 大纲对话会话ID |
+| `last_question` | String | 最近一次澄清问题；为空表示没有待回答问题 |
+| `created_at` | LocalDateTime | 创建时间 |
+| `updated_at` | LocalDateTime | 更新时间 |
+
+---
+
+## API-12B GET /api/v1/ai/sessions/{id}
+
+**功能**: 获取某个 Java 会话详情和历史消息。前端点击左侧历史会话时调用此接口，把 `messages` 渲染回聊天窗口，再用同一个 `{id}` 调 API-13 继续对话。
+
+**路径参数**: `id` — Java 会话ID
+
+**请求头**: `Authorization: Bearer <token>`
+
+**响应 VO**: `Result<ConversationVO>`
+
+---
+
+## API-12C PATCH /api/v1/ai/sessions/{id}
+
+**功能**: 重命名会话或更新会话状态。Java 会同步更新本地 `ai_conversation`；如果已有 `python_session_id`，也会同步更新 Python 会话标题。
+
+**路径参数**: `id` — Java 会话ID
+
+**请求体 (JSON)**
+| 字段 | 类型 | 必填 | 说明 |
+|---|---|---|---|
+| `title` | String | 否 | 新会话标题 |
+| `status` | String | 否 | 新状态，例如 `active` / `archived` |
+| `context_summary` | String | 否 | 前端摘要 |
+
+**后端 DTO**: `ConversationDTO { title, status, context_summary }`
+
+**响应 VO**: `Result<ConversationVO>`
+
+---
+
+## API-12D DELETE /api/v1/ai/sessions/{id}
+
+**功能**: 删除当前用户的 Java 会话及其关联 `ai_task`；如果已有 `python_session_id`，会同步删除 Python 会话。用于前端历史会话栏删除操作。
+
+**路径参数**: `id` — Java 会话ID
+
+**响应 VO**: `Result<Void>`
 
 ---
 
@@ -249,8 +313,8 @@
 |---|---|---|---|
 | `message` | String | 推荐 | 用户本轮自然语言输入；新前端建议传这个字段 |
 | `messages` | String(JSON/String) | 否 | 兼容旧字段；当 `message` 为空时作为本轮输入 |
-| `resource_ids` | String(JSON) | 否 | Python 资料ID列表，例如 `["res_xxx"]` |
-| `enable_rag` | Boolean | 否 | 是否启用 Python RAG 检索 |
+| `resource_ids` | String(JSON) | 否 | 上传参考资料ID列表，例如 `["res_xxx"]`；用于提取格式、语气、案例、内容，并参与构造 RAG 检索 query，不作为向量库检索范围 |
+| `enable_rag` | Boolean | 否 | 是否启用本地知识库 RAG；为 `true` 时使用用户输入、已识别意图和上传参考资料内容融合检索 |
 | `enable_web` | Boolean | 否 | 是否启用 Python 联网搜索 |
 | `slide_count` | int | 否 | 期望页数 |
 | `known_context` | String(JSON) | 否 | 已知上下文，例如 `{"title":"光合作用","subject":"生物","grade":"七年级"}` |
@@ -260,7 +324,7 @@
 
 **后端 DTO**: `ConversationDTO { title, status, messages, context_summary, message, resource_ids, enable_rag, enable_web, slide_count, known_context }`
 
-**响应 VO**: `Result<ConversationVO>` — 更新后的会话信息。若 Python 返回澄清问题，`last_question` 有值；若生成完成，`TaskVO.plan_json` 会保存 Python 返回的大纲。`enable_rag/enable_web` 为本轮覆盖开关；不传时沿用 API-12 创建会话时保存的默认开关。
+**响应 VO**: `Result<ConversationVO>` — 更新后的会话信息。Java 会把本轮用户消息和 Python assistant 结果追加写入 `messages`，前端切换回该会话时可直接恢复聊天窗口。若 Python 返回澄清问题，`last_question` 有值；若生成完成，`TaskVO.plan_json` 会保存 Python 返回的大纲。`enable_rag/enable_web` 为本轮覆盖开关；不传时沿用 API-12 创建会话时保存的默认开关。
 
 ---
 
@@ -277,14 +341,158 @@
 | `file` | File | **是** | 语音文件，建议 `wav/mp3/m4a/webm` |
 | `language` | String | 否 | 语音语言，例如 `zh` |
 | `message` | String | 否 | 手动补充文本；如果同时传，会拼接在语音转写文本前面 |
-| `resource_ids` | String(JSON) | 否 | Python 资料ID列表，例如 `["res_xxx"]` |
-| `enable_rag` | Boolean | 否 | 是否启用 Python RAG 检索 |
+| `resource_ids` | String(JSON) | 否 | 上传参考资料ID列表，例如 `["res_xxx"]`；用于提取格式、语气、案例、内容，并参与构造 RAG 检索 query，不作为向量库检索范围 |
+| `enable_rag` | Boolean | 否 | 是否启用本地知识库 RAG；为 `true` 时使用用户输入、已识别意图和上传参考资料内容融合检索 |
 | `enable_web` | Boolean | 否 | 是否启用 Python 联网搜索 |
 | `slide_count` | int | 否 | 期望页数 |
 | `known_context` | String(JSON) | 否 | 已知上下文，例如 `{"title":"光合作用","subject":"生物","grade":"七年级"}` |
 | `context_summary` | String | 否 | 前端或 Java 侧摘要 |
 
 **响应 VO**: `Result<ConversationVO>` — 与 API-13 一致。Java 会把最终转写后的文本写入会话消息历史。
+
+---
+
+## API-13B POST /api/v1/ai/intent/recognize
+
+**功能**: 独立意图识别接口。只接收教师文本输入和可选上下文，返回结构化教学意图、缺失字段、是否需要澄清和置信度；不创建会话、不生成大纲、不触发 PPT/Word 生成。适合前端在进入正式备课流程前做“需求理解预检”。
+
+**请求体 (JSON)**
+| 字段 | 类型 | 必填 | 说明 |
+|---|---|---|---|
+| `user_id` | String | 否 | 用户ID；不传也可识别，传入后会透传给 Python intent |
+| `session_id` | String | 否 | Python 会话ID；首次不传会自动创建，后续传回可继续同一会话 |
+| `title` | String | 否 | 会话标题；首次创建会话时可传 |
+| `message` | String | **是** | 教师自然语言输入 |
+| `history` | String(JSON) | 否 | 历史消息数组，例如 `[{"role":"user","content":"..."}]` |
+| `known_context` | String(JSON) | 否 | 前端已知字段，例如 `{"title":"光合作用","subject":"生物"}` |
+| `resource_ids` | String(JSON) | 否 | 上传参考资料ID列表，例如 `["res_xxx"]`；用于意图记录和后续 RAG query 融合，不代表向量库检索范围 |
+| `enable_rag` | Boolean | 否 | 是否记录本轮启用 RAG 意图；本接口不执行检索 |
+| `enable_web` | Boolean | 否 | 是否记录本轮启用联网意图；本接口不执行联网 |
+| `slide_count` | int | 否 | 默认页数，默认 `8` |
+| `language` | String | 否 | 输出语言，默认 `zh-CN` |
+
+**后端 DTO**: `IntentRecognitionDTO { user_id, session_id, title, message, history, known_context, resource_ids, enable_rag, enable_web, slide_count, language }`
+
+**响应 VO**: `Result<IntentRecognitionVO>`。如果请求带 `user_id`，Python 会自动创建或复用 PostgreSQL 长期会话，并在响应中返回 `session_id`；前端下一轮继续传该 `session_id` 即可延续同一条意图识别对话。
+
+| IntentRecognitionVO 字段 | 类型 | 说明 |
+|---|---|---|
+| `intent` | Object(JSON) | 结构化意图，包含主题、学科、年级、课时、知识点、互动需求等 |
+| `need_clarification` | Boolean | 是否还需要追问 |
+| `missing_fields` | List<String> | 缺失关键字段，当前包括 `title/grade/subject` |
+| `clarification_question` | String | 可直接展示给教师的澄清问题 |
+| `confidence` | double | 识别置信度，范围 `0.1~0.95` |
+| `input_type` | String | `text` |
+| `model_used` | Boolean | 是否使用大模型完成抽取；false 表示走规则兜底 |
+| `user_id` | String | 可选，保存会话时返回 |
+| `session_id` | String | 可选，Python 长期会话ID |
+| `postgres_available` | Boolean | 可选，是否成功接入 PostgreSQL；false 时会退回进程内存储 |
+
+**请求示例**
+```json
+{
+  "user_id": "10001",
+  "title": "光合作用备课",
+  "message": "帮我做一个七年级生物光合作用8页PPT，加入一个课堂小游戏",
+  "known_context": "{}",
+  "resource_ids": "[\"res_abcd1234\"]",
+  "enable_rag": true,
+  "enable_web": false,
+  "slide_count": 8,
+  "language": "zh-CN"
+}
+```
+
+**响应示例**
+```json
+{
+  "code": 200,
+  "message": "success",
+  "data": {
+    "intent": {
+      "title": "光合作用",
+      "subject": "生物",
+      "grade": "七年级",
+      "requirements": "帮我做一个七年级生物光合作用8页PPT，加入一个课堂小游戏",
+      "slide_count": 8,
+      "language": "zh-CN",
+      "enable_web": false,
+      "enable_rag": true,
+      "resource_ids": ["res_abcd1234"],
+      "user_id": "10001",
+      "interactive_policy": {
+        "needs_interactive_assets": true,
+        "needs_animation": false,
+        "needs_game": true,
+        "preferred_formats": ["html5"]
+      }
+    },
+    "need_clarification": false,
+    "missing_fields": [],
+    "clarification_question": "",
+    "confidence": 0.86,
+    "input_type": "text",
+    "model_used": true,
+    "user_id": "10001",
+    "session_id": "outline_chat_abcd1234",
+    "postgres_available": true
+  }
+}
+```
+
+**长期存储说明**: 该接口复用 Python 大纲对话的 PostgreSQL 表：`a12_outline_chat_session` 保存合并后的 `intent/status/last_message_at`，`a12_outline_chat_message` 保存本轮用户输入和 assistant 的识别摘要，消息 metadata 中会记录 `type=intent_recognition_input/intent_recognition_result`、`confidence`、`missing_fields` 等信息。
+
+---
+
+## API-13C POST /api/v1/ai/intent/recognize-audio
+
+**功能**: 独立语音意图识别接口。前端上传教师语音到 Java，Java 先调用 Python ASR 转写，再调用 Python `/api/v1/python/intent/recognize` 返回结构化意图。此接口不创建会话、不生成大纲。
+
+**请求类型**: `multipart/form-data`
+
+| 字段 | 类型 | 必填 | 说明 |
+|---|---|---|---|
+| `file` | File | **是** | 教师语音文件，建议 `wav/mp3/m4a/webm` |
+| `language` | String | 否 | 语音语言，例如 `zh`；不传则模型自动识别 |
+| `user_id` | String | 否 | 用户ID |
+| `session_id` | String | 否 | Python 会话ID；首次不传会自动创建 |
+| `title` | String | 否 | 会话标题 |
+| `message` | String | 否 | 手动补充文本；如果同时传，会拼接在语音转写文本前面 |
+| `history` | String(JSON) | 否 | 历史消息数组 |
+| `known_context` | String(JSON) | 否 | 前端已知字段 |
+| `resource_ids` | String(JSON) | 否 | 上传参考资料ID列表；用于意图记录和后续 RAG query 融合，不代表向量库检索范围 |
+| `enable_rag` | Boolean | 否 | 是否记录启用 RAG 意图 |
+| `enable_web` | Boolean | 否 | 是否记录启用联网意图 |
+| `slide_count` | int | 否 | 默认页数，默认 `8` |
+
+**响应 VO**: `Result<IntentRecognitionVO>` — 字段同 API-13B，额外包含 `asr` 字段，保存语音转写结果。
+
+**响应示例**
+```json
+{
+  "code": 200,
+  "message": "success",
+  "data": {
+    "intent": {
+      "title": "光合作用",
+      "subject": "生物",
+      "grade": "七年级",
+      "slide_count": 8,
+      "language": "zh-CN"
+    },
+    "need_clarification": false,
+    "missing_fields": [],
+    "clarification_question": "",
+    "confidence": 0.86,
+    "input_type": "audio",
+    "model_used": true,
+    "asr": {
+      "text": "帮我做一个七年级生物光合作用8页PPT",
+      "status": "completed"
+    }
+  }
+}
+```
 
 ---
 
@@ -1688,6 +1896,95 @@
 
 ---
 
+## API-134B POST /api/v1/python/intent/recognize
+
+**功能**: Python 细粒度意图识别接口。接收文本输入、历史消息和已知上下文，返回结构化教学意图、缺失字段、澄清问题和置信度；不会创建 Java 会话，也不会生成大纲或 PPT。Java 业务接口 API-13B/API-13C 内部均会调用该接口。
+
+**请求类型**: `application/json`
+
+**请求体 (JSON)**
+| 字段 | 类型 | 必填 | 说明 |
+|---|---|---|---|
+| `user_id` | String | 否 | 用户ID |
+| `session_id` | String | 否 | Python 会话ID；首次不传且提供 `user_id` 时会自动创建 |
+| `title` | String | 否 | 会话标题 |
+| `message` | String | **是** | 教师自然语言输入 |
+| `history` | List<Message> | 否 | 历史消息数组，元素字段为 `role/content` |
+| `known_context` | Object(JSON) | 否 | 已知上下文，例如 `title/subject/grade` |
+| `resource_ids` | List<String> | 否 | 上传参考资料ID列表；用于意图记录和后续 RAG query 融合，不代表向量库检索范围 |
+| `enable_rag` | Boolean | 否 | 是否记录启用 RAG 意图；本接口不执行检索 |
+| `enable_web` | Boolean | 否 | 是否记录启用联网意图；本接口不执行联网 |
+| `slide_count` | int | 否 | 期望页数，默认 `8` |
+| `language` | String | 否 | 输出语言，默认 `zh-CN` |
+| `input_type` | String | 否 | `text` 或 `audio`，默认 `text` |
+
+**响应 VO**: `Result<IntentRecognitionVO>`
+
+| IntentRecognitionVO 字段 | 类型 | 说明 |
+|---|---|---|
+| `intent` | Object(JSON) | 结构化意图 |
+| `need_clarification` | Boolean | 是否需要补充关键信息 |
+| `missing_fields` | List<String> | 缺失字段，如 `title/grade/subject` |
+| `clarification_question` | String | 澄清问题 |
+| `confidence` | double | 置信度，范围 `0.1~0.95` |
+| `input_type` | String | `text/audio` |
+| `model_used` | Boolean | 是否使用大模型抽取 |
+| `user_id` | String | 可选，保存会话时返回 |
+| `session_id` | String | 可选，Python 长期会话ID |
+| `postgres_available` | Boolean | 可选，是否成功接入 PostgreSQL |
+
+**请求示例**
+```json
+{
+  "user_id": "10001",
+  "title": "光合作用备课",
+  "message": "帮我做一个七年级生物光合作用8页PPT，加入一个课堂小游戏",
+  "history": [],
+  "known_context": {},
+  "resource_ids": ["res_abcd1234"],
+  "enable_rag": true,
+  "enable_web": false,
+  "slide_count": 8,
+  "language": "zh-CN",
+  "input_type": "text"
+}
+```
+
+**响应示例**
+```json
+{
+  "code": 200,
+  "message": "success",
+  "data": {
+    "intent": {
+      "title": "光合作用",
+      "subject": "生物",
+      "grade": "七年级",
+      "requirements": "帮我做一个七年级生物光合作用8页PPT，加入一个课堂小游戏",
+      "slide_count": 8,
+      "language": "zh-CN",
+      "enable_web": false,
+      "enable_rag": true,
+      "resource_ids": ["res_abcd1234"],
+      "user_id": "10001"
+    },
+    "need_clarification": false,
+    "missing_fields": [],
+    "clarification_question": "",
+    "confidence": 0.86,
+    "input_type": "text",
+    "model_used": true,
+    "user_id": "10001",
+    "session_id": "outline_chat_abcd1234",
+    "postgres_available": true
+  }
+}
+```
+
+**长期存储说明**: 传入 `user_id` 时，接口会调用 `OutlineSessionStore.load_or_create(...)` 创建/复用会话，把用户输入保存为 `intent_recognition_input` 消息，把识别摘要保存为 `intent_recognition_result` 消息，并将合并后的 `intent` 写回 `a12_outline_chat_session.intent`。
+
+---
+
 ## API-134 GET /api/v1/python/templates
 
 **功能**: 获取 Python PPT 服务可用模板列表，前端主题下拉框应使用此接口返回值
@@ -1850,8 +2147,8 @@
 | `knowledge_points` | List<String> | 否 | 知识点数组，例如 `["叶绿体", "光能", "氧气释放"]` |
 | `requirements` | String | 否 | 用户额外要求，例如 `风格活泼，加入课堂互动` |
 | `reference_text` | String | 否 | 教材、资料、上传文件解析后的纯文本；没有资料可不传 |
-| `resource_ids` | List<String> | 否 | RAG资源ID列表。临时上传资料使用 API-135 返回的 `res_xxx`；公共资源使用 `public:{adm_resource.id}`；个人AI资源使用 `personal:{res_material.id}` |
-| `enable_rag` | Boolean | 否 | 是否启用资料/RAG增强；为 `true` 时会合并上传资料文本 |
+| `resource_ids` | List<String> | 否 | 上传参考资料ID列表。临时上传资料使用 API-135 返回的 `res_xxx`；用于提取格式、语气、案例、内容，并参与构造 RAG 检索 query，不作为向量库检索范围 |
+| `enable_rag` | Boolean | 否 | 是否启用本地知识库 RAG；为 `true` 时，系统会用用户输入、已识别意图和上传参考资料内容构造查询，在全局可用知识库向量库中检索 |
 | `enable_web` | Boolean | 否 | 是否启用联网增强开关；当前会传入模型提示词 |
 | `slide_count` | int | 否 | 期望页数，建议 `6-15`，默认 `8` |
 | `language` | String | 否 | 输出语言，默认 `zh-CN` |
@@ -1889,8 +2186,8 @@
 |---|---|---|---|
 | `outline` | Object(JSON) | **是** | 当前大纲对象 |
 | `instruction` | String | **是** | 修改/重生成要求 |
-| `resource_ids` | List<String> | 否 | 参考资料ID列表 |
-| `enable_rag` | Boolean | 否 | 是否合并资料增强 |
+| `resource_ids` | List<String> | 否 | 上传参考资料ID列表；用于提取格式、语气、案例、内容，并参与构造 RAG 检索 query |
+| `enable_rag` | Boolean | 否 | 是否启用本地知识库 RAG 检索 |
 | `enable_web` | Boolean | 否 | 是否开启联网增强开关 |
 
 **响应 VO**: `Result<OutlineGenerateVO>`
@@ -1943,11 +2240,13 @@
 | `message` | String | **是** | 用户本轮自然语言输入，也可以是对后端澄清问题的回复 |
 | `history` | List<Message> | 否 | 前端已有对话历史；后端也会维护进程内会话状态 |
 | `known_context` | Object(JSON) | 否 | 前端已知或用户已编辑确认的信息，例如 `title`、`subject`、`grade` |
-| `resource_ids` | List<String> | 否 | RAG资源ID列表。临时上传资料使用 API-135 返回的 `res_xxx`；公共资源使用 `public:{adm_resource.id}`；个人AI资源使用 `personal:{res_material.id}` |
-| `enable_rag` | Boolean | 否 | 是否调用 RAG 检索工具 |
+| `resource_ids` | List<String> | 否 | 上传参考资料ID列表。临时上传资料使用 API-135 返回的 `res_xxx`；用于提取格式、语气、案例、内容，并参与构造 RAG 检索 query，不作为向量库检索范围 |
+| `enable_rag` | Boolean | 否 | 是否调用本地知识库 RAG 检索工具 |
 | `enable_web` | Boolean | 否 | 是否调用联网搜索工具 |
 | `slide_count` | int | 否 | 期望页数，默认 `8` |
 | `language` | String | 否 | 输出语言，默认 `zh-CN` |
+
+**RAG 范围说明**: `resource_ids` 不是向量库过滤条件。上传资料会先解析为 `reference_context`，用于提取格式、语气、案例和用户特定内容；系统再把用户输入、已识别意图和 `reference_context` 融合成 `enriched_query`，用这个融合查询到本地知识库向量库中检索最匹配资料。RAG 工具返回的 `tool_result.rag` 中包含 `enriched_query`、`search_scope=global_knowledge_base`、`reference_context`、`knowledge_context` 和 `matches`。
 
 **SSE 事件**
 | event | data 说明 |
@@ -2020,6 +2319,74 @@ while (true) {
 |---|---|---|
 | `user_id` | String | 用户ID |
 | `sessions` | List<Object> | 会话列表，包含 `session_id`、`title`、`intent`、`status`、`updated_at` |
+
+---
+
+## API-137B-1 POST /api/v1/python/outlines/chat/sessions
+
+**功能**: 通过 Java 代理创建 Python 大纲对话会话。适合不使用 Java `ai_conversation` 业务表、只需要 Python 历史会话的页面。
+
+**请求体 (JSON)**
+| 字段 | 类型 | 必填 | 说明 |
+|---|---|---|---|
+| `user_id` | String | **是** | 用户ID |
+| `title` | String | 否 | 会话标题 |
+
+**响应 VO**: `Result<OutlineChatSessionVO>` — 包含 `session_id`、`messages`、`intent`、`outline`、`created_at/updated_at` 等字段。
+
+---
+
+## API-137B-2 GET /api/v1/python/outlines/chat/sessions/{session_id}
+
+**功能**: 通过 Java 代理读取 Python 单个会话详情和完整消息历史。前端点击历史会话时调用。
+
+**Query 参数**
+| 字段 | 类型 | 必填 | 说明 |
+|---|---|---|---|
+| `user_id` | String | **是** | 用户ID |
+
+**响应 VO**: `Result<OutlineChatSessionVO>`
+
+| OutlineChatSessionVO 字段 | 类型 | 说明 |
+|---|---|---|
+| `session_id` | String | Python 会话ID |
+| `title` | String | 会话标题 |
+| `messages` | List<Object> | 完整历史消息，元素包含 `role/content/metadata/created_at` |
+| `intent` | Object(JSON) | 当前合并后的用户意图 |
+| `outline` | Object(JSON) | 最近一次生成的大纲 |
+| `final_prompt` | String | 最近一次最终 prompt |
+| `status` | String | 会话状态 |
+
+---
+
+## API-137B-3 PATCH /api/v1/python/outlines/chat/sessions/{session_id}
+
+**功能**: 通过 Java 代理重命名 Python 会话。
+
+**Query 参数**
+| 字段 | 类型 | 必填 | 说明 |
+|---|---|---|---|
+| `user_id` | String | **是** | 用户ID |
+
+**请求体 (JSON)**
+| 字段 | 类型 | 必填 | 说明 |
+|---|---|---|---|
+| `title` | String | **是** | 新会话标题 |
+
+**响应 VO**: `Result<OutlineChatSessionVO>`
+
+---
+
+## API-137B-4 DELETE /api/v1/python/outlines/chat/sessions/{session_id}
+
+**功能**: 通过 Java 代理删除 Python 会话及其消息历史。
+
+**Query 参数**
+| 字段 | 类型 | 必填 | 说明 |
+|---|---|---|---|
+| `user_id` | String | **是** | 用户ID |
+
+**响应 VO**: `Result<{user_id, session_id, deleted}>`
 
 ---
 
@@ -2104,6 +2471,7 @@ while (true) {
 | `slide_count` | int | 实际生成页数 |
 | `slides` | List<PptSlideHtmlVO> | 每页 PPT HTML |
 | `html` | String | 可选，整套 PPT 合并后的 HTML 字符串 |
+| `metadata.interactive_assets` | List<Object> | 可选，动画/小游戏等额外资源规划；前端导出时应保留在 slides metadata 中 |
 
 | PptSlideHtmlVO 字段 | 类型 | 说明 |
 |---|---|---|
@@ -2111,6 +2479,7 @@ while (true) {
 | `title` | String | 单页标题 |
 | `html` | String | 单页 PPT 的 HTML 字符串 |
 | `notes` | String | 可选，讲稿或备注 |
+| `interactive_assets` | List<Object> | 可选，本页关联的 HTML5/GIF/MP4 动画或小游戏资源 |
 | `metadata` | Object(JSON) | 可选，版式、主题、生成参数等扩展信息 |
 
 ---
@@ -2242,23 +2611,36 @@ while (true) {
 
 ## API-141 POST /api/v1/python/presentations/export/pptx
 
-**功能**: 将前端最终确认/编辑后的 HTML PPT slides 导出为 PPTX 文件下载。默认使用高保真导出：通过浏览器把每页 HTML 渲染为整页图片，再写入 PPTX，以最大程度保留 HTML 视觉效果、复杂 CSS、背景、图表和互动模块的静态首屏。若浏览器运行时不可用，会自动降级为可编辑文本版导出。
+**功能**: 将前端最终确认/编辑后的 HTML PPT slides 导出为 PPTX 或 ZIP 文件下载。默认使用高保真导出：通过浏览器把每页 HTML 渲染为整页图片，再写入 PPTX，以最大程度保留 HTML 视觉效果、复杂 CSS、背景、图表和互动模块的静态首屏。若浏览器运行时不可用，会自动降级为可编辑文本版导出。若 slides 中包含动画、小游戏、HTML5、GIF、MP4 等额外资源，服务会返回 ZIP：PPTX 放在压缩包根目录，额外资源放在 `static/` 目录。
 
 **请求体 (JSON)**
 | 字段 | 类型 | 必填 | 说明 |
 |---|---|---|---|
 | `title` | String | 否 | PPT 标题，默认 `A12 PPT` |
 | `filename` | String | 否 | 下载文件名，例如 `光合作用.pptx` |
-| `slides` | List<Object> | **是** | 最终 slides 列表，每项至少包含 `html`，建议包含 `title` |
+| `slides` | List<Object> | **是** | 最终 slides 列表，每项至少包含 `html`，建议包含 `title`；如含 `interactive_assets` 或 `metadata.interactive_assets`，导出会自动打包静态资源 |
 | `fidelity` | String | 否 | `high_fidelity` 或 `editable_text`，默认 `high_fidelity` |
+| `package_static_assets` | Boolean | 否 | 是否打包 `interactive_assets/static_assets`，默认 `true` |
 
-**响应**: `application/vnd.openxmlformats-officedocument.presentationml.presentation` 文件流
+**响应**: 文件流。无额外资源时为 `application/vnd.openxmlformats-officedocument.presentationml.presentation`；有额外资源时为 `application/zip`。Java 代理会透传 Python 返回的 `Content-Type` 和下载文件名。
 
 **导出模式说明**:
 | fidelity | 说明 | 优点 | 限制 |
 |---|---|---|---|
 | `high_fidelity` | Chromium 渲染 HTML 截图，每页作为整页图片写入 PPTX | 视觉最接近前端 HTML 预览，适合最终交付 | PPTX 内文字不可逐字编辑，动画/小游戏导出为静态首屏 |
 | `editable_text` | 从 HTML 抽取标题和文本，用 PowerPoint 文本框重建 | 文本可编辑 | 视觉还原度较低 |
+
+**ZIP 结构**
+```text
+{filename}.zip
+├── {filename}.pptx
+└── static/
+    ├── manifest.json
+    ├── animation_1.html
+    └── game_1.html
+```
+
+**互动资源说明**: MP4 资源有真实文件时会尽量作为视频放入 PPT；HTML5/GIF/小游戏不直接嵌入 PPT，而是在 PPT 中提供相对链接和文字说明，并把资源放入 ZIP 的 `static/` 目录。
 
 **部署说明**: 高保真导出依赖 Python 包 `playwright` 和 Chromium 运行时。部署后需执行 `python -m playwright install chromium`。如果没有安装浏览器，接口不会失败，会退回 `editable_text`。
 
