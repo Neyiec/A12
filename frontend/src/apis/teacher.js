@@ -1,5 +1,6 @@
 import axios from 'axios'
 import { apiRequest, del, get, post, put } from '../utils/api'
+import { useUserStore } from '../storage/user.js'
 
 export const listResources = (params) => get('/api/v1/resources', params)
 export const uploadResource = async (file, onProgress) => {
@@ -79,6 +80,28 @@ export const confirmAiPlan = (id, data) => post(`/api/v1/ai/sessions/${id}/plan-
 export const createAiRun = (id) => post(`/api/v1/ai/sessions/${id}/runs`)
 export const getAiRun = (runId) => get(`/api/v1/ai/runs/${runId}`)
 export const reviseProjectWithAi = (id, data) => post(`/api/v1/projects/${id}/ai-revisions`, data)
+
+/**
+ * 调用 Python SSE 大纲/资源生成对话流（POST 端点）
+ * 注意：浏览器原生 EventSource 仅支持 GET，API-137A 需要 POST JSON body
+ * 因此返回原生 fetch Response，由调用方通过 ReadableStream 读取 SSE 事件
+ * @param {Object} body - 请求体 { user_id, session_id, message, history?, ... }
+ * @returns {Promise<Response>}
+ */
+export function streamOutlineChat(body) {
+  const userStore = useUserStore()
+  return fetch(
+    `${import.meta.env.VITE_API_BASE_URL || ''}/api/v1/python/outlines/chat/stream`,
+    {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        Authorization: `Bearer ${userStore.token}`,
+      },
+      body: JSON.stringify(body),
+    }
+  )
+}
 
 // 教师端项目管理
 export const createProject = (data) => post('/api/v1/projects', data)

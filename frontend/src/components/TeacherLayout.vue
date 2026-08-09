@@ -11,6 +11,7 @@ import {
   Moon, MoreFilled, Plus, Setting, Sunny,
 } from '@element-plus/icons-vue'
 import { TEACHER_HOME } from '../config/teacherHome.config.js'
+import { requestNewChat } from '../config/teacherChat.config.js'
 import { getCurrentUser } from '../apis/login.js'
 import { useUserStore } from '../storage/user.js'
 
@@ -84,7 +85,7 @@ onMounted(async () => {
           <span>{{ TEACHER_HOME.brand.subtitle }}</span>
         </div>
       </header>
-      <el-button type="primary" class="new-chat-button" :icon="Plus" @click="router.push('/main')">
+      <el-button type="primary" class="new-chat-button" :icon="Plus" @click="requestNewChat = true">
         {{ TEACHER_HOME.actions.newChat }}
       </el-button>
       <nav class="primary-nav">

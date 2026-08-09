@@ -4,7 +4,7 @@
   - 输出: 教师端默认首页内容，由 `TeacherLayout.vue` 承载全局导航
 -->
 <script setup>
-import { computed, onMounted, reactive, ref } from 'vue'
+import { computed, onMounted, ref, watch } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import {
@@ -17,7 +17,9 @@ import {
   Promotion,
 } from '@element-plus/icons-vue'
 import { TEACHER_HOME } from '../config/teacherHome.config.js'
-import { archiveProject, copyProject, createAiSession, createProject, deleteProject, listProjects, listResources, restoreProject, sendAiSessionMessage, uploadResource } from '../apis/teacher'
+import { requestNewChat } from '../config/teacherChat.config.js'
+import ChatView from './ChatView.vue'
+import { archiveProject, copyProject, createAiSession, createProject, deleteProject, listProjects, listResources, restoreProject, uploadResource } from '../apis/teacher'
 
 const router = useRouter()
 const route = useRoute()
@@ -28,8 +30,6 @@ const activeSuggestionId = ref(null)
 const iconMap = { Presentation: Monitor, Document, MagicStick }
 const projects = ref([])
 const projectsLoading = ref(true)
-const sessionDialogVisible = ref(false)
-const sessionCreating = ref(false)
 const resourcesLoading = ref(false)
 const availableResources = ref([])
 const selectedResourceIds = ref([])
@@ -43,13 +43,18 @@ const uploadedResourceNames = ref([])
 const uploadDragging = ref(false)
 const voiceDialogVisible = ref(false)
 const voiceLanguage = ref('zh-CN')
-const sessionForm = reactive({ title: '', subject: '', grade: '' })
 const archivedVisible = ref(false)
 const archivedProjects = ref([])
 const archivedLoading = ref(false)
 const projectManagerVisible = ref(false)
 const managedProjects = ref([])
 const projectManagerLoading = ref(false)
+/** 聊天视图状态管理 */
+const viewMode = ref('welcome') // 'welcome' | 'chat'
+const chatSessionId = ref(null)
+const chatPrompt = ref('')
+const chatResourceIds = ref([])
+
 const filteredAvailableResources = computed(() => {
   const query = resourceSearch.value.trim().toLowerCase()
   return query ? availableResources.value.filter((item) => (item.file_name || '').toLowerCase().includes(query)) : availableResources.value
@@ -79,11 +84,70 @@ const applySuggestion = (suggestion) => {
   requestAnimationFrame(() => composerInput.value?.focus())
 }
 
-/** 创建演示任务并进入创作工作台。 */
-const sendPrompt = () => {
+/**
+ * 从欢迎页直接发送提示词，创建 AI 会话并切换到聊天视图。
+ * 替换原有的 "打开会话对话框 → 创建会话 → 跳转工作台" 流程。
+ */
+const sendPrompt = async () => {
   if (!canSend.value) return
-  ElMessage.success('教学思路已梳理，正在展开创作工作台')
-  router.push({ path: '/main/workspace', query: route.query.preview ? { preview: '1' } : {} })
+  const text = prompt.value.trim()
+
+  try {
+    // 自动生成会话标题（取前40字）
+    const result = await createAiSession({
+      title: text.slice(0, 40),
+      subject: '',
+      grade: '',
+      status: 'active',
+      messages: JSON.stringify([{ role: 'user', content: text }]),
+      uploaded_refs: JSON.stringify(selectedResourceIds.value),
+    })
+    const task = result?.data || result
+    const sessionId = task?.conversation_id || task?.id
+    if (!sessionId) throw new Error(result?.message || '创建备课会话失败')
+
+    // 保存会话参数，切换到聊天视图
+    chatSessionId.value = sessionId
+    chatPrompt.value = text
+    chatResourceIds.value = [...selectedResourceIds.value]
+    viewMode.value = 'chat'
+    ElMessage.success('备课会话已创建，正在生成教学大纲')
+  } catch (error) {
+    ElMessage.error(error?.message || '创建会话失败，请登录后重试')
+  }
+}
+
+/** 关闭聊天视图，返回欢迎页 */
+const closeChatView = () => {
+  viewMode.value = 'welcome'
+  chatSessionId.value = null
+  chatPrompt.value = ''
+  chatResourceIds.value = []
+  prompt.value = ''
+  loadProjects()
+}
+
+/**
+ * 监听 TeacherLayout 侧栏"新建对话"按钮触发的跨组件信号。
+ * 当前已在聊天视图时，关闭聊天并返回欢迎页。
+ */
+watch(requestNewChat, (val) => {
+  if (val) {
+    closeChatView()
+    requestNewChat.value = false
+  }
+})
+
+/** 从聊天视图跳转到创作工作台 */
+const openWorkspaceFromChat = (projectId) => {
+  router.push({
+    path: '/main/workspace',
+    query: {
+      ...(route.query.preview ? { preview: '1' } : {}),
+      sessionId: chatSessionId.value,
+      ...(projectId ? { projectId } : {}),
+    },
+  })
 }
 
 const createProjectFromPrompt = async () => {
@@ -151,60 +215,6 @@ const dropResourceFiles = async (event) => {
   if (supported.length !== files.length) ElMessage.warning('已忽略不支持的文件格式')
   await uploadLocalFiles(supported)
 }
-const openSessionDialog = async () => {
-  if (!canSend.value) return
-  sessionForm.title = prompt.value.trim().slice(0, 40)
-  sessionForm.subject = ''
-  sessionForm.grade = ''
-  sessionDialogVisible.value = true
-  await loadAvailableResources()
-}
-
-const handleSessionEnter = (event) => {
-  event.preventDefault()
-  if (!sessionCreating.value) createSessionFromPrompt()
-}
-
-const createSessionFromPrompt = async () => {
-  if (sessionCreating.value) return
-  if (!sessionForm.title.trim() || !sessionForm.subject.trim() || !sessionForm.grade.trim()) return ElMessage.warning('请完整填写备课信息')
-  sessionCreating.value = true
-  try {
-    const initialMessage = prompt.value.trim()
-    const knownContext = {
-      title: sessionForm.title.trim(),
-      subject: sessionForm.subject.trim(),
-      grade: sessionForm.grade.trim(),
-    }
-    const result = await createAiSession({
-      title: sessionForm.title.trim(), subject: sessionForm.subject.trim(), grade: sessionForm.grade.trim(), status: 'active',
-      messages: JSON.stringify([]), uploaded_refs: JSON.stringify(selectedResourceIds.value),
-    })
-    const task = result?.data || result
-    const sessionId = task?.conversation_id || task?.id
-    if (!sessionId) throw new Error(result?.message || '创建备课会话失败')
-
-    // UI-07 创建会话后立即提交原始指令，AI 才能判断意图是否需要澄清。
-    const conversationResult = await sendAiSessionMessage(sessionId, {
-      message: initialMessage,
-      messages: JSON.stringify([{ role: 'user', content: initialMessage }]),
-      known_context: JSON.stringify(knownContext),
-    })
-    const conversation = conversationResult?.data || conversationResult || {}
-    const initialClarification = conversation.last_question || conversation.clarification_question || null
-    const workspaceQuery = {
-      ...(route.query.preview ? { preview: '1' } : {}),
-      sessionId,
-      taskId: task.id,
-    }
-    if (initialClarification) workspaceQuery.initialClarification = JSON.stringify(initialClarification)
-
-    sessionDialogVisible.value = false
-    ElMessage.success(initialClarification ? '备课会话已创建，请先补充教学意图' : '备课会话已创建，正在生成教学大纲')
-    router.push({ path: '/main/workspace', query: workspaceQuery })
-  } catch (error) { ElMessage.error(error?.message || '创建备课会话失败，请稍后重试') } finally { sessionCreating.value = false }
-}
-
 const openArchivedProjects = async () => {
   archivedVisible.value = true; archivedLoading.value = true
   try { const result = await listProjects({ page: 1, size: 30, status: 'archived' }); archivedProjects.value = result?.data?.records || result?.data?.list || result?.data?.items || [] }
@@ -236,7 +246,9 @@ onMounted(loadProjects)
 </script>
 
 <template>
-  <section class="home-welcome">
+  <section class="home-welcome" :class="{ 'is-chat-mode': viewMode === 'chat' }">
+    <!-- 欢迎视图 -->
+    <template v-if="viewMode === 'welcome'">
     <div class="welcome-copy motion-stage motion-stage-1">
       <p class="eyebrow">{{ TEACHER_HOME.greeting.eyebrow }}</p>
       <h1>{{ TEACHER_HOME.greeting.title }}</h1>
@@ -294,7 +306,7 @@ onMounted(loadProjects)
         :autosize="{ minRows: 3, maxRows: 7 }"
         resize="none"
         :placeholder="TEACHER_HOME.composer.placeholder"
-        @keydown.ctrl.enter="openSessionDialog"
+        @keydown.ctrl.enter="sendPrompt"
       />
       <div class="composer-toolbar">
         <div class="composer-tools">
@@ -309,11 +321,25 @@ onMounted(loadProjects)
           :class="{ 'is-ready': canSend }"
           :disabled="!canSend"
           :aria-label="TEACHER_HOME.composer.send"
-          @click="openSessionDialog"
+          @click="sendPrompt"
         />
       </div>
     </section>
+
     <p class="composer-hint motion-stage motion-stage-4">{{ TEACHER_HOME.composer.hint }}</p>
+    </template>
+
+    <!-- 聊天视图 -->
+    <ChatView
+      v-if="viewMode === 'chat'"
+      :session-id="chatSessionId"
+      :initial-prompt="chatPrompt"
+      :resource-ids="chatResourceIds"
+      @back="closeChatView"
+      @open-workspace="openWorkspaceFromChat"
+    />
+
+    <!-- 资料上传 / 知识库 / 语音对话框（欢迎视图和聊天视图共用）-->
     <el-dialog v-model="uploadDialogVisible" title="添加资料" width="min(560px, 92vw)">
       <input ref="resourceFileInput" class="resource-file-input" type="file" multiple accept=".pdf,.doc,.docx,.ppt,.pptx,.txt,.md" @change="uploadPickedResource" />
       <button
@@ -334,11 +360,13 @@ onMounted(loadProjects)
       <div v-if="uploadedResourceNames.length" class="uploaded-resource-list"><span>已自动引用</span><p v-for="name in uploadedResourceNames" :key="name">{{ name }}</p></div>
       <template #footer><el-button @click="uploadDialogVisible = false">完成</el-button></template>
     </el-dialog>
+
     <el-dialog v-model="knowledgeDialogVisible" title="引用知识库" width="min(640px, 92vw)">
       <div class="knowledge-picker-header"><p>从已经上传并入库的资料中选择，AI 将结合这些内容生成大纲。</p><el-input v-model="resourceSearch" placeholder="搜索知识库资料" clearable /></div>
       <el-checkbox-group v-model="selectedResourceIds" v-loading="resourcesLoading" class="resource-picker resource-picker-dialog"><el-checkbox v-for="item in filteredAvailableResources" :key="item.id" :value="item.id">{{ item.file_name }}</el-checkbox><el-empty v-if="!resourcesLoading && !filteredAvailableResources.length" description="没有找到可引用的知识资料" /></el-checkbox-group>
       <template #footer><span class="selected-resource-count">已选择 {{ selectedResourceIds.length }} 项</span><el-button type="primary" @click="knowledgeDialogVisible = false">完成引用</el-button></template>
     </el-dialog>
+
     <el-dialog v-model="voiceDialogVisible" title="语音输入" width="min(480px, 92vw)">
       <div class="voice-panel">
         <div class="voice-orb" aria-hidden="true"><el-icon><Microphone /></el-icon></div>
@@ -357,22 +385,18 @@ onMounted(loadProjects)
       </div>
       <template #footer><el-button @click="voiceDialogVisible = false">取消</el-button><el-tooltip content="等待语音识别服务接入"><span><el-button type="primary" disabled>开始录音</el-button></span></el-tooltip></template>
     </el-dialog>
-    <el-dialog v-model="sessionDialogVisible" title="创建 AI 备课会话" width="min(600px, 92vw)" destroy-on-close>
-      <el-form label-position="top" class="session-form" @submit.prevent="createSessionFromPrompt">
-        <div class="session-fields"><el-form-item label="备课主题" required><el-input v-model="sessionForm.title" maxlength="40" show-word-limit @keydown.enter="handleSessionEnter" /></el-form-item><el-form-item label="学科" required><el-input v-model="sessionForm.subject" placeholder="例如：数学" @keydown.enter="handleSessionEnter" /></el-form-item><el-form-item label="年级" required><el-input v-model="sessionForm.grade" placeholder="例如：八年级" @keydown.enter="handleSessionEnter" /></el-form-item></div>
-        <el-form-item label="本次需求"><div class="prompt-preview">{{ prompt }}</div></el-form-item>
-        <el-form-item label="引用个人资源（可选）"><el-checkbox-group v-model="selectedResourceIds" v-loading="resourcesLoading" class="resource-picker"><el-checkbox v-for="item in availableResources" :key="item.id" :value="item.id">{{ item.file_name }}</el-checkbox><span v-if="!resourcesLoading && !availableResources.length" class="empty-resources">暂无可选资源</span></el-checkbox-group></el-form-item>
-      </el-form>
-      <template #footer><el-button @click="sessionDialogVisible = false">取消</el-button><el-button type="primary" :loading="sessionCreating" @click="createSessionFromPrompt">开始生成大纲</el-button></template>
-    </el-dialog>
+
   </section>
-    <div class="archive-entry"><el-button text size="small" @click="openArchivedProjects">归档项目管理</el-button></div>
-    <el-dialog v-model="projectManagerVisible" title="项目管理" width="min(720px, 92vw)">
-      <div v-loading="projectManagerLoading" class="managed-project-list">
-        <article v-for="project in managedProjects" :key="project.id"><div><strong>{{ project.project_name }}</strong><span>{{ project.project_type || '教学项目' }} · {{ project.status }}</span></div><div class="managed-project-actions"><el-button text size="small" @click="openProject(project)">打开</el-button><el-button text size="small" @click="copyManagedProject(project)">复制</el-button><el-button v-if="project.status !== 'archived'" text size="small" @click="archiveManagedProject(project)">归档</el-button><el-button type="danger" text size="small" @click="deleteManagedProject(project)">删除</el-button></div></article><el-empty v-if="!projectManagerLoading && !managedProjects.length" description="暂无项目" />
-      </div>
-    </el-dialog>
-    <el-dialog v-model="archivedVisible" title="归档项目" width="min(620px, 92vw)"><div v-loading="archivedLoading" class="archived-list"><article v-for="project in archivedProjects" :key="project.id"><div><strong>{{ project.project_name }}</strong><span>{{ project.project_type || '教学项目' }}</span></div><el-button type="primary" plain size="small" @click="restoreArchivedProject(project)">恢复</el-button></article><el-empty v-if="!archivedLoading && !archivedProjects.length" description="暂无归档项目" /></div><template #footer><el-button @click="archivedVisible = false">关闭</el-button></template></el-dialog>
+
+  <div class="archive-entry"><el-button text size="small" @click="openArchivedProjects">归档项目管理</el-button></div>
+
+  <el-dialog v-model="projectManagerVisible" title="项目管理" width="min(720px, 92vw)">
+    <div v-loading="projectManagerLoading" class="managed-project-list">
+      <article v-for="project in managedProjects" :key="project.id"><div><strong>{{ project.project_name }}</strong><span>{{ project.project_type || '教学项目' }} · {{ project.status }}</span></div><div class="managed-project-actions"><el-button text size="small" @click="openProject(project)">打开</el-button><el-button text size="small" @click="copyManagedProject(project)">复制</el-button><el-button v-if="project.status !== 'archived'" text size="small" @click="archiveManagedProject(project)">归档</el-button><el-button type="danger" text size="small" @click="deleteManagedProject(project)">删除</el-button></div></article><el-empty v-if="!projectManagerLoading && !managedProjects.length" description="暂无项目" />
+    </div>
+  </el-dialog>
+  
+  <el-dialog v-model="archivedVisible" title="归档项目" width="min(620px, 92vw)"><div v-loading="archivedLoading" class="archived-list"><article v-for="project in archivedProjects" :key="project.id"><div><strong>{{ project.project_name }}</strong><span>{{ project.project_type || '教学项目' }}</span></div><el-button type="primary" plain size="small" @click="restoreArchivedProject(project)">恢复</el-button></article><el-empty v-if="!archivedLoading && !archivedProjects.length" description="暂无归档项目" /></div><template #footer><el-button @click="archivedVisible = false">关闭</el-button></template></el-dialog>
 </template>
 
 <style scoped>
@@ -380,6 +404,12 @@ onMounted(loadProjects)
   width: min(880px, calc(100% - 48px));
   margin: 0 auto;
   padding: clamp(70px, 10vh, 124px) 0 42px;
+}
+/* 聊天模式下移除欢迎页内边距，让 ChatView 撑满可用空间 */
+.home-welcome.is-chat-mode {
+  width: 100%;
+  max-width: 100%;
+  padding: 0;
 }
 
 .welcome-copy { max-width: 720px; }

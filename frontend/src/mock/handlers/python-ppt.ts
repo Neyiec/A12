@@ -147,19 +147,51 @@ export const pythonPptHandlers = [
 
     // 模拟 SSE 流式响应
     const outlineId = generateId('outline')
+    const extractedTitle = userMessage.length > 20 ? userMessage.slice(0, 20) : userMessage
+    const outlineTitle = extractedTitle || '未命名教学设计'
     const events = [
       `event: session\ndata: {"user_id":"${body.user_id || '10001'}","session_id":"${sessionId}"}\n`,
-      `event: stage\ndata: {"stage":"parse_input","message":"正在解析输入…"}\n`,
-      `event: stage\ndata: {"stage":"build_prompt","message":"正在构建生成提示…"}\n`,
     ]
 
-    // 模拟需要澄清
+    // 模拟需要澄清（无年级/学科信息时）
     if (!body.known_context && !userMessage.includes('年级') && !userMessage.includes('学科')) {
       events.push(`event: question\ndata: {"question":"为了更好地为您生成大纲，请补充以下信息：\\n1. 适用的年级和学科\\n2. 希望的教学侧重点（知识讲解/课堂互动/实验探究）"}\n`)
     } else {
-      events.push(`event: stage\ndata: {"stage":"generate_outline","message":"正在生成大纲…"}\n`)
-      events.push(`event: outline_delta\ndata: {"slide":{"slide_no":1,"title":"课程导入","content_points":["引入主题","激发兴趣"]}}\n`)
-      events.push(`event: final\ndata: {"outline_id":"${outlineId}","title":"大纲标题","outline":{"outline_id":"${outlineId}"},"slides":[]}\n`)
+      // 构建完整的大纲数据
+      const slideCount = (body.slide_count as number) || 8
+      const slideTemplates = [
+        { title: '课程导入', content_points: ['通过生活情境或实验现象引入课题', '提出核心问题，激发学生探究兴趣'], teaching_intent: '创设问题情境，激活学生前概念，建立学习动机', visual_suggestion: '封面式大标题配合关键词云，搭配与课题相关的高质量实拍图或示意图' },
+        { title: '知识讲解（一）', content_points: ['核心概念的定义与内涵解析', '概念产生背景与学科发展脉络'], teaching_intent: '帮助学生建立科学概念，理解知识本质', visual_suggestion: '左文右图布局，概念用加粗高亮标注，配合思维导图展示概念关系' },
+        { title: '知识讲解（二）', content_points: ['原理推导与逻辑论证过程', '公式/定律的适用条件与范围'], teaching_intent: '培养逻辑推理能力，避免机械记忆', visual_suggestion: '分步骤展示推导过程，使用动画呈现逻辑链条，关键步骤用色块强调' },
+        { title: '案例分析', content_points: ['典型例题的完整解析过程', '常见错误类型与纠正策略'], teaching_intent: '学以致用，在解题中巩固知识、暴露认知误区', visual_suggestion: '左侧题目原文，右侧分步解析，错误类型用红色警示框标注' },
+        { title: '实验探究', content_points: ['实验目的、器材与操作步骤', '数据记录表格与结果分析'], teaching_intent: '培养科学探究能力，体验"做中学"', visual_suggestion: '实验装置示意图 + 数据记录表格，关键操作步骤配实拍照片或插画' },
+        { title: '课堂互动', content_points: ['小组讨论/头脑风暴活动设计', '即时反馈问答环节'], teaching_intent: '促进深度参与，检测实时理解水平', visual_suggestion: '活泼的卡片式布局，问答区用对比色突出，活动规则用编号列表展示' },
+        { title: '拓展延伸', content_points: ['跨学科联系与前沿应用', '分层拓展任务设计'], teaching_intent: '拓展学科视野，满足不同层次学生的学习需求', visual_suggestion: '时间线或知识地图布局，拓展内容用虚线框区分，配合推荐阅读链接' },
+        { title: '课堂总结', content_points: ['本课知识框架回顾', '课后作业与预习任务'], teaching_intent: '结构化梳理所学内容，建立完整知识网络', visual_suggestion: '思维导图总结全课，作业区用清单样式，预习任务用箭头指向下一课' },
+      ]
+
+      const slides = slideTemplates.slice(0, slideCount).map((tpl, i) => ({
+        slide_no: i + 1,
+        title: tpl.title,
+        content_points: tpl.content_points,
+        teaching_intent: tpl.teaching_intent,
+        visual_suggestion: tpl.visual_suggestion,
+      }))
+
+      // 逐页发送 outline_delta 事件
+      for (const slide of slides) {
+        events.push(`event: outline_delta\ndata: {"slide":${JSON.stringify(slide)}}\n`)
+      }
+
+      // 发送最终的完整大纲
+      events.push(`event: final\ndata: ${JSON.stringify({
+        outline_id: outlineId,
+        title: outlineTitle,
+        summary: `关于「${outlineTitle}」的教学设计大纲，共 ${slideCount} 页，涵盖导入、讲解、探究、互动、总结等完整教学环节`,
+        slide_count: slideCount,
+        outline: { outline_id: outlineId, title: outlineTitle, summary: '', slide_count: slideCount, slides },
+        slides,
+      })}\n`)
     }
     events.push(`event: done\ndata: {}\n`)
 
