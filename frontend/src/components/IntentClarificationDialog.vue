@@ -49,18 +49,21 @@ const hasAnswer = (item, index) => Boolean(selectedOption(item, index)?.value ||
 
 const canSubmit = computed(() => questionItems.value.length > 0 && questionItems.value.every((item, index) => !item.required || hasAnswer(item, index)))
 const submitLabel = computed(() => questionItems.value.length > 1 ? '提交并生成大纲' : '继续生成')
+const questionSignature = computed(() => JSON.stringify(questionItems.value.map((item) => ({
+  field: item.field,
+  label: item.label,
+  text: item.text,
+  options: item.options.map((option) => option.value),
+}))))
 
 const resetSelection = () => {
   Object.keys(selectedAnswers).forEach((key) => delete selectedAnswers[key])
   Object.keys(customAnswers).forEach((key) => delete customAnswers[key])
 }
 
-watch(
-  () => [props.modelValue, props.question?.title, props.question?.text, props.question?.questions?.length],
-  ([visible]) => {
-    if (visible) resetSelection()
-  },
-)
+watch([() => props.modelValue, questionSignature], ([visible, signature], [wasVisible, previousSignature]) => {
+  if (visible && (!wasVisible || signature !== previousSignature)) resetSelection()
+})
 
 const chooseOption = (item, index, option) => {
   const key = keyFor(item, index)
