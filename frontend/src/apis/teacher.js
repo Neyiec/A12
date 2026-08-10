@@ -118,3 +118,16 @@ export const addProjectComponent = (id, data) => post(`/api/v1/projects/${id}/co
 export const updateProjectComponent = (id, componentId, data) => apiRequest({ url: `/api/v1/projects/${id}/components/${componentId}`, method: 'patch', data })
 export const getProjectVersionDiff = (id, versionId, compareVersionId) => get(`/api/v1/projects/${id}/versions/${versionId}/diff`, compareVersionId ? { compare_version_id: compareVersionId } : undefined)
 export const addProjectPermission = (id, data) => post(`/api/v1/projects/${id}/permissions`, data)
+
+/**
+ * 获取当前教师个人偏好设置
+ * @returns {Promise} 后端返回 { teaching_style, template_style, interaction_forms }
+ */
+export const getTeacherPreferences = () => get('/api/v1/teachers/me/preferences')
+
+/**
+ * 保存教师个人偏好设置
+ * @param {{ teaching_style: string, template_style: string, interaction_forms: string[] }} data - 偏好数据
+ * @returns {Promise} 后端返回更新后的偏好配置
+ */
+export const saveTeacherPreferences = (data) => put('/api/v1/teachers/me/preferences', data)
