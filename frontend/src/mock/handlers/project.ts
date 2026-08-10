@@ -188,9 +188,31 @@ export const projectHandlers = [
   // ========== API-28 AI 修改页面/组件 ==========
   http.post('/api/v1/projects/:id/ai-revisions', async ({ request }) => {
     const body = (await request.json()) as Record<string, unknown>
+    const context = (() => {
+      try {
+        return typeof body.context === 'string' ? JSON.parse(body.context) : body.context
+      } catch {
+        return {}
+      }
+    })() as Record<string, unknown>
+    const contextObject = context && typeof context === 'object' ? context : {}
+    const sourcePage = (contextObject.page && typeof contextObject.page === 'object' ? contextObject.page : contextObject) as Record<string, unknown>
+    const instruction = String(body.instruction || '').trim()
+    const sourceElements = sourcePage.elements ?? sourcePage.components ?? []
+    const elements = typeof sourceElements === 'string'
+      ? (() => { try { return JSON.parse(sourceElements) } catch { return [] } })()
+      : sourceElements
+    const nextPage = {
+      ...sourcePage,
+      description: instruction ? `已根据“${instruction}”生成可编辑页面内容。` : sourcePage.description,
+      elements: Array.isArray(elements) ? elements : [],
+    }
     return HttpResponse.json(success({
-      page_id: body.target_id || 1,
-      page_content: JSON.stringify({ revised: true, instruction: body.instruction }),
+      id: Number(body.target_id) || sourcePage.componentId || sourcePage.id || 1,
+      page_id: Number(body.target_id) || sourcePage.componentId || sourcePage.id || 1,
+      page_title: nextPage.title || 'AI 修改页面',
+      page_content: JSON.stringify(nextPage),
+      components: JSON.stringify(nextPage.elements),
     }))
   }),
 
@@ -219,6 +241,9 @@ export const projectHandlers = [
     const page = mockPages.find((p) => p.id === pageId)
     if (!page) return HttpResponse.json(error(404, '页面不存在'), { status: 404 })
 
+    if (body.page_order !== undefined) page.page_order = body.page_order as number
+    if (body.page_type) page.page_type = body.page_type as string
+    if (body.page_title) page.page_title = body.page_title as string
     if (body.page_content) page.page_content = body.page_content as string
     if (body.components) page.components = body.components as string
     page.updated_at = now()
