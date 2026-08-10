@@ -423,6 +423,8 @@ public class PythonPptClient {
                 }
             } else if ("memory".equals(event)) {
                 result.memory = parsed;
+            } else if ("reflection".equals(event)) {
+                result.reflection = parsed;
             } else if ("final".equals(event)) {
                 result.status = "completed";
                 result.pythonSessionId = stringValue(parsed.get("session_id"));
@@ -519,6 +521,7 @@ public class PythonPptClient {
         public Object outline;
         public Object slides;
         public Object memory;
+        public Object reflection;
         public Map<String, Object> finalData = new LinkedHashMap<>();
         public List<Object> outlineDeltas = new ArrayList<>();
     }

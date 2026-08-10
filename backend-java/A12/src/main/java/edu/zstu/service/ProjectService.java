@@ -4,6 +4,7 @@ import edu.zstu.dto.*;
 import edu.zstu.utils.PageResult;
 import edu.zstu.vo.PageVO;
 import edu.zstu.vo.ProjectVO;
+import edu.zstu.vo.SubjectComponentValidateVO;
 import edu.zstu.vo.VersionVO;
 
 import java.util.Map;
@@ -19,6 +20,13 @@ public interface ProjectService {
     ProjectVO restoreProject(String id, Integer userId);
     void deleteProject(String id, Integer userId);
     PageVO aiRevision(String id, AiRevisionDTO dto, Integer userId);
+    java.util.List<PageVO> listPages(String id, Integer userId);
+    PageVO getPage(String id, String pageId, Integer userId);
+    PageVO createPage(String id, PageDTO dto, Integer userId);
+    PageVO savePage(String id, String pageId, PageDTO dto, Integer userId);
+    java.util.List<PageVO> batchSavePages(String id, PageBatchSaveDTO dto, Integer userId);
+    void deletePage(String id, String pageId, Integer userId);
+    SubjectComponentValidateVO validateComponent(SubjectComponentDTO dto, Integer userId);
     PageVO addComponent(String id, PageDTO dto, Integer userId);
     PageVO updateComponent(String id, String componentId, PageDTO dto, Integer userId);
     Map<String, Object> saveVersion(String id, VersionCreateDTO dto, Integer userId);

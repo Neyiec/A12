@@ -2,6 +2,7 @@ package edu.zstu.service.impl;
 
 import cn.hutool.core.bean.BeanUtil;
 import cn.hutool.json.JSONArray;
+import cn.hutool.json.JSONObject;
 import cn.hutool.json.JSONUtil;
 import com.github.pagehelper.PageHelper;
 import com.github.pagehelper.PageInfo;
@@ -19,6 +20,7 @@ import edu.zstu.service.ProjectService;
 import edu.zstu.utils.PageResult;
 import edu.zstu.vo.PageVO;
 import edu.zstu.vo.ProjectVO;
+import edu.zstu.vo.SubjectComponentValidateVO;
 import edu.zstu.vo.VersionVO;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
@@ -29,6 +31,10 @@ import lombok.extern.slf4j.Slf4j;
 @Slf4j
 @Service
 public class ProjectServiceImpl implements ProjectService {
+
+    private static final Set<String> SUBJECT_COMPONENT_TYPES = Set.of(
+            "math_formula", "chemical_formula", "mermaid_diagram", "chart", "table", "geometry"
+    );
 
     private final WsProjectMapper projectMapper;
     private final WsPageMapper pageMapper;
@@ -227,40 +233,133 @@ public class ProjectServiceImpl implements ProjectService {
         return new PageVO();
     }
 
+
+    @Override
+    public List<PageVO> listPages(String id, Integer userId) {
+        Ws_Project p = findProject(id);
+        checkPermission(p, userId);
+        return pageMapper.findByProjectId(p.getId()).stream().map(this::toPageVO).toList();
+    }
+
+    @Override
+    public PageVO getPage(String id, String pageId, Integer userId) {
+        Ws_Project p = findProject(id);
+        checkPermission(p, userId);
+        Ws_Page page = requireProjectPage(p.getId(), Integer.valueOf(pageId));
+        return toPageVO(page);
+    }
+
+    @Override
+    @Transactional
+    public PageVO createPage(String id, PageDTO dto, Integer userId) {
+        Ws_Project p = findProject(id);
+        checkPermission(p, userId);
+        checkEditable(p);
+        validatePageJson(dto);
+        Ws_Page page = new Ws_Page();
+        page.setProject_id(p.getId());
+        page.setPage_order(dto.getPage_order() == null ? nextPageOrder(p.getId()) : dto.getPage_order());
+        page.setPage_type(defaultString(dto.getPage_type(), "content"));
+        page.setPage_title(dto.getPage_title());
+        page.setPage_content(defaultString(dto.getPage_content(), "{}"));
+        page.setComponents(defaultString(dto.getComponents(), "[]"));
+        page.setPage_version(1);
+        page.setClient_version(dto.getClient_version());
+        page.setAutosave(Boolean.TRUE.equals(dto.getAutosave()));
+        page.setDirty(Boolean.TRUE.equals(dto.getDirty()));
+        pageMapper.insert(page);
+        bumpProjectVersion(p);
+        businessLogService.record("operation", "project", "create_page", "page", page.getId(), Map.of("project_id", p.getId()));
+        return toPageVO(pageMapper.findById(page.getId()));
+    }
+
+    @Override
+    @Transactional
+    public PageVO savePage(String id, String pageId, PageDTO dto, Integer userId) {
+        Ws_Project p = findProject(id);
+        checkPermission(p, userId);
+        checkEditable(p);
+        validatePageJson(dto);
+        Ws_Page current = requireProjectPage(p.getId(), Integer.valueOf(pageId));
+        Integer expectedVersion = dto.getExpected_page_version();
+        if (expectedVersion == null) {
+            throw new RuntimeException("expected_page_version is required to avoid overwriting concurrent edits");
+        }
+        Ws_Page page = new Ws_Page();
+        page.setId(current.getId());
+        page.setPage_order(dto.getPage_order());
+        page.setPage_type(dto.getPage_type());
+        page.setPage_title(dto.getPage_title());
+        page.setPage_content(dto.getPage_content());
+        page.setComponents(dto.getComponents());
+        page.setClient_version(dto.getClient_version());
+        page.setAutosave(Boolean.TRUE.equals(dto.getAutosave()));
+        page.setDirty(Boolean.TRUE.equals(dto.getDirty()));
+        if (pageMapper.updateWithVersion(page, expectedVersion) <= 0) {
+            throw new RuntimeException("Version conflict, please refresh and retry");
+        }
+        bumpProjectVersion(p);
+        businessLogService.record("operation", "project", Boolean.TRUE.equals(dto.getAutosave()) ? "autosave_page" : "save_page", "page", current.getId(), Map.of("project_id", p.getId()));
+        return toPageVO(pageMapper.findById(current.getId()));
+    }
+
+    @Override
+    @Transactional
+    public List<PageVO> batchSavePages(String id, PageBatchSaveDTO dto, Integer userId) {
+        Ws_Project p = findProject(id);
+        checkPermission(p, userId);
+        checkEditable(p);
+        if (dto == null || dto.getPages() == null) throw new RuntimeException("pages cannot be empty");
+        if (dto.getCurrent_version() != null && !Objects.equals(dto.getCurrent_version(), p.getCurrent_version())) {
+            throw new RuntimeException("Version conflict, please refresh and retry");
+        }
+        List<PageVO> saved = new ArrayList<>();
+        for (PageDTO pageDto : dto.getPages()) {
+            if (pageDto.getClient_version() == null) pageDto.setClient_version(dto.getClient_version());
+            if (pageDto.getAutosave() == null) pageDto.setAutosave(dto.getAutosave());
+            if (pageDto.getPage_id() == null) {
+                saved.add(createPage(id, pageDto, userId));
+            } else {
+                saved.add(savePage(id, String.valueOf(pageDto.getPage_id()), pageDto, userId));
+            }
+        }
+        return saved;
+    }
+
+    @Override
+    @Transactional
+    public void deletePage(String id, String pageId, Integer userId) {
+        Ws_Project p = findProject(id);
+        checkPermission(p, userId);
+        checkEditable(p);
+        Ws_Page page = requireProjectPage(p.getId(), Integer.valueOf(pageId));
+        pageMapper.deleteByIdAndProjectId(page.getId(), p.getId());
+        bumpProjectVersion(p);
+        businessLogService.record("operation", "project", "delete_page", "page", page.getId(), Map.of("project_id", p.getId()));
+    }
+
+    @Override
+    public SubjectComponentValidateVO validateComponent(SubjectComponentDTO dto, Integer userId) {
+        if (userId == null) throw new RuntimeException("unauthorized");
+        return validateSubjectComponent(dto, true);
+    }
+
     @Override
     @Transactional
     public PageVO addComponent(String id, PageDTO dto, Integer userId) {
         log.info("addComponent userId={}, projectId={}, pageType={}", userId, id, dto.getPage_type());
-        Ws_Project p = findProject(id);
-        checkPermission(p, userId);
-        checkEditable(p);
-        Ws_Page page = new Ws_Page();
-        BeanUtil.copyProperties(dto, page);
-        page.setProject_id(Integer.valueOf(id));
-        pageMapper.insert(page);
-        businessLogService.record("operation", "project", "add_component", "page", page.getId(),
-                Map.of("project_id", Integer.valueOf(id)));
-        PageVO vo = new PageVO(); BeanUtil.copyProperties(page, vo);
-        return vo;
+        return createPage(id, dto, userId);
     }
 
     @Override
     @Transactional
     public PageVO updateComponent(String id, String componentId, PageDTO dto, Integer userId) {
         log.info("updateComponent userId={}, projectId={}, componentId={}", userId, id, componentId);
-        Ws_Project p = findProject(id);
-        checkPermission(p, userId);
-        checkEditable(p);
-        Ws_Page page = pageMapper.findById(Integer.valueOf(componentId));
-        if (page == null) throw new RuntimeException("页面不存在");
-        if (page.getProject_id() != Integer.valueOf(id)) throw new RuntimeException("页面不属于该项目");
-        if (dto.getPage_content() != null) page.setPage_content(dto.getPage_content());
-        if (dto.getComponents() != null) page.setComponents(dto.getComponents());
-        pageMapper.update(page);
-        businessLogService.record("operation", "project", "update_component", "page", page.getId(),
-                Map.of("project_id", Integer.valueOf(id)));
-        PageVO vo = new PageVO(); BeanUtil.copyProperties(page, vo);
-        return vo;
+        Ws_Page page = requireProjectPage(Integer.valueOf(id), Integer.valueOf(componentId));
+        if (dto.getExpected_page_version() == null) {
+            dto.setExpected_page_version(page.getPage_version() == null ? 1 : page.getPage_version());
+        }
+        return savePage(id, componentId, dto, userId);
     }
 
     @Override
@@ -370,7 +469,253 @@ public class ProjectServiceImpl implements ProjectService {
     }
 
     private ProjectVO toProjectVO(Ws_Project p) {
-        ProjectVO vo = new ProjectVO(); BeanUtil.copyProperties(p, vo); return vo;
+        ProjectVO vo = new ProjectVO();
+        BeanUtil.copyProperties(p, vo);
+        vo.setPages(pageMapper.findByProjectId(p.getId()).stream().map(this::toPageVO).toList());
+        return vo;
+    }
+
+    private PageVO toPageVO(Ws_Page page) {
+        PageVO vo = new PageVO();
+        BeanUtil.copyProperties(page, vo);
+        return vo;
+    }
+
+    private Ws_Page requireProjectPage(Integer projectId, Integer pageId) {
+        Ws_Page page = pageMapper.findById(pageId);
+        if (page == null) throw new RuntimeException("页面不存在");
+        if (!Objects.equals(page.getProject_id(), projectId)) throw new RuntimeException("页面不属于该项目");
+        return page;
+    }
+
+    private int nextPageOrder(Integer projectId) {
+        return pageMapper.findByProjectId(projectId).stream()
+                .map(Ws_Page::getPage_order)
+                .filter(Objects::nonNull)
+                .max(Integer::compareTo)
+                .orElse(0) + 1;
+    }
+
+    private void bumpProjectVersion(Ws_Project project) {
+        project.setCurrent_version(project.getCurrent_version() + 1);
+        projectMapper.update(project);
+    }
+
+    private void validatePageJson(PageDTO dto) {
+        if (dto == null) throw new RuntimeException("Page data cannot be empty");
+        validateJsonField("page_content", dto.getPage_content(), true, true);
+        validateJsonField("components", dto.getComponents(), true, false);
+        validatePageComponents(dto.getComponents());
+    }
+
+    private void validateJsonField(String field, String value, boolean optional, boolean objectExpected) {
+        if (value == null || value.isBlank()) {
+            if (optional) return;
+            throw new RuntimeException(field + " cannot be empty");
+        }
+        String trimmed = value.trim();
+        if (objectExpected && !trimmed.startsWith("{")) {
+            throw new RuntimeException(field + " must be a JSON object");
+        }
+        if (!objectExpected && !trimmed.startsWith("[")) {
+            throw new RuntimeException(field + " must be a JSON array");
+        }
+        try {
+            JSONUtil.parse(value);
+        } catch (Exception e) {
+            throw new RuntimeException(field + " must be valid JSON: " + e.getMessage());
+        }
+    }
+
+    private void validatePageComponents(String componentsJson) {
+        if (componentsJson == null || componentsJson.isBlank()) return;
+        JSONArray components = JSONUtil.parseArray(componentsJson);
+        for (int i = 0; i < components.size(); i++) {
+            Object item = components.get(i);
+            if (!(item instanceof JSONObject)) {
+                continue;
+            }
+            JSONObject obj = (JSONObject) item;
+            String type = obj.getStr("type");
+            if (type == null || !SUBJECT_COMPONENT_TYPES.contains(type)) {
+                continue;
+            }
+            SubjectComponentDTO component = new SubjectComponentDTO(
+                    obj.getStr("component_id", obj.getStr("id")),
+                    type,
+                    jsonObjectToMap(obj.getJSONObject("data")),
+                    jsonObjectToMap(obj.getJSONObject("render")),
+                    jsonObjectToMap(obj.getJSONObject("style"))
+            );
+            SubjectComponentValidateVO result = validateSubjectComponent(component, false);
+            if (!Boolean.TRUE.equals(result.getValid())) {
+                throw new RuntimeException("components[" + i + "] invalid: " + String.join("; ", result.getErrors()));
+            }
+        }
+    }
+
+    private SubjectComponentValidateVO validateSubjectComponent(SubjectComponentDTO dto, boolean rejectUnknownType) {
+        List<String> errors = new ArrayList<>();
+        List<String> warnings = new ArrayList<>();
+        Map<String, Object> renderHint = new LinkedHashMap<>();
+        SubjectComponentDTO normalized = new SubjectComponentDTO();
+
+        if (dto == null) {
+            return new SubjectComponentValidateVO(false, null, renderHint, List.of("component cannot be empty"), warnings);
+        }
+
+        String type = dto.getType() == null ? "" : dto.getType().trim();
+        normalized.setComponent_id(dto.getComponent_id());
+        normalized.setType(type);
+        normalized.setData(new LinkedHashMap<>(dto.getData() == null ? Map.of() : dto.getData()));
+        normalized.setRender(new LinkedHashMap<>(dto.getRender() == null ? Map.of() : dto.getRender()));
+        normalized.setStyle(new LinkedHashMap<>(dto.getStyle() == null ? Map.of() : dto.getStyle()));
+
+        if (type.isBlank()) {
+            errors.add("type is required");
+            return new SubjectComponentValidateVO(false, normalized, renderHint, errors, warnings);
+        }
+        if (!SUBJECT_COMPONENT_TYPES.contains(type)) {
+            if (rejectUnknownType) {
+                errors.add("unsupported component type: " + type);
+            }
+            return new SubjectComponentValidateVO(errors.isEmpty(), normalized, renderHint, errors, warnings);
+        }
+
+        Map<String, Object> data = normalized.getData();
+        switch (type) {
+            case "math_formula" -> validateMathFormula(data, renderHint, errors, warnings);
+            case "chemical_formula" -> validateChemicalFormula(data, renderHint, errors, warnings);
+            case "mermaid_diagram" -> validateMermaidDiagram(data, renderHint, errors, warnings);
+            case "chart" -> validateChart(data, renderHint, errors, warnings);
+            case "table" -> validateTable(data, renderHint, errors, warnings);
+            case "geometry" -> validateGeometry(data, renderHint, errors, warnings);
+            default -> errors.add("unsupported component type: " + type);
+        }
+
+        return new SubjectComponentValidateVO(errors.isEmpty(), normalized, renderHint, errors, warnings);
+    }
+
+    private void validateMathFormula(Map<String, Object> data, Map<String, Object> renderHint,
+                                     List<String> errors, List<String> warnings) {
+        String latex = stringValue(data.get("latex"));
+        if (latex.isBlank()) {
+            errors.add("data.latex is required for math_formula");
+        }
+        if (!data.containsKey("display_mode")) {
+            data.put("display_mode", true);
+        }
+        renderHint.put("engine", "katex");
+        renderHint.put("input", "latex");
+        renderHint.put("output", List.of("html", "svg"));
+        if (latex.contains("<script")) {
+            errors.add("data.latex contains unsafe script content");
+        }
+        if (latex.length() > 2000) {
+            warnings.add("data.latex is very long; frontend rendering may be slow");
+        }
+    }
+
+    private void validateChemicalFormula(Map<String, Object> data, Map<String, Object> renderHint,
+                                         List<String> errors, List<String> warnings) {
+        String formula = stringValue(data.get("formula"));
+        String smiles = stringValue(data.get("smiles"));
+        String molfile = stringValue(data.get("molfile"));
+        if (formula.isBlank() && smiles.isBlank() && molfile.isBlank()) {
+            errors.add("one of data.formula, data.smiles or data.molfile is required for chemical_formula");
+        }
+        renderHint.put("engine", "kekule");
+        renderHint.put("input", List.of("formula", "smiles", "molfile"));
+        renderHint.put("output", List.of("svg", "canvas"));
+        if (!formula.isBlank() && formula.length() > 200) {
+            warnings.add("data.formula is unusually long");
+        }
+        if (!molfile.isBlank() && molfile.length() > 20000) {
+            warnings.add("data.molfile is very large; consider storing it as an external resource");
+        }
+    }
+
+    private void validateMermaidDiagram(Map<String, Object> data, Map<String, Object> renderHint,
+                                        List<String> errors, List<String> warnings) {
+        String mermaid = stringValue(data.get("mermaid"));
+        if (mermaid.isBlank()) {
+            errors.add("data.mermaid is required for mermaid_diagram");
+        } else {
+            String lower = mermaid.trim().toLowerCase(Locale.ROOT);
+            boolean supported = lower.startsWith("flowchart") || lower.startsWith("graph")
+                    || lower.startsWith("sequencediagram") || lower.startsWith("classdiagram")
+                    || lower.startsWith("statediagram") || lower.startsWith("timeline")
+                    || lower.startsWith("mindmap") || lower.startsWith("pie")
+                    || lower.startsWith("erdiagram") || lower.startsWith("journey")
+                    || lower.startsWith("gantt");
+            if (!supported) {
+                warnings.add("data.mermaid does not start with a common Mermaid diagram declaration");
+            }
+        }
+        renderHint.put("engine", "mermaid");
+        renderHint.put("input", "mermaid");
+        renderHint.put("output", List.of("svg"));
+    }
+
+    private void validateChart(Map<String, Object> data, Map<String, Object> renderHint,
+                               List<String> errors, List<String> warnings) {
+        Object option = data.get("option");
+        if (option == null) {
+            errors.add("data.option is required for chart");
+        } else if (option instanceof String optionText) {
+            try {
+                JSONUtil.parseObj(optionText);
+            } catch (Exception e) {
+                errors.add("data.option must be a JSON object or object string");
+            }
+        } else if (!(option instanceof Map) && !(option instanceof JSONObject)) {
+            errors.add("data.option must be a JSON object");
+        }
+        renderHint.put("engine", "echarts");
+        renderHint.put("input", "option");
+        renderHint.put("output", List.of("canvas", "svg"));
+        if (!data.containsKey("responsive")) {
+            data.put("responsive", true);
+        }
+    }
+
+    private void validateTable(Map<String, Object> data, Map<String, Object> renderHint,
+                               List<String> errors, List<String> warnings) {
+        Object rows = data.get("rows");
+        Object columns = data.get("columns");
+        if (!(rows instanceof List) && !(columns instanceof List)) {
+            errors.add("data.rows or data.columns is required for table");
+        }
+        renderHint.put("engine", "html_table");
+        renderHint.put("input", List.of("columns", "rows"));
+        renderHint.put("output", List.of("html"));
+    }
+
+    private void validateGeometry(Map<String, Object> data, Map<String, Object> renderHint,
+                                  List<String> errors, List<String> warnings) {
+        Object construction = data.get("construction");
+        Object commands = data.get("commands");
+        if (construction == null && !(commands instanceof List)) {
+            errors.add("data.construction or data.commands is required for geometry");
+        }
+        renderHint.put("engine", "jsxgraph");
+        renderHint.put("input", List.of("construction", "commands"));
+        renderHint.put("output", List.of("svg", "html"));
+    }
+
+    private Map<String, Object> jsonObjectToMap(JSONObject object) {
+        Map<String, Object> map = new LinkedHashMap<>();
+        if (object == null) return map;
+        object.forEach((key, value) -> map.put(String.valueOf(key), value));
+        return map;
+    }
+
+    private String stringValue(Object value) {
+        return value == null ? "" : String.valueOf(value).trim();
+    }
+
+    private String defaultString(String value, String fallback) {
+        return value == null || value.isBlank() ? fallback : value;
     }
 
     private String buildProjectSnapshot(Ws_Project project) {

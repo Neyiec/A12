@@ -10,13 +10,18 @@ import java.time.LocalDateTime;
 @NoArgsConstructor
 @AllArgsConstructor
 public class Ws_Page {
-    private int id;
-    private int project_id;
-    private int page_order;
-    private String page_type; //页面类型(cover/toc/content/summary)
+    private Integer id;
+    private Integer project_id;
+    private Integer page_order;
+    private String page_type; // page type: cover/toc/content/summary
     private String page_title;
-    private String page_content; //json字符串 页面内容(文本/布局)
-    private String components; //json字符串 组件列表
+    private String page_content; // JSON string for full page content/layout
+    private String components; // JSON string for component list
+    private Integer page_version;
+    private String client_version;
+    private Boolean autosave;
+    private Boolean dirty;
+    private LocalDateTime last_saved_at;
     private LocalDateTime created_at;
     private LocalDateTime updated_at;
 }

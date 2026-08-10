@@ -10,20 +10,20 @@ import java.time.LocalDateTime;
 @NoArgsConstructor
 @AllArgsConstructor
 public class Res_Material {
-    private int id;
-    private int user_id;
+    private Integer id;
+    private Integer user_id;
     private String file_name;
     private String file_type;
     private String file_url;
-    private long file_size;
+    private Long file_size;
     private String thumbnail;
     private String description;
     private String categories;
     private String tags;
     private String access_type;
     private String authorized_users;
-    private int allow_ai;
-    private int status;
+    private Integer allow_ai;
+    private Integer status;
     private String ai_index_status;
     private LocalDateTime ai_indexed_at;
     private String ai_index_error;

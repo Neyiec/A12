@@ -12,9 +12,13 @@ import lombok.NoArgsConstructor;
 @AllArgsConstructor
 public class PageDTO {
     private Integer page_id;
-    private int page_order;
+    private Integer page_order;
     private String page_type;
     private String page_title;
     private String page_content;
     private String components;
+    private Integer expected_page_version;
+    private String client_version;
+    private Boolean autosave;
+    private Boolean dirty;
 }

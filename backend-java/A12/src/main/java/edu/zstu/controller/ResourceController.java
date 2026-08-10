@@ -3,6 +3,7 @@ package edu.zstu.controller;
 import edu.zstu.dto.MaterialDTO;
 import edu.zstu.dto.MaterialQueryDTO;
 import edu.zstu.dto.ResourceBatchActionDTO;
+import edu.zstu.dto.ResourceTaxonomyDTO;
 import edu.zstu.dto.ResourceUploadConfirmDTO;
 import edu.zstu.dto.UploadTokenDTO;
 import edu.zstu.service.ResourceService;
@@ -65,6 +66,82 @@ public class ResourceController {
             return Result.success(resourceService.listResources(dto, userId));
         } catch (RuntimeException e) { return Result.error(400, e.getMessage()); }
     }
+
+    @GetMapping("/tags")
+    public Result<java.util.List<Map<String, Object>>> listTags() {
+        try {
+            Integer userId = CurrentHolder.getCurrentId();
+            if (userId == null) return Result.error(401, "unauthorized");
+            return Result.success(resourceService.listTags(userId));
+        } catch (RuntimeException e) { return Result.error(400, e.getMessage()); }
+    }
+
+    @GetMapping("/categories")
+    public Result<java.util.List<Map<String, Object>>> listCategories() {
+        try {
+            Integer userId = CurrentHolder.getCurrentId();
+            if (userId == null) return Result.error(401, "unauthorized");
+            return Result.success(resourceService.listCategories(userId));
+        } catch (RuntimeException e) { return Result.error(400, e.getMessage()); }
+    }
+
+
+    @PostMapping("/tags")
+    public Result<Map<String, Object>> createTag(@RequestBody ResourceTaxonomyDTO dto) {
+        try {
+            Integer userId = CurrentHolder.getCurrentId();
+            if (userId == null) return Result.error(401, "unauthorized");
+            return Result.success(resourceService.createTag(dto, userId));
+        } catch (RuntimeException e) { return Result.error(400, e.getMessage()); }
+    }
+
+    @DeleteMapping("/tags/{dictId}")
+    public Result<Void> deleteTag(@PathVariable Integer dictId) {
+        try {
+            Integer userId = CurrentHolder.getCurrentId();
+            if (userId == null) return Result.error(401, "unauthorized");
+            resourceService.deleteTag(dictId, userId);
+            return Result.success();
+        } catch (RuntimeException e) { return Result.error(400, e.getMessage()); }
+    }
+
+    @PatchMapping("/tags/{dictId}")
+    public Result<Map<String, Object>> updateTag(@PathVariable Integer dictId, @RequestBody ResourceTaxonomyDTO dto) {
+        try {
+            Integer userId = CurrentHolder.getCurrentId();
+            if (userId == null) return Result.error(401, "unauthorized");
+            return Result.success(resourceService.updateTag(dictId, dto, userId));
+        } catch (RuntimeException e) { return Result.error(400, e.getMessage()); }
+    }
+
+    @PostMapping("/categories")
+    public Result<Map<String, Object>> createCategory(@RequestBody ResourceTaxonomyDTO dto) {
+        try {
+            Integer userId = CurrentHolder.getCurrentId();
+            if (userId == null) return Result.error(401, "unauthorized");
+            return Result.success(resourceService.createCategory(dto, userId));
+        } catch (RuntimeException e) { return Result.error(400, e.getMessage()); }
+    }
+
+    @DeleteMapping("/categories/{dictId}")
+    public Result<Void> deleteCategory(@PathVariable Integer dictId) {
+        try {
+            Integer userId = CurrentHolder.getCurrentId();
+            if (userId == null) return Result.error(401, "unauthorized");
+            resourceService.deleteCategory(dictId, userId);
+            return Result.success();
+        } catch (RuntimeException e) { return Result.error(400, e.getMessage()); }
+    }
+
+    @PatchMapping("/categories/{dictId}")
+    public Result<Map<String, Object>> updateCategory(@PathVariable Integer dictId, @RequestBody ResourceTaxonomyDTO dto) {
+        try {
+            Integer userId = CurrentHolder.getCurrentId();
+            if (userId == null) return Result.error(401, "unauthorized");
+            return Result.success(resourceService.updateCategory(dictId, dto, userId));
+        } catch (RuntimeException e) { return Result.error(400, e.getMessage()); }
+    }
+
 
     /**
      * API-35 获取资源详情

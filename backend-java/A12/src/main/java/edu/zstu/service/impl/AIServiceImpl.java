@@ -400,6 +400,7 @@ public class AIServiceImpl implements AIService {
             task.setStatus("planning");
             task.setPlan_confirm_status("pending");
             task.setPlan_json(pythonPptClient.toJson(result.outline != null ? result.outline : result.finalData));
+            task.setReflections(buildGenerationReflections(result));
             task.setExec_steps("[{\"step\":\"python_outline_chat\",\"status\":\"completed\"}]");
             task.setError_message("");
         } else if ("failed".equals(result.status)) {
@@ -542,6 +543,26 @@ public class AIServiceImpl implements AIService {
             message.append("\n已规划动画/小游戏资源，生成 PPT 后导出时会随 static 目录一起打包。");
         }
         return message.toString();
+    }
+
+    private String buildGenerationReflections(PythonPptClient.OutlineChatResult result) {
+        try {
+            Map<String, Object> data = result.finalData == null ? Map.of() : result.finalData;
+            Object reflection = result.reflection != null ? result.reflection : data.get("reflection");
+            Object toolTrace = data.get("tool_trace");
+            Object qualityReport = data.get("quality_report");
+            if (qualityReport == null && data.get("outline") instanceof Map<?, ?> outline) {
+                qualityReport = outline.get("quality_report");
+            }
+            Map<String, Object> payload = new LinkedHashMap<>();
+            payload.put("type", "generation_reflection");
+            payload.put("reflection", reflection == null ? Map.of() : reflection);
+            payload.put("tool_trace", toolTrace == null ? List.of() : toolTrace);
+            payload.put("quality_report", qualityReport == null ? Map.of() : qualityReport);
+            return objectMapper.writeValueAsString(List.of(payload));
+        } catch (Exception e) {
+            return "[{\"type\":\"generation_reflection\",\"error\":\"" + escapeJson(e.getMessage()) + "\"}]";
+        }
     }
 
     private String escapeJson(String value) {

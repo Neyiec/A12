@@ -10,13 +10,19 @@
         <result column="page_title" property="page_title"/>
         <result column="page_content" property="page_content"/>
         <result column="components" property="components"/>
+        <result column="page_version" property="page_version"/>
+        <result column="client_version" property="client_version"/>
+        <result column="autosave" property="autosave"/>
+        <result column="dirty" property="dirty"/>
+        <result column="last_saved_at" property="last_saved_at"/>
         <result column="created_at" property="created_at"/>
         <result column="updated_at" property="updated_at"/>
     </resultMap>
 
     <sql id="Base_Columns">
         id, project_id, page_order, page_type, page_title,
-        page_content, components, created_at, updated_at
+        page_content, components, page_version, client_version,
+        autosave, dirty, last_saved_at, created_at, updated_at
     </sql>
 
     <select id="findById" resultMap="BaseResultMap">
@@ -24,14 +30,16 @@
     </select>
 
     <select id="findByProjectId" resultMap="BaseResultMap">
-        SELECT <include refid="Base_Columns"/> FROM ws_page WHERE project_id = #{projectId} ORDER BY page_order ASC
+        SELECT <include refid="Base_Columns"/> FROM ws_page WHERE project_id = #{projectId} ORDER BY page_order ASC, id ASC
     </select>
 
     <insert id="insert" useGeneratedKeys="true" keyProperty="id">
         INSERT INTO ws_page(project_id, page_order, page_type, page_title,
-                            page_content, components, created_at, updated_at)
+                            page_content, components, page_version, client_version,
+                            autosave, dirty, last_saved_at, created_at, updated_at)
         VALUES(#{project_id}, #{page_order}, #{page_type}, #{page_title},
-               #{page_content}, #{components}, NOW(), NOW())
+               #{page_content}, #{components}, COALESCE(#{page_version}, 1), #{client_version},
+               COALESCE(#{autosave}, 0), COALESCE(#{dirty}, 0), NOW(), NOW(), NOW())
     </insert>
 
     <update id="update">
@@ -42,13 +50,41 @@
             <if test="page_title != null">page_title = #{page_title},</if>
             <if test="page_content != null">page_content = #{page_content},</if>
             <if test="components != null">components = #{components},</if>
+            <if test="page_version != null">page_version = #{page_version},</if>
+            <if test="client_version != null">client_version = #{client_version},</if>
+            <if test="autosave != null">autosave = #{autosave},</if>
+            <if test="dirty != null">dirty = #{dirty},</if>
+            last_saved_at = NOW(),
             updated_at = NOW()
         </set>
         WHERE id = #{id}
     </update>
 
+    <update id="updateWithVersion">
+        UPDATE ws_page
+        <set>
+            <if test="page.page_order != null">page_order = #{page.page_order},</if>
+            <if test="page.page_type != null">page_type = #{page.page_type},</if>
+            <if test="page.page_title != null">page_title = #{page.page_title},</if>
+            <if test="page.page_content != null">page_content = #{page.page_content},</if>
+            <if test="page.components != null">components = #{page.components},</if>
+            page_version = page_version + 1,
+            <if test="page.client_version != null">client_version = #{page.client_version},</if>
+            <if test="page.autosave != null">autosave = #{page.autosave},</if>
+            <if test="page.dirty != null">dirty = #{page.dirty},</if>
+            last_saved_at = NOW(),
+            updated_at = NOW()
+        </set>
+        WHERE id = #{page.id}
+          AND page_version = #{expectedVersion}
+    </update>
+
     <delete id="deleteById">
         DELETE FROM ws_page WHERE id = #{id}
+    </delete>
+
+    <delete id="deleteByIdAndProjectId">
+        DELETE FROM ws_page WHERE id = #{id} AND project_id = #{projectId}
     </delete>
 
     <delete id="deleteByProjectId">

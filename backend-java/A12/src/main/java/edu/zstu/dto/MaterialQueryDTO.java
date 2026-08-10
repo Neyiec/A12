@@ -18,6 +18,11 @@ import java.time.LocalDateTime;
 public class MaterialQueryDTO extends PageQuery {
     private Integer user_id;
     private String file_type;
+    private String category;
+    private String tag;
+    private String access_type;
+    private Integer allow_ai;
+    private String ai_index_status;
     private String keyword;
     private LocalDateTime start_time;
     private LocalDateTime end_time;
