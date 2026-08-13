@@ -14,6 +14,7 @@ import App from './App.vue'
 import router from './router'
 import ElementPlus from 'element-plus'
 import 'element-plus/dist/index.css'
+import 'markstream-vue/index.css'
 import './style.css'
 import { createPinia } from 'pinia'
 // Pinia 持久化插件 — 自动将 store 状态同步到 localStorage

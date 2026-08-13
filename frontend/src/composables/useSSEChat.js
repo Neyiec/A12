@@ -65,7 +65,8 @@ export function useSSEChat() {
    * @param {Function} callbacks.onToolResult - tool_result 事件回调
    * @param {Function} callbacks.onPrompt - prompt 事件回调
    * @param {Function} callbacks.onProgress - progress 事件回调
-   * @param {Function} callbacks.onOutlineDelta - outline_delta 事件回调
+   * @param {Function} callbacks.onOutlineDelta - outline_delta 事件回调（旧版幻灯片大纲，已弃用）
+   * @param {Function} callbacks.onDesignTextDelta - design_text_delta 事件回调（新版 Markdown 流式方案文本）
    * @param {Function} callbacks.onFinal - final 事件回调
    * @param {Function} callbacks.onError - error 事件回调
    * @param {Function} callbacks.onDone - done 事件回调
@@ -181,6 +182,9 @@ function dispatchEvent(event, data, callbacks) {
       break
     case 'outline_delta':
       callbacks.onOutlineDelta?.(data)
+      break
+    case 'design_text_delta':
+      callbacks.onDesignTextDelta?.(data)
       break
     case 'final':
       callbacks.onFinal?.(data)
