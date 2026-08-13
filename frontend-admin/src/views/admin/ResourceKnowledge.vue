@@ -301,8 +301,21 @@ const uploadDialogVisible = ref(false)
 /** 上传文件列表 */
 const uploadFileList = ref([])
 
+/** 上传文件选择器 */
+const uploadInput = ref(null)
+
+/** 拖拽上传区域是否处于悬停状态 */
+const isDragOver = ref(false)
+
 /** 上传中状态 */
 const isUploading = ref(false)
+
+/** 上传定时器（当前页面使用 mock 上传，接入 API 时可替换为真实进度回调） */
+let uploadTimer = null
+
+/** 上传队列中的重命名状态 */
+const renamingUploadUid = ref(null)
+const uploadRenameDraft = ref('')
 
 /** 上传分类设置 */
 const uploadCategory = reactive({
@@ -325,6 +338,37 @@ const isKnowledgeSearching = ref(false)
 
 /** 操作执行中状态 */
 const isActionLoading = ref(false)
+
+/** 上传限制 */
+const MAX_UPLOAD_FILES = 20
+const MAX_UPLOAD_FILE_SIZE = 500 * 1024 * 1024
+const SUPPORTED_UPLOAD_EXTENSIONS = new Set([
+  'pdf', 'doc', 'docx', 'ppt', 'pptx', 'xls', 'xlsx', 'txt',
+  'jpg', 'jpeg', 'png', 'gif', 'webp', 'mp3', 'wav', 'm4a',
+  'mp4', 'avi', 'mov', 'mkv',
+])
+
+/** 上传队列中尚未完成的文件 */
+const pendingUploadFiles = computed(() => {
+  return uploadFileList.value.filter((file) => file.status !== 'success')
+})
+
+/** 已完成上传的文件数量 */
+const completedUploadCount = computed(() => {
+  return uploadFileList.value.filter((file) => file.status === 'success').length
+})
+
+/** 上传整体进度 */
+const uploadOverallProgress = computed(() => {
+  if (uploadFileList.value.length === 0) return 0
+  const total = uploadFileList.value.reduce((sum, file) => sum + (Number(file.progress) || 0), 0)
+  return Math.round(total / uploadFileList.value.length)
+})
+
+/** 队列中的文件是否全部完成 */
+const uploadAllComplete = computed(() => {
+  return uploadFileList.value.length > 0 && uploadFileList.value.every((file) => file.status === 'success')
+})
 
 // ===================================================================
 // Mock 数据生成 — Tab 1：资源数据
@@ -769,31 +813,185 @@ const openDetailDrawer = (row) => {
   drawerVisible.value = true
 }
 
+/** 重命名已入库资源，并同步知识库任务中的来源名称 */
+const handleRenameResource = (row) => {
+  ElMessageBox.prompt('请输入新的资源名称', '重命名资源', {
+    confirmButtonText: '保存名称',
+    cancelButtonText: '取消',
+    inputValue: row.name,
+    inputPlaceholder: '例如：2026版数学教材（必修三）.pdf',
+    inputValidator: (value) => value?.trim() ? true : '资源名称不能为空',
+  })
+    .then(({ value }) => {
+      const nextName = value.trim()
+      const resource = allResources.find((item) => item.id === row.id)
+      if (resource) {
+        resource.name = nextName
+        resource.updatedAt = new Date().toISOString().replace('T', ' ').slice(0, 16)
+      }
+      allVectorTasks.forEach((task) => {
+        if (task.resourceId === row.id) task.resourceName = nextName
+      })
+      if (currentResource.value?.id === row.id) {
+        currentResource.value.name = nextName
+        currentResource.value.updatedAt = resource?.updatedAt || currentResource.value.updatedAt
+      }
+      fetchData()
+      ElMessage.success(`已将资源重命名为「${nextName}」`)
+    })
+    .catch(() => {})
+}
+
 /**
  * 打开上传对话框 — 重置上传状态
  */
 const openUploadDialog = () => {
+  if (uploadTimer) {
+    clearInterval(uploadTimer)
+    uploadTimer = null
+  }
   uploadFileList.value = []
   uploadCategory.subject = ''
   uploadCategory.type = ''
   uploadCategory.grade = ''
   isUploading.value = false
+  isDragOver.value = false
+  renamingUploadUid.value = null
+  uploadRenameDraft.value = ''
   uploadDialogVisible.value = true
 }
 
+/** 打开系统文件选择器 */
+const triggerUploadPicker = () => {
+  if (!isUploading.value) uploadInput.value?.click()
+}
+
+/** 获取文件扩展名 */
+const getFileExtension = (name) => {
+  const parts = String(name || '').toLowerCase().split('.')
+  return parts.length > 1 ? parts.pop() : 'other'
+}
+
+/** 判断文件格式是否在资源库支持范围内 */
+const isSupportedUploadFile = (file) => {
+  const extension = getFileExtension(file.name)
+  return SUPPORTED_UPLOAD_EXTENSIONS.has(extension)
+    || String(file.type || '').startsWith('image/')
+    || String(file.type || '').startsWith('audio/')
+    || String(file.type || '').startsWith('video/')
+}
+
 /**
- * 模拟上传文件选择（演示用，实际使用 el-upload 的 on-change 回调）
- * @param {File} file - 选择的文件对象
+ * 添加待上传文件到队列
+ * @param {FileList|Array<File>} files - 文件选择器或拖拽得到的文件集合
  */
-const handleFileSelected = (file) => {
-  const newFile = {
-    uid: Date.now() + Math.random(),
-    name: file.name,
-    size: file.size,
-    status: 'ready',
-    format: file.name.split('.').pop().toLowerCase(),
+const addUploadFiles = (files) => {
+  if (isUploading.value) return
+  const incomingFiles = Array.from(files || [])
+  if (incomingFiles.length === 0) return
+
+  const availableSlots = MAX_UPLOAD_FILES - uploadFileList.value.length
+  if (availableSlots <= 0) {
+    ElMessage.warning(`单次最多上传 ${MAX_UPLOAD_FILES} 个文件`)
+    return
   }
-  uploadFileList.value.push(newFile)
+
+  const existingKeys = new Set(uploadFileList.value.map((file) => `${file.name}:${file.size}:${file.lastModified || 0}`))
+  const acceptedFiles = []
+  let oversizedCount = 0
+  let unsupportedCount = 0
+  let duplicateCount = 0
+
+  for (const file of incomingFiles) {
+    const key = `${file.name}:${file.size}:${file.lastModified || 0}`
+    if (existingKeys.has(key)) {
+      duplicateCount += 1
+      continue
+    }
+    if (isFileOversized(file.size || 0)) {
+      oversizedCount += 1
+      continue
+    }
+    if (!isSupportedUploadFile(file)) {
+      unsupportedCount += 1
+      continue
+    }
+    existingKeys.add(key)
+    acceptedFiles.push(file)
+  }
+
+  const filesToAdd = acceptedFiles.slice(0, availableSlots)
+  filesToAdd.forEach((file, index) => {
+    uploadFileList.value.push({
+      uid: `${Date.now()}-${index}-${Math.random().toString(16).slice(2)}`,
+      name: file.name,
+      size: file.size,
+      lastModified: file.lastModified,
+      status: 'ready',
+      progress: 0,
+      format: getFileExtension(file.name),
+    })
+  })
+
+  const overflowCount = Math.max(acceptedFiles.length - filesToAdd.length, 0)
+  if (oversizedCount > 0) ElMessage.warning(`${oversizedCount} 个文件超过 500MB，已跳过`)
+  if (unsupportedCount > 0) ElMessage.warning(`${unsupportedCount} 个文件格式不受支持，已跳过`)
+  if (duplicateCount > 0) ElMessage.info(`${duplicateCount} 个重复文件已跳过`)
+  if (overflowCount > 0) ElMessage.warning(`单次最多上传 ${MAX_UPLOAD_FILES} 个文件，已忽略多余文件`)
+}
+
+/** 处理文件选择器变更 */
+const handleUploadInputChange = (event) => {
+  addUploadFiles(event.target?.files)
+  // 允许用户再次选择同名文件时仍触发 change 事件。
+  if (event.target) event.target.value = ''
+}
+
+/** 处理拖拽进入上传区域 */
+const handleUploadDragOver = (event) => {
+  event.preventDefault()
+  if (!isUploading.value) isDragOver.value = true
+}
+
+/** 处理拖拽离开上传区域 */
+const handleUploadDragLeave = (event) => {
+  event.preventDefault()
+  if (event.currentTarget === event.target || !event.currentTarget.contains(event.relatedTarget)) {
+    isDragOver.value = false
+  }
+}
+
+/** 处理文件拖拽放下 */
+const handleUploadDrop = (event) => {
+  event.preventDefault()
+  isDragOver.value = false
+  if (!isUploading.value) addUploadFiles(event.dataTransfer?.files)
+}
+
+/** 开始编辑上传队列中的文件名 */
+const beginUploadRename = (file) => {
+  if (isUploading.value) return
+  renamingUploadUid.value = file.uid
+  uploadRenameDraft.value = file.name
+}
+
+/** 取消上传队列中的文件重命名 */
+const cancelUploadRename = () => {
+  renamingUploadUid.value = null
+  uploadRenameDraft.value = ''
+}
+
+/** 保存上传队列中的文件名 */
+const commitUploadRename = (file) => {
+  if (renamingUploadUid.value !== file.uid) return
+  const nextName = uploadRenameDraft.value.trim()
+  if (!nextName) {
+    ElMessage.warning('文件名不能为空')
+    return
+  }
+  file.name = nextName
+  file.format = getFileExtension(nextName)
+  cancelUploadRename()
 }
 
 /**
@@ -801,7 +999,9 @@ const handleFileSelected = (file) => {
  * @param {number} uid - 文件唯一标识
  */
 const removeUploadFile = (uid) => {
+  if (isUploading.value) return
   uploadFileList.value = uploadFileList.value.filter((f) => f.uid !== uid)
+  if (renamingUploadUid.value === uid) cancelUploadRename()
 }
 
 /**
@@ -822,57 +1022,82 @@ const formatFileSize = (bytes) => {
  * @returns {boolean} 是否超限
  */
 const isFileOversized = (bytes) => {
-  return bytes > 500 * 1024 * 1024
+  return bytes > MAX_UPLOAD_FILE_SIZE
+}
+
+/** 将已完成的 mock 上传文件写入资源列表 */
+const appendUploadedResources = (files) => {
+  const firstNewResourceIndex = allResources.length
+  files.forEach((file, idx) => {
+    const newId = `R${String(firstNewResourceIndex + idx + 1).padStart(4, '0')}`
+    allResources.unshift({
+      id: newId,
+      name: file.name,
+      type: uploadCategory.type || 'document',
+      format: file.format,
+      subject: uploadCategory.subject || 'math',
+      grade: uploadCategory.grade || 'senior',
+      size: formatFileSize(file.size || 0),
+      status: 'pending',
+      updatedAt: new Date().toISOString().replace('T', ' ').slice(0, 16),
+      uploader: '管理员',
+      version: 'v1.0',
+      tags: [
+        SUBJECT_LABEL_MAP[uploadCategory.subject] || '未分类',
+        GRADE_LABEL_MAP[uploadCategory.grade] || '未分类',
+      ],
+      vectorCount: 0,
+      vectorProgress: 0,
+      failReason: '',
+    })
+  })
+}
+
+/** 完成当前批次的 mock 上传 */
+const finishMockUpload = (files) => {
+  if (uploadTimer) {
+    clearInterval(uploadTimer)
+    uploadTimer = null
+  }
+  appendUploadedResources(files)
+  allVectorTasks = generateMockVectorTasks(allResources)
+  isUploading.value = false
+  fetchResources()
+  ElMessage.success(`成功上传 ${files.length} 个资源，系统正在自动解析...`)
 }
 
 /**
- * 执行上传操作（模拟异步上传）
+ * 执行上传操作（当前前端使用 mock 进度，接入 API 时替换为真实上传回调）
  */
 const handleUpload = () => {
-  if (uploadFileList.value.length === 0) {
-    ElMessage.warning('请先选择要上传的文件')
-    return
-  }
-  // 检查文件大小
-  const oversized = uploadFileList.value.filter((f) => isFileOversized(f.size || 0))
-  if (oversized.length > 0) {
-    ElMessage.warning(`${oversized.length} 个文件超过 500MB 限制，请移除后重试`)
+  const filesToUpload = uploadFileList.value.filter((file) => file.status === 'ready' || file.status === 'error')
+  if (filesToUpload.length === 0) {
+    if (uploadAllComplete.value) uploadDialogVisible.value = false
+    else ElMessage.warning('请先选择要上传的文件')
     return
   }
 
+  if (uploadTimer) clearInterval(uploadTimer)
   isUploading.value = true
-  setTimeout(() => {
-    const count = uploadFileList.value.length
-    uploadFileList.value.forEach((file, idx) => {
-      const newId = `R${String(allResources.length + idx + 1).padStart(4, '0')}`
-      allResources.unshift({
-        id: newId,
-        name: file.name,
-        type: uploadCategory.type || 'document',
-        format: file.format,
-        subject: uploadCategory.subject || 'math',
-        grade: uploadCategory.grade || 'senior',
-        size: formatFileSize(file.size || 0),
-        status: 'pending',
-        updatedAt: new Date().toISOString().replace('T', ' ').slice(0, 16),
-        uploader: '管理员',
-        version: 'v1.0',
-        tags: [
-          SUBJECT_LABEL_MAP[uploadCategory.subject] || '未分类',
-          GRADE_LABEL_MAP[uploadCategory.grade] || '未分类',
-        ],
-        vectorCount: 0,
-        vectorProgress: 0,
-        failReason: '',
-      })
+  filesToUpload.forEach((file) => {
+    file.status = 'uploading'
+    file.progress = 0
+  })
+
+  let tick = 0
+  uploadTimer = setInterval(() => {
+    tick += 1
+    filesToUpload.forEach((file, index) => {
+      if (file.status !== 'uploading') return
+      const step = 8 + ((tick + index) % 5) * 3
+      file.progress = Math.min(100, file.progress + step)
+      if (file.progress >= 100) file.status = 'success'
     })
-    isUploading.value = false
-    uploadDialogVisible.value = false
-    ElMessage.success(`成功上传 ${count} 个资源，系统正在自动解析...`)
-    // 更新向量化任务列表
-    allVectorTasks = generateMockVectorTasks(allResources)
-    fetchResources()
-  }, 2000)
+
+    if (filesToUpload.every((file) => file.status === 'success')) {
+      finishMockUpload(filesToUpload)
+    }
+  }, 180)
 }
 
 /**
@@ -1034,6 +1259,12 @@ onMounted(() => {
 
 onBeforeUnmount(() => {
   window.removeEventListener('admin-refresh', handleRefresh)
+  if (uploadTimer) {
+    clearInterval(uploadTimer)
+    uploadTimer = null
+  }
+  if (resourceSearchTimer) clearTimeout(resourceSearchTimer)
+  if (knowledgeSearchTimer) clearTimeout(knowledgeSearchTimer)
 })
 </script>
 
@@ -1300,7 +1531,7 @@ onBeforeUnmount(() => {
             </el-table-column>
 
             <!-- 列：操作 -->
-            <el-table-column label="操作" width="180" align="center" fixed="right">
+            <el-table-column label="操作" width="240" align="center" fixed="right">
               <template #default="{ row }">
                 <div class="flex items-center justify-center gap-1">
                   <el-button
@@ -1318,6 +1549,14 @@ onBeforeUnmount(() => {
                   >
                     <el-icon class="mr-0.5"><Refresh /></el-icon>
                     重解析
+                  </el-button>
+                  <el-button
+                    type="primary" link size="small"
+                    :style="{ fontSize: 'var(--zh-font-size12)' }"
+                    @click="handleRenameResource(row)"
+                  >
+                    <el-icon class="mr-0.5"><Edit /></el-icon>
+                    重命名
                   </el-button>
                   <el-button
                     type="danger" link size="small"
@@ -1863,6 +2102,9 @@ onBeforeUnmount(() => {
       title="上传公共资源"
       width="640px"
       destroy-on-close
+      :close-on-click-modal="!isUploading"
+      :close-on-press-escape="!isUploading"
+      :show-close="!isUploading"
       :style="{
         '--el-dialog-bg-color': 'var(--zh-background-pop)',
         '--el-dialog-border-radius': 'var(--zh-radius16)',
@@ -1870,30 +2112,66 @@ onBeforeUnmount(() => {
     >
       <!-- 拖拽上传区 -->
       <div
-        class="upload-dropzone flex flex-col items-center justify-center gap-3 cursor-pointer transition-all duration-200"
+        class="upload-dropzone flex flex-col items-center justify-center gap-3 transition-all duration-200"
+        :class="{ 'is-dragover': isDragOver, 'is-uploading': isUploading }"
         :style="{
           border: '2px dashed var(--zh-line-heavier)',
           borderRadius: 'var(--zh-radius12)',
           background: 'var(--zh-background-light-gray)',
           minHeight: '160px',
         }"
-        @click="() => { /* el-upload 会自动处理点击 */ }"
+        @click="triggerUploadPicker"
+        @dragenter.prevent="handleUploadDragOver"
+        @dragover.prevent="handleUploadDragOver"
+        @dragleave.prevent="handleUploadDragLeave"
+        @drop.prevent="handleUploadDrop"
       >
+        <input
+          ref="uploadInput"
+          class="visually-hidden"
+          type="file"
+          multiple
+          accept=".pdf,.doc,.docx,.ppt,.pptx,.xls,.xlsx,.txt,.jpg,.jpeg,.png,.gif,.webp,.mp3,.wav,.m4a,.mp4,.avi,.mov,.mkv,image/*,audio/*,video/*"
+          @change="handleUploadInputChange"
+        >
         <el-icon :size="48" :style="{ color: 'var(--zh-text-caption)' }">
-          <Upload />
+          <Loading v-if="isUploading" class="is-loading" />
+          <Upload v-else />
         </el-icon>
         <p :style="{ fontSize: 'var(--zh-font-size14)', color: 'var(--zh-text-caption)' }">
-          将文件拖拽到此处，或<span :style="{ color: 'var(--zh-text-link)', textDecoration: 'underline' }">点击上传</span>
+          {{ isUploading ? '文件正在上传，请稍候...' : '将文件拖拽到此处，或' }}
+          <span
+            v-if="!isUploading"
+            :style="{ color: 'var(--zh-text-link)', textDecoration: 'underline' }"
+          >点击上传</span>
         </p>
         <p :style="{ fontSize: 'var(--zh-font-size12)', color: 'var(--zh-text-disabled)' }">
           支持 PDF / Word / PPT / 图片 / 音视频，单文件最大 500MB，单次最多 20 个文件
         </p>
       </div>
 
-      <!-- 已选文件列表（演示用静态数据） -->
+      <!-- 整体上传进度 -->
+      <div v-if="uploadFileList.length > 0" class="upload-overall-progress mt-4">
+        <div class="flex items-center justify-between mb-1.5">
+          <span :style="{ fontSize: 'var(--zh-font-size13)', color: 'var(--zh-text-secondary)' }">
+            上传进度 · {{ completedUploadCount }}/{{ uploadFileList.length }} 个文件
+          </span>
+          <span :style="{ fontSize: 'var(--zh-font-size13)', color: 'var(--zh-text-theme)', fontFamily: 'var(--zh-font-number)' }">
+            {{ uploadOverallProgress }}%
+          </span>
+        </div>
+        <el-progress
+          :percentage="uploadOverallProgress"
+          :stroke-width="6"
+          :show-text="false"
+          :status="uploadAllComplete ? 'success' : undefined"
+        />
+      </div>
+
+      <!-- 已选文件列表 -->
       <div v-if="uploadFileList.length > 0" class="mt-4">
         <p :style="{ fontSize: 'var(--zh-font-size14)', fontWeight: 500, color: 'var(--zh-text-primary)', marginBottom: '8px' }">
-          已选文件（{{ uploadFileList.length }} 个）：
+          文件队列（{{ uploadFileList.length }} 个）：
         </p>
         <div
           class="rounded-lg overflow-hidden"
@@ -1902,42 +2180,74 @@ onBeforeUnmount(() => {
           <div
             v-for="file in uploadFileList"
             :key="file.uid"
-            class="flex items-center gap-3 px-4 py-2.5 border-b last:border-0"
+            class="upload-file-row flex items-center gap-3 px-4 py-2.5 border-b last:border-0"
             :style="{ borderColor: 'var(--zh-line-parting)' }"
           >
             <span class="text-lg">{{ getFileIcon(file.format) }}</span>
-            <span class="flex-1 truncate" :style="{ fontSize: 'var(--zh-font-size13)', color: 'var(--zh-text-primary)' }">
-              {{ file.name }}
-            </span>
-            <span :style="{ fontSize: 'var(--zh-font-size12)', color: 'var(--zh-text-caption)' }">
+            <div class="upload-file-main min-w-0 flex-1">
+              <div class="flex items-center gap-1.5 min-w-0">
+                <template v-if="renamingUploadUid === file.uid">
+                  <el-input
+                    v-model="uploadRenameDraft"
+                    size="small"
+                    maxlength="160"
+                    show-word-limit
+                    autofocus
+                    @keyup.enter="commitUploadRename(file)"
+                    @keyup.esc="cancelUploadRename"
+                    @blur="commitUploadRename(file)"
+                  />
+                </template>
+                <template v-else>
+                  <span
+                    class="truncate"
+                    :style="{ fontSize: 'var(--zh-font-size13)', color: 'var(--zh-text-primary)' }"
+                    :title="file.name"
+                  >
+                    {{ file.name }}
+                  </span>
+                  <el-button
+                    text
+                    size="small"
+                    :icon="Edit"
+                    :disabled="isUploading"
+                    aria-label="重命名文件"
+                    @click.stop="beginUploadRename(file)"
+                  />
+                </template>
+              </div>
+              <el-progress
+                v-if="file.status === 'uploading' || file.status === 'success'"
+                class="upload-file-progress"
+                :percentage="file.progress"
+                :stroke-width="4"
+                :show-text="false"
+                :status="file.status === 'success' ? 'success' : undefined"
+              />
+            </div>
+            <span class="upload-file-size" :style="{ fontSize: 'var(--zh-font-size12)', color: 'var(--zh-text-caption)' }">
               {{ formatFileSize(file.size || 0) }}
             </span>
             <span
-              v-if="isFileOversized(file.size || 0)"
-              :style="{ fontSize: 'var(--zh-font-size12)', color: 'var(--zh-red)' }"
+              class="upload-file-status"
+              :class="{
+                'is-success': file.status === 'success',
+                'is-uploading': file.status === 'uploading',
+              }"
             >
-              ⚠ 超限
+              {{ file.status === 'success' ? '已上传' : file.status === 'uploading' ? `${file.progress}%` : '待上传' }}
             </span>
-            <span v-else :style="{ color: 'var(--zh-green)' }">✅</span>
             <el-button
               :icon="Delete"
               circle
               size="small"
+              :disabled="isUploading"
               :style="{ color: 'var(--zh-text-caption)' }"
+              aria-label="移除文件"
               @click="removeUploadFile(file.uid)"
             />
           </div>
         </div>
-      </div>
-
-      <!-- 空状态下演示添加文件的按钮 -->
-      <div v-else class="mt-4 flex justify-center">
-        <el-button size="small" @click="handleFileSelected({ name: '2026版数学教材（必修三）.pdf', size: 128 * 1024 * 1024, format: 'pdf' })">
-          + 添加示例文件（PDF）
-        </el-button>
-        <el-button size="small" class="ml-2" @click="handleFileSelected({ name: '细胞分裂动画.mp4', size: 320 * 1024 * 1024, format: 'mp4' })">
-          + 添加示例文件（MP4）
-        </el-button>
       </div>
 
       <!-- 资源分类设置 -->
@@ -1961,9 +2271,20 @@ onBeforeUnmount(() => {
       <!-- 底部按钮 -->
       <template #footer>
         <div class="flex justify-end gap-3">
-          <el-button @click="uploadDialogVisible = false">取消</el-button>
-          <el-button type="primary" :loading="isUploading" :disabled="uploadFileList.length === 0" @click="handleUpload">
-            {{ isUploading ? '上传中...' : `开始上传 (${uploadFileList.length})` }}
+          <el-button :disabled="isUploading" @click="uploadDialogVisible = false">取消</el-button>
+          <el-button
+            type="primary"
+            :loading="isUploading"
+            :disabled="uploadFileList.length === 0"
+            @click="handleUpload"
+          >
+            {{
+              isUploading
+                ? '上传中...'
+                : uploadAllComplete
+                  ? '完成'
+                  : `开始上传 (${pendingUploadFiles.length})`
+            }}
           </el-button>
         </div>
       </template>
@@ -2146,8 +2467,9 @@ onBeforeUnmount(() => {
             <el-button
               :icon="Edit"
               :style="{ borderRadius: 'var(--zh-radius8)' }"
+              @click="handleRenameResource(currentResource)"
             >
-              编辑分类
+              重命名
             </el-button>
             <el-button
               :icon="Download"
@@ -2256,6 +2578,59 @@ onBeforeUnmount(() => {
 .upload-dropzone:hover {
   border-color: var(--zh-text-theme) !important;
   background: var(--zh-background-weaken) !important;
+}
+.upload-dropzone {
+  cursor: pointer;
+}
+.upload-dropzone.is-dragover {
+  border-color: var(--zh-text-theme) !important;
+  background: var(--zh-background-option-on) !important;
+  box-shadow: inset 0 0 0 1px var(--zh-text-theme);
+}
+.upload-dropzone.is-uploading {
+  cursor: wait;
+  opacity: 0.82;
+}
+.upload-overall-progress :deep(.el-progress-bar__outer),
+.upload-file-progress :deep(.el-progress-bar__outer) {
+  background: var(--zh-background-option);
+}
+.upload-file-row {
+  min-height: 58px;
+}
+.upload-file-main {
+  min-width: 0;
+}
+.upload-file-main :deep(.el-input) {
+  min-width: 0;
+}
+.upload-file-progress {
+  margin-top: 5px;
+}
+.upload-file-size {
+  flex: 0 0 62px;
+  text-align: right;
+}
+.upload-file-status {
+  flex: 0 0 48px;
+  color: var(--zh-text-caption);
+  font-size: var(--zh-font-size12);
+  text-align: right;
+}
+.upload-file-status.is-uploading {
+  color: var(--zh-text-theme);
+  font-family: var(--zh-font-number);
+}
+.upload-file-status.is-success {
+  color: var(--zh-green);
+}
+.upload-dropzone :deep(.is-loading) {
+  animation: rotating 1.6s linear infinite;
+}
+
+@keyframes rotating {
+  0% { transform: rotate(0deg); }
+  100% { transform: rotate(360deg); }
 }
 
 /* ===== 旋转动画（折叠箭头） ===== */

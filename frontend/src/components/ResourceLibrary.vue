@@ -4,9 +4,9 @@
   - 输出: 教师个人资源库页面
 -->
 <script setup>
-import { computed, onMounted, ref } from 'vue'
+import { computed, onBeforeUnmount, onMounted, ref } from 'vue'
 import { ElMessage } from 'element-plus'
-import { Delete, Edit, Folder, Lock, MoreFilled, Search, Upload } from '@element-plus/icons-vue'
+import { Delete, Edit, Folder, Loading, Lock, MoreFilled, Search, Upload } from '@element-plus/icons-vue'
 import { batchResourceAction, deleteResource, downloadResource, getResourcePermission, listResources, setResourcePermission, updateResource, uploadResource } from '../apis/teacher'
 
 const keyword = ref('')
@@ -14,10 +14,12 @@ const activeFolder = ref('全部素材')
 const selectedRows = ref([])
 const resources = ref([])
 const resourceTotal = ref(0)
-const fileInput = ref(null)
+const uploadInput = ref(null)
 const loading = ref(false)
 const uploading = ref(false)
-const uploadProgress = ref(0)
+const uploadDialogVisible = ref(false)
+const uploadQueue = ref([])
+const isDragOver = ref(false)
 const typeFilter = ref('')
 const editDialogVisible = ref(false)
 const permissionDialogVisible = ref(false)
@@ -27,6 +29,22 @@ const editingRow = ref(null)
 const editForm = ref({ file_name: '', description: '', categories: '', tags: '' })
 const permissionForm = ref({ access_type: 'private', authorized_users: '', allow_ai: false })
 const batchForm = ref({ action: 'delete', target: '' })
+
+const MAX_UPLOAD_FILES = 20
+const MAX_UPLOAD_FILE_SIZE = 500 * 1024 * 1024
+const SUPPORTED_UPLOAD_EXTENSIONS = new Set([
+  'pdf', 'doc', 'docx', 'ppt', 'pptx', 'xls', 'xlsx', 'txt', 'zip',
+  'jpg', 'jpeg', 'png', 'gif', 'webp', 'mp3', 'wav', 'm4a',
+  'mp4', 'avi', 'mov', 'mkv',
+])
+
+const completedUploadCount = computed(() => uploadQueue.value.filter((file) => file.status === 'success').length)
+const uploadOverallProgress = computed(() => {
+  if (!uploadQueue.value.length) return 0
+  const total = uploadQueue.value.reduce((sum, file) => sum + (Number(file.progress) || 0), 0)
+  return Math.round(total / uploadQueue.value.length)
+})
+const uploadProgressTimers = new Map()
 
 const formatFileSize = (bytes) => {
   const size = Number(bytes) || 0
@@ -103,41 +121,205 @@ const loadResources = async () => {
   } catch { /* 开发环境保留示例数据，接口上线后自动替换。 */ } finally { loading.value = false }
 }
 
-const startUpload = () => fileInput.value?.click()
-const handleUploadLegacy = async (event) => {
-  const file = event.target.files?.[0]
-  if (!file) return
-  const formData = new FormData()
-  formData.append('file', file)
-  try {
-    await uploadResource(formData)
-    ElMessage.success('素材已上传，正在解析')
-    await loadResources()
-  } catch { ElMessage.error('上传失败，请检查服务连接后重试') }
-  event.target.value = ''
+const clearUploadProgressTimers = () => {
+  uploadProgressTimers.forEach((timer) => clearInterval(timer))
+  uploadProgressTimers.clear()
 }
-const handleUpload = async (event) => {
-  const file = event.target.files?.[0]
-  if (!file) return
+
+const resetUploadQueue = () => {
+  clearUploadProgressTimers()
+  uploadQueue.value = []
+  isDragOver.value = false
+  uploading.value = false
+}
+
+const startUpload = () => {
+  resetUploadQueue()
+  uploadDialogVisible.value = true
+}
+
+const openFilePicker = () => {
+  if (!uploading.value) uploadInput.value?.click()
+}
+
+const getFileExtension = (name) => {
+  const parts = String(name || '').toLowerCase().split('.')
+  return parts.length > 1 ? parts.pop() : ''
+}
+
+const isSupportedUploadFile = (file) => {
+  const extension = getFileExtension(file.name)
+  return SUPPORTED_UPLOAD_EXTENSIONS.has(extension)
+    || String(file.type || '').startsWith('image/')
+    || String(file.type || '').startsWith('audio/')
+    || String(file.type || '').startsWith('video/')
+}
+
+const addUploadFiles = (files) => {
+  if (uploading.value) return
+  const incomingFiles = Array.from(files || [])
+  if (!incomingFiles.length) return
+
+  const availableSlots = MAX_UPLOAD_FILES - uploadQueue.value.length
+  if (availableSlots <= 0) {
+    ElMessage.warning(`单次最多上传 ${MAX_UPLOAD_FILES} 个文件`)
+    return
+  }
+
+  const existingKeys = new Set(uploadQueue.value.map((item) => `${item.name}:${item.size}:${item.lastModified || 0}`))
+  const acceptedFiles = []
+  let oversizedCount = 0
+  let unsupportedCount = 0
+  let duplicateCount = 0
+
+  for (const file of incomingFiles) {
+    const key = `${file.name}:${file.size}:${file.lastModified || 0}`
+    if (existingKeys.has(key)) {
+      duplicateCount += 1
+      continue
+    }
+    if (file.size > MAX_UPLOAD_FILE_SIZE) {
+      oversizedCount += 1
+      continue
+    }
+    if (!isSupportedUploadFile(file)) {
+      unsupportedCount += 1
+      continue
+    }
+    existingKeys.add(key)
+    acceptedFiles.push(file)
+  }
+
+  acceptedFiles.slice(0, availableSlots).forEach((file, index) => {
+    uploadQueue.value.push({
+      uid: `${Date.now()}-${index}-${Math.random().toString(16).slice(2)}`,
+      file,
+      name: file.name,
+      size: file.size,
+      lastModified: file.lastModified,
+      format: getFileExtension(file.name) || 'file',
+      status: 'ready',
+      progress: 0,
+      error: '',
+    })
+  })
+
+  const overflowCount = Math.max(acceptedFiles.length - availableSlots, 0)
+  if (oversizedCount) ElMessage.warning(`${oversizedCount} 个文件超过 500MB，已跳过`)
+  if (unsupportedCount) ElMessage.warning(`${unsupportedCount} 个文件格式不受支持，已跳过`)
+  if (duplicateCount) ElMessage.info(`${duplicateCount} 个重复文件已跳过`)
+  if (overflowCount) ElMessage.warning(`单次最多上传 ${MAX_UPLOAD_FILES} 个文件，已忽略多余文件`)
+
+  // 文件一旦进入队列就立即开始传输，不再等待底部按钮触发。
+  void handleUpload()
+}
+
+const handleUploadInputChange = (event) => {
+  addUploadFiles(event.target?.files)
+  if (event.target) event.target.value = ''
+}
+
+const handleUploadDragOver = (event) => {
+  event.preventDefault()
+  if (!uploading.value) isDragOver.value = true
+}
+
+const handleUploadDragLeave = (event) => {
+  event.preventDefault()
+  if (event.currentTarget === event.target || !event.currentTarget.contains(event.relatedTarget)) {
+    isDragOver.value = false
+  }
+}
+
+const handleUploadDrop = (event) => {
+  event.preventDefault()
+  isDragOver.value = false
+  if (!uploading.value) addUploadFiles(event.dataTransfer?.files)
+}
+
+const removeUploadFile = (uid) => {
+  if (uploading.value) return
+  uploadQueue.value = uploadQueue.value.filter((file) => file.uid !== uid)
+}
+
+const renameUploadFile = (file) => {
+  if (uploading.value) return
+  const nextName = window.prompt('请输入新的文件名', file.name)?.trim()
+  if (!nextName) return
+  file.name = nextName
+  file.format = getFileExtension(nextName) || 'file'
+}
+
+const createUploadFile = (item) => {
+  if (item.file.name === item.name) return item.file
+  return new File([item.file], item.name, {
+    type: item.file.type,
+    lastModified: item.file.lastModified,
+  })
+}
+
+const startProgressFallback = (item) => {
+  const timer = setInterval(() => {
+    if (item.status === 'uploading' && item.progress < 90) {
+      item.progress = Math.min(90, item.progress + 4)
+    }
+  }, 180)
+  uploadProgressTimers.set(item.uid, timer)
+}
+
+const stopProgressFallback = (item) => {
+  const timer = uploadProgressTimers.get(item.uid)
+  if (timer) clearInterval(timer)
+  uploadProgressTimers.delete(item.uid)
+}
+
+const handleUpload = async () => {
+  if (uploading.value) return
+
+  const pendingFiles = uploadQueue.value.filter((file) => file.status === 'ready')
+  if (!pendingFiles.length) return ElMessage.warning('请先选择要上传的文件')
 
   uploading.value = true
-  uploadProgress.value = 0
-  try {
-    const resource = await uploadResource(file, (progress) => { uploadProgress.value = progress })
-    if (resource?.id) {
-      resources.value = [normalizeRealResource(resource), ...resources.value.filter((item) => item.id !== resource.id)]
-      resourceTotal.value += 1
-    } else {
-      await loadResources()
+  let successCount = 0
+  let failureCount = 0
+
+  for (const item of pendingFiles) {
+    item.status = 'uploading'
+    item.progress = 0
+    item.error = ''
+    startProgressFallback(item)
+
+    try {
+      const resource = await uploadResource(createUploadFile(item), (progress) => {
+        item.progress = Math.max(item.progress, progress)
+      })
+      item.status = 'success'
+      item.progress = 100
+      successCount += 1
+      if (resource?.id) {
+        const normalized = normalizeRealResource(resource)
+        resources.value = [normalized, ...resources.value.filter((row) => row.id !== normalized.id)]
+      }
+    } catch (error) {
+      item.status = 'error'
+      item.error = error?.message || '上传失败，请重试'
+      failureCount += 1
+    } finally {
+      stopProgressFallback(item)
     }
-    ElMessage.success('素材已上传并加入个人资源库')
-  } catch (error) {
-    ElMessage.error(error?.message || '上传失败，请检查服务连接后重试')
-  } finally {
-    uploading.value = false
-    uploadProgress.value = 0
-    event.target.value = ''
   }
+
+  uploading.value = false
+  if (successCount) {
+    await loadResources()
+    ElMessage.success(`${successCount} 个素材上传成功，已加入个人资源库`)
+  }
+  if (failureCount) ElMessage.error(`${failureCount} 个文件上传失败，可确认后重新打开弹窗再试`)
+}
+
+const confirmUploadDialog = () => {
+  if (uploading.value) return
+  uploadDialogVisible.value = false
 }
 
 const handleAction = async (row, command) => {
@@ -222,16 +404,15 @@ const submitBatchAction = async () => {
 }
 
 onMounted(loadResources)
+onBeforeUnmount(clearUploadProgressTimers)
 </script>
 
 <template>
   <div class="page-wrap">
     <header class="page-heading">
       <div><p class="page-kicker">个人教学资产</p><h1>个人资源库</h1><p>统一管理私有素材，并决定哪些内容可供智能体引用。</p></div>
-      <el-button type="primary" :icon="Upload" @click="startUpload">上传素材</el-button><input ref="fileInput" class="visually-hidden" type="file" accept=".doc,.docx,.pdf,.ppt,.pptx,.txt,image/*,audio/*,video/*" @change="handleUpload">
+      <el-button type="primary" :icon="Upload" @click="startUpload">上传素材</el-button>
     </header>
-
-    <el-progress v-if="uploading" :percentage="uploadProgress" :stroke-width="5" :show-text="false" class="upload-progress" />
 
     <section class="stat-strip" aria-label="资源库概览">
       <article v-for="stat in resourceStats" :key="stat.label">
@@ -267,6 +448,110 @@ onMounted(loadResources)
       </div>
     </section>
 
+    <el-dialog
+      v-model="uploadDialogVisible"
+      title="上传素材"
+      width="680px"
+      destroy-on-close
+      :close-on-click-modal="!uploading"
+      :close-on-press-escape="!uploading"
+      :show-close="!uploading"
+    >
+      <input
+        ref="uploadInput"
+        class="visually-hidden"
+        type="file"
+        multiple
+        accept=".pdf,.doc,.docx,.ppt,.pptx,.xls,.xlsx,.txt,.zip,.jpg,.jpeg,.png,.gif,.webp,.mp3,.wav,.m4a,.mp4,.avi,.mov,.mkv,image/*,audio/*,video/*"
+        @change="handleUploadInputChange"
+      >
+
+      <div
+        class="upload-dropzone"
+        :class="{ 'is-dragover': isDragOver, 'is-uploading': uploading }"
+        @click="openFilePicker"
+        @dragenter.prevent="handleUploadDragOver"
+        @dragover.prevent="handleUploadDragOver"
+        @dragleave.prevent="handleUploadDragLeave"
+        @drop.prevent="handleUploadDrop"
+      >
+        <el-icon :size="42" class="upload-dropzone-icon">
+          <Loading v-if="uploading" class="upload-loading-icon" />
+          <Upload v-else />
+        </el-icon>
+        <strong>{{ uploading ? '正在上传文件，请稍候…' : '拖拽文件到这里，或点击选择文件' }}</strong>
+        <span>支持 PDF、Word、PPT、TXT、图片、音频和视频，单文件最大 500MB，最多 20 个文件</span>
+      </div>
+
+      <section v-if="uploadQueue.length" class="upload-queue" aria-label="待上传文件列表">
+        <div class="upload-summary">
+          <span>上传进度 · {{ completedUploadCount }}/{{ uploadQueue.length }} 个文件</span>
+          <strong>{{ uploadOverallProgress }}%</strong>
+        </div>
+        <el-progress
+          :percentage="uploadOverallProgress"
+          :stroke-width="6"
+          :show-text="false"
+          :status="uploadAllComplete ? 'success' : undefined"
+        />
+
+        <div class="upload-file-list">
+          <div v-for="file in uploadQueue" :key="file.uid" class="upload-file-item">
+            <span class="upload-file-mark">{{ file.format.slice(0, 3).toUpperCase() }}</span>
+            <div class="upload-file-info">
+              <div class="upload-file-title-row">
+                <strong :title="file.name">{{ file.name }}</strong>
+                <el-button
+                  text
+                  size="small"
+                  :icon="Edit"
+                  :disabled="uploading"
+                  aria-label="重命名文件"
+                  @click="renameUploadFile(file)"
+                />
+              </div>
+              <el-progress
+                v-if="file.status === 'uploading' || file.status === 'success'"
+                :percentage="file.progress"
+                :stroke-width="4"
+                :show-text="false"
+                :status="file.status === 'success' ? 'success' : undefined"
+              />
+              <small v-if="file.status === 'error'" class="upload-error">{{ file.error }}</small>
+            </div>
+            <span class="upload-file-size">{{ formatFileSize(file.size) }}</span>
+            <span
+              class="upload-file-status"
+              :class="{ 'is-success': file.status === 'success', 'is-error': file.status === 'error' }"
+            >
+              {{ file.status === 'success' ? '已完成' : file.status === 'uploading' ? `${file.progress}%` : file.status === 'error' ? '失败' : '待上传' }}
+            </span>
+            <el-button
+              text
+              circle
+              :icon="Delete"
+              :disabled="uploading"
+              aria-label="移除文件"
+              @click="removeUploadFile(file.uid)"
+            />
+          </div>
+        </div>
+      </section>
+
+      <template #footer>
+        <div class="upload-dialog-footer">
+          <el-button :disabled="uploading" @click="uploadDialogVisible = false">取消</el-button>
+          <el-button
+            type="primary"
+            :disabled="uploading"
+            @click="confirmUploadDialog"
+          >
+            确认
+          </el-button>
+        </div>
+      </template>
+    </el-dialog>
+
     <el-dialog v-model="editDialogVisible" title="编辑资源信息" width="520px" destroy-on-close>
       <el-form label-position="top">
         <el-form-item label="资源名称"><el-input v-model="editForm.file_name" maxlength="100" show-word-limit /></el-form-item>
@@ -300,7 +585,51 @@ onMounted(loadResources)
 .page-kicker { margin: 0 0 6px !important; color: var(--zh-text-theme) !important; font-size: 13px !important; font-weight: 600; }
 .page-heading h1 { margin: 0; font-size: 30px; letter-spacing: var(--zh-tracking-tight); }
 .page-heading p { margin: 8px 0 0; color: var(--zh-text-secondary); font-size: 14px; }
-.upload-progress { margin-top: 14px; }
+.upload-dropzone {
+  min-height: 178px;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 10px;
+  padding: 24px;
+  border: 1.5px dashed var(--zh-line-heavier);
+  border-radius: var(--zh-radius12);
+  color: var(--zh-text-secondary);
+  background: var(--zh-background-light-gray);
+  cursor: pointer;
+  transition: border-color 180ms ease, background-color 180ms ease, box-shadow 180ms ease;
+}
+.upload-dropzone:hover, .upload-dropzone.is-dragover {
+  border-color: var(--zh-text-theme);
+  background: var(--zh-background-option-on);
+  box-shadow: inset 0 0 0 1px var(--zh-text-theme);
+}
+.upload-dropzone.is-uploading { cursor: wait; opacity: .82; }
+.upload-dropzone strong { color: var(--zh-text-primary); font-size: 14px; font-weight: 600; }
+.upload-dropzone span { color: var(--zh-text-caption); font-size: 12px; text-align: center; }
+.upload-dropzone-icon { color: var(--zh-text-theme); }
+.upload-loading-icon { animation: resource-upload-spin 1.4s linear infinite; }
+.upload-queue { margin-top: 20px; }
+.upload-summary { display: flex; align-items: center; justify-content: space-between; margin-bottom: 6px; color: var(--zh-text-secondary); font-size: 13px; }
+.upload-summary strong { color: var(--zh-text-theme); font-family: var(--zh-font-number); font-weight: 600; }
+.upload-queue :deep(.el-progress-bar__outer) { background: var(--zh-background-option); }
+.upload-file-list { max-height: 250px; margin-top: 12px; overflow: auto; border: 1px solid var(--zh-line-border); border-radius: var(--zh-radius8); }
+.upload-file-item { display: flex; align-items: center; gap: 10px; min-height: 66px; padding: 10px 12px; border-bottom: 1px solid var(--zh-line-parting); }
+.upload-file-item:last-child { border-bottom: 0; }
+.upload-file-mark { width: 38px; height: 38px; display: grid; place-items: center; flex: 0 0 38px; border-radius: 7px; color: var(--zh-text-theme); background: var(--zh-background-weaken); font-size: 10px; font-weight: 700; }
+.upload-file-info { min-width: 0; flex: 1; }
+.upload-file-title-row { display: flex; align-items: center; gap: 4px; min-width: 0; }
+.upload-file-title-row strong { min-width: 0; overflow: hidden; color: var(--zh-text-primary); font-size: 13px; font-weight: 500; text-overflow: ellipsis; white-space: nowrap; }
+.upload-file-title-row :deep(.el-button) { flex: 0 0 auto; color: var(--zh-text-caption); }
+.upload-file-info :deep(.el-progress) { margin-top: 5px; }
+.upload-file-size { flex: 0 0 62px; color: var(--zh-text-caption); font-size: 12px; text-align: right; }
+.upload-file-status { flex: 0 0 48px; color: var(--zh-text-caption); font-size: 12px; text-align: right; }
+.upload-file-status.is-success { color: var(--zh-green); }
+.upload-file-status.is-error, .upload-error { color: var(--zh-red); }
+.upload-error { display: block; margin-top: 4px; overflow: hidden; font-size: 11px; text-overflow: ellipsis; white-space: nowrap; }
+.upload-dialog-footer { display: flex; justify-content: flex-end; gap: 10px; }
+@keyframes resource-upload-spin { to { transform: rotate(360deg); } }
 .stat-strip { display: grid; grid-template-columns: repeat(3, 1fr); margin-top: 32px; border-block: 1px solid var(--zh-line-border); }
 .stat-strip article { display: grid; grid-template-columns: 1fr auto; gap: 4px 12px; padding: 22px 28px; border-right: 1px solid var(--zh-line-border); }
 .stat-strip article:last-child { border: 0; }

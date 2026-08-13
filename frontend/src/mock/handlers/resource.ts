@@ -24,9 +24,18 @@ export const resourceHandlers = [
 
     return HttpResponse.json(success({
       object_key: objectKey,
-      upload_url: `https://oss.example.com/put/${encodeURIComponent(objectKey)}?signature=mock_sig_${Date.now()}`,
+      // 开发环境使用同源 mock 地址，避免浏览器因示例 OSS 域名跨域导致上传弹窗直接失败。
+      upload_url: `/api/v1/resources/upload-objects?object_key=${encodeURIComponent(objectKey)}&signature=mock_sig_${Date.now()}`,
       expires_at: expiresAt,
     }))
+  }),
+
+  // ========== Mock OSS 文件直传 ==========
+  http.put('/api/v1/resources/upload-objects', async ({ request }) => {
+    await request.arrayBuffer()
+    // 留出可观察的传输时间，便于开发环境验证上传进度反馈。
+    await new Promise((resolve) => setTimeout(resolve, 600))
+    return new HttpResponse(null, { status: 200 })
   }),
 
   // ========== API-37 确认文件上传 ==========
