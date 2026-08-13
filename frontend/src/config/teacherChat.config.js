@@ -22,6 +22,7 @@ export const SSE_EVENT = {
   PROMPT: 'prompt',
   PROGRESS: 'progress',
   OUTLINE_DELTA: 'outline_delta',
+  DESIGN_TEXT_DELTA: 'design_text_delta',
   FINAL: 'final',
   ERROR: 'error',
   DONE: 'done',
@@ -32,6 +33,7 @@ export const STAGE_LABELS = {
   parse_input: '正在分析需求…',
   tools: '正在检索相关资料…',
   build_prompt: '正在构建教学方案…',
+  generate_design: '正在生成教学设计方案…',
   generate_outline: '正在生成教学设计大纲…',
   generate_resource: '正在生成教学资源…',
 }
@@ -41,6 +43,17 @@ export const OUTLINE_ACTIONS = {
   confirm: '确认大纲',
   modify: '修改要求',
   regenerate: '重新生成',
+}
+
+/** 教学设计方案 Markdown 流式生成 SSE 端点 */
+export const DESIGN_STREAM_URL = '/api/v1/python/designs/stream'
+
+/** 大纲操作栏文案（Markdown 消息下方的操作按钮） */
+export const DESIGN_ACTION_BAR = {
+  modify: '修改',
+  confirm: '✓ 确认大纲',
+  confirmed: '✓ 已确认',
+  processing: '生成中…',
 }
 
 /** 创作类型选项 */

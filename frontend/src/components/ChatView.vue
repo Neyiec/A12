@@ -9,13 +9,15 @@
 <script setup>
 import { computed, nextTick, onBeforeUnmount, onMounted, reactive, ref } from 'vue'
 import { ElMessage } from 'element-plus'
-import { ChatDotRound, Document, Promotion } from '@element-plus/icons-vue'
+import { Document, Promotion } from '@element-plus/icons-vue'
+import MarkdownRender from 'markstream-vue'
 import { useUserStore } from '../storage/user.js'
 import { confirmAiPlan, getAiPlan } from '../apis/teacher.js'
 import { useSSEChat } from '../composables/useSSEChat.js'
 import {
-  CHAT_COMPOSER, CHAT_HEADER, CLASS_LEVEL_OPTIONS, GEN_RESOURCE_DEFAULTS,
-  INFO_FORM_DEFAULTS, RESOURCE_CARD_LABELS, STAGE_LABELS, SYSTEM_MESSAGES,
+  CHAT_COMPOSER, CHAT_HEADER, CLASS_LEVEL_OPTIONS, DESIGN_ACTION_BAR,
+  DESIGN_STREAM_URL, GEN_RESOURCE_DEFAULTS, INFO_FORM_DEFAULTS,
+  RESOURCE_CARD_LABELS, STAGE_LABELS, SYSTEM_MESSAGES,
 } from '../config/teacherChat.config.js'
 
 const props = defineProps({
@@ -48,7 +50,9 @@ const messageListRef = ref(null)
 
 // ========== SSE 流式状态 ==========
 const currentStage = ref('')
-const outlineSlides = ref([])
+/** 当前正在流式渲染的设计方案消息 ID，用于直接更新消息 content 触发 MarkdownRender 重渲染 */
+const streamingDesignMsgId = ref(null)
+/** 教学设计方案完整数据（Markdown 文本 + 元数据），由 final 事件填充 */
 const outlineData = ref(null)
 
 // ========== 补充信息表单 ==========
@@ -99,38 +103,58 @@ function handleStage(data) {
   currentStage.value = STAGE_LABELS[stageKey] || data.message || stageKey
 }
 
-/** 处理 outline_delta 事件：逐页累积大纲 */
-function handleOutlineDelta(data) {
-  if (data.slide) outlineSlides.value.push(data.slide)
+/**
+ * 处理 design_text_delta 事件：向当前消息的 Markdown content 追加文本增量
+ * MarkdownRender 组件绑定 msg.content，直接修改即可驱动渐进渲染
+ */
+function handleDesignTextDelta(data) {
+  const delta = data.delta || ''
+  if (!delta) return
+  // 找到当前流式消息并追加内容
+  const msg = messages.find(m => m.id === streamingDesignMsgId.value)
+  if (msg) {
+    msg.content += delta
+  }
 }
 
-/** 处理 final 事件：保存完整大纲并渲染大纲卡片（重新生成时覆盖原卡片） */
+/**
+ * 处理 final 事件：保存完整 Markdown 方案文本与元数据
+ * 重新生成时覆盖原消息，首次生成时将消息内容锁定为完整 Markdown
+ */
 function handleFinal(data) {
-  outlineData.value = data.outline || data
-  const slideList = data.slides || outlineSlides.value
-  const title = data.title || outlineData.value?.title || '教学设计'
-  const slideCount = data.slide_count || slideList.length || 0
-  const newData = {
-    outline: outlineData.value,
-    slides: slideList,
+  const markdown = data.markdown || ''
+  const title = data.title || '教学设计方案'
+  const slideCount = data.slide_count || 0
+  outlineData.value = {
+    markdown,
+    title,
+    designId: data.design_id,
     slideCount,
-    outlineId: data.outline_id,
+    outlineId: data.outline_id || data.design_id,
   }
-  // 重新生成时：找到原大纲消息直接覆盖，不追加新消息
+  // 重新生成时：覆盖原 markdown 消息内容
   if (isRegenerating.value) {
-    const idx = [...messages].reverse().findIndex(m => m.type === 'outline')
-    if (idx !== -1) {
-      const realIdx = messages.length - 1 - idx
-      messages[realIdx].content = title
-      messages[realIdx].data = newData
+    const msg = messages.find(m => m.id === streamingDesignMsgId.value)
+    if (msg) {
+      msg.content = markdown
+      msg.data = { ...outlineData.value }
     }
     isRegenerating.value = false
-  } else {
-    addMessage('assistant', 'outline', title, newData)
+  } else if (streamingDesignMsgId.value) {
+    // 首次生成：用完整 Markdown 替换流式累积内容（保证完整性）
+    const msg = messages.find(m => m.id === streamingDesignMsgId.value)
+    if (msg) {
+      msg.content = markdown
+      msg.data = { ...outlineData.value }
+    }
   }
-  outlineSlides.value = []
+  streamingDesignMsgId.value = null
   currentStage.value = ''
   phase.value = 'outline_ready'
+  // 在 Markdown 方案消息后追加操作栏（方案A：独立消息类型）
+  if (!isRegenerating.value) {
+    addMessage('assistant', 'outline_actions', '', { outlineId: outlineData.value.outlineId })
+  }
 }
 
 /** 处理 error 事件：通过 ElMessage 弹窗告知用户错误 */
@@ -138,6 +162,7 @@ function handleSSEError(data) {
   const msg = data?.message || data?.error || SYSTEM_MESSAGES.connectionError
   ElMessage.error(msg)
   currentStage.value = ''
+  streamingDesignMsgId.value = null
   isRegenerating.value = false
   phase.value = 'info'
 }
@@ -153,7 +178,7 @@ function buildSSECallbacks() {
     onToolResult: () => { /* 不再在聊天中展示检索结果 */ },
     onPrompt: () => {},
     onProgress: () => {},
-    onOutlineDelta: handleOutlineDelta,
+    onDesignTextDelta: handleDesignTextDelta,
     onFinal: handleFinal,
     onError: handleSSEError,
     onDone: () => { currentStage.value = '' },
@@ -162,7 +187,7 @@ function buildSSECallbacks() {
 
 // ========== 补充信息确认 ==========
 
-/** 确认补充信息，构建上下文消息，发起 SSE 大纲生成 */
+/** 确认补充信息，构建上下文消息，发起 SSE 教学设计方案流式生成 */
 async function confirmInfo() {
   // 校验课程名称必填
   if (!infoForm.courseName.trim()) {
@@ -172,6 +197,11 @@ async function confirmInfo() {
 
   phase.value = 'generating_outline'
 
+  // 插入一条空 markdown 消息，后续通过 design_text_delta 增量追加内容
+  addMessage('assistant', 'markdown', '', {})
+  // 记录该消息 ID，供 handleDesignTextDelta 直接修改 content 驱动流式渲染
+  streamingDesignMsgId.value = messageSeq
+
   // 构建包含补充信息的上下文消息
   const contextMsg = [
     `${infoForm.stage}${infoForm.subject}${infoForm.grade}${infoForm.textbook}`,
@@ -180,7 +210,7 @@ async function confirmInfo() {
     `个性化需求：${infoForm.requirements}`,
   ].join('，')
 
-  await connectStream('/api/v1/python/outlines/chat/stream', {
+  await connectStream(DESIGN_STREAM_URL, {
     user_id: String(userStore.userInfo?.user_id || ''),
     session_id: props.sessionId,
     message: contextMsg,
@@ -193,13 +223,12 @@ async function confirmInfo() {
 
 // ========== 大纲操作 ==========
 
-/** 确认教学设计大纲，切换到资源生成卡片阶段 */
+/** 确认教学设计方案，切换到资源生成卡片阶段 */
 function confirmOutline() {
-  // 从大纲数据中提取资源卡片信息
-  const outline = outlineData.value
-  const slides = outline?.slides || []
-  genResource.name = (infoForm.courseName.trim() || outline?.title || '教学设计') + ' 课件'
-  genResource.slideCount = slides.length || GEN_RESOURCE_DEFAULTS.slideCount
+  const data = outlineData.value
+  const slideCount = data?.slideCount || 0
+  genResource.name = (infoForm.courseName.trim() || data?.title || '教学设计') + ' 课件'
+  genResource.slideCount = slideCount || GEN_RESOURCE_DEFAULTS.slideCount
   genResource.theme = GEN_RESOURCE_DEFAULTS.theme
   genResource.description = RESOURCE_CARD_LABELS.pptDesc
     .replace('{count}', genResource.slideCount)
@@ -207,16 +236,16 @@ function confirmOutline() {
   phase.value = 'resource_ready'
 }
 
-/** 打开大纲修改模态框 */
+/** 打开教学设计方案修改模态框 */
 async function modifyOutline() {
   outlineDialogVisible.value = true
-  // 若尚未加载大纲数据，从后端拉取
-  if (!planTask.value) {
+  // 若尚未加载大纲数据且本地无 outlineData，从后端拉取
+  if (!planTask.value && !outlineData.value?.markdown) {
     planLoading.value = true
     try {
       planTask.value = (await getAiPlan(props.sessionId))?.data || (await getAiPlan(props.sessionId))
     } catch {
-      ElMessage.error('教学大纲加载失败')
+      ElMessage.error('教学方案加载失败')
       outlineDialogVisible.value = false
     } finally {
       planLoading.value = false
@@ -224,7 +253,7 @@ async function modifyOutline() {
   }
 }
 
-/** 修改要求：必须填写说明 → 通知后端 → 重新通过 SSE 生成大纲 */
+/** 修改要求：必须填写说明 → 通知后端 → 重新通过 SSE 生成教学设计方案 */
 async function submitModifyRequirement() {
   if (!planComment.value.trim()) {
     ElMessage.warning('请填写修改要求')
@@ -243,13 +272,15 @@ async function submitModifyRequirement() {
   }
   // 在清空前保存修改要求文本
   const requirement = planComment.value.trim()
-  // 标记为重新生成模式，关闭对话框并重置状态，重新发起 SSE 大纲生成
+  // 标记为重新生成模式，关闭对话框并重置状态
   isRegenerating.value = true
   outlineDialogVisible.value = false
   planComment.value = ''
   planSubmitting.value = false
-  outlineSlides.value = []
   phase.value = 'generating_outline'
+  // 插入一条空 markdown 消息用于流式覆盖
+  addMessage('assistant', 'markdown', '', {})
+  streamingDesignMsgId.value = messageSeq
   // 构建包含修改要求的上下文消息
   const contextMsg = [
     `${infoForm.stage}${infoForm.subject}${infoForm.grade}${infoForm.textbook}`,
@@ -257,7 +288,7 @@ async function submitModifyRequirement() {
     `班级学情：${infoForm.classLevel}`,
     `${requirement}`,
   ].join('，')
-  await connectStream('/api/v1/python/outlines/chat/stream', {
+  await connectStream(DESIGN_STREAM_URL, {
     user_id: String(userStore.userInfo?.user_id || ''),
     session_id: props.sessionId,
     message: contextMsg,
@@ -395,49 +426,50 @@ onBeforeUnmount(() => {
               </div>
             </div>
 
-            <!-- 教学设计大纲卡片 -->
-            <div v-else-if="msg.type === 'outline'" class="outline-card">
-              <div class="outline-header">
-                <strong>教学设计大纲</strong>
-                <el-tag v-if="msg.data?.slideCount" size="small" round>共 {{ msg.data.slideCount }} 页</el-tag>
-              </div>
-
-              <!-- 大纲每页列表 -->
-              <ul v-if="msg.data?.slides?.length" class="outline-slides">
-                <li v-for="(slide, i) in msg.data.slides" :key="i">
-                  <span class="slide-no">{{ String(slide.slide_no || i + 1).padStart(2, '0') }}</span>
-                  <div class="slide-info">
-                    <strong>{{ slide.title }}</strong>
-                    <span v-if="slide.teaching_intent">{{ slide.teaching_intent }}</span>
-                  </div>
-                </li>
-              </ul>
-
-              <!-- 大纲操作按钮 -->
-              <div class="outline-actions">
-                <el-button
-                  v-if="phase === 'outline_ready'"
-                  size="small"
-                  @click="modifyOutline"
-                >
-                  修改
-                </el-button>
-                <el-button
-                  v-if="phase === 'outline_ready'"
-                  type="primary"
-                  size="small"
-                  @click="confirmOutline"
-                >
-                  ✓ 确认大纲
-                </el-button>
-                <span v-if="phase === 'resource_ready' || phase === 'generating_resource'" class="confirmed-badge">✓ 已确认</span>
+            <!-- AI Markdown 流式消息：使用 markstream-vue 渲染，占满全宽 -->
+            <div v-else-if="msg.type === 'markdown'" class="ai-bubble">
+              <div class="ai-markdown-body">
+                <MarkdownRender
+                  mode="chat"
+                  :content="msg.content"
+                  :final="msg.id !== streamingDesignMsgId"
+                  :fade="false"
+                  max-live-nodes="0"
+                />
               </div>
             </div>
 
-            <!-- 普通 AI 文本消息 -->
+            <!-- 大纲操作栏（方案A：独立消息类型，在 Markdown 方案下方） -->
+            <div v-else-if="msg.type === 'outline_actions'" class="outline-actions-bar">
+              <el-button
+                v-if="phase === 'outline_ready'"
+                size="small"
+                @click="modifyOutline"
+              >
+                {{ DESIGN_ACTION_BAR.modify }}
+              </el-button>
+              <el-button
+                v-if="phase === 'outline_ready'"
+                type="primary"
+                size="small"
+                @click="confirmOutline"
+              >
+                {{ DESIGN_ACTION_BAR.confirm }}
+              </el-button>
+              <span v-if="phase === 'resource_ready' || phase === 'generating_resource'" class="confirmed-badge">{{ DESIGN_ACTION_BAR.confirmed }}</span>
+            </div>
+
+            <!-- 普通 AI 文本消息（同样使用 MarkdownRender 渲染以支持 MD 格式，占满全宽） -->
             <div v-else class="ai-bubble">
-              <span class="ai-avatar"><el-icon><ChatDotRound /></el-icon></span>
-              <p>{{ msg.content }}</p>
+              <div class="ai-markdown-body">
+                <MarkdownRender
+                  mode="chat"
+                  :content="msg.content"
+                  :final="true"
+                  :fade="false"
+                  max-live-nodes="0"
+                />
+              </div>
             </div>
           </template>
         </article>
@@ -492,24 +524,23 @@ onBeforeUnmount(() => {
     </footer>
   </div>
 
-  <!-- 教学大纲确认/修改模态框（由大纲卡片"修改"按钮触发） -->
-  <el-dialog v-model="outlineDialogVisible" title="教学设计大纲" width="min(700px, 92vw)" destroy-on-close>
+  <!-- 教学设计方案确认/修改模态框（由操作栏"修改"按钮触发） -->
+  <el-dialog v-model="outlineDialogVisible" title="教学设计方案" width="min(700px, 92vw)" destroy-on-close>
     <div v-loading="planLoading" class="plan-dialog-content">
-      <p class="plan-status">请确认以下教学设计大纲，或填写修改要求后重新生成。</p>
+      <p class="plan-status">请确认以下教学设计方案，或填写修改要求后重新生成。</p>
 
-      <!-- 可读大纲：复用卡片样式展示每页信息 -->
-      <ul v-if="outlineData?.slides?.length" class="plan-outline-list">
-        <li v-for="(slide, i) in outlineData.slides" :key="i">
-          <span class="plan-slide-no">{{ String(slide.slide_no || i + 1).padStart(2, '0') }}</span>
-          <div class="plan-slide-info">
-            <strong>{{ slide.title }}</strong>
-            <span v-if="slide.teaching_intent">{{ slide.teaching_intent }}</span>
-            <span v-if="slide.content_points" class="plan-content">{{ slide.content_points }}</span>
-          </div>
-        </li>
-      </ul>
-      <!-- 回退：大纲数据暂不可用时显示提示 -->
-      <p v-else class="plan-fallback">大纲数据暂未就绪，请关闭后重试。</p>
+      <!-- Markdown 方案内容 -->
+      <div v-if="outlineData?.markdown" class="plan-markdown-body">
+        <MarkdownRender
+          mode="chat"
+          :content="outlineData.markdown"
+          :final="true"
+          :fade="false"
+          max-live-nodes="0"
+        />
+      </div>
+      <!-- 回退：方案数据暂不可用时显示提示 -->
+      <p v-else class="plan-fallback">方案数据暂未就绪，请关闭后重试。</p>
 
       <el-input v-model="planComment" type="textarea" :rows="3" placeholder="请描述您希望调整的内容，例如：增加互动环节、调整难度、精简内容…" />
     </div>
@@ -577,40 +608,25 @@ onBeforeUnmount(() => {
   word-break: break-word;
 }
 
-/* ===== AI 气泡 ===== */
+/* ===== AI 气泡（全宽，无头像） ===== */
 .ai-bubble {
-  display: flex;
-  gap: 10px;
-  max-width: 75%;
+  width: 100%;
   margin: 20px 0;
 }
-.ai-avatar {
-  width: 32px;
-  height: 32px;
-  flex-shrink: 0;
-  display: grid;
-  place-items: center;
-  border-radius: var(--zh-radius8);
-  color: var(--zh-text-white);
-  background: var(--zh-gradient-blue);
-  font-size: var(--zh-font-size14);
-  font-weight: 700;
-}
-.ai-bubble p {
-  margin: 0;
+/* Markdown 渲染内容容器：全宽展示 */
+.ai-markdown-body {
+  width: 100%;
   padding: 12px 18px;
   border-radius: var(--zh-radius18) var(--zh-radius18) var(--zh-radius18) var(--zh-radius8);
   background: var(--zh-background-answer-card);
   color: var(--zh-text-primary);
   font-size: var(--zh-font-size14);
   line-height: 1.65;
-  white-space: pre-wrap;
-  word-break: break-word;
 }
 
 /* ===== 补充信息卡片 ===== */
 .info-card {
-  max-width: 92%;
+  width: 100%;
   margin: 20px 0;
   padding: 20px;
   border: 1px solid var(--zh-line-heavier);
@@ -699,90 +715,13 @@ onBeforeUnmount(() => {
   border-top: 1px solid var(--zh-line-parting);
 }
 
-/* ===== 教学设计大纲卡片 ===== */
-.outline-card {
-  max-width: 85%;
-  margin: 20px 0;
-  padding: 20px;
-  border: 1px solid var(--zh-line-heavier);
-  border-radius: var(--zh-radius12);
-  background: var(--zh-background-capsule);
-  box-shadow: var(--zh-shadow1);
-  transition: box-shadow 200ms cubic-bezier(0.4, 0, 0.2, 1), transform 200ms cubic-bezier(0.4, 0, 0.2, 1);
-}
-.outline-card:hover {
-  box-shadow: var(--zh-shadow2);
-  transform: translateY(-1px);
-}
-.outline-header {
+/* ===== 大纲操作栏（Markdown 方案下方独立消息条） ===== */
+.outline-actions-bar {
   display: flex;
   align-items: center;
   gap: 8px;
-  margin-bottom: 14px;
-}
-.outline-icon {
-  font-size: var(--zh-font-size18);
-}
-.outline-header strong {
-  font-size: var(--zh-font-size15);
-  color: var(--zh-text-primary);
-}
-.outline-slides {
-  list-style: none;
-  margin: 0 0 16px;
-  padding: 0;
-  display: grid;
-  gap: 8px;
-}
-.outline-slides li {
-  display: flex;
-  gap: 10px;
-  padding: 8px 10px;
-  border-radius: var(--zh-radius8);
-  background: var(--zh-background-light);
-  transition: background-color 200ms cubic-bezier(0.4, 0, 0.2, 1);
-}
-.outline-slides li:hover {
-  background: var(--zh-background-option);
-}
-.slide-no {
-  flex-shrink: 0;
-  width: 28px;
-  height: 28px;
-  display: grid;
-  place-items: center;
-  border-radius: var(--zh-radius6);
-  background: var(--zh-background-option-on);
-  color: var(--zh-text-theme);
-  font-size: var(--zh-font-size12);
-  font-weight: 600;
-}
-.slide-info {
-  display: flex;
-  flex-direction: column;
-  gap: 3px;
-  min-width: 0;
-}
-.slide-info strong {
-  font-size: var(--zh-font-size13);
-  color: var(--zh-text-primary);
-}
-.slide-info span {
-  font-size: var(--zh-font-size11);
-  color: var(--zh-text-caption);
-  line-height: 1.4;
-}
-.outline-actions {
-  display: flex;
-  align-items: center;
-  gap: 8px;
-  padding-top: 4px;
-  border-top: 1px solid var(--zh-line-parting);
-}
-.confirmed-badge {
-  color: var(--zh-green);
-  font-size: var(--zh-font-size13);
-  font-weight: 600;
+  padding: 12px 0;
+  margin: 4px 0 20px 0;
 }
 
 /* ===== 流式加载指示器 ===== */
@@ -891,7 +830,6 @@ onBeforeUnmount(() => {
 
 /* ===== 无障碍：键盘焦点可见指示器 ===== */
 .info-card:focus-visible,
-.outline-card:focus-visible,
 .resource-card:focus-visible {
   outline: 2px solid var(--zh-line-theme);
   outline-offset: 2px;
@@ -916,10 +854,7 @@ onBeforeUnmount(() => {
   .chat-container {
     padding: 0 12px;
   }
-  .user-bubble,
-  .ai-bubble,
-  .info-card,
-  .outline-card {
+  .user-bubble {
     max-width: 92%;
   }
   .info-label,
@@ -928,7 +863,7 @@ onBeforeUnmount(() => {
   }
 }
 
-/* ===== 大纲确认模态框内容 ===== */
+/* ===== 方案确认模态框内容 ===== */
 .plan-dialog-content .plan-status {
   margin: 0 0 14px;
   color: var(--zh-text-secondary);
@@ -943,52 +878,14 @@ onBeforeUnmount(() => {
   background: var(--zh-background-light);
   border-radius: var(--zh-radius8);
 }
-/* 可读大纲列表 */
-.plan-outline-list {
-  list-style: none;
-  margin: 0 0 16px;
-  padding: 0;
-  display: grid;
-  gap: 6px;
+/* 模态框内 Markdown 方案内容：限高滚动 */
+.plan-markdown-body {
   max-height: 360px;
   overflow: auto;
-}
-.plan-outline-list li {
-  display: flex;
-  gap: 10px;
-  padding: 10px 12px;
+  margin-bottom: 16px;
+  padding: 12px;
+  border: 1px solid var(--zh-line-parting);
   border-radius: var(--zh-radius8);
   background: var(--zh-background-light);
-}
-.plan-slide-no {
-  flex-shrink: 0;
-  width: 28px;
-  height: 28px;
-  display: grid;
-  place-items: center;
-  border-radius: var(--zh-radius6);
-  background: var(--zh-background-option-on);
-  color: var(--zh-text-theme);
-  font-size: var(--zh-font-size12);
-  font-weight: 600;
-}
-.plan-slide-info {
-  display: flex;
-  flex-direction: column;
-  gap: 3px;
-  min-width: 0;
-}
-.plan-slide-info strong {
-  font-size: var(--zh-font-size13);
-  color: var(--zh-text-primary);
-}
-.plan-slide-info span {
-  font-size: var(--zh-font-size11);
-  color: var(--zh-text-caption);
-  line-height: 1.4;
-}
-.plan-content {
-  color: var(--zh-text-secondary) !important;
-  font-size: var(--zh-font-size12) !important;
 }
 </style>
