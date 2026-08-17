@@ -171,6 +171,11 @@ CREATE TABLE ws_page (
   page_title VARCHAR(200) DEFAULT NULL COMMENT '页面标题',
   page_content JSON DEFAULT NULL COMMENT '页面内容',
   components JSON DEFAULT NULL COMMENT '组件列表',
+  page_version INT NOT NULL DEFAULT 1 COMMENT 'page optimistic-lock version',
+  client_version VARCHAR(80) DEFAULT NULL COMMENT 'frontend draft/client version',
+  autosave TINYINT(1) NOT NULL DEFAULT 0 COMMENT 'created by autosave',
+  dirty TINYINT(1) NOT NULL DEFAULT 0 COMMENT 'frontend dirty flag',
+  last_saved_at DATETIME DEFAULT NULL COMMENT 'last saved time',
   created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP COMMENT '创建时间',
   updated_at DATETIME DEFAULT NULL ON UPDATE CURRENT_TIMESTAMP COMMENT '更新时间',
   PRIMARY KEY (id),
@@ -221,6 +226,24 @@ CREATE TABLE res_material (
   KEY idx_user_type_created (user_id, file_type, created_at),
   KEY idx_ai_index_status (ai_index_status)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci COMMENT='个人素材资源表';
+
+DROP TABLE IF EXISTS res_metadata_dictionary;
+CREATE TABLE res_metadata_dictionary (
+  id INT NOT NULL AUTO_INCREMENT COMMENT '字典ID',
+  user_id INT NOT NULL COMMENT '所属用户ID',
+  dict_type VARCHAR(20) NOT NULL COMMENT '字典类型: tag/category',
+  name VARCHAR(80) NOT NULL COMMENT '标签或分类名称',
+  color VARCHAR(30) DEFAULT NULL COMMENT '前端展示颜色',
+  sort_order INT NOT NULL DEFAULT 1000 COMMENT '排序值',
+  usage_count INT NOT NULL DEFAULT 0 COMMENT '冗余使用次数，实际列表会按资源实时统计覆盖',
+  status TINYINT NOT NULL DEFAULT 1 COMMENT '状态: 1正常/0删除',
+  created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP COMMENT '创建时间',
+  updated_at DATETIME DEFAULT NULL ON UPDATE CURRENT_TIMESTAMP COMMENT '更新时间',
+  PRIMARY KEY (id),
+  UNIQUE KEY uk_user_type_name (user_id, dict_type, name),
+  KEY idx_user_type_status (user_id, dict_type, status),
+  KEY idx_sort (sort_order, usage_count)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci COMMENT='个人资源标签/分类字典表';
 
 DROP TABLE IF EXISTS kb_document;
 CREATE TABLE kb_document (

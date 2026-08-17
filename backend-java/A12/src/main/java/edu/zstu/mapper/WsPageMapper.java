@@ -11,6 +11,8 @@ public interface WsPageMapper {
     List<Ws_Page> findByProjectId(@Param("projectId") Integer projectId);
     int insert(Ws_Page page);
     int update(Ws_Page page);
+    int updateWithVersion(@Param("page") Ws_Page page, @Param("expectedVersion") Integer expectedVersion);
     int deleteById(@Param("id") Integer id);
+    int deleteByIdAndProjectId(@Param("id") Integer id, @Param("projectId") Integer projectId);
     int deleteByProjectId(@Param("projectId") Integer projectId);
 }

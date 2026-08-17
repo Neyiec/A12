@@ -30,9 +30,11 @@ class PPTGenerator:
 
     async def generate_outline(self, req: OutlineGenerateRequest) -> dict[str, Any]:
         slide_count = req.slide_count or 8
-        req = self._with_resource_context(req)
+        req = await self._with_reference_and_rag_context(req)
         outline = await self._generate_outline_with_model(req, slide_count) if self.llm.available else self._fallback_outline(req, slide_count)
         outline = self._ensure_interactive_assets(outline, req, slide_count)
+        outline = self._ensure_teaching_design_chain(outline, req)
+        outline = self._ensure_outline_quality(outline, req, slide_count)
         outline["subject"] = req.subject
         outline["grade"] = req.grade
         outline["requirements"] = req.requirements
@@ -49,9 +51,18 @@ class PPTGenerator:
         outline = dict(req.outline or {})
         if not self.llm.available:
             outline["revision_note"] = req.instruction
+            outline = self._finalize_existing_outline(outline)
             return self._outline_response(outline)
 
-        rag_context = build_rag_context(req.resource_ids) if req.enable_rag else ""
+        rag_context = ""
+        if req.enable_rag:
+            from ..tools.rag import rag_search
+            query = "\n".join([
+                req.instruction or "",
+                json.dumps(req.outline, ensure_ascii=False)[:4000],
+            ]).strip()
+            rag_result = await rag_search(req.resource_ids, query)
+            rag_context = rag_result.get("context", "")
         prompt = f"""
 请根据用户要求修订或重生成 PPT 大纲。只输出严格 JSON，不要 Markdown。
 
@@ -77,6 +88,7 @@ slides 每项字段：slide_no, title, slide_type, content_points(list), teachin
                 outline = self._normalize_outline(data, str(data.get("title") or outline.get("title") or "未命名大纲"))
         except Exception:
             outline["revision_note"] = req.instruction
+        outline = self._finalize_existing_outline(outline)
         return self._outline_response(outline)
 
     async def generate_presentation(self, req: PresentationGenerateRequest) -> dict[str, Any]:
@@ -635,23 +647,45 @@ JSON 格式:
 
     async def _generate_outline_with_model(self, req: OutlineGenerateRequest, slide_count: int) -> dict[str, Any]:
         prompt = f"""
-请生成教学 PPT 大纲，返回严格 JSON，不要 Markdown。
-字段：title, summary, slides, interactive_assets。
-slides 每项字段：slide_no, title, slide_type, content_points(list), teaching_intent, visual_suggestion, interactive_asset_ids(list), external_resource_notes。
-interactive_assets 每项字段：asset_id, title, type(animation|game|simulation), target_slide_no, preferred_format(html5|gif|mp4), integration(ppt_video|static_link), description。
+Generate a teaching PPT outline. Return strict JSON only, no Markdown.
 
-课程：{req.title}
-学科：{req.subject}
-年级：{req.grade}
-页数：{slide_count}
-教学目标：{req.teaching_goals or ""}
-知识点：{", ".join(req.knowledge_points)}
-补充要求：{req.requirements or ""}
-是否启用联网增强：{req.enable_web}
-是否启用 RAG 增强：{req.enable_rag}
-重生成/附加要求：{req.regenerate_instruction or ""}
-互动资源策略：{json.dumps(req.interactive_policy or {}, ensure_ascii=False)}
-参考资料：{(req.reference_text or "")[:9000]}
+Required top-level fields:
+- title
+- summary
+- teaching_design_chain
+- slides
+- interactive_assets
+- diagram_assets
+
+teaching_design_chain is for frontend display and must not replace slides. It must contain:
+- teaching_goals: list[str]
+- learner_analysis: string
+- key_points: list[str]
+- difficult_points: list[str]
+- teaching_sequence: list[str]
+- activity_design: list[str]
+- assessment_design: list[str]
+- homework: list[str]
+
+slides must contain about {slide_count} pages and include cover, agenda, content pages, activity or practice page, and summary page.
+Each slide must contain: slide_no, title, slide_type, content_points(list), teaching_intent, visual_suggestion, interactive_asset_ids(list), external_resource_notes.
+interactive_assets items must contain: asset_id, title, type(animation|game|simulation), target_slide_no, preferred_format(html5|gif|mp4), integration(ppt_video|static_link), description.
+If diagram context is provided, add diagram_assets items with asset_id, title, type, format, mermaid, usage.
+
+Course title: {req.title}
+Subject: {req.subject}
+Grade: {req.grade}
+Duration minutes: {req.duration_minutes or ""}
+Expected slide count: {slide_count}
+Teaching goals: {req.teaching_goals or ""}
+Knowledge points: {", ".join(req.knowledge_points)}
+Extra requirements: {req.requirements or ""}
+Web enabled: {req.enable_web}
+RAG enabled: {req.enable_rag}
+Regenerate instruction: {req.regenerate_instruction or ""}
+Interactive policy: {json.dumps(req.interactive_policy or {}, ensure_ascii=False)}
+Reference material and RAG context:
+{(req.reference_text or "")[:12000]}
 """.strip()
         try:
             raw = await self.llm.complete("你是资深教学设计专家，只输出可解析 JSON。", prompt, 0.25)
@@ -662,14 +696,38 @@ interactive_assets 每项字段：asset_id, title, type(animation|game|simulatio
             pass
         return self._fallback_outline(req, slide_count)
 
-    def _with_resource_context(self, req: OutlineGenerateRequest) -> OutlineGenerateRequest:
-        if not req.resource_ids:
+    async def _with_reference_and_rag_context(self, req: OutlineGenerateRequest) -> OutlineGenerateRequest:
+        context_parts = []
+        if req.reference_text:
+            context_parts.append(req.reference_text)
+
+        # Uploaded resources are reference material. They enrich style, tone, cases,
+        # and the RAG query, but they are not the vector-store search scope.
+        if req.resource_ids:
+            local_ids = [resource_id for resource_id in req.resource_ids if ":" not in resource_id]
+            reference_context = build_rag_context(local_ids, limit=5000)
+            if reference_context:
+                context_parts.append("[Uploaded reference material]\n" + reference_context)
+
+        if req.enable_rag:
+            from ..tools.rag import rag_search
+            query = "\n".join([
+                req.title,
+                req.subject,
+                req.grade,
+                req.teaching_goals or "",
+                " ".join(req.knowledge_points or []),
+                req.requirements or "",
+                req.reference_text or "",
+            ]).strip()
+            rag_result = await rag_search(req.resource_ids, query)
+            if rag_result.get("knowledge_context"):
+                context_parts.append("[RAG knowledge base matches]\n" + rag_result["knowledge_context"])
+
+        if not context_parts:
             return req
-        limit = 12000 if req.enable_rag else 5000
-        rag_context = build_rag_context(req.resource_ids, limit=limit)
-        merged_reference = "\n\n".join(part for part in [req.reference_text or "", rag_context] if part.strip())
         data = req.model_dump()
-        data["reference_text"] = merged_reference
+        data["reference_text"] = "\n\n".join(part for part in context_parts if part.strip())[:16000]
         return OutlineGenerateRequest(**data)
 
     def _html_system_prompt(self) -> str:
@@ -769,6 +827,180 @@ interactive_assets 每项字段：asset_id, title, type(animation|game|simulatio
         outline["interactive_assets"] = assets
         return outline
 
+    def _finalize_existing_outline(self, outline: dict[str, Any]) -> dict[str, Any]:
+        slides = [slide for slide in outline.get("slides") or [] if isinstance(slide, dict)]
+        options = outline.get("generation_options") if isinstance(outline.get("generation_options"), dict) else {}
+        req = OutlineGenerateRequest(
+            title=str(outline.get("title") or "Untitled outline"),
+            subject=str(outline.get("subject") or "General"),
+            grade=str(outline.get("grade") or "General"),
+            teaching_goals="; ".join(self._as_list((outline.get("teaching_design_chain") or {}).get("teaching_goals"))) if isinstance(outline.get("teaching_design_chain"), dict) else None,
+            knowledge_points=self._as_list((outline.get("teaching_design_chain") or {}).get("key_points")) if isinstance(outline.get("teaching_design_chain"), dict) else [],
+            requirements=str(outline.get("requirements") or "") or None,
+            resource_ids=list(options.get("resource_ids") or []),
+            enable_web=bool(options.get("enable_web")),
+            enable_rag=bool(options.get("enable_rag")),
+            slide_count=max(1, len(slides) or 8),
+            interactive_policy=dict(options.get("interactive_policy") or {}),
+        )
+        outline = self._ensure_teaching_design_chain(outline, req)
+        return self._ensure_outline_quality(outline, req, req.slide_count or 8)
+
+    def _ensure_teaching_design_chain(self, outline: dict[str, Any], req: OutlineGenerateRequest) -> dict[str, Any]:
+        chain = outline.get("teaching_design_chain")
+        if not isinstance(chain, dict):
+            chain = {}
+        fallback = self._fallback_teaching_design_chain(req, outline)
+        normalized = {
+            "teaching_goals": self._as_list(chain.get("teaching_goals")) or fallback["teaching_goals"],
+            "learner_analysis": str(chain.get("learner_analysis") or fallback["learner_analysis"]),
+            "key_points": self._as_list(chain.get("key_points")) or fallback["key_points"],
+            "difficult_points": self._as_list(chain.get("difficult_points")) or fallback["difficult_points"],
+            "teaching_sequence": self._as_list(chain.get("teaching_sequence")) or fallback["teaching_sequence"],
+            "activity_design": self._as_list(chain.get("activity_design")) or fallback["activity_design"],
+            "assessment_design": self._as_list(chain.get("assessment_design")) or fallback["assessment_design"],
+            "homework": self._as_list(chain.get("homework")) or fallback["homework"],
+        }
+        outline["teaching_design_chain"] = normalized
+        return outline
+
+    def _fallback_teaching_design_chain(self, req: OutlineGenerateRequest, outline: dict[str, Any]) -> dict[str, Any]:
+        knowledge_points = req.knowledge_points or self._slide_titles(outline) or self._split_points(req.teaching_goals or req.requirements or req.title)
+        goals = self._split_points(req.teaching_goals or "") if req.teaching_goals else [
+            f"Understand the core concepts of {req.title}.",
+            f"Explain key ideas using examples from {req.subject}.",
+            "Apply the knowledge through classroom activity or practice.",
+        ]
+        return {
+            "teaching_goals": goals,
+            "learner_analysis": f"Learners are {req.grade} students. The outline should connect prior experience with {req.title} and reduce abstract cognitive load.",
+            "key_points": knowledge_points[:6],
+            "difficult_points": (knowledge_points[:2] or [req.title]),
+            "teaching_sequence": [
+                "Create a problem situation and activate prior knowledge.",
+                "Clarify learning goals and the lesson structure.",
+                "Explain core concepts from easy to difficult.",
+                "Use examples, visual prompts, and interaction to consolidate understanding.",
+                "Summarize key takeaways and assign transfer practice.",
+            ],
+            "activity_design": [
+                "Use questioning or a mini task before the main explanation.",
+                "Arrange one classroom interaction around the key difficult point.",
+            ],
+            "assessment_design": [
+                "Check understanding through quick questions during the lesson.",
+                "Use a short exit ticket or practice task after the summary.",
+            ],
+            "homework": [
+                f"Review the core concepts of {req.title}.",
+                "Complete one application or reflection task based on the lesson.",
+            ],
+        }
+
+    def _ensure_outline_quality(self, outline: dict[str, Any], req: OutlineGenerateRequest, slide_count: int) -> dict[str, Any]:
+        slides = [slide for slide in outline.get("slides") or [] if isinstance(slide, dict)]
+        if not slides:
+            slides = self._fallback_outline(req, slide_count)["slides"]
+
+        slides = [dict(slide) for slide in slides]
+        if slides:
+            slides[0]["slide_type"] = "cover"
+            slides[0]["title"] = str(slides[0].get("title") or req.title)
+        if slide_count >= 4:
+            has_agenda = any(str(slide.get("slide_type") or "").lower() in {"agenda", "toc", "directory"} for slide in slides)
+            if not has_agenda:
+                agenda_slide = {
+                    "slide_no": 2,
+                    "slide_type": "agenda",
+                    "title": "Learning Agenda",
+                    "content_points": self._agenda_points(outline, req),
+                    "teaching_intent": "Help learners establish the lesson path before detailed explanation.",
+                    "visual_suggestion": "Use a numbered roadmap or process line.",
+                    "interactive_asset_ids": [],
+                    "external_resource_notes": "",
+                }
+                if len(slides) < slide_count:
+                    slides.insert(1, agenda_slide)
+                elif len(slides) >= 2:
+                    slides[1] = {**agenda_slide, **{k: v for k, v in slides[1].items() if k not in {"slide_type"}}}
+                    slides[1]["slide_type"] = "agenda"
+        if slides:
+            slides[-1]["slide_type"] = "summary"
+            if not slides[-1].get("title"):
+                slides[-1]["title"] = "Summary and Extension"
+
+        normalized = []
+        for index, slide in enumerate(slides[:slide_count], 1):
+            item = dict(slide)
+            item["slide_no"] = index
+            item["slide_type"] = str(item.get("slide_type") or ("cover" if index == 1 else ("summary" if index == len(slides) else "content")))
+            item["title"] = str(item.get("title") or f"Slide {index}")
+            item["content_points"] = self._as_list(item.get("content_points") or item.get("points")) or [item["title"]]
+            item["teaching_intent"] = str(item.get("teaching_intent") or self._default_teaching_intent(item, index))
+            item["visual_suggestion"] = str(item.get("visual_suggestion") or "Use clear hierarchy, visual grouping, and concise classroom prompts.")
+            item["interactive_asset_ids"] = list(item.get("interactive_asset_ids") or [])
+            item["external_resource_notes"] = str(item.get("external_resource_notes") or "")
+            normalized.append(item)
+        outline["slides"] = normalized
+        outline["quality_report"] = self._outline_quality_report(outline, req, slide_count)
+        return outline
+
+    def _outline_quality_report(self, outline: dict[str, Any], req: OutlineGenerateRequest, expected_count: int) -> dict[str, Any]:
+        slides = outline.get("slides") or []
+        slide_types = {str(slide.get("slide_type") or "").lower() for slide in slides if isinstance(slide, dict)}
+        knowledge_points = req.knowledge_points or []
+        covered_text = json.dumps(slides, ensure_ascii=False)
+        missing_knowledge_points = [point for point in knowledge_points if point and point not in covered_text]
+        checks = {
+            "has_teaching_design_chain": isinstance(outline.get("teaching_design_chain"), dict),
+            "has_cover": "cover" in slide_types,
+            "has_agenda": bool(slide_types & {"agenda", "toc", "directory"}),
+            "has_summary": "summary" in slide_types,
+            "slide_count_close": abs(len(slides) - expected_count) <= 1,
+            "all_slides_have_teaching_intent": all(bool(slide.get("teaching_intent")) for slide in slides if isinstance(slide, dict)),
+            "all_slides_have_visual_suggestion": all(bool(slide.get("visual_suggestion")) for slide in slides if isinstance(slide, dict)),
+            "knowledge_points_covered": not missing_knowledge_points,
+        }
+        return {
+            "passed": all(checks.values()),
+            "checks": checks,
+            "expected_slide_count": expected_count,
+            "actual_slide_count": len(slides),
+            "missing_knowledge_points": missing_knowledge_points,
+        }
+
+    def _agenda_points(self, outline: dict[str, Any], req: OutlineGenerateRequest) -> list[str]:
+        chain = outline.get("teaching_design_chain") or {}
+        sequence = self._as_list(chain.get("teaching_sequence"))
+        if sequence:
+            return sequence[:5]
+        points = req.knowledge_points or self._slide_titles(outline)
+        return points[:5] or ["Learning goals", "Core concepts", "Classroom activity", "Summary"]
+
+    def _slide_titles(self, outline: dict[str, Any]) -> list[str]:
+        return [str(slide.get("title")) for slide in outline.get("slides") or [] if isinstance(slide, dict) and slide.get("title")]
+
+    def _default_teaching_intent(self, slide: dict[str, Any], index: int) -> str:
+        slide_type = str(slide.get("slide_type") or "").lower()
+        if slide_type == "cover":
+            return "Introduce the topic and create an initial learning expectation."
+        if slide_type in {"agenda", "toc", "directory"}:
+            return "Clarify the lesson structure and learning path."
+        if slide_type == "summary":
+            return "Consolidate key conclusions and guide transfer after class."
+        return "Support understanding of this knowledge point through explanation, examples, and guided interaction."
+
+    def _as_list(self, value: Any) -> list[str]:
+        if value is None:
+            return []
+        if isinstance(value, list):
+            return [str(item).strip() for item in value if str(item).strip()]
+        if isinstance(value, tuple):
+            return [str(item).strip() for item in value if str(item).strip()]
+        if isinstance(value, str):
+            return self._split_points(value)
+        return [str(value).strip()] if str(value).strip() else []
+
     def _normalize_outline(self, data: dict[str, Any], title: str) -> dict[str, Any]:
         slides = []
         for idx, item in enumerate(data.get("slides") or []):
@@ -798,6 +1030,9 @@ interactive_assets 每项字段：asset_id, title, type(animation|game|simulatio
             "outline": outline,
             "slides": slides,
             "interactive_assets": outline.get("interactive_assets", []),
+            "diagram_assets": outline.get("diagram_assets", []),
+            "teaching_design_chain": outline.get("teaching_design_chain", {}),
+            "quality_report": outline.get("quality_report", {}),
         }
 
     def _normalize_interactive_assets(self, assets: list[dict[str, Any]]) -> list[dict[str, Any]]:

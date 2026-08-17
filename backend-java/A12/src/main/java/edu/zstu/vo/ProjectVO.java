@@ -5,6 +5,7 @@ import lombok.Data;
 import lombok.NoArgsConstructor;
 
 import java.time.LocalDateTime;
+import java.util.List;
 
 /**
  * 创作项目详情
@@ -23,6 +24,7 @@ public class ProjectVO {
     private String snapshots;
     private String edit_history;
     private String permissions;
+    private List<PageVO> pages;
     private LocalDateTime deleted_at;
     private LocalDateTime created_at;
     private LocalDateTime updated_at;

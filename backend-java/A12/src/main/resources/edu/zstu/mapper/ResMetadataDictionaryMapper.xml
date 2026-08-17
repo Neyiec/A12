@@ -1,0 +1,68 @@
+<?xml version="1.0" encoding="UTF-8" ?>
+<!DOCTYPE mapper PUBLIC "-//mybatis.org//DTD Mapper 3.0//EN" "http://mybatis.org/dtd/mybatis-3-mapper.dtd">
+<mapper namespace="edu.zstu.mapper.ResMetadataDictionaryMapper">
+    <resultMap id="BaseResultMap" type="edu.zstu.entity.Res_Metadata_Dictionary">
+        <id column="id" property="id"/>
+        <result column="user_id" property="user_id"/>
+        <result column="dict_type" property="dict_type"/>
+        <result column="name" property="name"/>
+        <result column="color" property="color"/>
+        <result column="sort_order" property="sort_order"/>
+        <result column="usage_count" property="usage_count"/>
+        <result column="status" property="status"/>
+        <result column="created_at" property="created_at"/>
+        <result column="updated_at" property="updated_at"/>
+    </resultMap>
+
+    <sql id="Base_Columns">id, user_id, dict_type, name, color, sort_order, usage_count, status, created_at, updated_at</sql>
+
+    <select id="findById" resultMap="BaseResultMap">
+        SELECT <include refid="Base_Columns"/> FROM res_metadata_dictionary WHERE id = #{id}
+    </select>
+
+    <select id="findByUserTypeName" resultMap="BaseResultMap">
+        SELECT <include refid="Base_Columns"/> FROM res_metadata_dictionary
+        WHERE user_id = #{userId} AND dict_type = #{dictType} AND name = #{name}
+        LIMIT 1
+    </select>
+
+    <select id="findByUserAndType" resultMap="BaseResultMap">
+        SELECT <include refid="Base_Columns"/> FROM res_metadata_dictionary
+        WHERE user_id = #{userId} AND dict_type = #{dictType} AND status = 1
+        ORDER BY sort_order ASC, usage_count DESC, name ASC
+    </select>
+
+    <insert id="insert" useGeneratedKeys="true" keyProperty="id">
+        INSERT INTO res_metadata_dictionary(user_id, dict_type, name, color, sort_order, usage_count, status, created_at, updated_at)
+        VALUES(#{user_id}, #{dict_type}, #{name}, #{color}, #{sort_order}, #{usage_count}, #{status}, NOW(), NOW())
+    </insert>
+
+    <update id="update">
+        UPDATE res_metadata_dictionary
+        <set>
+            <if test="name != null">name = #{name},</if>
+            <if test="color != null">color = #{color},</if>
+            <if test="sort_order != null">sort_order = #{sort_order},</if>
+            <if test="usage_count != null">usage_count = #{usage_count},</if>
+            <if test="status != null">status = #{status},</if>
+            updated_at = NOW()
+        </set>
+        WHERE id = #{id}
+    </update>
+
+    <insert id="upsert" useGeneratedKeys="true" keyProperty="id">
+        INSERT INTO res_metadata_dictionary(user_id, dict_type, name, color, sort_order, usage_count, status, created_at, updated_at)
+        VALUES(#{user_id}, #{dict_type}, #{name}, #{color}, #{sort_order}, #{usage_count}, 1, NOW(), NOW())
+        ON DUPLICATE KEY UPDATE
+            status = 1,
+            color = COALESCE(VALUES(color), color),
+            sort_order = COALESCE(VALUES(sort_order), sort_order),
+            updated_at = NOW()
+    </insert>
+
+    <update id="softDelete">
+        UPDATE res_metadata_dictionary
+        SET status = 0, updated_at = NOW()
+        WHERE id = #{id} AND user_id = #{userId} AND dict_type = #{dictType}
+    </update>
+</mapper>

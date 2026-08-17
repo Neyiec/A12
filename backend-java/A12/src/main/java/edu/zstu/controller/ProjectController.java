@@ -7,9 +7,11 @@ import edu.zstu.utils.PageResult;
 import edu.zstu.utils.Result;
 import edu.zstu.vo.PageVO;
 import edu.zstu.vo.ProjectVO;
+import edu.zstu.vo.SubjectComponentValidateVO;
 import edu.zstu.vo.VersionVO;
 import org.springframework.web.bind.annotation.*;
 
+import java.util.List;
 import java.util.Map;
 
 /**
@@ -148,6 +150,70 @@ public class ProjectController {
             Integer userId = CurrentHolder.getCurrentId();
             if (userId == null) return Result.error(401, "未登录");
             return Result.success(projectService.aiRevision(id, dto, userId));
+        } catch (RuntimeException e) { return Result.error(400, e.getMessage()); }
+    }
+
+    @GetMapping("/{id}/pages")
+    public Result<List<PageVO>> listPages(@PathVariable String id) {
+        try {
+            Integer userId = CurrentHolder.getCurrentId();
+            if (userId == null) return Result.error(401, "unauthorized");
+            return Result.success(projectService.listPages(id, userId));
+        } catch (RuntimeException e) { return Result.error(400, e.getMessage()); }
+    }
+
+    @GetMapping("/{id}/pages/{pageId}")
+    public Result<PageVO> getPage(@PathVariable String id, @PathVariable String pageId) {
+        try {
+            Integer userId = CurrentHolder.getCurrentId();
+            if (userId == null) return Result.error(401, "unauthorized");
+            return Result.success(projectService.getPage(id, pageId, userId));
+        } catch (RuntimeException e) { return Result.error(400, e.getMessage()); }
+    }
+
+    @PostMapping("/{id}/pages")
+    public Result<PageVO> createPage(@PathVariable String id, @RequestBody PageDTO dto) {
+        try {
+            Integer userId = CurrentHolder.getCurrentId();
+            if (userId == null) return Result.error(401, "unauthorized");
+            return Result.success(projectService.createPage(id, dto, userId));
+        } catch (RuntimeException e) { return Result.error(400, e.getMessage()); }
+    }
+
+    @PutMapping("/{id}/pages/{pageId}")
+    public Result<PageVO> savePage(@PathVariable String id, @PathVariable String pageId, @RequestBody PageDTO dto) {
+        try {
+            Integer userId = CurrentHolder.getCurrentId();
+            if (userId == null) return Result.error(401, "unauthorized");
+            return Result.success(projectService.savePage(id, pageId, dto, userId));
+        } catch (RuntimeException e) { return Result.error(400, e.getMessage()); }
+    }
+
+    @PostMapping("/{id}/pages/batch-save")
+    public Result<List<PageVO>> batchSavePages(@PathVariable String id, @RequestBody PageBatchSaveDTO dto) {
+        try {
+            Integer userId = CurrentHolder.getCurrentId();
+            if (userId == null) return Result.error(401, "unauthorized");
+            return Result.success(projectService.batchSavePages(id, dto, userId));
+        } catch (RuntimeException e) { return Result.error(400, e.getMessage()); }
+    }
+
+    @DeleteMapping("/{id}/pages/{pageId}")
+    public Result<Void> deletePage(@PathVariable String id, @PathVariable String pageId) {
+        try {
+            Integer userId = CurrentHolder.getCurrentId();
+            if (userId == null) return Result.error(401, "unauthorized");
+            projectService.deletePage(id, pageId, userId);
+            return Result.success();
+        } catch (RuntimeException e) { return Result.error(400, e.getMessage()); }
+    }
+
+    @PostMapping("/tools/validate-component")
+    public Result<SubjectComponentValidateVO> validateComponent(@RequestBody SubjectComponentDTO dto) {
+        try {
+            Integer userId = CurrentHolder.getCurrentId();
+            if (userId == null) return Result.error(401, "unauthorized");
+            return Result.success(projectService.validateComponent(dto, userId));
         } catch (RuntimeException e) { return Result.error(400, e.getMessage()); }
     }
 

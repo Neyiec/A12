@@ -7,19 +7,24 @@ import lombok.NoArgsConstructor;
 import java.time.LocalDateTime;
 
 /**
- * 项目页面信息
+ * Project page information.
  */
 @Data
 @NoArgsConstructor
 @AllArgsConstructor
 public class PageVO {
-    private int id;
-    private int project_id;
-    private int page_order;
+    private Integer id;
+    private Integer project_id;
+    private Integer page_order;
     private String page_type;
     private String page_title;
     private String page_content;
     private String components;
+    private Integer page_version;
+    private String client_version;
+    private Boolean autosave;
+    private Boolean dirty;
+    private LocalDateTime last_saved_at;
     private LocalDateTime created_at;
     private LocalDateTime updated_at;
 }

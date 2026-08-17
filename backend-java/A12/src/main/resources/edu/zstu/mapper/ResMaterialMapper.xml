@@ -53,6 +53,21 @@
             status = 1
             <if test="user_id != null">AND user_id = #{user_id}</if>
             <if test="file_type != null">AND file_type = #{file_type}</if>
+            <if test="access_type != null">AND access_type = #{access_type}</if>
+            <if test="allow_ai != null">AND allow_ai = #{allow_ai}</if>
+            <if test="ai_index_status != null">AND ai_index_status = #{ai_index_status}</if>
+            <if test="category != null">
+                AND (
+                    JSON_CONTAINS(categories, JSON_QUOTE(#{category}))
+                    OR categories LIKE CONCAT('%', #{category}, '%')
+                )
+            </if>
+            <if test="tag != null">
+                AND (
+                    JSON_CONTAINS(tags, JSON_QUOTE(#{tag}))
+                    OR tags LIKE CONCAT('%', #{tag}, '%')
+                )
+            </if>
             <if test="keyword != null">
                 AND (file_name LIKE CONCAT('%', #{keyword}, '%')
                      OR description LIKE CONCAT('%', #{keyword}, '%')

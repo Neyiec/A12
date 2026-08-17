@@ -10,7 +10,7 @@ from ..llm import LLMClient
 from ..models import IntentRecognizeRequest, OutlineChatStreamRequest, OutlineGenerateRequest
 from ..presentation import PPTGenerator
 from ..presentation.json_utils import extract_json
-from ..tools import rag_search, web_search
+from ..tools import diagram_tool, rag_search, should_call_diagram_tool, web_search
 from .message_utils import message_text, messages_to_dicts, normalize_messages
 from .postgres_store import postgres_memory_store
 from .session_store import outline_session_store
@@ -23,11 +23,13 @@ class OutlineChatState(MessagesState, total=False):
     intent: dict[str, Any]
     teacher_profile: dict[str, Any] | None
     tool_context: dict[str, Any]
+    tool_trace: list[dict[str, Any]]
     interactive_policy: dict[str, Any]
     final_prompt: str
     clarification_question: str
     outline: dict[str, Any]
     response: dict[str, Any]
+    reflection: dict[str, Any]
     memory_result: dict[str, Any]
     error: str
 
@@ -45,6 +47,7 @@ class OutlineChatWorkflow:
         graph.add_node("tools", self._tools_node)
         graph.add_node("build_prompt", self._build_prompt_node)
         graph.add_node("generate_outline", self._generate_outline_node)
+        graph.add_node("reflect", self._reflection_node)
         graph.add_node("memory", self._memory_node)
 
         graph.add_edge(START, "load_profile")
@@ -59,8 +62,9 @@ class OutlineChatWorkflow:
         graph.add_conditional_edges(
             "generate_outline",
             self._after_generate,
-            {"memory": "memory", "failed": END},
+            {"memory": "reflect", "failed": END},
         )
+        graph.add_edge("reflect", "memory")
         graph.add_edge("memory", END)
         return graph.compile()
 
@@ -137,6 +141,11 @@ class OutlineChatWorkflow:
                 outline_session_store.save(user_id, session_id, self._session_snapshot(final_state), status="completed")
                 postgres_memory_store.save_generation(user_id, session_id, final_state["response"], final_state.get("final_prompt", ""))
                 yield {"event": "stage", "data": {"name": "generate_outline", "message": "Generated structured outline"}}
+
+            elif node_name == "reflect":
+                outline_session_store.save(user_id, session_id, self._session_snapshot(final_state), status="completed")
+                yield {"event": "stage", "data": {"name": "reflect", "message": "Reflected on outline quality and tool usage"}}
+                yield {"event": "reflection", "data": final_state.get("reflection", {})}
 
             elif node_name == "memory":
                 yield {"event": "stage", "data": {"name": "memory", "message": "Evaluated teacher-style long-term memory"}}
@@ -293,11 +302,39 @@ class OutlineChatWorkflow:
         intent = state["intent"]
         query = self._build_rag_query(state)
         tool_context: dict[str, Any] = {}
+        tool_trace: list[dict[str, Any]] = []
         if intent.get("enable_rag"):
-            tool_context["rag"] = await rag_search(list(intent.get("resource_ids") or []), query)
+            result = await rag_search(list(intent.get("resource_ids") or []), query)
+            tool_context["rag"] = result
+            tool_trace.append({
+                "tool": "rag_search",
+                "status": "success" if result.get("context") or result.get("matches") else "empty",
+                "query": result.get("query"),
+                "enriched_query": result.get("enriched_query"),
+                "match_count": len(result.get("matches") or []),
+                "search_scope": result.get("search_scope"),
+            })
         if intent.get("enable_web"):
-            tool_context["web"] = await web_search(query, max_results=5)
-        return {"tool_context": tool_context}
+            result = await web_search(query, max_results=5)
+            tool_context["web"] = result
+            tool_trace.append({
+                "tool": "web_search",
+                "status": "error" if result.get("error") else ("success" if result.get("results") else "empty"),
+                "query": result.get("query"),
+                "result_count": len(result.get("results") or []),
+                "error": result.get("error"),
+            })
+        if should_call_diagram_tool(intent, query):
+            result = await diagram_tool(intent, query)
+            tool_context["diagram"] = result
+            tool_trace.append({
+                "tool": "diagram_tool",
+                "status": "success",
+                "diagram_type": result.get("diagram_type"),
+                "format": result.get("format"),
+                "node_count": len(result.get("nodes") or []),
+            })
+        return {"tool_context": tool_context, "tool_trace": tool_trace}
 
     async def _build_prompt_node(self, state: OutlineChatState) -> dict[str, Any]:
         intent = state["intent"]
@@ -316,9 +353,12 @@ Requirements:
 2. Each slide must include slide_no, title, slide_type, content_points, teaching_intent, visual_suggestion.
 3. Use uploaded reference material for formatting, tone, examples, and user-specific content adaptation.
 4. Use RAG knowledge base matches as the authoritative local knowledge supplement.
-5. Reflect stable teacher preferences from teacher_profile when available.
-6. Keep slide count close to slide_count.
-7. If interactive_policy.needs_interactive_assets is true, include top-level interactive_assets.
+5. If diagram tool returns Mermaid, add top-level diagram_assets and reference it in related slide visual_suggestion.
+6. Reflect stable teacher preferences from teacher_profile when available.
+7. Add top-level teaching_design_chain for frontend display, with teaching_goals, learner_analysis,
+   key_points, difficult_points, teaching_sequence, activity_design, assessment_design, homework.
+8. Include cover, agenda, content, activity/practice, and summary pages; keep slide count close to slide_count.
+9. If interactive_policy.needs_interactive_assets is true, include top-level interactive_assets.
    Each interactive asset must include asset_id, title, type(animation|game|simulation),
    target_slide_no, preferred_format(html5|gif|mp4), integration(ppt_video|static_link),
    and description. Use ppt_video only for mp4. For html5/gif assets, use static_link
@@ -328,36 +368,43 @@ Requirements:
 
     async def _generate_outline_node(self, state: OutlineChatState) -> dict[str, Any]:
         try:
-            intent = state["intent"]
-            reference_parts = []
-            tool_context = state.get("tool_context", {})
-            if tool_context.get("rag", {}).get("context"):
-                reference_parts.append(tool_context["rag"]["context"])
-            if tool_context.get("web", {}).get("results"):
-                reference_parts.append(json.dumps(tool_context["web"]["results"], ensure_ascii=False))
-            if state.get("final_prompt"):
-                reference_parts.append(state["final_prompt"])
-
-            req = OutlineGenerateRequest(
-                title=str(intent.get("title") or "未命名主题"),
-                subject=str(intent.get("subject") or "通用"),
-                grade=str(intent.get("grade") or "通用"),
-                duration_minutes=int(intent["duration_minutes"]) if str(intent.get("duration_minutes") or "").isdigit() else None,
-                teaching_goals=str(intent.get("teaching_goals") or "") or None,
-                knowledge_points=list(intent.get("knowledge_points") or []),
-                requirements=str(intent.get("requirements") or "") or None,
-                reference_text="\n\n".join(reference_parts),
-                resource_ids=list(intent.get("resource_ids") or []),
-                enable_web=bool(intent.get("enable_web")),
-                enable_rag=bool(intent.get("enable_rag")),
-                slide_count=int(intent.get("slide_count") or 8),
-                language=str(intent.get("language") or "zh-CN"),
-                interactive_policy=dict(intent.get("interactive_policy") or state.get("interactive_policy") or {}),
-            )
+            req = self._outline_request_from_state(state)
             response = await self.generator.generate_outline(req)
+            self._attach_tool_outputs(response, state)
             return {"outline": response.get("outline", {}), "response": response}
         except Exception as exc:
             return {"error": str(exc)}
+
+    async def _reflection_node(self, state: OutlineChatState) -> dict[str, Any]:
+        response = dict(state.get("response") or {})
+        if not response:
+            return {"reflection": {"status": "skipped", "issues": ["No outline response to reflect on."], "retry_count": 0}}
+
+        reflection = self._build_generation_reflection(response, state)
+        if reflection["status"] == "needs_revision" and reflection["retry_count"] == 0:
+            try:
+                fix_instruction = self._reflection_fix_instruction(reflection)
+                req = self._outline_request_from_state(state, regenerate_instruction=fix_instruction)
+                retry_response = await self.generator.generate_outline(req)
+                self._attach_tool_outputs(retry_response, state)
+                retry_reflection = self._build_generation_reflection(retry_response, state)
+                reflection["retry_count"] = 1
+                reflection["fixes"].append(fix_instruction)
+                reflection["after_retry"] = {
+                    "status": retry_reflection.get("status"),
+                    "issues": retry_reflection.get("issues", []),
+                    "quality_passed": retry_reflection.get("quality_passed"),
+                }
+                response = retry_response
+            except Exception as exc:
+                reflection["fixes"].append(f"Auto revision failed: {exc}")
+
+        response["reflection"] = reflection
+        response["tool_trace"] = state.get("tool_trace", [])
+        if isinstance(response.get("outline"), dict):
+            response["outline"]["reflection"] = reflection
+            response["outline"]["tool_trace"] = state.get("tool_trace", [])
+        return {"reflection": reflection, "response": response, "outline": response.get("outline", {})}
 
     async def _memory_node(self, state: OutlineChatState) -> dict[str, Any]:
         user_text = "\n".join(message_text(message) for message in state.get("messages", []) if isinstance(message, HumanMessage))[-6000:]
@@ -382,6 +429,94 @@ Requirements:
                 "postgres_available": postgres_memory_store.available,
             }
         }
+
+    def _outline_request_from_state(self, state: OutlineChatState, regenerate_instruction: str | None = None) -> OutlineGenerateRequest:
+        intent = state["intent"]
+        reference_parts = []
+        tool_context = state.get("tool_context", {})
+        if tool_context.get("rag", {}).get("context"):
+            reference_parts.append(tool_context["rag"]["context"])
+        if tool_context.get("web", {}).get("results"):
+            reference_parts.append(json.dumps(tool_context["web"]["results"], ensure_ascii=False))
+        if tool_context.get("diagram", {}).get("mermaid"):
+            reference_parts.append("[Diagram tool]\n" + json.dumps(tool_context["diagram"], ensure_ascii=False))
+        if state.get("final_prompt"):
+            reference_parts.append(state["final_prompt"])
+        if regenerate_instruction:
+            reference_parts.append("[Reflection revision instruction]\n" + regenerate_instruction)
+
+        return OutlineGenerateRequest(
+            title=str(intent.get("title") or "Untitled topic"),
+            subject=str(intent.get("subject") or "General"),
+            grade=str(intent.get("grade") or "General"),
+            duration_minutes=int(intent["duration_minutes"]) if str(intent.get("duration_minutes") or "").isdigit() else None,
+            teaching_goals=str(intent.get("teaching_goals") or "") or None,
+            knowledge_points=list(intent.get("knowledge_points") or []),
+            requirements=str(intent.get("requirements") or "") or None,
+            reference_text="\n\n".join(reference_parts),
+            resource_ids=list(intent.get("resource_ids") or []),
+            enable_web=bool(intent.get("enable_web")),
+            enable_rag=bool(intent.get("enable_rag")),
+            slide_count=int(intent.get("slide_count") or 8),
+            language=str(intent.get("language") or "zh-CN"),
+            regenerate_instruction=regenerate_instruction,
+            interactive_policy=dict(intent.get("interactive_policy") or state.get("interactive_policy") or {}),
+        )
+
+    def _attach_tool_outputs(self, response: dict[str, Any], state: OutlineChatState) -> None:
+        tool_context = state.get("tool_context", {})
+        diagram = tool_context.get("diagram")
+        if diagram:
+            asset = {
+                "asset_id": "diagram_1",
+                "title": diagram.get("title"),
+                "type": diagram.get("diagram_type"),
+                "format": diagram.get("format"),
+                "mermaid": diagram.get("mermaid"),
+                "usage": diagram.get("usage"),
+            }
+            if not response.get("diagram_assets"):
+                response["diagram_assets"] = [asset]
+            if isinstance(response.get("outline"), dict):
+                if not response["outline"].get("diagram_assets"):
+                    response["outline"]["diagram_assets"] = [asset]
+        response["tool_trace"] = state.get("tool_trace", [])
+        if isinstance(response.get("outline"), dict):
+            response["outline"]["tool_trace"] = state.get("tool_trace", [])
+
+    def _build_generation_reflection(self, response: dict[str, Any], state: OutlineChatState) -> dict[str, Any]:
+        report = response.get("quality_report") or (response.get("outline") or {}).get("quality_report") or {}
+        checks = report.get("checks") if isinstance(report, dict) else {}
+        issues = []
+        if isinstance(checks, dict):
+            issues.extend([f"quality_check_failed:{key}" for key, passed in checks.items() if not passed])
+        missing_points = report.get("missing_knowledge_points") if isinstance(report, dict) else []
+        for point in missing_points or []:
+            issues.append(f"missing_knowledge_point:{point}")
+        if not state.get("tool_trace"):
+            issues.append("no_tool_called")
+
+        quality_passed = bool(report.get("passed")) if isinstance(report, dict) else False
+        status = "passed" if quality_passed and not issues else "needs_revision"
+        if issues == ["no_tool_called"]:
+            status = "passed"
+        return {
+            "status": status,
+            "quality_passed": quality_passed,
+            "issues": issues,
+            "fixes": [],
+            "retry_count": 0,
+            "tool_trace": state.get("tool_trace", []),
+            "summary": "Generation quality is acceptable." if status == "passed" else "Generation has issues and should be revised once.",
+        }
+
+    def _reflection_fix_instruction(self, reflection: dict[str, Any]) -> str:
+        issues = reflection.get("issues") or []
+        return (
+            "Revise the outline to fix these quality issues: "
+            + "; ".join(str(issue) for issue in issues)
+            + ". Preserve user intent, keep the same slide count, include teaching_design_chain, cover, agenda, summary, and explicit teaching_intent/visual_suggestion for every slide."
+        )
 
     def _after_parse(self, state: OutlineChatState) -> Literal["clarify", "continue"]:
         return "clarify" if state.get("clarification_question") else "continue"
@@ -636,6 +771,8 @@ Return strict JSON:
             "intent": state.get("intent", {}),
             "final_prompt": state.get("final_prompt", ""),
             "outline": state.get("outline", {}),
+            "tool_trace": state.get("tool_trace", []),
+            "reflection": state.get("reflection", {}),
         }
 
     def _assistant_outline_message(self, response: dict[str, Any]) -> str:
