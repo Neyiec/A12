@@ -61,6 +61,14 @@ const chartData = computed(() => Array.isArray(props.selectedElement?.data) ? pr
 const imageSourceDraft = ref('')
 const imageSourceError = ref('')
 const imageFileInput = ref(null)
+const elementEditorSection = ref('style')
+const chartImportDraft = ref('')
+const chartImportError = ref('')
+const elementEditorSections = [
+  { id: 'content', label: '内容' },
+  { id: 'style', label: '样式' },
+  { id: 'position', label: '排列' },
+]
 const updateStyle = (key, value) => emit('update-element-style', { key, value })
 const updatePosition = (key, value) => emit('update-element-position', { key, value })
 const updateContent = (value) => emit('update-element-content', value)
@@ -77,6 +85,13 @@ watch([() => props.selectedElement?.id, () => props.selectedElement?.src], () =>
   const source = props.selectedElement?.src || ''
   imageSourceDraft.value = /^data:image\//i.test(source) ? '' : source
   imageSourceError.value = ''
+}, { immediate: true })
+
+watch(() => props.selectedElement?.id, () => {
+  const type = props.selectedElement?.type
+  elementEditorSection.value = ['image', 'chart'].includes(type) ? 'content' : 'style'
+  chartImportDraft.value = ''
+  chartImportError.value = ''
 }, { immediate: true })
 
 const applyImageSource = () => {
@@ -127,6 +142,25 @@ const addChartItem = () => {
 const removeChartItem = (index) => {
   if (chartData.value.length <= 1) return
   updateData(chartData.value.filter((_, itemIndex) => itemIndex !== index).map((item) => ({ ...item })))
+}
+const importChartData = () => {
+  const rows = chartImportDraft.value
+    .split(/\r?\n/)
+    .map((row) => row.trim())
+    .filter(Boolean)
+    .map((row) => {
+      const [label = '', rawValue = ''] = row.split(/[,，\t]/, 2)
+      return { label: label.trim().slice(0, 10), value: Number(rawValue.trim()) }
+    })
+    .filter((item) => item.label && Number.isFinite(item.value))
+
+  if (!rows.length) {
+    chartImportError.value = '请按“名称,数值”格式输入至少一行有效数据'
+    return
+  }
+
+  updateData(rows.slice(0, 8).map((item) => ({ ...item, value: Math.max(0, Math.min(100, item.value)) })))
+  chartImportError.value = rows.length > 8 ? '已导入前 8 项数据' : ''
 }
 
 const resetSelectedStyle = () => {
@@ -224,7 +258,19 @@ const typeInitials = {
         <el-button type="danger" plain :icon="Delete" @click="deleteElement">删除元素</el-button>
       </section>
 
-      <section class="element-content-section">
+      <div class="element-editor-tabs" role="tablist" aria-label="元素属性分组">
+        <button
+          v-for="section in elementEditorSections"
+          :key="section.id"
+          type="button"
+          role="tab"
+          :aria-selected="elementEditorSection === section.id"
+          :class="{ active: elementEditorSection === section.id }"
+          @click="elementEditorSection = section.id"
+        >{{ section.label }}</button>
+      </div>
+
+      <section v-show="elementEditorSection === 'content'" class="element-content-section">
         <div class="panel-section-heading">
           <strong>内容设置</strong>
           <span>同步更新画布</span>
@@ -266,6 +312,11 @@ const typeInitials = {
             </div>
           </div>
           <el-button class="add-chart-item" :icon="Plus" :disabled="chartData.length >= 8" @click="addChartItem">添加数据项</el-button>
+          <label>批量导入数据</label>
+          <el-input v-model="chartImportDraft" type="textarea" :rows="3" maxlength="240" show-word-limit placeholder="例如：A组,68&#10;B组,82&#10;C组,56" />
+          <el-button class="import-chart-data" @click="importChartData">导入并覆盖当前数据</el-button>
+          <p v-if="chartImportError" class="content-error" role="alert">{{ chartImportError }}</p>
+          <p class="content-help">每行一项，支持英文逗号、中文逗号或 Tab 分隔；数值范围为 0–100。</p>
         </template>
 
         <template v-else>
@@ -283,7 +334,7 @@ const typeInitials = {
         </template>
       </section>
 
-      <section class="element-position-section">
+      <section v-show="elementEditorSection === 'position'" class="element-position-section">
         <div class="panel-section-heading">
           <strong>位置与尺寸</strong>
           <span>百分比坐标 · 可拖拽</span>
@@ -298,7 +349,7 @@ const typeInitials = {
         </div>
       </section>
 
-      <section class="element-style-section">
+      <section v-show="elementEditorSection === 'style'" class="element-style-section">
         <div class="panel-section-heading">
           <strong>样式设置</strong>
           <el-button text size="small" :icon="RefreshLeft" class="reset-style-button" @click="resetSelectedStyle">重置样式</el-button>
@@ -463,12 +514,12 @@ const typeInitials = {
 .properties.has-selected-element > .element-list-section { order: 1; padding-top: 12px; padding-bottom: 12px; }
 .properties.has-selected-element > .selected-element-summary { order: 2; }
 .properties.has-selected-element > .element-actions { order: 3; }
-.properties.has-selected-element > .element-style-section { order: 4; }
-.properties.has-selected-element > .element-content-section { order: 5; }
-.properties.has-selected-element > .element-position-section { order: 6; }
-.properties.has-selected-element > .element-hint { order: 7; }
-.properties.has-selected-element.is-content-focused > .element-content-section { order: 4; }
-.properties.has-selected-element.is-content-focused > .element-style-section { order: 5; }
+.element-editor-tabs { display: grid; grid-template-columns: repeat(3, 1fr); order: 4; padding: 10px 16px 0; border-bottom: 1px solid var(--zh-line-parting); background: var(--zh-background-primary); }
+.element-editor-tabs button { padding: 8px 4px; border: 0; border-bottom: 2px solid transparent; color: var(--zh-text-caption); background: transparent; font-size: 11px; cursor: pointer; }
+.element-editor-tabs button:hover, .element-editor-tabs button:focus-visible { color: var(--zh-text-theme); background: var(--zh-background-weaken); outline: none; }
+.element-editor-tabs button.active { border-color: var(--zh-line-theme); color: var(--zh-text-theme); font-weight: 700; }
+.properties.has-selected-element > .element-style-section, .properties.has-selected-element > .element-content-section, .properties.has-selected-element > .element-position-section { order: 5; }
+.properties.has-selected-element > .element-hint { order: 6; }
 .reset-style-button { margin: -6px -8px -6px 0; color: var(--zh-text-caption); font-size: 10px; }
 .reset-style-button:hover, .reset-style-button:focus-visible { color: var(--zh-text-theme); background: var(--zh-background-weaken); }
 .image-content-preview { position: relative; display: grid; place-items: center; aspect-ratio: 16 / 9; margin-bottom: 14px; overflow: hidden; border: 1px solid var(--zh-line-border); border-radius: var(--zh-radius8); color: var(--zh-text-caption); background: var(--zh-background-light); font-size: 10px; }
@@ -491,6 +542,7 @@ const typeInitials = {
 .chart-data-row :deep(.el-button:hover:not(:disabled)) { color: var(--el-color-danger); background: var(--el-color-danger-light-9); }
 .chart-data-row :deep(.el-input-number .el-input__wrapper) { padding-right: 28px; padding-left: 7px; }
 .add-chart-item { width: 100%; margin-top: 10px; margin-left: 0; border-style: dashed; }
+.import-chart-data { width: 100%; margin-top: 8px; margin-left: 0; }
 .properties label { display: block; margin: 0 0 9px; color: var(--zh-text-secondary); font-size: 11px; font-weight: 600; }
 .properties label:not(:first-child) { margin-top: 16px; }
 .properties :deep(.el-input), .properties :deep(.el-input-number), .properties :deep(.el-select) { width: 100%; }
@@ -498,8 +550,10 @@ const typeInitials = {
 .field-grid label { margin: 0 0 6px; font-size: 10px; }
 .color-field { display: flex; align-items: center; gap: 9px; }
 .color-field span { color: var(--zh-text-caption); font: 11px var(--zh-font-number); text-transform: uppercase; }
-.properties :deep(.el-radio-group) { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); width: 100%; }
-.properties :deep(.el-radio-button__inner) { width: 100%; padding: 8px 4px; font-size: 10px; }
+.properties :deep(.el-radio-group) { display: flex; align-items: stretch; width: 100%; }
+.properties :deep(.el-radio-button) { display: flex; flex: 1 1 0; min-width: 0; margin: 0; }
+.properties :deep(.el-radio-button:not(:first-child)) { margin-top: 0; }
+.properties :deep(.el-radio-button__inner) { display: flex; align-items: center; justify-content: center; box-sizing: border-box; width: 100%; height: 38px; padding: 8px 4px; font-size: 10px; line-height: 1.2; }
 .slider-value { display: flex; justify-content: space-between; color: var(--zh-text-caption); font-size: 10px; }
 .slider-value strong { color: var(--zh-text-theme); font: 700 11px var(--zh-font-number); }
 .element-hint, .assistant-tip { display: flex; gap: 8px; margin: 16px; padding: 12px; border-radius: var(--zh-radius8); background: var(--zh-background-weaken); }
