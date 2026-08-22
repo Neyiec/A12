@@ -10,7 +10,7 @@ import { useRoute, useRouter } from 'vue-router'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import { CircleCheck, CircleClose, DocumentChecked, Download, Files, FolderOpened, Refresh, Search, Timer, View, Warning } from '@element-plus/icons-vue'
 import { EXPORT_PAGE } from '../config/teacherPages.config.js'
-import { cancelExportTask, createExportPreviewUrl, createExportTask, downloadExportArtifact, getExportArtifact, getExportQualityReport, getExportTask, getProject, listExportTasks, precheckProjectExport, retryExportTask, saveProjectVersion } from '../apis/teacher'
+import { cancelExportTask, createExportPreviewUrl, createExportTask, downloadExportArtifact, getExportArtifact, getExportQualityReport, getExportTask, getProject, listExportTasks, listProjects, listProjectVersions, precheckProjectExport, retryExportTask, saveProjectVersion } from '../apis/teacher'
 
 const route = useRoute()
 const router = useRouter()
@@ -41,6 +41,10 @@ const previewUrl = ref('')
 const taskDetail = ref(null)
 const taskDetailRow = ref(null)
 const project = ref(null)
+const projectOptions = ref([])
+const versionOptions = ref([])
+const projectOptionsLoading = ref(false)
+const versionOptionsLoading = ref(false)
 
 const flow = ref({
   status: 'idle',
@@ -99,6 +103,38 @@ const formatSize = (value) => {
   if (value < 1024) return `${value} B`
   if (value < 1024 * 1024) return `${(value / 1024).toFixed(1)} KB`
   return `${(value / (1024 * 1024)).toFixed(1)} MB`
+}
+const projectTypeText = (type) => ({ ppt: 'PPT 课件', word: 'Word 教案', h5: '互动内容', mixed: '综合项目' }[type] || '教学项目')
+const projectStatusText = (status) => ({ draft: '草稿', editing: '编辑中', confirmed: '已确认', exported: '已导出' }[status] || status || '可用')
+
+const loadProjectOptions = async () => {
+  projectOptionsLoading.value = true
+  try {
+    const rows = recordsFrom(await listProjects({ page: 1, size: 100 }))
+      .filter((item) => item.status !== 'archived')
+      .sort((a, b) => new Date(b.updated_at || 0).getTime() - new Date(a.updated_at || 0).getTime())
+    if (project.value?.id && !rows.some((item) => String(item.id) === String(project.value.id))) rows.unshift(project.value)
+    projectOptions.value = rows
+  } catch (error) {
+    projectOptions.value = project.value?.id ? [project.value] : []
+    ElMessage.error(error?.message || '项目列表加载失败')
+  } finally {
+    projectOptionsLoading.value = false
+  }
+}
+
+const loadVersionOptions = async (id) => {
+  versionOptions.value = []
+  if (!id) return
+  versionOptionsLoading.value = true
+  try {
+    versionOptions.value = recordsFrom(await listProjectVersions(id, { page: 1, size: 100 }))
+      .sort((a, b) => Number(b.version_number) - Number(a.version_number))
+  } catch (error) {
+    ElMessage.error(error?.message || '快照版本加载失败')
+  } finally {
+    versionOptionsLoading.value = false
+  }
 }
 
 const normalizeTask = (task, context = {}) => {
@@ -450,15 +486,30 @@ const openPreview = async (row) => {
 const resetExportForm = () => {
   exportForm.value = {
     project_id: projectId.value || '',
-    export_type: showFlowTest.value ? testCase.exportType : 'package', snapshot_version: '', template_version: 'zh-teaching-v1', header_enabled: true, header_text: '', footer_text: '', teacher_notes: '', interaction_mode: showFlowTest.value ? 'package' : 'static', page_range: 'all',
+    export_type: showFlowTest.value ? testCase.exportType : 'package', snapshot_version: 'auto', template_version: 'zh-teaching-v1', header_enabled: true, header_text: '', footer_text: '', teacher_notes: '', interaction_mode: showFlowTest.value ? 'package' : 'static', page_range: 'all',
   }
+  versionOptions.value = []
   clearPrecheck()
 }
-const openExportDialog = () => { resetExportForm(); exportDialogVisible.value = true }
+const handleProjectSelection = async (id) => {
+  exportForm.value.snapshot_version = 'auto'
+  clearPrecheck()
+  await loadVersionOptions(id)
+}
+const openExportDialog = async () => {
+  resetExportForm()
+  exportDialogVisible.value = true
+  await loadProjectOptions()
+  if (exportForm.value.project_id) await loadVersionOptions(exportForm.value.project_id)
+}
 const runPrecheck = async () => {
-  if (!exportForm.value.project_id) return ElMessage.warning('请输入项目 ID')
+  if (!exportForm.value.project_id) return ElMessage.warning('请选择需要导出的项目')
   try {
-    const snapshotVersion = Number(exportForm.value.snapshot_version) || await saveImmutableSnapshot(exportForm.value.project_id)
+    let snapshotVersion = Number(exportForm.value.snapshot_version)
+    if (!Number.isFinite(snapshotVersion) || snapshotVersion <= 0) {
+      snapshotVersion = await saveImmutableSnapshot(exportForm.value.project_id)
+      await loadVersionOptions(exportForm.value.project_id)
+    }
     exportForm.value.snapshot_version = String(snapshotVersion)
     const config = buildExportConfig()
     precheck.value = unwrap(await precheckProjectExport(exportForm.value.project_id, {
@@ -473,9 +524,10 @@ const runPrecheck = async () => {
   } catch (error) { ElMessage.error(error?.message || '导出预检失败') }
 }
 const submitExport = async () => {
-  if (!exportForm.value.project_id) return ElMessage.warning('请输入项目 ID')
+  if (!exportForm.value.project_id) return ElMessage.warning('请选择需要导出的项目')
   try {
     const snapshotVersion = Number(exportForm.value.snapshot_version)
+    if (!Number.isFinite(snapshotVersion) || snapshotVersion <= 0) return ElMessage.warning('请先运行预检，系统会固化所选快照')
     const config = buildExportConfig()
     const signature = JSON.stringify({ projectId: exportForm.value.project_id, snapshotVersion, exportType: exportForm.value.export_type, config })
     if (!precheck.value?.passed || precheckSignature.value !== signature) return ElMessage.warning('请先对当前快照和导出配置运行预检')
@@ -659,11 +711,26 @@ onBeforeUnmount(() => clearTimeout(taskPollTimer))
       <el-empty v-if="!loading && !pageError && filteredTasks.length === 0" :image-size="64" description="还没有符合条件的导出任务" />
     </section>
 
-    <el-dialog v-model="exportDialogVisible" title="创建导出任务" width="460px" class="export-dialog">
+    <el-dialog v-model="exportDialogVisible" title="创建导出任务" width="520px" class="export-dialog">
       <el-form label-position="top">
-        <el-form-item label="项目 ID"><el-input v-model="exportForm.project_id" placeholder="请输入已保存项目的 ID" /></el-form-item>
+        <el-form-item label="选择项目">
+          <el-select v-model="exportForm.project_id" filterable :loading="projectOptionsLoading" placeholder="选择需要导出的教学项目" style="width: 100%" @change="handleProjectSelection">
+            <el-option v-for="item in projectOptions" :key="item.id" :label="item.project_name" :value="String(item.id)">
+              <div class="project-select-option"><strong>{{ item.project_name }}</strong><span>{{ projectTypeText(item.project_type) }} · {{ projectStatusText(item.status) }} · #{{ item.id }}</span></div>
+            </el-option>
+          </el-select>
+          <small class="form-field-hint">仅显示当前账号有权访问且未归档的项目。</small>
+        </el-form-item>
         <el-form-item label="导出格式"><el-select v-model="exportForm.export_type" style="width: 100%" @change="clearPrecheck"><el-option label="PowerPoint 课件（PPTX）" value="pptx" /><el-option label="Word 教案（DOCX）" value="word" /><el-option label="教学成果包（ZIP）" value="package" /></el-select></el-form-item>
-        <el-form-item label="快照版本"><el-input v-model="exportForm.snapshot_version" placeholder="运行预检时自动保存不可变快照" @input="clearPrecheck" /></el-form-item>
+        <el-form-item label="快照版本">
+          <el-select v-model="exportForm.snapshot_version" :disabled="!exportForm.project_id" :loading="versionOptionsLoading" placeholder="请先选择项目" style="width: 100%" @change="clearPrecheck">
+            <el-option label="基于当前内容创建新快照（推荐）" value="auto" />
+            <el-option v-for="item in versionOptions" :key="item.version_id" :label="`v${item.version_number} · ${item.description || '历史快照'}`" :value="String(item.version_number)">
+              <div class="version-select-option"><strong>v{{ item.version_number }} · {{ item.description || '历史快照' }}</strong><span>{{ formatDate(item.created_at) }}</span></div>
+            </el-option>
+          </el-select>
+          <small class="form-field-hint">可导出历史快照，或在预检时固化项目的当前内容。</small>
+        </el-form-item>
         <el-form-item label="模板版本"><el-input v-model="exportForm.template_version" placeholder="例如 zh-teaching-v1" @input="clearPrecheck" /></el-form-item>
         <el-form-item label="互动内容处理"><el-radio-group v-model="exportForm.interaction_mode" @change="clearPrecheck"><el-radio value="static">静态截图</el-radio><el-radio value="link">访问链接</el-radio><el-radio value="package">随成果包附带</el-radio></el-radio-group></el-form-item>
         <el-form-item label="页码范围"><el-input v-model="exportForm.page_range" placeholder="all 或 1-6" @input="clearPrecheck" /></el-form-item>
@@ -789,6 +856,10 @@ onBeforeUnmount(() => clearTimeout(taskPollTimer))
 .table-actions { justify-content: flex-start; gap: 2px; }
 .table-actions :deep(.el-button) { padding: 5px 4px; font-size: 12px; }
 .history-section > :deep(.el-empty) { padding: 42px 0; border: 1px dashed var(--zh-line-heavier); border-top: 0; border-radius: 0 0 var(--zh-radius12) var(--zh-radius12); }
+.form-field-hint { display: block; margin-top: 7px; color: var(--zh-text-caption); font-size: 11px; line-height: 1.5; }
+.project-select-option, .version-select-option { display: flex; min-width: 0; align-items: center; justify-content: space-between; gap: 20px; }
+.project-select-option strong, .version-select-option strong { overflow: hidden; color: var(--zh-text-primary); font-size: 13px; font-weight: 500; text-overflow: ellipsis; white-space: nowrap; }
+.project-select-option span, .version-select-option span { flex: none; color: var(--zh-text-caption); font-size: 11px; }
 .dialog-precheck { display: flex; align-items: center; justify-content: space-between; gap: 12px; padding: 10px 12px; border-radius: var(--zh-radius8); color: var(--zh-green); background: color-mix(in srgb, var(--zh-green) 10%, transparent); font-size: 12px; }
 .dialog-precheck.failed { color: var(--zh-red); background: var(--zh-danger-background); }
 .dialog-precheck span { color: inherit; opacity: .8; }
