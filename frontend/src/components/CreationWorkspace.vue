@@ -3,7 +3,7 @@ import { computed, onBeforeUnmount, onMounted, reactive, ref, watch } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { ElMessage } from 'element-plus'
 import { FullScreen, Plus, Promotion, VideoPlay } from '@element-plus/icons-vue'
-import { addProjectComponent, addProjectPermission, createAiRun, getAiRun, getProject, getProjectVersionDiff, listProjectVersions, restoreProjectVersion, reviseProjectWithAi, saveProjectVersion, sendAiSessionMessage, updateProjectComponent } from '../apis/teacher'
+import { addProjectComponent, addProjectPermission, createAiRun, createProject, getAiRun, getProject, getProjectVersionDiff, listProjectVersions, restoreProjectVersion, reviseProjectWithAi, saveProjectVersion, sendAiSessionMessage, updateProjectComponent } from '../apis/teacher'
 import IntentClarificationDialog from './IntentClarificationDialog.vue'
 import CreationWorkspaceToolbar from './CreationWorkspaceToolbar.vue'
 import WorkspacePropertiesPanel from './WorkspacePropertiesPanel.vue'
@@ -32,6 +32,7 @@ const versions = ref([])
 const versionDiff = ref(null)
 const permissionUserId = ref('')
 const autosaveState = ref('已保存')
+const testCaseBootstrapping = ref(false)
 let eventSource = null
 let runPollTimer = null
 let autosaveTimer = null
@@ -783,6 +784,47 @@ const loadTestCase = () => {
   selectedSlide.value = 0
 }
 
+/**
+ * 将社区测试案例真正落成项目和页面记录。
+ * 预览入口只负责提供可重复的测试数据，后续编辑与导出均使用项目 ID 访问 API。
+ */
+const bootstrapTestCaseProject = async () => {
+  if (!import.meta.env.DEV || route.query.preview !== '1' || !route.query.testCase || projectId.value) return
+  testCaseBootstrapping.value = true
+  autosaveState.value = '正在创建测试项目…'
+  try {
+    const created = unwrapResponse(await createProject({
+      project_name: String(route.query.templateTitle || '临时测试案例'),
+      project_type: 'mixed',
+      status: 'editing',
+    }))
+    const createdId = created?.id || created?.project_id
+    if (!createdId) throw new Error('项目创建接口未返回项目 ID')
+
+    for (const [index, slide] of slides.entries()) {
+      const saved = unwrapResponse(await addProjectComponent(createdId, {
+        project_id: Number(createdId),
+        page_order: index + 1,
+        page_type: index === 0 ? 'cover' : 'content',
+        page_title: slide.title,
+        page_content: JSON.stringify(slide),
+        components: JSON.stringify(slide.elements || []),
+      }))
+      slide.componentId = saved?.id || saved?.component_id
+    }
+
+    await router.replace({ query: { ...route.query, projectId: String(createdId) } })
+    project.value = { ...created, id: createdId }
+    autosaveState.value = '已保存 · 测试项目已落库'
+    WorkspaceMessage.success('测试项目已创建，页面内容已保存')
+  } catch (error) {
+    autosaveState.value = '创建失败'
+    WorkspaceMessage.error(error?.message || '测试项目创建失败')
+  } finally {
+    testCaseBootstrapping.value = false
+  }
+}
+
 const normalizeRunStatus = (status) => {
   const value = String(status || '').toLowerCase()
   if (['pending', 'queued', 'running', 'executing', 'processing', 'generating'].includes(value)) return 'running'
@@ -923,7 +965,13 @@ const handleWorkspaceKeydown = (event) => {
     copyElement()
   }
 }
-onMounted(() => { loadTestCase(); initializeSessionFlow(); loadProject(); window.addEventListener('keydown', handleWorkspaceKeydown) })
+onMounted(async () => {
+  loadTestCase()
+  initializeSessionFlow()
+  await bootstrapTestCaseProject()
+  await loadProject()
+  window.addEventListener('keydown', handleWorkspaceKeydown)
+})
 onBeforeUnmount(() => { eventSource?.close(); clearInterval(runPollTimer); stopElementDrag(); cancelCanvasPlacement(); workspaceMessageInstance?.close(); window.removeEventListener('keydown', handleWorkspaceKeydown) })
 const currentPagePayload = () => ({ project_id: Number(projectId.value) || undefined, page_order: selectedSlide.value + 1, page_type: selectedSlide.value === 0 ? 'cover' : 'content', page_title: current.value.title, page_content: JSON.stringify(current.value), components: JSON.stringify(current.value.elements || []) })
 const persistCurrentSlide = async () => {
@@ -947,11 +995,58 @@ const createVersion = async () => { if (!projectId.value) return; try { await sa
 const showVersionDiff = async (version) => { try { versionDiff.value = unwrapResponse(await getProjectVersionDiff(projectId.value, version.id || version.version_id)) } catch (error) { WorkspaceMessage.error(error?.message || '差异加载失败') } }
 const restoreVersion = async (version) => { try { await restoreProjectVersion(projectId.value, version.id || version.version_id); WorkspaceMessage.success('已恢复历史版本'); await loadVersions() } catch (error) { WorkspaceMessage.error(error?.message || '版本恢复失败') } }
 const grantPermission = async () => { const userId = Number(permissionUserId.value); if (!Number.isInteger(userId) || userId <= 0) return WorkspaceMessage.warning('请输入有效用户 ID'); try { await addProjectPermission(projectId.value, { user_id: userId }); permissionUserId.value = ''; permissionDialogVisible.value = false; WorkspaceMessage.success('协作者已添加') } catch (error) { WorkspaceMessage.error(error?.message || '授权失败') } }
-watch(slides, () => { if (!projectId.value) return; autosaveState.value = '待保存'; clearTimeout(autosaveTimer); autosaveTimer = setTimeout(persistCurrentSlide, 700) }, { deep: true })
+watch(slides, () => { if (!projectId.value || testCaseBootstrapping.value) return; autosaveState.value = '待保存'; clearTimeout(autosaveTimer); autosaveTimer = setTimeout(persistCurrentSlide, 700) }, { deep: true })
 watch(selectedSlide, () => { selectedElementId.value = null })
 onBeforeUnmount(() => clearTimeout(autosaveTimer))
+const workspaceFlowQuery = (targetProjectId = projectId.value) => ({
+  ...(route.query.preview ? { preview: '1' } : {}),
+  ...(route.query.testCase ? { testCase: route.query.testCase } : {}),
+  ...(route.query.templateTitle ? { templateTitle: route.query.templateTitle } : {}),
+  ...(targetProjectId ? { projectId: String(targetProjectId) } : {}),
+  // 导出中心消费此标记后会自动完成“快照 → 预检 → 创建任务”。
+  autoExport: '1',
+})
 const goHome = () => router.push({ path: '/main', query: route.query.preview ? { preview: '1' } : {} })
-const exportProject = () => router.push({ path: '/main/exports', query: route.query.preview ? { preview: '1' } : {} })
+const createWorkspaceProjectForExport = async () => {
+  autosaveState.value = '正在创建项目…'
+  const created = unwrapResponse(await createProject({
+    project_name: String(project.value?.project_name || route.query.templateTitle || `${current.value.title}教学课件`),
+    project_type: 'mixed',
+    status: 'editing',
+  }))
+  const createdId = created?.id || created?.project_id
+  if (!createdId) throw new Error('项目创建接口未返回项目 ID')
+
+  for (const [index, slide] of slides.entries()) {
+    const saved = unwrapResponse(await addProjectComponent(createdId, {
+      project_id: Number(createdId),
+      page_order: index + 1,
+      page_type: index === 0 ? 'cover' : 'content',
+      page_title: slide.title,
+      page_content: JSON.stringify(slide),
+      components: JSON.stringify(slide.elements || []),
+    }))
+    slide.componentId = saved?.id || saved?.component_id
+  }
+  project.value = { ...created, id: createdId }
+  autosaveState.value = '已保存 · 项目已落库'
+  return String(createdId)
+}
+const exportProject = async () => {
+  clearTimeout(autosaveTimer)
+  try {
+    if (import.meta.env.DEV) {
+      const { ensureDevelopmentPreviewSession } = await import('../utils/previewSession.js')
+      await ensureDevelopmentPreviewSession(true)
+    }
+    const targetProjectId = projectId.value ? String(projectId.value) : await createWorkspaceProjectForExport()
+    if (projectId.value) await persistCurrentSlide()
+    await router.push({ path: '/main/exports', query: workspaceFlowQuery(targetProjectId) })
+  } catch (error) {
+    autosaveState.value = '导出准备失败'
+    WorkspaceMessage.error(error?.message || '项目保存失败，无法创建导出任务')
+  }
+}
 const addSlide = () => { slides.push({ ...defaultSlide(slides.length + 1), eyebrow: '新建内容' }); selectedSlide.value = slides.length - 1 }
 const copySlide = () => { slides.splice(selectedSlide.value + 1, 0, { ...current.value, title: `${current.value.title} 副本`, elements: normalizeElements(current.value.elements) }); selectedSlide.value++ }
 const removeSlide = () => { if (slides.length === 1) return WorkspaceMessage.warning('课件至少保留一页'); slides.splice(selectedSlide.value, 1); selectedSlide.value = Math.max(0, selectedSlide.value - 1) }

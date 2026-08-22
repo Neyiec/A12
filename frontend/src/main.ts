@@ -37,9 +37,19 @@ async function bootstrap() {
   // 注册持久化插件，使 defineStore 中的 persist 选项生效
   pinia.use(piniaPluginPersistedstate)
 
+  app.use(pinia)
   app.use(router)
   app.use(ElementPlus)
-  app.use(pinia)
+
+  // 预览或工作台自动导出入口都先建立 mock 会话，避免跳转后因鉴权失败而静默没有任务。
+  if (import.meta.env.DEV && (window.location.hash.includes('preview=1') || window.location.hash.includes('autoExport=1'))) {
+    try {
+      const { ensureDevelopmentPreviewSession } = await import('./utils/previewSession.js')
+      await ensureDevelopmentPreviewSession()
+    } catch (error) {
+      console.error('[preview] mock 登录失败:', error)
+    }
+  }
 
   app.mount('#app')
 }

@@ -15,6 +15,9 @@ const service = axios.create({
   }
 })
 
+// 开发预览页使用组件内置的演示数据，不应因 mock 接口未登录而离开预览流程。
+const isDevelopmentPreview = () => import.meta.env.DEV && router.currentRoute.value?.query?.preview === '1'
+
 // 请求拦截器
 service.interceptors.request.use(
   config => {
@@ -40,7 +43,7 @@ service.interceptors.response.use(
     const code = response.data.code
 
     // 401 未授权 — 清除用户状态并跳转登录页，提前返回阻止业务层误处理
-    if (code == 401) {
+    if (code == 401 && !isDevelopmentPreview()) {
       const userStore = useUserStore()
       userStore.clearUser()
       router.replace('/login')
@@ -67,10 +70,12 @@ service.interceptors.response.use(
           break
         case 401: {
           console.error('未授权，请重新登录')
-          // 清除用户状态并使用 SPA 路由跳转，避免整页刷新
-          const userStore = useUserStore()
-          userStore.clearUser()
-          router.replace('/login')
+          if (!isDevelopmentPreview()) {
+            // 清除用户状态并使用 SPA 路由跳转，避免整页刷新
+            const userStore = useUserStore()
+            userStore.clearUser()
+            router.replace('/login')
+          }
           break
         }
         case 403:

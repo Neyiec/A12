@@ -254,17 +254,34 @@ export const projectHandlers = [
   // ========== API-31 保存版本 ==========
   http.post('/api/v1/projects/:id/versions', async ({ request, params }) => {
     const body = (await request.json()) as { description?: string }
+    const token = extractToken(request.headers.get('Authorization'))
+    const user = mockSessions.get(token || '')
+    if (!user) return HttpResponse.json(error(401, '请先登录'), { status: 401 })
+
     const projectId = parseInt(params.id as string, 10)
     const project = mockProjects.find((p) => p.id === projectId)
     if (!project) return HttpResponse.json(error(404, '项目不存在'), { status: 404 })
+    const permissions = JSON.parse(project.permissions || '[]') as number[]
+    if (project.user_id !== user.id && !permissions.includes(user.id)) {
+      return HttpResponse.json(error(403, '无权为该项目创建快照'), { status: 403 })
+    }
 
     project.current_version += 1
+    project.updated_at = now()
+    // 版本内容必须和后续编辑隔离；导出服务只读取这个不可变副本。
+    const snapshot = {
+      project: JSON.parse(JSON.stringify(project)),
+      pages: mockPages
+        .filter((page) => page.project_id === projectId)
+        .sort((a, b) => a.page_order - b.page_order)
+        .map((page) => JSON.parse(JSON.stringify(page))),
+    }
     const newVersion = {
       version_id: getNextVersionId(),
       project_id: projectId,
       version_number: project.current_version,
       description: body.description || '',
-      snapshot_data: JSON.stringify(project),
+      snapshot_data: JSON.stringify(snapshot),
       created_by: project.user_id,
       created_at: now(),
     }

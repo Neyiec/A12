@@ -19,10 +19,27 @@ export const RESOURCE_PAGE = {
   ],
 }
 
+/**
+ * 教师端可重复运行的全流程测试案例。
+ * 路径：社区复用 → 创作工作台 → 导出预检 → 生成进度 → 下载成果。
+ */
+export const END_TO_END_TEST_CASE = {
+  id: 'pythagorean-lab',
+  title: '勾股定理：从测量到证明',
+  projectName: '勾股定理互动教学课件',
+  subject: '八年级数学',
+  lessonType: '探究课',
+  description: '可编辑的课堂案例，覆盖情境导入、观察猜想、公式推导与互动练习。',
+  // 成果包会连同互动内容一起交付，符合导出中心对互动内容的处理要求。
+  exportType: 'package',
+  snapshotVersion: 1,
+  steps: ['从社区复用案例', '在创作工作台调整内容', '完成导出预检并生成', '下载并预览成果'],
+}
+
 export const COMMUNITY_PAGE = {
   featured: {
-    testCaseId: 'pythagorean-lab', type: '测试案例', title: '勾股定理：从测量到证明', description: '可直接载入创作工作台的临时测试案例，包含情境导入、观察猜想、公式推导与互动练习。',
-    author: '系统测试案例', meta: '八年级数学 · 探究课', uses: '可直接进入工作台', stage: '初中', subject: '数学', updatedAt: '2026-07-29',
+    testCaseId: END_TO_END_TEST_CASE.id, type: '测试案例', title: END_TO_END_TEST_CASE.title, description: END_TO_END_TEST_CASE.description,
+    author: '系统测试案例', meta: `${END_TO_END_TEST_CASE.subject} · ${END_TO_END_TEST_CASE.lessonType}`, uses: '可直接进入工作台', stage: '初中', subject: '数学', updatedAt: '2026-07-29',
   },
   cards: [
     { testCaseId: 'concept-question-chain', type: 'Skill', title: '概念课问题链生成器', subject: '通用', stage: '通用', author: '系统测试案例', uses: 0, tag: '问题链', updatedAt: '2026-07-29' },
@@ -33,16 +50,7 @@ export const COMMUNITY_PAGE = {
 }
 
 export const EXPORT_PAGE = {
-  stats: [
-    { label: '本月导出', value: '23', detail: '较上月 +4' },
-    { label: '可下载成果', value: '17', detail: '6 个文件将在 7 天内过期' },
-    { label: '平均生成时间', value: '1m 46s', detail: '最近 30 次任务' },
-  ],
-  tasks: [
-    { id: 'test-export-pythagorean', isTest: true, project: '勾股定理互动教学课件', format: 'HTML 互动课件', artifactType: 'html', version: 'v1.0', time: '今天 10:08', status: '成功', quality: '校验通过', size: '12 KB', subject: '八年级数学', pages: 6 },
-    { id: 'test-export-classical', isTest: true, project: '《背影》公开课教学设计', format: 'Markdown 教案', artifactType: 'md', version: 'v1.0', time: '今天 09:42', status: '成功', quality: '校验通过', size: '3 KB', subject: '八年级语文', pages: 4 },
-    { id: 'test-export-photosynthesis', isTest: true, project: '光合作用实验活动成果清单', format: 'JSON 成果清单', artifactType: 'json', version: 'v1.0', time: '昨天 16:20', status: '成功', quality: '校验通过', size: '2 KB', subject: '七年级生物', pages: 5 },
-  ],
+  testCase: END_TO_END_TEST_CASE,
 }
 
 export const WORKSPACE_PAGE = {

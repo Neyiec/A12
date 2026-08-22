@@ -29,6 +29,10 @@ const selectedShapeKind = ref('rectangle')
 const shapeMenuOpen = ref(false)
 const selectedShape = computed(() => shapeOptions.find((item) => item.shapeKind === selectedShapeKind.value) || shapeOptions[0])
 const projectLabel = computed(() => props.projectId || '演示')
+const activeToolLabel = computed(() => {
+  if (props.modelValue === 'shape') return selectedShape.value.label
+  return tools.find((item) => item.id === props.modelValue)?.label || ''
+})
 
 const selectTool = (tool) => {
   emit('update:modelValue', tool.id)
@@ -62,38 +66,44 @@ const exportProject = () => emit('export')
       </div>
     </div>
 
-    <nav class="editing-tools" aria-label="页面编辑工具">
-      <template v-for="tool in tools" :key="tool.id">
-        <el-dropdown v-if="tool.id === 'shape'" trigger="click" @command="selectShape" @visible-change="shapeMenuOpen = $event">
-          <WorkspaceToolButton
-            :icon="tool.icon"
-            :label="selectedShape.label"
-            :active="modelValue === tool.id"
-            :trailing-icon="ArrowDown"
-            aria-haspopup="menu"
-            :aria-expanded="shapeMenuOpen"
-          />
-          <template #dropdown>
-            <el-dropdown-menu class="shape-picker-menu">
-              <el-dropdown-item
-                v-for="shape in shapeOptions"
-                :key="shape.shapeKind"
-                :command="shape.shapeKind"
-                :class="{ 'is-shape-selected': selectedShapeKind === shape.shapeKind }"
-                :aria-current="selectedShapeKind === shape.shapeKind ? 'true' : undefined"
-              >
-                <span class="shape-picker-option">
-                  <i :class="['shape-picker-preview', `shape-picker-${shape.shapeKind}`]"></i>
-                  <span>{{ shape.label }}</span>
-                  <el-icon class="shape-picker-check"><Check v-if="selectedShapeKind === shape.shapeKind" /></el-icon>
-                </span>
-              </el-dropdown-item>
-            </el-dropdown-menu>
-          </template>
-        </el-dropdown>
-        <WorkspaceToolButton v-else :icon="tool.icon" :label="tool.label" :active="modelValue === tool.id" @click="selectTool(tool)" />
-      </template>
-    </nav>
+    <div class="editing-tool-area">
+      <nav class="editing-tools" aria-label="页面编辑工具">
+        <template v-for="tool in tools" :key="tool.id">
+          <el-dropdown v-if="tool.id === 'shape'" trigger="click" @command="selectShape" @visible-change="shapeMenuOpen = $event">
+            <WorkspaceToolButton
+              :icon="tool.icon"
+              :label="selectedShape.label"
+              :active="modelValue === tool.id"
+              :trailing-icon="ArrowDown"
+              aria-haspopup="menu"
+              :aria-expanded="shapeMenuOpen"
+            />
+            <template #dropdown>
+              <el-dropdown-menu class="shape-picker-menu">
+                <el-dropdown-item
+                  v-for="shape in shapeOptions"
+                  :key="shape.shapeKind"
+                  :command="shape.shapeKind"
+                  :class="{ 'is-shape-selected': selectedShapeKind === shape.shapeKind }"
+                  :aria-current="selectedShapeKind === shape.shapeKind ? 'true' : undefined"
+                >
+                  <span class="shape-picker-option">
+                    <svg v-if="shape.shapeKind === 'triangle'" class="shape-picker-preview shape-picker-triangle" viewBox="0 0 22 16" aria-hidden="true">
+                      <polygon points="11,1 21,15 1,15" fill="none" stroke="currentColor" stroke-width="2" stroke-linejoin="round" />
+                    </svg>
+                    <i v-else :class="['shape-picker-preview', `shape-picker-${shape.shapeKind}`]"></i>
+                    <span>{{ shape.label }}</span>
+                    <el-icon class="shape-picker-check"><Check v-if="selectedShapeKind === shape.shapeKind" /></el-icon>
+                  </span>
+                </el-dropdown-item>
+              </el-dropdown-menu>
+            </template>
+          </el-dropdown>
+          <WorkspaceToolButton v-else :icon="tool.icon" :label="tool.label" :active="modelValue === tool.id" @click="selectTool(tool)" />
+        </template>
+      </nav>
+      <span class="tool-placement-status" aria-live="polite">{{ activeToolLabel ? `正在放置${activeToolLabel}` : '选择元素后在画布中放置' }}</span>
+    </div>
 
     <div class="toolbar-actions">
       <el-button :icon="Monitor" @click="openPreview">预览</el-button>
@@ -156,6 +166,23 @@ const exportProject = () => emit('export')
   background: var(--zh-background-light);
 }
 
+.editing-tool-area {
+  display: grid;
+  justify-items: center;
+  gap: 2px;
+}
+
+.tool-placement-status {
+  max-width: 100%;
+  overflow: hidden;
+  color: var(--zh-text-caption);
+  font-size: 10px;
+  line-height: 1.1;
+  text-align: center;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
 .toolbar-actions {
   display: flex;
   justify-self: end;
@@ -189,14 +216,24 @@ const exportProject = () => emit('export')
 :global(.shape-picker-rounded) { border-radius: 7px; }
 :global(.shape-picker-circle) { border-radius: 50%; }
 :global(.shape-picker-diamond) { width: 14px; height: 14px; margin: 1px 4px; transform: rotate(45deg); }
-:global(.shape-picker-triangle) { border: 0; background: var(--zh-text-theme); clip-path: polygon(50% 0, 100% 100%, 0 100%); }
+:global(.shape-picker-triangle) {
+  display: block;
+  width: 22px;
+  height: 16px;
+  flex: none;
+  border: 0;
+  border-radius: 0;
+  background: transparent;
+  color: var(--zh-text-theme);
+  overflow: visible;
+}
 
 @media (max-width: 820px) {
   .toolbar {
     grid-template-columns: 1fr auto;
   }
 
-  .editing-tools {
+  .editing-tool-area {
     display: none;
   }
 }

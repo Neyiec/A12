@@ -1,567 +1,915 @@
 <!--
   [数据交互说明]
-  - 导入: 导出中心演示数据、Element Plus 组件
-  - 输出: 教学成果导出任务与历史文件页面
+  - 导入: 导出任务、项目、预检、质量报告与成果链接 API
+  - 输出: 真实导出任务创建、轮询、预览、下载与质量报告交互
+  - 说明: 开发预览入口也走 mock API，不生成本地演示任务或本地假文件
 -->
 <script setup>
 import { computed, onBeforeUnmount, onMounted, ref, watch } from 'vue'
-import { ElMessage } from 'element-plus'
-import { CircleCheck, Download, Files, Refresh, Search, Warning } from '@element-plus/icons-vue'
+import { useRoute, useRouter } from 'vue-router'
+import { ElMessage, ElMessageBox } from 'element-plus'
+import { CircleCheck, CircleClose, DocumentChecked, Download, Files, FolderOpened, Refresh, Search, Timer, View, Warning } from '@element-plus/icons-vue'
 import { EXPORT_PAGE } from '../config/teacherPages.config.js'
-import { cancelExportTask, createExportPreviewUrl, createExportTask, downloadExportArtifact, getExportArtifact, getExportQualityReport, getExportTask, listExportTasks, precheckProjectExport, retryExportTask } from '../apis/teacher'
+import { cancelExportTask, createExportPreviewUrl, createExportTask, downloadExportArtifact, getExportArtifact, getExportQualityReport, getExportTask, getProject, listExportTasks, listProjects, listProjectVersions, precheckProjectExport, retryExportTask, saveProjectVersion } from '../apis/teacher'
+
+const route = useRoute()
+const router = useRouter()
+const testCase = EXPORT_PAGE.testCase
+const isDevelopmentPreview = computed(() => import.meta.env.DEV && route.query.preview === '1')
+const showFlowTest = computed(() => isDevelopmentPreview.value && route.query.testCase === testCase.id)
+const projectId = computed(() => route.query.projectId ? String(route.query.projectId) : '')
+const autoExportRequested = computed(() => route.query.autoExport === '1')
+const autoExportFlowVisible = ref(false)
+const flowDetailVisible = ref(false)
+const showFlowPanel = computed(() => autoExportFlowVisible.value && flowDetailVisible.value)
 
 const keyword = ref('')
 const activeTab = ref('全部任务')
 const tabs = ['全部任务', '进行中', '已完成', '需要处理']
 const tasks = ref([])
 const loading = ref(false)
-const exportDialogVisible = ref(false), reportVisible = ref(false), previewVisible = ref(false)
-const exportForm = ref({ project_id: '', export_type: 'pdf', snapshot_version: '' })
-const precheck = ref(null), qualityReport = ref(null), previewUrl = ref('')
-const taskDetailVisible = ref(false), taskDetail = ref(null), taskDetailRow = ref(null)
-let localPreviewUrl = ''
-const normalizeTask = (task) => ({
-  id: task.id, project: task.project_name || task.project?.project_name || task.file_name || '未命名项目',
-  format: (task.export_type || task.format || '成果包').toUpperCase(), version: task.snapshot_version ? `v${task.snapshot_version}` : task.version || '—',
-  time: task.created_at || task.time || '刚刚', status: ({ queued: '排队中', generating: '生成中', checking: '校验中', success: '成功', partial: '部分成功', failed: '失败', cancelled: '已取消' })[task.status] || task.status || '排队中',
-  quality: task.quality_report ? '查看报告' : task.quality || '待校验', size: task.file_size_text || task.size || '—', fileStatus: task.file_status,
+const pageError = ref('')
+const exportDialogVisible = ref(false)
+const reportVisible = ref(false)
+const previewVisible = ref(false)
+const taskDetailVisible = ref(false)
+const exportForm = ref({ project_id: '', export_type: 'package', snapshot_version: '', template_version: 'zh-teaching-v1', header_enabled: true, header_text: '', footer_text: '', teacher_notes: '', interaction_mode: 'package', page_range: 'all' })
+const precheck = ref(null)
+const precheckSignature = ref('')
+const qualityReport = ref(null)
+const previewUrl = ref('')
+const taskDetail = ref(null)
+const taskDetailRow = ref(null)
+const project = ref(null)
+const projectOptions = ref([])
+const versionOptions = ref([])
+const projectOptionsLoading = ref(false)
+const versionOptionsLoading = ref(false)
+
+const flow = ref({
+  status: 'idle',
+  step: 0,
+  taskId: null,
+  progress: 0,
+  message: '正在准备项目快照和导出配置。',
+  error: '',
+  precheck: null,
+  downloaded: false,
 })
-const testTasks = EXPORT_PAGE.tasks.map((task) => ({ ...task }))
-const escapeHtml = (value) => String(value).replace(/[&<>"']/g, (character) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' })[character])
-const createTestArtifact = (row) => {
-  const lessons = {
-    'test-export-pythagorean': ['真实情境：如何测量梯子的斜边', '观察三组直角三角形边长', '拖动顶点验证 a²+b²=c²', '分层练习与课堂小结'],
-    'test-export-classical': ['学习目标与学情分析', '从父亲背影切入文本细读', '品味动作描写与情感变化', '迁移写作与课后反思'],
-    'test-export-photosynthesis': ['提出问题：绿叶在光下制造什么', '设置遮光与见光对照组', '脱色、滴加碘液并记录现象', '依据证据形成实验结论'],
-  }
-  const sections = lessons[row.id] || ['课程导入', '核心探究', '课堂练习', '学习评价']
-  if (row.artifactType === 'json') {
-    return {
-      content: JSON.stringify({ title: row.project, subject: row.subject, version: row.version, generatedAt: '2026-07-29', sections, assets: ['实验步骤卡', '观察记录表', '评价量规'], quality: { structure: 'passed', copyright: 'passed', sensitiveContent: 'passed' } }, null, 2),
-      mime: 'application/json;charset=utf-8',
-      extension: 'json',
-    }
-  }
-  if (row.artifactType === 'md') {
-    return {
-      content: `# ${row.project}\n\n- 学科：${row.subject}\n- 版本：${row.version}\n- 类型：前端测试成果\n\n## 教学目标\n\n引导学生在真实任务中提取关键信息，形成有依据的表达。\n\n## 教学流程\n\n${sections.map((section, index) => `${index + 1}. ${section}`).join('\n')}\n\n## 评价方式\n\n课堂观察、任务单与学生作品相结合。\n`,
-      mime: 'text/markdown;charset=utf-8',
-      extension: 'md',
-    }
-  }
-  return {
-    content: `<!doctype html><html lang="zh-CN"><head><meta charset="UTF-8"><meta name="viewport" content="width=device-width"><title>${escapeHtml(row.project)}</title><style>body{margin:0;font-family:"Microsoft YaHei",sans-serif;color:#172033;background:#eef4ff}.deck{width:min(920px,calc(100% - 40px));margin:40px auto}.cover,.section{padding:48px;border-radius:20px;background:#fff;box-shadow:0 16px 42px #1d4ed81f}.cover{color:#fff;background:#2563eb}.cover small{opacity:.72}.cover h1{margin:16px 0 8px;font-size:42px}.section{margin-top:18px}.section span{color:#2563eb;font-weight:700}.section h2{margin:10px 0}.section p{color:#64748b;line-height:1.8}</style></head><body><main class="deck"><section class="cover"><small>${escapeHtml(row.subject)} · ${escapeHtml(row.version)}</small><h1>${escapeHtml(row.project)}</h1><p>可预览、可下载的前端测试成果</p></section>${sections.map((section, index) => `<section class="section"><span>0${index + 1}</span><h2>${escapeHtml(section)}</h2><p>围绕学习任务组织观察、探究、表达与评价活动，教师可根据课堂实际继续编辑。</p></section>`).join('')}</main></body></html>`,
-    mime: 'text/html;charset=utf-8',
-    extension: 'html',
-  }
+
+let taskPollTimer = null
+let activePoll = false
+let autoExportStarted = false
+
+const flowSteps = [
+  { title: '项目已保存', detail: '当前工作台内容已写入项目' },
+  { title: '快照已固化', detail: '导出内容绑定不可变项目版本' },
+  { title: '导出前校验', detail: '检查结构、素材与格式兼容性' },
+  { title: '文件生成', detail: '异步生成成果并执行质量检查' },
+  { title: '成果交付', detail: '完成后可预览、查看报告和下载' },
+]
+
+const statusText = {
+  queued: '排队中',
+  generating: '生成中',
+  checking: '校验中',
+  success: '成功',
+  partial: '部分成功',
+  failed: '失败',
+  cancelled: '已取消',
 }
-const createTestReport = (row) => ({
-  成果名称: row.project,
-  测试标识: '前端本地测试成果',
-  校验结论: '通过',
-  总分: 96,
-  检查项: [
-    { 名称: '页面结构完整', 结果: '通过' },
-    { 名称: '素材授权有效', 结果: '通过' },
-    { 名称: '敏感信息检查', 结果: '通过' },
-    { 名称: '导出文件可读取', 结果: '通过' },
-  ],
-})
-const loadTasks = async () => {
-  loading.value = true
+const runningStatuses = ['queued', 'generating', 'checking']
+const completedStatuses = ['success', 'partial']
+
+const unwrap = (response) => response?.data || response
+const recordsFrom = (response) => {
+  const data = unwrap(response)
+  return data?.records || data?.list || data?.items || []
+}
+const statusTagType = (status) => ({ 成功: 'success', 部分成功: 'warning', 失败: 'danger', 已取消: 'info' }[status] || 'info')
+const isRunning = (row) => runningStatuses.includes(row?.apiStatus)
+const canDownload = (row) => completedStatuses.includes(row?.apiStatus) && row?.fileStatus !== 'expired'
+const safeFilename = (value) => String(value || 'export').replace(/[\\/:*?"<>|]/g, '-').replace(/\s+/g, ' ').trim()
+const exportExtension = (type) => ({ pptx: 'pptx', word: 'docx', package: 'zip' }[String(type)] || 'zip')
+const formatDate = (value) => {
+  if (!value) return '刚刚'
+  const date = new Date(value)
+  if (Number.isNaN(date.getTime())) return String(value)
+  return new Intl.DateTimeFormat('zh-CN', { month: 'numeric', day: 'numeric', hour: '2-digit', minute: '2-digit' }).format(date)
+}
+const formatSize = (value) => {
+  if (!value && value !== 0) return '—'
+  if (typeof value === 'string') return value
+  if (value < 1024) return `${value} B`
+  if (value < 1024 * 1024) return `${(value / 1024).toFixed(1)} KB`
+  return `${(value / (1024 * 1024)).toFixed(1)} MB`
+}
+const projectTypeText = (type) => ({ ppt: 'PPT 课件', word: 'Word 教案', h5: '互动内容', mixed: '综合项目' }[type] || '教学项目')
+const projectStatusText = (status) => ({ draft: '草稿', editing: '编辑中', confirmed: '已确认', exported: '已导出' }[status] || status || '可用')
+
+const loadProjectOptions = async () => {
+  projectOptionsLoading.value = true
   try {
-    const status = activeTab.value === '进行中' ? 'generating' : activeTab.value === '已完成' ? 'success' : undefined
-    const result = await listExportTasks({ status, page: 1, size: 50 })
-    const records = result?.data?.records || result?.data?.list || result?.data?.items || result?.records || []
-    tasks.value = [...testTasks, ...records.map(normalizeTask)]
-  } catch { tasks.value = [...testTasks] } finally { loading.value = false }
+    const rows = recordsFrom(await listProjects({ page: 1, size: 100 }))
+      .filter((item) => item.status !== 'archived')
+      .sort((a, b) => new Date(b.updated_at || 0).getTime() - new Date(a.updated_at || 0).getTime())
+    if (project.value?.id && !rows.some((item) => String(item.id) === String(project.value.id))) rows.unshift(project.value)
+    projectOptions.value = rows
+  } catch (error) {
+    projectOptions.value = project.value?.id ? [project.value] : []
+    ElMessage.error(error?.message || '项目列表加载失败')
+  } finally {
+    projectOptionsLoading.value = false
+  }
 }
 
-/** 根据当前状态页签和关键词过滤导出任务。 */
+const loadVersionOptions = async (id) => {
+  versionOptions.value = []
+  if (!id) return
+  versionOptionsLoading.value = true
+  try {
+    versionOptions.value = recordsFrom(await listProjectVersions(id, { page: 1, size: 100 }))
+      .sort((a, b) => Number(b.version_number) - Number(a.version_number))
+  } catch (error) {
+    ElMessage.error(error?.message || '快照版本加载失败')
+  } finally {
+    versionOptionsLoading.value = false
+  }
+}
+
+const normalizeTask = (task, context = {}) => {
+  const apiStatus = task?.status || 'queued'
+  const projectName = task?.project_name || task?.project?.project_name || context.project_name || (String(task?.project_id) === projectId.value ? testCase.projectName : '')
+  const subject = task?.subject || task?.project?.subject || context.subject || (String(task?.project_id) === projectId.value ? testCase.subject : '—')
+  return {
+    ...task,
+    id: task?.id,
+    project: projectName || task?.file_name || '未命名项目',
+    format: ({ pptx: 'PPTX', word: 'Word', package: '成果包' }[String(task?.export_type || '').toLowerCase()] || task?.format || '成果包'),
+    version: task?.snapshot_version ? `v${task.snapshot_version}` : task?.version || '—',
+    time: formatDate(task?.created_at || task?.time),
+    apiStatus,
+    status: statusText[apiStatus] || apiStatus || '排队中',
+    progress: Number.isFinite(Number(task?.progress)) ? Math.max(0, Math.min(100, Number(task.progress))) : apiStatus === 'success' ? 100 : 0,
+    quality: task?.quality_report ? '查看报告' : task?.quality || (apiStatus === 'success' ? '待查看' : '待校验'),
+    size: formatSize(task?.file_size ?? task?.file_size_text ?? task?.size),
+    fileStatus: task?.file_status,
+    subject,
+    pages: task?.page_count || task?.pages || context.page_count || '—',
+    stage: task?.stage || task?.status_message || ({ queued: '等待导出服务接管', generating: '正在生成成果文件', checking: '正在进行导出校验', success: '成果文件已生成' }[apiStatus] || '—'),
+    source: task?.data_source || '导出服务',
+  }
+}
+
+const mergeTask = (row) => {
+  const index = tasks.value.findIndex((task) => String(task.id) === String(row.id))
+  if (index === -1) tasks.value = [row, ...tasks.value]
+  else tasks.value.splice(index, 1, row)
+}
+
+const loadProjectContext = async () => {
+  if (!projectId.value) return
+  try {
+    project.value = unwrap(await getProject(projectId.value))
+    if (showFlowPanel.value) {
+      flow.value.step = 1
+      flow.value.message = `项目“${project.value?.project_name || testCase.projectName}”已准备，等待导出。`
+    }
+  } catch (error) {
+    project.value = null
+    if (showFlowPanel.value) flow.value.error = error?.message || '项目加载失败，无法创建导出任务'
+  }
+}
+
+const loadTasks = async () => {
+  loading.value = true
+  pageError.value = ''
+  try {
+    // 预览入口也调用分页接口，保证任务列表来自服务端内存状态。
+    const result = await listExportTasks({ page: 1, size: 50 })
+    const context = project.value || {}
+    tasks.value = recordsFrom(result).map((task) => normalizeTask(task, context))
+    const flowTask = flow.value.taskId && tasks.value.find((row) => String(row.id) === String(flow.value.taskId))
+    if (flowTask) {
+      flow.value.progress = flowTask.progress
+      flow.value.status = flowTask.apiStatus
+    }
+  } catch (error) {
+    pageError.value = error?.message || '导出任务加载失败'
+    tasks.value = []
+  } finally {
+    loading.value = false
+    scheduleTaskPolling()
+  }
+}
+
+const scheduleTaskPolling = () => {
+  clearTimeout(taskPollTimer)
+  if (!tasks.value.some(isRunning)) return
+  taskPollTimer = window.setTimeout(async () => {
+    await loadTasks()
+  }, 900)
+}
+
+const pollTask = async (taskId) => {
+  const timeoutAt = Date.now() + 20_000
+  activePoll = true
+  try {
+    while (Date.now() < timeoutAt) {
+      const latest = normalizeTask(unwrap(await getExportTask(taskId)), project.value || {})
+      mergeTask(latest)
+      flow.value.progress = latest.progress
+      flow.value.status = latest.apiStatus
+      flow.value.message = latest.stage
+      if (latest.apiStatus === 'success' || latest.apiStatus === 'partial') return latest
+      if (['failed', 'cancelled'].includes(latest.apiStatus)) throw new Error(latest.error_msg || `导出任务${latest.status}`)
+      await new Promise((resolve) => window.setTimeout(resolve, 400))
+    }
+    throw new Error('导出任务轮询超时，请查看任务列表')
+  } finally {
+    activePoll = false
+    scheduleTaskPolling()
+  }
+}
+
+const flowStepState = (index) => {
+  if (flow.value.downloaded || flow.value.step > index) return 'complete'
+  if (flow.value.step === index) return 'current'
+  return ''
+}
+
+const buildExportConfig = (extra = {}) => ({
+  template_version: exportForm.value.template_version.trim() || 'zh-teaching-v1',
+  header_footer: { enabled: Boolean(exportForm.value.header_enabled), header: exportForm.value.header_text.trim(), footer: exportForm.value.footer_text.trim() },
+  teacher_notes: exportForm.value.teacher_notes.trim(),
+  interaction_mode: exportForm.value.interaction_mode,
+  page_range: exportForm.value.page_range.trim() || 'all',
+  ...extra,
+})
+const clearPrecheck = () => { precheck.value = null; precheckSignature.value = '' }
+const saveImmutableSnapshot = async (id, description = '导出前自动固化快照') => {
+  const saved = unwrap(await saveProjectVersion(id, { description }))
+  const version = Number(saved?.version_number)
+  if (!Number.isFinite(version) || version <= 0) throw new Error('项目版本接口未返回有效快照版本')
+  if (String(id) === projectId.value) project.value = { ...(project.value || {}), current_version: version }
+  return version
+}
+
+const runFullFlow = async () => {
+  if (!projectId.value) {
+    flow.value.error = '项目尚未保存，无法创建导出任务。'
+    return
+  }
+  if (activePoll) return
+
+  flow.value = { ...flow.value, status: 'snapshotting', step: 1, taskId: null, progress: 0, error: '', precheck: null, downloaded: false, message: '正在保存不可变项目快照…' }
+  try {
+    const snapshotVersion = await saveImmutableSnapshot(projectId.value, '社区全流程测试案例导出快照')
+    const exportType = showFlowTest.value ? testCase.exportType : 'package'
+    const config = buildExportConfig({ source: showFlowTest.value ? 'community-test-case' : 'workspace-export', ...(showFlowTest.value ? { test_case_id: testCase.id } : {}) })
+    flow.value.step = 2
+    flow.value.status = 'prechecking'
+    flow.value.message = `快照 v${snapshotVersion} 已固化，正在调用导出预检接口…`
+    const check = unwrap(await precheckProjectExport(projectId.value, {
+      export_type: exportType,
+      snapshot_version: snapshotVersion,
+      config,
+      ...(showFlowTest.value ? { test_case_id: testCase.id } : {}),
+    }))
+    flow.value.precheck = check
+    if (!check?.passed) throw new Error(check?.errors?.[0]?.message || '导出预检未通过')
+
+    flow.value.step = 3
+    flow.value.status = 'queued'
+    flow.value.message = '预检通过，正在创建导出任务…'
+    const created = unwrap(await createExportTask({
+      project_id: Number(projectId.value),
+      export_type: exportType,
+      snapshot_version: snapshotVersion,
+      ...(showFlowTest.value ? { test_case_id: testCase.id } : {}),
+      precheck_confirmed: true,
+      config: JSON.stringify(config),
+    }))
+    if (!created?.id) throw new Error('导出任务接口未返回任务 ID')
+    flow.value.taskId = created.id
+    mergeTask(normalizeTask(created, project.value || {}))
+    const completed = await pollTask(created.id)
+    flow.value.step = 5
+    flow.value.status = completed.apiStatus
+    flow.value.progress = completed.progress
+    flow.value.message = '导出任务已完成，可继续打开质量报告、在线预览或下载成果。'
+    await loadTasks()
+    ElMessage.success('导出任务已创建并完成')
+  } catch (error) {
+    flow.value.status = 'failed'
+    flow.value.error = error?.message || '导出流程执行失败'
+    flow.value.message = '流程未完成，请根据错误信息处理后重试。'
+    flowDetailVisible.value = true
+    await loadTasks()
+    ElMessage.error(flow.value.error)
+  }
+}
+
 const filteredTasks = computed(() => {
   const normalizedKeyword = keyword.value.trim().toLowerCase()
   return tasks.value.filter((task) => {
-    const matchesKeyword = !normalizedKeyword || [task.project, task.format, task.version]
-      .some((value) => value.toLowerCase().includes(normalizedKeyword))
+    const matchesKeyword = !normalizedKeyword || [task.project, task.format, task.version, task.subject]
+      .some((value) => String(value ?? '').toLowerCase().includes(normalizedKeyword))
     const matchesTab = activeTab.value === '全部任务'
-      || activeTab.value === '进行中' && ['排队中', '生成中', '校验中'].includes(task.status)
-      || activeTab.value === '已完成' && ['成功', '部分成功'].includes(task.status)
-      || activeTab.value === '需要处理' && ['部分成功', '已过期', '失败'].includes(task.status)
+      || activeTab.value === '进行中' && runningStatuses.includes(task.apiStatus)
+      || activeTab.value === '已完成' && completedStatuses.includes(task.apiStatus)
+      || activeTab.value === '需要处理' && ['partial', 'failed', 'cancelled'].includes(task.apiStatus)
     return matchesKeyword && matchesTab
   })
 })
 
-const detailValue = (...keys) => {
-  const source = taskDetail.value || {}
-  for (const key of keys) {
-    const value = source[key]
-    if (value !== undefined && value !== null && value !== '') return value
-  }
-  return '—'
+const stats = computed(() => {
+  const completed = tasks.value.filter((task) => completedStatuses.includes(task.apiStatus))
+  const durations = completed.map((task) => {
+    if (!task.created_at || !task.completed_at) return 0
+    return Math.max(0, new Date(task.completed_at).getTime() - new Date(task.created_at).getTime())
+  }).filter(Boolean)
+  const averageSeconds = durations.length ? Math.round(durations.reduce((sum, value) => sum + value, 0) / durations.length / 1000) : 0
+  const average = averageSeconds ? `${Math.floor(averageSeconds / 60)}m ${averageSeconds % 60}s` : '—'
+  return [
+    { label: '导出任务', value: String(tasks.value.length), detail: '来自当前教师账号的导出记录' },
+    { label: '可下载成果', value: String(completed.filter(canDownload).length), detail: '由服务端任务状态决定' },
+    { label: '平均生成时间', value: average, detail: durations.length ? `基于最近 ${durations.length} 个已完成任务` : '完成任务后自动计算' },
+  ]
+})
+
+const flowTask = computed(() => flow.value.taskId ? tasks.value.find((row) => String(row.id) === String(flow.value.taskId)) : null)
+const activeTaskView = computed(() => tasks.value.find(isRunning) || null)
+const primaryTaskView = computed(() => flowTask.value || activeTaskView.value)
+const latestCompletedTask = computed(() => tasks.value.find((task) => completedStatuses.includes(task.apiStatus)) || null)
+const activeTaskLabel = computed(() => flowTask.value ? '本次导出' : primaryTaskView.value?.status || '暂无进行中的任务')
+const activeTaskEstimate = computed(() => primaryTaskView.value ? `当前进度 ${primaryTaskView.value.progress}%` : '可从当前项目或已有项目创建导出任务')
+const flowStatusLabel = computed(() => ({
+  idle: '准备中', snapshotting: '正在固化快照', prechecking: '正在预检', queued: '等待生成',
+  generating: '正在生成', checking: '质量校验中', success: '已完成', partial: '部分完成',
+  failed: '需要处理', cancelled: '已取消',
+}[flow.value.status] || '处理中'))
+const flowStatusType = computed(() => ({ success: 'success', partial: 'warning', failed: 'danger', cancelled: 'info' }[flow.value.status] || 'primary'))
+
+const openTaskDetail = async (row) => {
+  taskDetailRow.value = row
+  taskDetail.value = row?.id ? unwrap(await getExportTask(row.id)) : row
+  taskDetailVisible.value = true
 }
 
 const taskDetailView = computed(() => {
   const row = taskDetailRow.value || {}
-  const rawStatus = detailValue('状态', 'status')
-  const statusMap = { queued: '排队中', generating: '生成中', checking: '校验中', success: '成功', partial: '部分成功', failed: '失败', cancelled: '已取消' }
-  const actions = detailValue('可用操作', 'available_actions')
+  const raw = taskDetail.value || {}
   return {
-    title: detailValue('成果名称', 'project_name', 'file_name') === '—' ? row.project || '未命名成果' : detailValue('成果名称', 'project_name', 'file_name'),
-    format: detailValue('成果类型', 'export_type', 'format') === '—' ? row.format || '成果包' : String(detailValue('成果类型', 'export_type', 'format')).toUpperCase(),
-    subject: detailValue('学科', 'subject'),
-    version: detailValue('版本', 'snapshot_version', 'version') === '—' ? row.version || '—' : detailValue('版本', 'snapshot_version', 'version'),
-    status: rawStatus === '—' ? row.status || '未知' : statusMap[rawStatus] || rawStatus,
-    pages: detailValue('页面或章节数', 'page_count', 'pages', 'chapter_count'),
-    createdAt: detailValue('创建时间', 'created_at', 'create_at'),
-    size: detailValue('文件大小', 'file_size_text', 'size'),
-    source: detailValue('数据来源', 'data_source', 'source'),
-    actions: Array.isArray(actions) ? actions : actions === '—' ? [] : [actions],
+    title: raw.project_name || raw.file_name || row.project || '未命名成果',
+    format: String(raw.export_type || row.format || '成果包').toUpperCase(),
+    version: raw.snapshot_version ? `v${raw.snapshot_version}` : row.version || '—',
+    status: statusText[raw.status] || row.status || '未知',
+    progress: Number(raw.progress ?? row.progress ?? 0),
+    stage: raw.stage || raw.status_message || row.stage || '—',
+    createdAt: formatDate(raw.created_at || row.created_at || row.time),
+    completedAt: formatDate(raw.completed_at),
+    size: formatSize(raw.file_size ?? row.size),
+    projectId: raw.project_id || row.project_id || '—',
+    source: raw.test_case_id ? '社区案例' : row.source,
   }
 })
-
-const taskDetailStatusType = computed(() => ({
-  成功: 'success',
-  部分成功: 'warning',
-  失败: 'danger',
-  已取消: 'info',
-})[taskDetailView.value.status] || 'info')
 
 const parseReportValue = (value) => {
   if (typeof value !== 'string') return value
   try { return JSON.parse(value) } catch { return value }
 }
-
 const qualityReportView = computed(() => {
   const outer = qualityReport.value || {}
   const nested = parseReportValue(outer.quality_report)
   const source = nested && typeof nested === 'object' ? nested : outer
-  const pick = (...keys) => {
-    for (const key of keys) {
-      const value = source[key]
-      if (value !== undefined && value !== null && value !== '') return value
-    }
-    return '—'
-  }
-  const rawItems = pick('检查项', 'checks', 'items', 'results')
+  const read = (...keys) => keys.map((key) => source[key]).find((value) => value !== undefined && value !== null && value !== '') ?? '—'
+  const rawItems = read('检查项', 'checks', 'items', 'results')
   const items = (Array.isArray(rawItems) ? rawItems : []).map((item, index) => ({
     name: item?.名称 || item?.name || item?.title || `检查项 ${index + 1}`,
     result: item?.结果 || item?.result || item?.status || '待确认',
     detail: item?.说明 || item?.detail || item?.message || '',
   }))
-  const rawScore = Number(pick('总分', 'score', 'total_score'))
-  const score = Number.isFinite(rawScore) ? Math.min(100, Math.max(0, rawScore)) : 0
+  const rawScore = Number(read('总分', 'score', 'total_score'))
   return {
-    title: pick('成果名称', 'project_name', 'title') === '—' ? taskDetailRow.value?.project || '未命名成果' : pick('成果名称', 'project_name', 'title'),
-    marker: pick('测试标识', 'test_marker', 'report_id'),
-    conclusion: pick('校验结论', 'conclusion', 'status'),
-    score,
+    title: read('成果名称', 'project_name', 'title') === '—' ? taskDetailRow.value?.project || '未命名成果' : read('成果名称', 'project_name', 'title'),
+    marker: read('report_id'),
+    conclusion: read('校验结论', 'conclusion', 'status'),
+    score: Number.isFinite(rawScore) ? Math.max(0, Math.min(100, rawScore)) : 0,
     items,
   }
 })
-
-const reportPassed = (result) => ['通过', 'passed', 'pass', 'success', 'ok'].includes(String(result).toLowerCase())
+const reportPassed = (value) => ['通过', 'passed', 'pass', 'success', 'ok'].includes(String(value).toLowerCase())
 const qualityScoreStatus = computed(() => qualityReportView.value.score >= 80 ? 'success' : qualityReportView.value.score >= 60 ? 'warning' : 'exception')
-const qualityTagType = computed(() => {
-  const conclusion = String(qualityReportView.value.conclusion).toLowerCase()
-  if (conclusion.includes('失败') || conclusion.includes('不通过') || conclusion.includes('failed')) return 'danger'
-  if (conclusion.includes('需处理') || conclusion.includes('警告') || conclusion.includes('warning')) return 'warning'
-  return qualityReportView.value.score >= 80 ? 'success' : qualityReportView.value.score >= 60 ? 'warning' : 'danger'
+const qualityTagType = computed(() => qualityReportView.value.score >= 80 ? 'success' : qualityReportView.value.score >= 60 ? 'warning' : 'danger')
+
+const openQualityReport = async (row) => {
+  if (!row?.id) return ElMessage.info('当前任务还没有可读取的质量报告')
+  try {
+    qualityReport.value = unwrap(await getExportQualityReport(row.id))
+    taskDetailRow.value = row
+    reportVisible.value = true
+  } catch (error) {
+    ElMessage.error(error?.message || '质量报告加载失败')
+  }
+}
+const openLatestQualityReport = () => {
+  if (!latestCompletedTask.value) return ElMessage.info('完成一次导出后，这里会显示真实质量报告')
+  openQualityReport(latestCompletedTask.value)
+}
+
+const triggerDownload = (url, filename) => {
+  if (!url) return false
+  const anchor = document.createElement('a')
+  anchor.href = url
+  anchor.download = filename
+  anchor.rel = 'noopener'
+  anchor.target = url.startsWith('data:') || url.startsWith('blob:') ? '_self' : '_blank'
+  document.body.appendChild(anchor)
+  anchor.click()
+  anchor.remove()
+  return true
+}
+
+const download = async (row) => {
+  if (!row?.id) return ElMessage.info('当前任务暂不支持下载')
+  if (!canDownload(row)) return ElMessage.info('成果正在生成，请稍候再下载')
+  try {
+    const result = unwrap(await downloadExportArtifact(row.id))
+    const url = result?.download_url
+    if (!triggerDownload(url, `${safeFilename(row.project)}-${safeFilename(row.version)}.${exportExtension(row.export_type)}`)) return ElMessage.warning('服务端暂未返回下载链接')
+    if (autoExportFlowVisible.value && String(row.id) === String(flow.value.taskId)) {
+      flow.value.downloaded = true
+      flow.value.step = 5
+      flow.value.message = '成果文件已交付，可继续在任务列表中查看和下载。'
+    }
+    ElMessage.success('成果下载已开始')
+  } catch (error) {
+    if (row.fileStatus === 'expired' || row.status === '已过期') {
+      await retry(row)
+      return
+    }
+    ElMessage.error(error?.message || '下载链接获取失败')
+  }
+}
+
+const retry = async (row) => {
+  if (!row?.id) return
+  try {
+    await retryExportTask(row.id)
+    ElMessage.success('已重新提交生成任务')
+    await loadTasks()
+  } catch (error) { ElMessage.error(error?.message || '重试失败') }
+}
+
+const cancel = async (row) => {
+  if (!row?.id) return
+  try {
+    await cancelExportTask(row.id)
+    ElMessage.success('任务已取消')
+    await loadTasks()
+  } catch (error) { ElMessage.error(error?.message || '取消任务失败') }
+}
+
+const openPreview = async (row) => {
+  if (!canDownload(row)) return ElMessage.info('成果生成完成后才可预览')
+  try {
+    const artifact = unwrap(await getExportArtifact(row.id))
+    const preview = unwrap(await createExportPreviewUrl(row.id))
+    previewUrl.value = preview?.preview_url || artifact?.preview_url || artifact?.download_url || ''
+    if (!previewUrl.value) return ElMessage.warning('服务端暂未返回预览链接')
+    taskDetailRow.value = row
+    previewVisible.value = true
+  } catch (error) { ElMessage.error(error?.message || '预览链接获取失败') }
+}
+
+const resetExportForm = () => {
+  exportForm.value = {
+    project_id: projectId.value || '',
+    export_type: showFlowTest.value ? testCase.exportType : 'package', snapshot_version: 'auto', template_version: 'zh-teaching-v1', header_enabled: true, header_text: '', footer_text: '', teacher_notes: '', interaction_mode: showFlowTest.value ? 'package' : 'static', page_range: 'all',
+  }
+  versionOptions.value = []
+  clearPrecheck()
+}
+const handleProjectSelection = async (id) => {
+  exportForm.value.snapshot_version = 'auto'
+  clearPrecheck()
+  await loadVersionOptions(id)
+}
+const openExportDialog = async () => {
+  resetExportForm()
+  exportDialogVisible.value = true
+  await loadProjectOptions()
+  if (exportForm.value.project_id) await loadVersionOptions(exportForm.value.project_id)
+}
+const runPrecheck = async () => {
+  if (!exportForm.value.project_id) return ElMessage.warning('请选择需要导出的项目')
+  try {
+    let snapshotVersion = Number(exportForm.value.snapshot_version)
+    if (!Number.isFinite(snapshotVersion) || snapshotVersion <= 0) {
+      snapshotVersion = await saveImmutableSnapshot(exportForm.value.project_id)
+      await loadVersionOptions(exportForm.value.project_id)
+    }
+    exportForm.value.snapshot_version = String(snapshotVersion)
+    const config = buildExportConfig()
+    precheck.value = unwrap(await precheckProjectExport(exportForm.value.project_id, {
+      export_type: exportForm.value.export_type,
+      snapshot_version: snapshotVersion,
+      config,
+      ...(showFlowTest.value ? { test_case_id: testCase.id } : {}),
+    }))
+    precheckSignature.value = JSON.stringify({ projectId: exportForm.value.project_id, snapshotVersion, exportType: exportForm.value.export_type, config })
+    if (precheck.value?.passed) ElMessage.success(precheck.value.warnings?.length ? '导出预检通过，存在需确认的警告' : '导出预检通过')
+    else ElMessage.warning('导出预检未通过，请处理错误项')
+  } catch (error) { ElMessage.error(error?.message || '导出预检失败') }
+}
+const submitExport = async () => {
+  if (!exportForm.value.project_id) return ElMessage.warning('请选择需要导出的项目')
+  try {
+    const snapshotVersion = Number(exportForm.value.snapshot_version)
+    if (!Number.isFinite(snapshotVersion) || snapshotVersion <= 0) return ElMessage.warning('请先运行预检，系统会固化所选快照')
+    const config = buildExportConfig()
+    const signature = JSON.stringify({ projectId: exportForm.value.project_id, snapshotVersion, exportType: exportForm.value.export_type, config })
+    if (!precheck.value?.passed || precheckSignature.value !== signature) return ElMessage.warning('请先对当前快照和导出配置运行预检')
+    if (precheck.value.warnings?.length) {
+      await ElMessageBox.confirm('预检存在警告，继续后将按当前导出配置处理。是否确认创建任务？', '确认导出警告', { type: 'warning', confirmButtonText: '确认继续', cancelButtonText: '返回修改' })
+    }
+    const created = unwrap(await createExportTask({
+      ...exportForm.value,
+      project_id: Number(exportForm.value.project_id),
+      snapshot_version: snapshotVersion,
+      precheck_confirmed: true,
+      config: JSON.stringify(config),
+      ...(showFlowTest.value ? { test_case_id: testCase.id } : {}),
+    }))
+    if (!created?.id) throw new Error('导出任务接口未返回任务 ID')
+    mergeTask(normalizeTask(created, project.value || {}))
+    exportDialogVisible.value = false
+    ElMessage.success('导出任务已创建')
+    await loadTasks()
+  } catch (error) { ElMessage.error(error?.message || '导出任务创建失败') }
+}
+
+const handleCreateTask = () => openExportDialog()
+const handleActiveTaskDetail = () => {
+  if (flowTask.value && autoExportFlowVisible.value) {
+    flowDetailVisible.value = !flowDetailVisible.value
+    return
+  }
+  if (primaryTaskView.value) openTaskDetail(primaryTaskView.value)
+}
+
+watch(projectId, async () => {
+  await loadProjectContext()
+  await loadTasks()
 })
 
-const activeExportTask = {
-  id: 'active-export-fraction',
-  isTest: true,
-  project: '《分数的初步认识》教学成果包',
-  format: '教学成果包',
-  subject: '三年级数学',
-  version: 'v1.4',
-  status: '生成中',
-  pages: 8,
-  time: '今天 10:26',
-  size: '生成中',
-  actions: ['查看生成进度'],
-}
-
-const openActiveTaskDetail = () => openTaskDetail(activeExportTask)
-const openLatestQualityReport = () => {
-  qualityReport.value = {
-    成果名称: '最近项目快照 v1.4',
-    测试标识: '导出前自动校验',
-    校验结论: '需处理 1 项',
-    总分: 92,
-    检查项: [
-      { 名称: '页面结构完整', 结果: '通过' },
-      { 名称: '素材授权有效', 结果: '通过' },
-      { 名称: '字体兼容性', 结果: '需处理', 说明: '1 个字体将在导出时自动替换' },
-      { 名称: '敏感信息检查', 结果: '通过' },
-    ],
+onMounted(async () => {
+  await loadProjectContext()
+  await loadTasks()
+  if (autoExportRequested.value && !autoExportStarted) {
+    autoExportStarted = true
+    autoExportFlowVisible.value = true
+    // 消费一次性标记，避免刷新导出中心时重复创建任务。
+    const { autoExport, ...query } = route.query
+    await router.replace({ path: route.path, query })
+    if (!projectId.value) {
+      flow.value.status = 'failed'
+      flow.value.error = '工作台没有生成项目 ID，无法创建导出任务。请返回工作台重新点击导出。'
+      flow.value.message = '自动导出未启动。'
+      flowDetailVisible.value = true
+      return
+    }
+    await runFullFlow()
   }
-  reportVisible.value = true
-}
-
-const taskActionAvailable = (action) => taskDetailView.value.actions.includes(action)
-
-/** 模拟创建标准格式导出任务。 */
-const createExport = () => openExportDialog()
-const download = async (row) => {
-  if (row.isTest) {
-    const artifact = createTestArtifact(row)
-    const url = URL.createObjectURL(new Blob([artifact.content], { type: artifact.mime }))
-    const anchor = document.createElement('a')
-    anchor.href = url
-    anchor.download = `${row.project}-${row.version}.${artifact.extension}`
-    anchor.click()
-    URL.revokeObjectURL(url)
-    ElMessage.success('测试成果已下载')
-    return
-  }
-  if (!row.id) return ElMessage.info('当前任务暂不支持下载')
-  try {
-    if (row.fileStatus === 'expired' || row.status === '已过期') { await retryExportTask(row.id); ElMessage.success('已重新提交生成任务'); await loadTasks(); return }
-    const result = await downloadExportArtifact(row.id)
-    const url = result?.data?.download_url || result?.download_url
-    if (url) window.open(url, '_blank', 'noopener'); else ElMessage.warning('文件尚未生成完成')
-  } catch { ElMessage.error('操作未成功，请稍后重试') }
-}
-const openExportDialog = () => { exportForm.value = { project_id: '', export_type: 'pdf', snapshot_version: '' }; precheck.value = null; exportDialogVisible.value = true }
-const runPrecheck = async () => { if (!exportForm.value.project_id) return ElMessage.warning('请输入项目 ID'); try { precheck.value = (await precheckProjectExport(exportForm.value.project_id, { export_type: exportForm.value.export_type, snapshot_version: exportForm.value.snapshot_version || undefined }))?.data || null } catch (error) { ElMessage.error(error?.message || '导出预检失败') } }
-const submitExport = async () => { if (!exportForm.value.project_id) return ElMessage.warning('请输入项目 ID'); try { await createExportTask({ ...exportForm.value, snapshot_version: Number(exportForm.value.snapshot_version) || undefined }); exportDialogVisible.value = false; ElMessage.success('导出任务已创建'); await loadTasks() } catch (error) { ElMessage.error(error?.message || '导出任务创建失败') } }
-const cancelTask = async (row) => { try { await cancelExportTask(row.id); ElMessage.success('任务已取消'); await loadTasks() } catch (error) { ElMessage.error(error?.message || '任务取消失败') } }
-const openQualityReport = async (row) => {
-  if (row.isTest) { qualityReport.value = createTestReport(row); reportVisible.value = true; return }
-  try { qualityReport.value = (await getExportQualityReport(row.id))?.data || null; reportVisible.value = true } catch (error) { ElMessage.error(error?.message || '质量报告加载失败') }
-}
-const previewArtifact = async (row) => {
-  if (row.isTest) {
-    const artifact = createTestArtifact(row)
-    const content = row.artifactType === 'html' ? artifact.content : `<!doctype html><html lang="zh-CN"><head><meta charset="UTF-8"><style>body{margin:0;padding:36px;font:15px/1.75 ui-monospace,monospace;color:#24324a;background:#f7f9fc}pre{max-width:920px;margin:auto;padding:30px;white-space:pre-wrap;border:1px solid #dbe3ef;border-radius:14px;background:#fff}</style></head><body><pre>${escapeHtml(artifact.content)}</pre></body></html>`
-    if (localPreviewUrl) URL.revokeObjectURL(localPreviewUrl)
-    localPreviewUrl = URL.createObjectURL(new Blob([content], { type: 'text/html;charset=utf-8' }))
-    previewUrl.value = localPreviewUrl
-    previewVisible.value = true
-    return
-  }
-  try { const artifact = (await getExportArtifact(row.id))?.data || {}; const result = await createExportPreviewUrl(artifact.id || artifact.artifact_id || row.id); previewUrl.value = result?.data?.preview_url || result?.preview_url || ''; if (!previewUrl.value) throw new Error('预览地址未返回'); previewVisible.value = true } catch (error) { ElMessage.error(error?.message || '预览地址获取失败') }
-}
-const openTaskDetail = async (row) => {
-  taskDetailRow.value = row
-  if (row.isTest) {
-    taskDetail.value = { 成果名称: row.project, 成果类型: row.format, 学科: row.subject, 版本: row.version, 状态: row.status, 页面或章节数: row.pages, 创建时间: row.time, 文件大小: row.size, 数据来源: '前端本地测试数据', 可用操作: row.actions || ['在线预览', '质量报告', '下载文件'] }
-    taskDetailVisible.value = true
-    return
-  }
-  if (!row.id) return
-  try { taskDetail.value = (await getExportTask(row.id))?.data || null; taskDetailVisible.value = true } catch (error) { ElMessage.error(error?.message || '任务详情加载失败') }
-}
-watch(activeTab, loadTasks)
-onMounted(loadTasks)
-onBeforeUnmount(() => { if (localPreviewUrl) URL.revokeObjectURL(localPreviewUrl) })
+})
+onBeforeUnmount(() => clearTimeout(taskPollTimer))
 </script>
 
 <template>
-  <div class="export-page">
+  <main class="export-page">
     <header class="export-heading">
-      <div><p>成果交付与追溯</p><h1>成果导出中心</h1><span>把已确认的课件、教案与互动组件转换为可编辑、可追溯的标准文件。</span></div>
-      <el-button type="primary" :icon="Files" @click="createExport">新建导出</el-button>
+      <div>
+        <p class="eyebrow">成果管理</p>
+        <h1>成果导出中心</h1>
+        <span>从项目快照创建成果文件，并在这里跟踪生成、校验与交付状态。</span>
+      </div>
+      <div class="heading-actions">
+        <el-button type="primary" :icon="Files" @click="openExportDialog">新建导出</el-button>
+      </div>
     </header>
 
-    <section class="export-stats">
-      <article v-for="stat in EXPORT_PAGE.stats" :key="stat.label"><span>{{ stat.label }}</span><strong>{{ stat.value }}</strong><small>{{ stat.detail }}</small></article>
+    <section class="export-stats" aria-label="导出概览">
+      <article v-for="stat in stats" :key="stat.label">
+        <span>{{ stat.label }}</span>
+        <strong>{{ stat.value }}</strong>
+        <small>{{ stat.detail }}</small>
+      </article>
     </section>
 
-    <section class="active-task">
-      <div class="task-icon"><el-icon><Refresh /></el-icon></div>
-      <div class="task-copy"><span>正在生成</span><h2>《分数的初步认识》教学成果包</h2><p>当前阶段：校验字体与 H5 互动组件兼容性</p></div>
-      <div class="task-progress"><div><span>72%</span><small>预计还需 38 秒</small></div><el-progress :percentage="72" :show-text="false" /></div>
-      <el-button @click="openActiveTaskDetail">查看详情</el-button>
-    </section>
-
-    <section class="quality-panel">
-      <header><div><el-icon><CircleCheck /></el-icon><span><strong>导出前质量校验</strong><small>最近项目快照 v1.4</small></span></div><el-button type="primary" link @click="openLatestQualityReport">查看完整报告</el-button></header>
-      <div class="quality-items">
-        <span><el-icon><CircleCheck /></el-icon>页面结构完整</span>
-        <span><el-icon><CircleCheck /></el-icon>素材授权有效</span>
-        <span class="warning"><el-icon><Warning /></el-icon>1 个字体将自动替换</span>
-        <span><el-icon><CircleCheck /></el-icon>未发现敏感信息</span>
+    <section class="active-task" :class="{ empty: !primaryTaskView }" aria-label="当前导出">
+      <div class="active-task-icon"><Timer v-if="primaryTaskView && isRunning(primaryTaskView)" /><CircleCheck v-else /></div>
+      <div class="active-task-copy">
+        <p>{{ activeTaskLabel }}</p>
+        <h2>{{ primaryTaskView?.project || '当前没有进行中的导出任务' }}</h2>
+        <span>{{ primaryTaskView ? primaryTaskView.stage : activeTaskEstimate }}</span>
       </div>
+      <div v-if="primaryTaskView" class="active-task-progress">
+        <div><strong>{{ primaryTaskView.progress }}%</strong><span>{{ activeTaskEstimate }}</span></div>
+        <el-progress :percentage="primaryTaskView.progress" :status="primaryTaskView.apiStatus === 'failed' ? 'exception' : undefined" :show-text="false" />
+      </div>
+      <el-button v-if="primaryTaskView" plain @click="handleActiveTaskDetail">{{ flowTask && flowDetailVisible ? '收起详情' : '查看详情' }}</el-button>
+      <el-button v-else class="empty-task-action" type="primary" plain @click="handleCreateTask">创建任务</el-button>
     </section>
 
-    <section class="history-panel">
-      <div class="history-header"><div class="tab-list"><button v-for="tab in tabs" :key="tab" :class="{ active: activeTab === tab }" @click="activeTab = tab">{{ tab }}</button></div><el-input v-model="keyword" :prefix-icon="Search" placeholder="搜索项目或版本" clearable /></div>
-      <el-table v-loading="loading" :data="filteredTasks">
-        <el-table-column label="项目成果" min-width="240"><template #default="{ row }"><div class="project-cell"><span><el-icon><Files /></el-icon></span><div><strong>{{ row.project }}</strong><small>{{ row.format }} · {{ row.version }}</small></div></div></template></el-table-column>
-        <el-table-column prop="time" label="创建时间" min-width="125" />
-        <el-table-column label="任务状态" width="120"><template #default="{ row }"><el-tag :type="row.status === '成功' ? 'success' : row.status === '部分成功' ? 'warning' : 'info'">{{ row.status }}</el-tag></template></el-table-column>
-        <el-table-column prop="quality" label="质量报告" width="120" />
-        <el-table-column prop="size" label="文件大小" width="100" />
-        <el-table-column label="操作" width="176"><template #default="{ row }"><el-button type="primary" link @click="openTaskDetail(row)">详情</el-button><el-button type="primary" link :icon="row.status === '已过期' ? Refresh : Download" @click="download(row)">{{ row.status === '已过期' ? '重新生成' : '下载' }}</el-button></template></el-table-column>
-        <template #empty><el-empty description="没有符合当前筛选条件的导出任务" /></template>
-      </el-table>
-    </section>
-  </div>
-    <el-dialog v-model="exportDialogVisible" title="配置导出任务" width="460px"><el-form label-position="top"><el-form-item label="项目 ID"><el-input v-model="exportForm.project_id" /></el-form-item><el-form-item label="导出格式"><el-select v-model="exportForm.export_type"><el-option label="PDF" value="pdf" /><el-option label="Word" value="word" /><el-option label="PowerPoint" value="ppt" /></el-select></el-form-item><el-form-item label="快照版本"><el-input v-model="exportForm.snapshot_version" /></el-form-item></el-form><div v-if="precheck" class="precheck-result"><strong>预检完成</strong><pre>{{ JSON.stringify(precheck, null, 2) }}</pre></div><template #footer><el-button @click="runPrecheck">运行预检</el-button><el-button type="primary" @click="submitExport">创建导出</el-button></template></el-dialog>
-    <el-dialog
-      v-model="reportVisible"
-      class="quality-report-dialog"
-      width="min(760px, 94vw)"
-      align-center
-      destroy-on-close
-    >
-      <template #header>
-        <div class="task-detail-title">
-          <span>完整质量报告</span>
-          <small>导出前自动校验结果</small>
+    <section v-if="showFlowPanel" class="flow-console" aria-labelledby="flow-console-title">
+      <header class="flow-console-header">
+        <div>
+          <p class="eyebrow">导出详情</p>
+          <h2 id="flow-console-title">{{ project?.project_name || '正在创建导出任务' }}</h2>
+          <p class="flow-message">{{ flow.message }}</p>
         </div>
-      </template>
-      <article v-if="qualityReport" class="quality-report-card">
-        <header class="quality-report-summary">
-          <div class="quality-report-emblem">
-            <el-icon><CircleCheck /></el-icon>
-          </div>
-          <div class="quality-report-identity">
-            <p>校验结论 · {{ qualityReportView.conclusion }}</p>
-            <h2>{{ qualityReportView.title }}</h2>
-            <span v-if="qualityReportView.marker !== '—'">{{ qualityReportView.marker }}</span>
-          </div>
-          <div class="quality-score">
-            <el-progress
-              type="circle"
-              :percentage="qualityReportView.score"
-              :width="92"
-              :stroke-width="7"
-              :status="qualityScoreStatus"
-            >
-              <template #default="{ percentage }">
-                <strong>{{ percentage }}</strong>
-                <small>总分</small>
-              </template>
-            </el-progress>
-          </div>
-        </header>
+        <div class="flow-header-actions">
+          <el-tag class="flow-status" :type="flowStatusType" effect="light" round>{{ flowStatusLabel }}</el-tag>
+        </div>
+      </header>
 
-        <section class="quality-checks">
-          <header>
-            <div><span>检查明细</span><small>共 {{ qualityReportView.items.length }} 项</small></div>
-            <el-tag :type="qualityTagType" effect="light">{{ qualityReportView.conclusion }}</el-tag>
-          </header>
-          <ul v-if="qualityReportView.items.length">
-            <li v-for="(item, index) in qualityReportView.items" :key="`${item.name}-${index}`" :class="{ warning: !reportPassed(item.result) }">
-              <span class="quality-check-icon">
-                <el-icon><CircleCheck v-if="reportPassed(item.result)" /><Warning v-else /></el-icon>
-              </span>
-              <div>
-                <strong>{{ item.name }}</strong>
-                <small v-if="item.detail">{{ item.detail }}</small>
-              </div>
-              <el-tag :type="reportPassed(item.result) ? 'success' : 'warning'" effect="plain" size="small">{{ item.result }}</el-tag>
-            </li>
-          </ul>
-          <el-empty v-else description="暂无检查项明细" :image-size="64" />
-        </section>
-      </article>
-      <el-empty v-else description="暂无质量报告" :image-size="72" />
-      <template #footer>
-        <el-button type="primary" @click="reportVisible = false">完成</el-button>
-      </template>
-    </el-dialog>
-    <el-dialog
-      v-model="taskDetailVisible"
-      class="task-detail-dialog"
-      width="min(760px, 94vw)"
-      align-center
-      destroy-on-close
-    >
-      <template #header>
-        <div class="task-detail-title">
-          <span>导出任务详情</span>
-          <small>查看成果信息与后续操作</small>
+      <div class="flow-context">
+        <span><FolderOpened /> 项目：{{ project?.project_name || '等待项目创建' }}</span>
+        <span>项目 ID：{{ projectId || '—' }}</span>
+        <span>快照：{{ project?.current_version ? `v${project.current_version}` : '等待固化' }}</span>
+        <span v-if="flowTask">任务 ID：{{ flowTask.id }}</span>
+        <el-tag size="small" effect="plain">教学成果包</el-tag>
+      </div>
+
+      <ol class="flow-steps">
+        <li v-for="(item, index) in flowSteps" :key="item.title" :class="flowStepState(index)">
+          <span class="flow-step-index">
+            <CircleCheck v-if="flowStepState(index) === 'complete'" />
+            <span v-else>{{ index + 1 }}</span>
+          </span>
+          <span class="flow-step-copy"><strong>{{ item.title }}</strong><small>{{ item.detail }}</small></span>
+        </li>
+      </ol>
+
+      <div v-if="flow.error" class="inline-error" role="alert"><Warning /><span>{{ flow.error }}</span></div>
+      <div v-if="flow.precheck" class="precheck-strip" :class="{ failed: !flow.precheck.passed }">
+        <DocumentChecked />
+        <div><strong>{{ flow.precheck.passed ? '导出预检通过' : '导出预检未通过' }}</strong><span>{{ flow.precheck.warnings?.length || 0 }} 条提示 · {{ flow.precheck.errors?.length || 0 }} 条错误</span></div>
+      </div>
+      <div v-if="flowTask && canDownload(flowTask)" class="flow-delivery-strip">
+        <div><strong>成果文件已就绪</strong><span>可预览、查看质量报告或下载到本地</span></div>
+        <div class="flow-task-actions">
+          <el-button text type="primary" @click="openPreview(flowTask)"><View /> 在线预览</el-button>
+          <el-button text type="primary" @click="openQualityReport(flowTask)"><DocumentChecked /> 质量报告</el-button>
+          <el-button type="primary" @click="download(flowTask)"><Download /> 下载成果</el-button>
         </div>
-      </template>
-      <article v-if="taskDetail" class="task-detail-card">
-        <header class="task-detail-hero">
-          <div class="task-detail-file-icon"><el-icon><Files /></el-icon></div>
-          <div class="task-detail-identity">
-            <p>教学成果文件</p>
-            <h2>{{ taskDetailView.title }}</h2>
-            <div class="task-detail-meta">
-              <span>{{ taskDetailView.format }}</span>
-              <i aria-hidden="true"></i>
-              <span>{{ taskDetailView.version }}</span>
+      </div>
+      <small class="flow-footnote">导出基于当前不可变快照执行，任务完成后仍可从下方任务记录查看成果。</small>
+    </section>
+
+    <section class="quality-card">
+      <div class="quality-card-heading">
+        <div class="quality-title"><CircleCheck /><div><strong>最近一次导出质量</strong><span>{{ latestCompletedTask ? `${latestCompletedTask.project} · ${latestCompletedTask.version}` : '完成任务后显示服务端报告' }}</span></div></div>
+        <el-button text type="primary" :disabled="!latestCompletedTask" @click="openLatestQualityReport">查看完整报告</el-button>
+      </div>
+      <div v-if="latestCompletedTask" class="quality-meta"><span><CircleCheck /> 任务状态：{{ latestCompletedTask.status }}</span><span><Files /> 文件大小：{{ latestCompletedTask.size }}</span><span><DocumentChecked /> 质量报告：{{ latestCompletedTask.quality }}</span></div>
+      <el-empty v-else :image-size="46" description="暂无已完成的导出任务" />
+    </section>
+
+    <section class="history-section" aria-labelledby="history-title">
+      <header class="history-header">
+        <div><p class="eyebrow">任务记录</p><h2 id="history-title">导出任务</h2><span>查看当前账号的生成进度、质量状态和成果交付记录。</span></div>
+        <div class="history-controls"><el-input v-model="keyword" clearable :prefix-icon="Search" placeholder="搜索项目、格式或版本" /><el-button :icon="Refresh" :loading="loading" @click="loadTasks">刷新</el-button></div>
+      </header>
+      <el-tabs v-model="activeTab" class="history-tabs">
+        <el-tab-pane v-for="tab in tabs" :key="tab" :label="tab" :name="tab" />
+      </el-tabs>
+
+      <div v-if="pageError" class="inline-error history-error" role="alert"><Warning /><span>{{ pageError }}</span><el-button text type="primary" @click="loadTasks">重试</el-button></div>
+      <el-table v-loading="loading" :data="filteredTasks" data-testid="export-task-list" class="task-table" row-key="id">
+        <el-table-column label="项目与版本" min-width="270">
+          <template #default="{ row }"><div class="project-cell"><strong>{{ row.project }}</strong><span>{{ row.subject }} · {{ row.version }} · {{ row.time }}</span></div></template>
+        </el-table-column>
+        <el-table-column label="格式" width="110"><template #default="{ row }"><span class="format-label">{{ row.format }}</span></template></el-table-column>
+        <el-table-column label="生成进度" min-width="190"><template #default="{ row }"><div class="progress-cell"><el-progress :percentage="row.progress" :status="row.apiStatus === 'failed' ? 'exception' : undefined" :show-text="false" /><span>{{ row.progress }}%</span></div></template></el-table-column>
+        <el-table-column label="状态" width="110"><template #default="{ row }"><el-tag :type="statusTagType(row.status)" effect="plain">{{ row.status }}</el-tag></template></el-table-column>
+        <el-table-column label="质量" width="110"><template #default="{ row }"><span class="quality-label">{{ row.quality }}</span></template></el-table-column>
+        <el-table-column label="操作" width="280" fixed="right">
+          <template #default="{ row }">
+            <div class="table-actions">
+              <el-button text type="primary" @click="openTaskDetail(row)">详情</el-button>
+              <el-button text type="primary" :disabled="!canDownload(row)" @click="openPreview(row)">预览</el-button>
+              <el-button text type="primary" :disabled="!canDownload(row)" @click="openQualityReport(row)">报告</el-button>
+              <el-button text type="primary" :disabled="!canDownload(row)" @click="download(row)">下载</el-button>
+              <el-button v-if="isRunning(row)" text type="danger" @click="cancel(row)">取消</el-button>
+              <el-button v-else-if="row.apiStatus === 'failed'" text type="primary" @click="retry(row)">重试</el-button>
             </div>
-          </div>
-          <el-tag :type="taskDetailStatusType" effect="light" size="large">
-            <el-icon><Refresh v-if="taskDetailView.status === '生成中'" /><CircleCheck v-else /></el-icon>
-            {{ taskDetailView.status }}
-          </el-tag>
-        </header>
+          </template>
+        </el-table-column>
+      </el-table>
+      <el-empty v-if="!loading && !pageError && filteredTasks.length === 0" :image-size="64" description="还没有符合条件的导出任务" />
+    </section>
 
-        <section class="task-detail-metrics" aria-label="成果概览">
-          <div>
-            <span>学科</span>
-            <strong>{{ taskDetailView.subject }}</strong>
-          </div>
-          <div>
-            <span>页面或章节</span>
-            <strong class="number">{{ taskDetailView.pages }}</strong>
-          </div>
-          <div>
-            <span>文件大小</span>
-            <strong class="number">{{ taskDetailView.size }}</strong>
-          </div>
-        </section>
-
-        <section class="task-detail-info">
-          <header><span>任务信息</span><small>文件生成与追溯记录</small></header>
-          <dl>
-            <div><dt>创建时间</dt><dd>{{ taskDetailView.createdAt }}</dd></div>
-            <div><dt>数据来源</dt><dd>{{ taskDetailView.source }}</dd></div>
-          </dl>
-        </section>
-
-        <section v-if="taskDetailView.actions.length" class="task-detail-capabilities">
-          <span>可用能力</span>
-          <div>
-            <span v-for="action in taskDetailView.actions" :key="action">
-              <el-icon><CircleCheck /></el-icon>{{ action }}
-            </span>
-          </div>
-        </section>
-      </article>
-      <el-empty v-else description="暂无任务详情" :image-size="72" />
-      <template #footer>
-        <div class="task-detail-actions">
-          <el-button @click="taskDetailVisible = false">关闭</el-button>
-          <div v-if="taskDetailRow">
-            <el-button v-if="taskActionAvailable('质量报告')" @click="openQualityReport(taskDetailRow)">质量报告</el-button>
-            <el-button v-if="taskActionAvailable('在线预览')" @click="previewArtifact(taskDetailRow)">在线预览</el-button>
-            <el-button v-if="taskActionAvailable('下载文件')" type="primary" :icon="Download" @click="download(taskDetailRow)">下载文件</el-button>
-          </div>
-        </div>
-      </template>
+    <el-dialog v-model="exportDialogVisible" title="创建导出任务" width="520px" class="export-dialog">
+      <el-form label-position="top">
+        <el-form-item label="选择项目">
+          <el-select v-model="exportForm.project_id" filterable :loading="projectOptionsLoading" placeholder="选择需要导出的教学项目" style="width: 100%" @change="handleProjectSelection">
+            <el-option v-for="item in projectOptions" :key="item.id" :label="item.project_name" :value="String(item.id)">
+              <div class="project-select-option"><strong>{{ item.project_name }}</strong><span>{{ projectTypeText(item.project_type) }} · {{ projectStatusText(item.status) }} · #{{ item.id }}</span></div>
+            </el-option>
+          </el-select>
+          <small class="form-field-hint">仅显示当前账号有权访问且未归档的项目。</small>
+        </el-form-item>
+        <el-form-item label="导出格式"><el-select v-model="exportForm.export_type" style="width: 100%" @change="clearPrecheck"><el-option label="PowerPoint 课件（PPTX）" value="pptx" /><el-option label="Word 教案（DOCX）" value="word" /><el-option label="教学成果包（ZIP）" value="package" /></el-select></el-form-item>
+        <el-form-item label="快照版本">
+          <el-select v-model="exportForm.snapshot_version" :disabled="!exportForm.project_id" :loading="versionOptionsLoading" placeholder="请先选择项目" style="width: 100%" @change="clearPrecheck">
+            <el-option label="基于当前内容创建新快照（推荐）" value="auto" />
+            <el-option v-for="item in versionOptions" :key="item.version_id" :label="`v${item.version_number} · ${item.description || '历史快照'}`" :value="String(item.version_number)">
+              <div class="version-select-option"><strong>v{{ item.version_number }} · {{ item.description || '历史快照' }}</strong><span>{{ formatDate(item.created_at) }}</span></div>
+            </el-option>
+          </el-select>
+          <small class="form-field-hint">可导出历史快照，或在预检时固化项目的当前内容。</small>
+        </el-form-item>
+        <el-form-item label="模板版本"><el-input v-model="exportForm.template_version" placeholder="例如 zh-teaching-v1" @input="clearPrecheck" /></el-form-item>
+        <el-form-item label="互动内容处理"><el-radio-group v-model="exportForm.interaction_mode" @change="clearPrecheck"><el-radio value="static">静态截图</el-radio><el-radio value="link">访问链接</el-radio><el-radio value="package">随成果包附带</el-radio></el-radio-group></el-form-item>
+        <el-form-item label="页码范围"><el-input v-model="exportForm.page_range" placeholder="all 或 1-6" @input="clearPrecheck" /></el-form-item>
+        <el-form-item><el-checkbox v-model="exportForm.header_enabled" @change="clearPrecheck">添加页眉页脚</el-checkbox></el-form-item>
+        <template v-if="exportForm.header_enabled"><el-form-item label="页眉"><el-input v-model="exportForm.header_text" placeholder="可选" @input="clearPrecheck" /></el-form-item><el-form-item label="页脚"><el-input v-model="exportForm.footer_text" placeholder="可选" @input="clearPrecheck" /></el-form-item></template>
+        <el-form-item label="教师备注"><el-input v-model="exportForm.teacher_notes" type="textarea" :rows="2" placeholder="可选，会随导出配置保存" @input="clearPrecheck" /></el-form-item>
+      </el-form>
+      <div v-if="precheck" class="dialog-precheck" :class="{ failed: !precheck.passed }"><strong>{{ precheck.passed ? '预检通过' : '预检未通过' }}</strong><span>{{ precheck.warnings?.length || 0 }} 条提示 · {{ precheck.errors?.length || 0 }} 条错误</span></div>
+      <template #footer><el-button @click="runPrecheck">运行预检</el-button><el-button type="primary" @click="submitExport">创建导出</el-button></template>
     </el-dialog>
-    <el-dialog v-model="previewVisible" title="成果在线预览" width="min(1000px, 94vw)"><iframe v-if="previewUrl" :src="previewUrl" class="artifact-preview" title="导出成果预览" /></el-dialog>
+
+    <el-dialog v-model="taskDetailVisible" title="任务详情" width="520px" class="detail-dialog">
+      <div class="detail-grid"><div><span>成果名称</span><strong>{{ taskDetailView.title }}</strong></div><div><span>状态</span><el-tag :type="statusTagType(taskDetailView.status)" effect="plain">{{ taskDetailView.status }}</el-tag></div><div><span>格式 / 版本</span><strong>{{ taskDetailView.format }} · {{ taskDetailView.version }}</strong></div><div><span>生成进度</span><strong>{{ taskDetailView.progress }}%</strong></div><div><span>任务创建</span><strong>{{ taskDetailView.createdAt }}</strong></div><div><span>任务完成</span><strong>{{ taskDetailView.completedAt }}</strong></div><div><span>项目 ID</span><strong>{{ taskDetailView.projectId }}</strong></div><div><span>数据来源</span><strong>{{ taskDetailView.source }}</strong></div></div><div class="detail-stage"><Timer /><span>{{ taskDetailView.stage }}</span></div>
+      <template #footer><el-button @click="taskDetailVisible = false">关闭</el-button><el-button type="primary" :disabled="!canDownload(taskDetailRow)" @click="download(taskDetailRow)">下载成果</el-button></template>
+    </el-dialog>
+
+    <el-dialog v-model="reportVisible" title="导出质量报告" width="620px" class="quality-dialog">
+      <div class="report-summary"><div><span>成果</span><strong>{{ qualityReportView.title }}</strong><small>{{ qualityReportView.marker }}</small></div><div class="report-score"><el-progress type="circle" :percentage="qualityReportView.score" :status="qualityScoreStatus" :width="72" /><el-tag :type="qualityTagType" effect="plain">{{ qualityReportView.conclusion }}</el-tag></div></div>
+      <div class="report-items"><div v-for="item in qualityReportView.items" :key="item.name" class="report-item"><CircleCheck v-if="reportPassed(item.result)" /><CircleClose v-else /><div><strong>{{ item.name }}</strong><span>{{ item.detail || item.result }}</span></div><el-tag size="small" :type="reportPassed(item.result) ? 'success' : 'warning'" effect="plain">{{ item.result }}</el-tag></div><el-empty v-if="qualityReportView.items.length === 0" :image-size="48" description="服务端暂未返回检查明细" /></div>
+    </el-dialog>
+
+    <el-dialog v-model="previewVisible" :title="`${taskDetailRow?.project || '成果'} · 在线预览`" width="860px" class="preview-dialog" destroy-on-close>
+      <iframe v-if="previewUrl" :src="previewUrl" title="导出成果预览" class="preview-frame" />
+      <el-empty v-else description="没有可用的预览地址" />
+    </el-dialog>
+  </main>
 </template>
 
 <style scoped>
-.export-page { width: min(1180px, calc(100% - 48px)); margin: 0 auto; padding: 42px 0 60px; }
-.export-heading { display: flex; align-items: end; justify-content: space-between; gap: 24px; }.export-heading p { margin: 0 0 6px; color: var(--zh-text-theme); font-size: 13px; font-weight: 600; }.export-heading h1 { margin: 0; font-size: 30px; letter-spacing: var(--zh-tracking-tight); }.export-heading span { display: block; margin-top: 8px; color: var(--zh-text-secondary); font-size: 14px; }
-.export-stats { display: grid; grid-template-columns: repeat(3, 1fr); gap: 12px; margin-top: 30px; }.export-stats article { display: grid; padding: 20px 22px; border: 1px solid var(--zh-line-border); border-radius: var(--zh-radius12); background: var(--zh-background-capsule); }.export-stats span { color: var(--zh-text-secondary); font-size: 12px; }.export-stats strong { margin: 10px 0 3px; font: 600 26px var(--zh-font-number); }.export-stats small { color: var(--zh-text-caption); }
-.active-task { display: grid; grid-template-columns: auto minmax(250px, 1fr) minmax(200px, .65fr) auto; align-items: center; gap: 18px; margin-top: 18px; padding: 20px 22px; border-radius: var(--zh-radius12); color: white; background: #1d4f91; box-shadow: 0 12px 26px -12px rgb(29 78 216 / 45%); }
-.task-icon { width: 42px; height: 42px; display: grid; place-items: center; border-radius: var(--zh-radius10); background: rgb(255 255 255 / 12%); }.task-icon :deep(.el-icon) { animation: loadingSpin 1.5s linear infinite; }
-.task-copy span, .task-progress small { color: rgb(255 255 255 / 65%); font-size: 11px; }.task-copy h2 { margin: 3px 0; font-size: 16px; }.task-copy p { margin: 0; color: rgb(255 255 255 / 72%); font-size: 12px; }
-.task-progress > div { display: flex; justify-content: space-between; margin-bottom: 7px; font-family: var(--zh-font-number); }.active-task :deep(.el-progress-bar__outer) { background: rgb(255 255 255 / 18%); }.active-task :deep(.el-progress-bar__inner) { background: #93c5fd; }
-.quality-panel, .history-panel { margin-top: 18px; border: 1px solid var(--zh-line-border); border-radius: var(--zh-radius12); background: var(--zh-background-capsule); }
-.quality-panel header { display: flex; align-items: center; justify-content: space-between; padding: 16px 20px; border-bottom: 1px solid var(--zh-line-parting); }.quality-panel header > div { display: flex; align-items: center; gap: 10px; color: var(--zh-green); }.quality-panel header span { display: flex; flex-direction: column; }.quality-panel header strong { color: var(--zh-text-primary); font-size: 13px; }.quality-panel header small { margin-top: 2px; color: var(--zh-text-caption); }
-.quality-items { display: grid; grid-template-columns: repeat(4, 1fr); gap: 12px; padding: 14px 20px; }.quality-items span { display: flex; align-items: center; gap: 6px; color: var(--zh-text-secondary); font-size: 12px; }.quality-items .el-icon { color: var(--zh-green); }.quality-items .warning .el-icon { color: var(--zh-orange); }
-.history-header { display: flex; align-items: center; justify-content: space-between; padding: 0 16px; border-bottom: 1px solid var(--zh-line-parting); }.tab-list { display: flex; gap: 16px; }.tab-list button { padding: 17px 2px 14px; border: 0; border-bottom: 2px solid transparent; color: var(--zh-text-caption); background: transparent; cursor: pointer; }.tab-list button.active { color: var(--zh-text-theme); border-color: var(--zh-line-theme); font-weight: 600; }.history-header :deep(.el-input) { width: 230px; }
-.project-cell { display: flex; align-items: center; gap: 10px; }.project-cell > span { width: 34px; height: 34px; display: grid; place-items: center; border-radius: var(--zh-radius8); color: var(--zh-text-theme); background: var(--zh-background-weaken); }.project-cell > div { display: flex; flex-direction: column; }.project-cell strong { color: var(--zh-text-primary); font-size: 13px; }.project-cell small { margin-top: 3px; color: var(--zh-text-caption); }
-.history-panel :deep(.el-table) { --el-table-border-color: var(--zh-line-parting); border-radius: 0 0 var(--zh-radius12) var(--zh-radius12); }
-/* design.md：文字按钮采用主题链接色；所有交互态必须保持文字可读。 */
-.export-page :deep(.el-button--primary.is-link) { color: var(--zh-text-link); }
-.export-page :deep(.el-button--primary.is-link:hover), .export-page :deep(.el-button--primary.is-link:focus-visible) { color: var(--zh-text-link); background: var(--zh-background-weaken); }
-.export-page :deep(.el-button--primary.is-link:active) { color: var(--zh-text-link); background: var(--zh-line-theme20); }
-@keyframes loadingSpin { to { transform: rotate(360deg); } }
-@media (max-width: 900px) { .active-task { grid-template-columns: auto 1fr; }.task-progress { grid-column: 1 / -1; }.quality-items { grid-template-columns: repeat(2, 1fr); } }
-@media (max-width: 620px) { .export-stats { grid-template-columns: 1fr; }.history-header { align-items: stretch; flex-direction: column; }.history-header :deep(.el-input) { width: 100%; margin-bottom: 12px; }.quality-items { grid-template-columns: 1fr; } }
-.precheck-result{padding:12px;border-radius:var(--zh-radius8);background:var(--zh-background-weaken)}.precheck-result pre,.report-content{max-height:380px;overflow:auto;margin:8px 0 0;white-space:pre-wrap;font:12px/1.65 var(--zh-font-code)}.report-content{padding:16px;border-radius:var(--zh-radius8);background:var(--zh-background-light)}.artifact-preview{width:100%;height:min(70vh,720px);border:1px solid var(--zh-line-border);border-radius:var(--zh-radius8)}
+.export-page { width: min(1220px, calc(100% - 48px)); margin: 0 auto; padding: 42px 0 72px; color: var(--zh-text-primary); }
+.export-heading, .flow-console-header, .history-header, .quality-card-heading { display: flex; align-items: flex-end; justify-content: space-between; gap: 24px; }
+.eyebrow { margin: 0 0 8px; color: var(--zh-text-theme); font-size: 11px; font-weight: 700; letter-spacing: .12em; }
+.export-heading h1 { margin: 0; font-size: clamp(28px, 3vw, 36px); line-height: 1.15; letter-spacing: var(--zh-tracking-tight); text-wrap: balance; }
+.export-heading > div:first-child > span, .history-header > div:first-child > span { display: block; max-width: 620px; margin-top: 10px; color: var(--zh-text-secondary); font-size: 14px; line-height: 1.65; }
+.heading-actions, .history-controls, .table-actions, .flow-task-actions { display: flex; align-items: center; gap: 10px; }
+.flow-console { margin-top: 12px; padding: 24px; border: 1px solid var(--zh-line-theme20); border-radius: var(--zh-radius16); background: var(--zh-background-capsule); box-shadow: var(--zh-shadow1); }
+.flow-console-header { align-items: flex-start; }
+.flow-console-header h2 { margin: 0; font-size: 20px; letter-spacing: var(--zh-tracking-tight); }
+.flow-message { margin: 8px 0 0; color: var(--zh-text-secondary); font-size: 13px; line-height: 1.6; }
+.flow-status { flex: none; font-weight: 600; }
+.flow-header-actions { display: flex; align-items: center; gap: 8px; }
+.flow-context { display: flex; flex-wrap: wrap; align-items: center; gap: 18px; margin-top: 20px; padding: 11px 14px; border: 1px solid var(--zh-line-border); border-radius: var(--zh-radius8); color: var(--zh-text-secondary); background: var(--zh-background-capsule); font-size: 12px; }
+.flow-context span { display: inline-flex; align-items: center; gap: 5px; }
+.flow-context svg { width: 14px; color: var(--zh-text-theme); }
+.flow-steps { display: grid; grid-template-columns: repeat(5, 1fr); gap: 10px; margin: 22px 0 0; padding: 0; list-style: none; }
+.flow-steps li { position: relative; display: flex; gap: 10px; min-width: 0; padding: 14px 12px; border: 1px solid var(--zh-line-border); border-radius: var(--zh-radius10); background: var(--zh-background-capsule); transition: border-color 200ms ease, background 200ms ease, transform 200ms ease; }
+.flow-steps li.current { border-color: var(--zh-line-theme); background: var(--zh-background-option-on); transform: translateY(-2px); }
+.flow-steps li.complete { border-color: color-mix(in srgb, var(--zh-green) 35%, var(--zh-line-border)); }
+.flow-step-index { display: grid; flex: none; place-items: center; width: 24px; height: 24px; border-radius: 50%; color: var(--zh-text-caption); background: var(--zh-background-light); font: 600 12px var(--zh-font-number); }
+.flow-steps li.current .flow-step-index { color: var(--zh-text-white); background: var(--zh-theme-primary); }
+.flow-steps li.complete .flow-step-index { color: var(--zh-green); background: color-mix(in srgb, var(--zh-green) 12%, transparent); }
+.flow-step-index svg { width: 16px; }
+.flow-step-copy { display: grid; gap: 3px; min-width: 0; }
+.flow-step-copy strong { font-size: 13px; font-weight: 600; }
+.flow-step-copy small { color: var(--zh-text-caption); font-size: 11px; line-height: 1.45; }
+.inline-error { display: flex; align-items: center; gap: 8px; margin-top: 14px; padding: 11px 13px; border: 1px solid color-mix(in srgb, var(--zh-red) 30%, var(--zh-line-border)); border-radius: var(--zh-radius8); color: var(--zh-red); background: var(--zh-danger-background); font-size: 12px; }
+.inline-error svg { width: 15px; flex: none; }
+.history-error .el-button { margin-left: auto; }
+.precheck-strip { display: grid; grid-template-columns: auto 1fr; align-items: center; gap: 12px; margin-top: 14px; padding: 12px 14px; border: 1px solid color-mix(in srgb, var(--zh-green) 30%, var(--zh-line-border)); border-radius: var(--zh-radius8); background: var(--zh-background-capsule); }
+.precheck-strip > svg { width: 20px; color: var(--zh-green); }
+.precheck-strip.failed { border-color: color-mix(in srgb, var(--zh-red) 35%, var(--zh-line-border)); }
+.precheck-strip.failed > svg { color: var(--zh-red); }
+.precheck-strip strong, .flow-delivery-strip strong { display: block; font-size: 13px; font-weight: 600; }
+.precheck-strip span, .flow-delivery-strip span { display: block; margin-top: 3px; color: var(--zh-text-caption); font-size: 11px; }
+.flow-delivery-strip { display: flex; align-items: center; justify-content: space-between; gap: 18px; margin-top: 14px; padding: 12px 14px; border: 1px solid var(--zh-line-border); border-radius: var(--zh-radius8); background: var(--zh-background-light); }
+.flow-task-actions { justify-content: flex-end; }
+.flow-footnote { display: block; margin-top: 13px; color: var(--zh-text-caption); font-size: 11px; }
+.export-stats { display: grid; grid-template-columns: repeat(3, 1fr); margin-top: 30px; overflow: hidden; border: 1px solid var(--zh-line-border); border-radius: var(--zh-radius12); background: var(--zh-background-capsule); }
+.export-stats article { position: relative; display: grid; min-height: 118px; padding: 20px 22px; }
+.export-stats article + article::before { position: absolute; top: 20px; bottom: 20px; left: 0; width: 1px; background: var(--zh-line-parting); content: ''; }
+.export-stats span { color: var(--zh-text-secondary); font-size: 12px; }
+.export-stats strong { margin: 9px 0 3px; font: 600 28px var(--zh-font-number); font-variant-numeric: tabular-nums; letter-spacing: -.04em; }
+.export-stats small { color: var(--zh-text-caption); font-size: 11px; }
+.active-task { display: grid; grid-template-columns: auto minmax(200px, 1.2fr) minmax(260px, 1fr) auto; align-items: center; gap: 18px; margin-top: 12px; padding: 18px 22px; border: 1px solid var(--zh-line-theme20); border-radius: var(--zh-radius12); background: var(--zh-theme-primary); color: var(--zh-text-white); box-shadow: 0 12px 28px color-mix(in srgb, var(--zh-theme-primary) 22%, transparent); }
+.active-task.empty { grid-template-columns: auto minmax(0, 1fr) auto; border-color: var(--zh-line-border); color: var(--zh-text-primary); background: var(--zh-background-capsule); box-shadow: none; }
+.active-task-icon { display: grid; place-items: center; width: 44px; height: 44px; border-radius: var(--zh-radius10); color: var(--zh-text-white); background: color-mix(in srgb, var(--zh-text-white) 16%, transparent); }
+.active-task.empty .active-task-icon { color: var(--zh-green); background: color-mix(in srgb, var(--zh-green) 12%, transparent); }
+.active-task-icon svg { width: 21px; }
+.active-task-copy { min-width: 0; }
+.active-task-copy p { margin: 0; color: color-mix(in srgb, var(--zh-text-white) 72%, transparent); font-size: 12px; }
+.active-task.empty .active-task-copy p { color: var(--zh-text-caption); }
+.active-task-copy h2 { overflow: hidden; margin: 5px 0 4px; font-size: 16px; font-weight: 600; text-overflow: ellipsis; white-space: nowrap; }
+.active-task-copy span { display: block; overflow: hidden; color: color-mix(in srgb, var(--zh-text-white) 74%, transparent); font-size: 12px; text-overflow: ellipsis; white-space: nowrap; }
+.active-task.empty .active-task-copy span { color: var(--zh-text-secondary); }
+.active-task-progress > div { display: flex; align-items: baseline; justify-content: space-between; gap: 12px; margin-bottom: 8px; }
+.active-task-progress strong { font: 600 22px var(--zh-font-number); font-variant-numeric: tabular-nums; }
+.active-task-progress span { color: color-mix(in srgb, var(--zh-text-white) 72%, transparent); font-size: 11px; }
+.active-task :deep(.el-progress-bar__outer) { background: color-mix(in srgb, var(--zh-text-white) 22%, transparent); }
+.active-task :deep(.el-progress-bar__inner) { background: var(--zh-text-white); }
+.active-task > .el-button { color: var(--zh-text-white); border-color: color-mix(in srgb, var(--zh-text-white) 45%, transparent); background: transparent; }
+.active-task > .el-button:hover, .active-task > .el-button:focus-visible { color: var(--zh-theme-primary); border-color: var(--zh-text-white); background: var(--zh-text-white); }
+.active-task.empty > .el-button { color: var(--zh-text-theme); border-color: var(--zh-line-theme20); }
+.active-task.empty > .empty-task-action { width: min(100%, 136px); min-height: 38px; justify-self: end; }
+.quality-card { margin-top: 30px; padding: 20px 22px 14px; border: 1px solid var(--zh-line-border); border-radius: var(--zh-radius12); background: var(--zh-background-capsule); }
+.quality-title { display: flex; align-items: center; gap: 11px; }
+.quality-title > svg { width: 22px; color: var(--zh-green); }
+.quality-title strong, .quality-title span { display: block; }
+.quality-title strong { font-size: 15px; font-weight: 600; }
+.quality-title span { margin-top: 4px; color: var(--zh-text-caption); font-size: 12px; }
+.quality-meta { display: grid; grid-template-columns: repeat(3, 1fr); gap: 10px; margin-top: 20px; padding-top: 15px; border-top: 1px solid var(--zh-line-parting); color: var(--zh-text-secondary); font-size: 12px; }
+.quality-meta span { display: flex; align-items: center; gap: 7px; }
+.quality-meta svg { width: 15px; color: var(--zh-green); }
+.quality-card :deep(.el-empty) { padding: 20px 0 5px; }
+.history-section { margin-top: 34px; }
+.history-header { align-items: flex-end; }
+.history-header h2 { margin: 0; font-size: 22px; letter-spacing: var(--zh-tracking-tight); }
+.history-controls .el-input { width: 240px; }
+.history-tabs { margin-top: 20px; }
+.history-tabs :deep(.el-tabs__header) { margin-bottom: 13px; }
+.history-tabs :deep(.el-tabs__item) { color: var(--zh-text-secondary); font-size: 13px; }
+.history-tabs :deep(.el-tabs__item.is-active) { color: var(--zh-text-theme); font-weight: 600; }
+.task-table { overflow: hidden; border: 1px solid var(--zh-line-border); border-radius: var(--zh-radius12); }
+.task-table :deep(.el-table__inner-wrapper::before) { display: none; }
+.task-table :deep(.el-table__header th) { height: 44px; color: var(--zh-text-caption); background: var(--zh-background-light); font-size: 11px; font-weight: 600; }
+.task-table :deep(.el-table__row td) { height: 68px; border-bottom-color: var(--zh-line-parting); }
+.project-cell, .progress-cell { display: grid; gap: 4px; }
+.project-cell strong { overflow: hidden; color: var(--zh-text-primary); font-size: 13px; font-weight: 600; text-overflow: ellipsis; white-space: nowrap; }
+.project-cell span, .progress-cell span { color: var(--zh-text-caption); font-size: 11px; }
+.format-label, .quality-label { color: var(--zh-text-secondary); font-size: 12px; }
+.progress-cell { grid-template-columns: minmax(72px, 1fr) 35px; align-items: center; gap: 8px; }
+.progress-cell :deep(.el-progress-bar__outer) { background: var(--zh-background-light-grey); }
+.progress-cell span { text-align: right; font-family: var(--zh-font-number); }
+.table-actions { justify-content: flex-start; gap: 2px; }
+.table-actions :deep(.el-button) { padding: 5px 4px; font-size: 12px; }
+.history-section > :deep(.el-empty) { padding: 42px 0; border: 1px dashed var(--zh-line-heavier); border-top: 0; border-radius: 0 0 var(--zh-radius12) var(--zh-radius12); }
+.form-field-hint { display: block; margin-top: 7px; color: var(--zh-text-caption); font-size: 11px; line-height: 1.5; }
+.project-select-option, .version-select-option { display: flex; min-width: 0; align-items: center; justify-content: space-between; gap: 20px; }
+.project-select-option strong, .version-select-option strong { overflow: hidden; color: var(--zh-text-primary); font-size: 13px; font-weight: 500; text-overflow: ellipsis; white-space: nowrap; }
+.project-select-option span, .version-select-option span { flex: none; color: var(--zh-text-caption); font-size: 11px; }
+.dialog-precheck { display: flex; align-items: center; justify-content: space-between; gap: 12px; padding: 10px 12px; border-radius: var(--zh-radius8); color: var(--zh-green); background: color-mix(in srgb, var(--zh-green) 10%, transparent); font-size: 12px; }
+.dialog-precheck.failed { color: var(--zh-red); background: var(--zh-danger-background); }
+.dialog-precheck span { color: inherit; opacity: .8; }
+.detail-grid { display: grid; grid-template-columns: repeat(2, 1fr); gap: 14px; }
+.detail-grid > div { display: grid; gap: 4px; padding-bottom: 10px; border-bottom: 1px solid var(--zh-line-parting); }
+.detail-grid span { color: var(--zh-text-caption); font-size: 11px; }
+.detail-grid strong { color: var(--zh-text-primary); font-size: 13px; font-weight: 500; }
+.detail-stage { display: flex; align-items: center; gap: 8px; margin-top: 18px; padding: 11px 12px; border-radius: var(--zh-radius8); color: var(--zh-text-secondary); background: var(--zh-background-light); font-size: 12px; }
+.detail-stage svg { width: 15px; color: var(--zh-text-theme); }
+.report-summary { display: flex; align-items: center; justify-content: space-between; gap: 20px; padding-bottom: 18px; border-bottom: 1px solid var(--zh-line-parting); }
+.report-summary > div:first-child { display: grid; gap: 4px; }
+.report-summary span, .report-summary small { color: var(--zh-text-caption); font-size: 11px; }
+.report-summary strong { font-size: 16px; font-weight: 600; }
+.report-score { display: flex; align-items: center; gap: 14px; }
+.report-items { display: grid; gap: 8px; margin-top: 16px; }
+.report-item { display: grid; grid-template-columns: auto 1fr auto; align-items: center; gap: 9px; padding: 11px 12px; border: 1px solid var(--zh-line-border); border-radius: var(--zh-radius8); }
+.report-item > svg { width: 16px; color: var(--zh-green); }
+.report-item > svg:not(:first-child) { color: var(--zh-orange); }
+.report-item strong, .report-item span { display: block; }
+.report-item strong { font-size: 13px; font-weight: 500; }
+.report-item span { margin-top: 3px; color: var(--zh-text-caption); font-size: 11px; }
+.preview-frame { display: block; width: 100%; height: min(66vh, 620px); border: 1px solid var(--zh-line-border); border-radius: var(--zh-radius8); background: var(--zh-background-light); }
+.export-page :deep(.el-button:focus-visible), .export-page :deep(.el-input__wrapper:focus-within), .export-page :deep(.el-tabs__item:focus-visible) { outline: 2px solid var(--zh-line-theme); outline-offset: 2px; }
+.export-page :deep(.el-button) { transition: background 200ms cubic-bezier(.4, 0, .2, 1), border-color 200ms ease, color 200ms ease, transform 150ms ease; }
+.export-page :deep(.el-button:active) { transform: scale(.98); }
 
-.task-detail-title { display: flex; flex-direction: column; gap: 3px; }
-.task-detail-title span { color: var(--zh-text-primary); font-size: 20px; font-weight: 600; letter-spacing: var(--zh-tracking-tight); }
-.task-detail-title small { color: var(--zh-text-caption); font-size: 12px; font-weight: 400; }
-:deep(.task-detail-dialog) { overflow: hidden; border-radius: var(--zh-radius16); box-shadow: var(--zh-shadow3); }
-:deep(.task-detail-dialog .el-dialog__header) { margin: 0; padding: 22px 26px 18px; border-bottom: 1px solid var(--zh-line-parting); }
-:deep(.task-detail-dialog .el-dialog__headerbtn) { top: 15px; right: 18px; width: 40px; height: 40px; border-radius: var(--zh-radius8); transition: background 200ms ease, transform 150ms ease; }
-:deep(.task-detail-dialog .el-dialog__headerbtn:hover) { background: var(--zh-background-weaken); }
-:deep(.task-detail-dialog .el-dialog__headerbtn:active) { transform: scale(.96); }
-:deep(.task-detail-dialog .el-dialog__body) { padding: 0; }
-:deep(.task-detail-dialog .el-dialog__footer) { padding: 18px 26px 22px; border-top: 1px solid var(--zh-line-parting); }
-.task-detail-card { padding: 24px 26px 26px; background: var(--zh-background-pop); }
-.task-detail-hero { display: grid; grid-template-columns: auto minmax(0, 1fr) auto; align-items: center; gap: 16px; }
-.task-detail-file-icon { display: grid; place-items: center; width: 52px; height: 58px; border: 1px solid var(--zh-line-capsule); border-radius: var(--zh-radius10); color: var(--zh-text-theme); background: var(--zh-background-weaken); }
-.task-detail-file-icon .el-icon { font-size: 24px; }
-.task-detail-identity { min-width: 0; }
-.task-detail-identity p { margin: 0 0 3px; color: var(--zh-text-theme); font-size: 11px; font-weight: 600; letter-spacing: var(--zh-tracking-wide); }
-.task-detail-identity h2 { overflow: hidden; margin: 0; color: var(--zh-text-primary); font-size: 19px; font-weight: 600; letter-spacing: var(--zh-tracking-tight); line-height: 1.4; text-overflow: ellipsis; white-space: nowrap; }
-.task-detail-meta { display: flex; align-items: center; gap: 8px; margin-top: 5px; color: var(--zh-text-caption); font-size: 12px; }
-.task-detail-meta i { width: 3px; height: 3px; border-radius: 50%; background: currentColor; }
-.task-detail-hero :deep(.el-tag) { display: inline-flex; align-items: center; gap: 5px; border-radius: var(--zh-radius8); font-weight: 600; }
-.task-detail-metrics { display: grid; grid-template-columns: repeat(3, 1fr); margin-top: 24px; border: 1px solid var(--zh-line-border); border-radius: var(--zh-radius12); background: var(--zh-background-light); }
-.task-detail-metrics > div { display: flex; min-width: 0; flex-direction: column; gap: 6px; padding: 16px 18px; }
-.task-detail-metrics > div + div { border-left: 1px solid var(--zh-line-border); }
-.task-detail-metrics span { color: var(--zh-text-caption); font-size: 11px; }
-.task-detail-metrics strong { overflow: hidden; color: var(--zh-text-primary); font-size: 15px; font-weight: 600; text-overflow: ellipsis; white-space: nowrap; }
-.task-detail-metrics strong.number { font-family: var(--zh-font-number); font-variant-numeric: tabular-nums; }
-.task-detail-info { margin-top: 22px; }
-.task-detail-info > header { display: flex; align-items: baseline; gap: 8px; margin-bottom: 10px; }
-.task-detail-info > header span { color: var(--zh-text-primary); font-size: 13px; font-weight: 600; }
-.task-detail-info > header small { color: var(--zh-text-caption); font-size: 11px; }
-.task-detail-info dl { display: grid; grid-template-columns: 1fr 1fr; margin: 0; border-top: 1px solid var(--zh-line-parting); }
-.task-detail-info dl > div { display: grid; grid-template-columns: 82px minmax(0, 1fr); gap: 10px; padding: 14px 0; border-bottom: 1px solid var(--zh-line-parting); }
-.task-detail-info dl > div:nth-child(2n) { padding-left: 20px; }
-.task-detail-info dt { color: var(--zh-text-caption); font-size: 12px; }
-.task-detail-info dd { overflow: hidden; margin: 0; color: var(--zh-text-secondary); font-size: 12px; font-variant-numeric: tabular-nums; text-overflow: ellipsis; white-space: nowrap; }
-.task-detail-capabilities { display: flex; align-items: flex-start; gap: 18px; margin-top: 20px; padding: 14px 16px; border-radius: var(--zh-radius10); background: var(--zh-background-weaken); }
-.task-detail-capabilities > span { flex: 0 0 auto; padding-top: 2px; color: var(--zh-text-theme); font-size: 12px; font-weight: 600; }
-.task-detail-capabilities > div { display: flex; flex-wrap: wrap; gap: 8px 16px; }
-.task-detail-capabilities > div span { display: inline-flex; align-items: center; gap: 5px; color: var(--zh-text-secondary); font-size: 12px; }
-.task-detail-capabilities .el-icon { color: var(--zh-green); }
-.task-detail-actions { display: flex; align-items: center; justify-content: space-between; gap: 16px; }
-.task-detail-actions > div { display: flex; gap: 10px; }
-.task-detail-actions :deep(.el-button) { margin-left: 0; transition: transform 150ms ease, background 200ms ease, border-color 200ms ease; }
-.task-detail-actions :deep(.el-button:active) { transform: scale(.98); }
-
-:deep(.quality-report-dialog) { overflow: hidden; border-radius: var(--zh-radius16); box-shadow: var(--zh-shadow3); }
-:deep(.quality-report-dialog .el-dialog__header) { margin: 0; padding: 22px 26px 18px; border-bottom: 1px solid var(--zh-line-parting); }
-:deep(.quality-report-dialog .el-dialog__headerbtn) { top: 15px; right: 18px; width: 40px; height: 40px; border-radius: var(--zh-radius8); transition: background 200ms ease, transform 150ms ease; }
-:deep(.quality-report-dialog .el-dialog__headerbtn:hover) { background: var(--zh-background-weaken); }
-:deep(.quality-report-dialog .el-dialog__headerbtn:active) { transform: scale(.96); }
-:deep(.quality-report-dialog .el-dialog__body) { padding: 0; }
-:deep(.quality-report-dialog .el-dialog__footer) { padding: 16px 26px 20px; border-top: 1px solid var(--zh-line-parting); }
-.quality-report-card { padding: 24px 26px 26px; background: var(--zh-background-pop); }
-.quality-report-summary { display: grid; grid-template-columns: auto minmax(0, 1fr) auto; align-items: center; gap: 16px; }
-.quality-report-emblem { display: grid; place-items: center; width: 52px; height: 58px; border: 1px solid rgb(31 153 63 / 14%); border-radius: var(--zh-radius10); color: var(--zh-green); background: rgb(31 153 63 / 8%); }
-.quality-report-emblem .el-icon { font-size: 25px; }
-.quality-report-identity { min-width: 0; }
-.quality-report-identity p { margin: 0 0 3px; color: var(--zh-green); font-size: 11px; font-weight: 600; letter-spacing: var(--zh-tracking-wide); }
-.quality-report-identity h2 { overflow: hidden; margin: 0; color: var(--zh-text-primary); font-size: 19px; font-weight: 600; letter-spacing: var(--zh-tracking-tight); line-height: 1.4; text-overflow: ellipsis; white-space: nowrap; }
-.quality-report-identity span { display: block; margin-top: 5px; color: var(--zh-text-caption); font-size: 12px; }
-.quality-score { padding-left: 20px; border-left: 1px solid var(--zh-line-parting); }
-.quality-score :deep(.el-progress__text) { display: flex; flex-direction: column; line-height: 1; }
-.quality-score :deep(.el-progress__text strong) { color: var(--zh-text-primary); font: 600 24px var(--zh-font-number); font-variant-numeric: tabular-nums; letter-spacing: var(--zh-tracking-tight); }
-.quality-score :deep(.el-progress__text small) { margin-top: 5px; color: var(--zh-text-caption); font-size: 10px; }
-.quality-checks { margin-top: 24px; border: 1px solid var(--zh-line-border); border-radius: var(--zh-radius12); overflow: hidden; }
-.quality-checks > header { display: flex; align-items: center; justify-content: space-between; gap: 16px; padding: 14px 16px; border-bottom: 1px solid var(--zh-line-parting); background: var(--zh-background-light); }
-.quality-checks > header > div { display: flex; align-items: baseline; gap: 8px; }
-.quality-checks > header span { color: var(--zh-text-primary); font-size: 13px; font-weight: 600; }
-.quality-checks > header small { color: var(--zh-text-caption); font-size: 11px; }
-.quality-checks ul { display: grid; margin: 0; padding: 0; list-style: none; }
-.quality-checks li { display: grid; grid-template-columns: auto minmax(0, 1fr) auto; align-items: center; gap: 12px; min-height: 58px; padding: 10px 16px; transition: background 200ms ease; }
-.quality-checks li + li { border-top: 1px solid var(--zh-line-parting); }
-.quality-checks li:hover { background: var(--zh-background-option); }
-.quality-check-icon { display: grid; place-items: center; width: 30px; height: 30px; border-radius: var(--zh-radius8); color: var(--zh-green); background: rgb(31 153 63 / 8%); }
-.quality-checks li.warning .quality-check-icon { color: var(--zh-orange); background: rgb(255 107 63 / 8%); }
-.quality-checks li > div { display: flex; min-width: 0; flex-direction: column; gap: 2px; }
-.quality-checks li strong { overflow: hidden; color: var(--zh-text-primary); font-size: 13px; font-weight: 500; text-overflow: ellipsis; white-space: nowrap; }
-.quality-checks li small { overflow: hidden; color: var(--zh-text-caption); font-size: 11px; text-overflow: ellipsis; white-space: nowrap; }
-.quality-checks li :deep(.el-tag) { border-radius: var(--zh-radius6, 6px); }
-
-@media (max-width: 620px) {
-  :deep(.task-detail-dialog .el-dialog__header) { padding-inline: 20px; }
-  :deep(.task-detail-dialog .el-dialog__footer) { padding-inline: 20px; }
-  .task-detail-card { padding: 20px; }
-  .task-detail-hero { grid-template-columns: auto minmax(0, 1fr); }
-  .task-detail-hero :deep(.el-tag) { grid-column: 1 / -1; justify-self: start; }
-  .task-detail-metrics { grid-template-columns: 1fr; }
-  .task-detail-metrics > div + div { border-top: 1px solid var(--zh-line-border); border-left: 0; }
-  .task-detail-info dl { grid-template-columns: 1fr; }
-  .task-detail-info dl > div:nth-child(2n) { padding-left: 0; }
-  .task-detail-actions { align-items: stretch; flex-direction: column-reverse; }
-  .task-detail-actions > div { display: grid; grid-template-columns: 1fr 1fr; }
-  .task-detail-actions > div .el-button:last-child { grid-column: 1 / -1; }
-  :deep(.quality-report-dialog .el-dialog__header), :deep(.quality-report-dialog .el-dialog__footer) { padding-inline: 20px; }
-  .quality-report-card { padding: 20px; }
-  .quality-report-summary { grid-template-columns: auto minmax(0, 1fr); }
-  .quality-score { grid-column: 1 / -1; justify-self: stretch; margin-top: 2px; padding: 16px 0 0; border-top: 1px solid var(--zh-line-parting); border-left: 0; }
-  .quality-score :deep(.el-progress) { margin: 0 auto; }
+@media (max-width: 960px) {
+  .flow-steps { grid-template-columns: repeat(3, 1fr); }
+  .active-task { grid-template-columns: auto 1fr; }
+  .active-task-progress { grid-column: 2; }
+  .active-task > .el-button { grid-column: 2; justify-self: start; }
+}
+@media (max-width: 680px) {
+  .export-page { width: min(100% - 28px, 1220px); padding-top: 26px; }
+  .export-heading, .flow-console-header, .history-header, .quality-card-heading { align-items: stretch; flex-direction: column; }
+  .heading-actions, .history-controls { justify-content: space-between; }
+  .history-controls .el-input { width: 100%; }
+  .flow-console { padding: 17px; }
+  .flow-steps { grid-template-columns: 1fr; }
+  .flow-context { align-items: flex-start; flex-direction: column; gap: 7px; }
+  .export-stats { grid-template-columns: 1fr; }
+  .export-stats article + article::before { top: 0; right: 20px; bottom: auto; left: 20px; width: auto; height: 1px; }
+  .active-task { grid-template-columns: auto 1fr; padding: 16px; }
+  .active-task-progress { grid-column: 1 / -1; }
+  .active-task > .el-button { grid-column: 1 / -1; justify-self: stretch; }
+  .quality-meta { grid-template-columns: 1fr; }
+  .quality-card-heading .el-button { align-self: flex-start; padding-left: 0; }
+  .flow-task-actions { align-items: stretch; flex-wrap: wrap; justify-content: flex-start; }
+  .flow-delivery-strip { align-items: stretch; flex-direction: column; }
+  .detail-grid { grid-template-columns: 1fr; }
+  .task-table { overflow-x: auto; }
 }
 </style>
