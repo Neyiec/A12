@@ -1,5 +1,7 @@
 import json
+import time
 from dataclasses import asdict
+from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
@@ -16,6 +18,7 @@ from .similarity import cosine_similarity, embedding_to_pgvector, keyword_score
 INDEX_DIR = Path(__file__).resolve().parents[2] / "data" / "resource_index"
 INDEX_DIR.mkdir(parents=True, exist_ok=True)
 FALLBACK_INDEX_PATH = INDEX_DIR / "index.json"
+FALLBACK_RETRIEVAL_LOG_PATH = INDEX_DIR / "retrieval_logs.jsonl"
 
 
 class ResourceIndexStore:
@@ -84,6 +87,24 @@ class ResourceIndexStore:
                     cur.execute(
                         "CREATE INDEX IF NOT EXISTS idx_a12_resource_chunk_resource ON a12_resource_index_chunk(resource_key)"
                     )
+                    cur.execute(
+                        """
+                        CREATE TABLE IF NOT EXISTS a12_retrieval_log (
+                            id BIGSERIAL PRIMARY KEY,
+                            query TEXT NOT NULL,
+                            resource_ids JSONB NOT NULL DEFAULT '[]'::jsonb,
+                            match_count INTEGER NOT NULL DEFAULT 0,
+                            top_score DOUBLE PRECISION DEFAULT NULL,
+                            search_mode TEXT NOT NULL DEFAULT 'unknown',
+                            latency_ms INTEGER NOT NULL DEFAULT 0,
+                            metadata JSONB NOT NULL DEFAULT '{}'::jsonb,
+                            created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+                        )
+                        """
+                    )
+                    cur.execute(
+                        "CREATE INDEX IF NOT EXISTS idx_a12_retrieval_log_created ON a12_retrieval_log(created_at DESC)"
+                    )
             self.available = True
             self._ensure_vector_index()
         except Exception:
@@ -133,7 +154,7 @@ class ResourceIndexStore:
             parsed = await download_and_parse_resource(request)
             metadata["parse"] = parsed.metadata
             text = parsed.text
-            chunks = chunk_text(text)
+            chunks = chunk_text(text, metadata=metadata)
             try:
                 embeddings = await self.embedding_client.embed_documents(chunks)
             except Exception:
@@ -221,21 +242,37 @@ class ResourceIndexStore:
         return {"resource_key": key, "status": "deleted"}
 
     async def search_context(self, resource_ids: list[str], query: str, limit: int = 12000, top_k: int = 8) -> dict[str, Any]:
+        started_at = time.perf_counter()
+        search_mode = "empty"
+        matches: list[dict[str, Any]] = []
         try:
             query_embedding = await self.embedding_client.embed_query(query)
         except Exception:
             query_embedding = []
         if self.available and len(query_embedding) == self.embedding_dimensions:
             try:
-                vector_result = self._search_pgvector(resource_ids, query, query_embedding, limit, top_k)
+                vector_result = self._search_pgvector(resource_ids, query, query_embedding, limit, max(top_k * 4, top_k))
             except Exception:
                 vector_result = {"context": "", "matches": []}
             if vector_result.get("matches"):
-                return vector_result
+                matches = self._rerank_matches(vector_result["matches"], query, top_k)
+                search_mode = "pgvector_hybrid_rerank"
+                result = self._build_search_result(query, matches, limit, search_mode)
+                result["latency_ms"] = self._elapsed_ms(started_at)
+                self._record_retrieval_log(query, resource_ids, matches, search_mode, result["latency_ms"], {
+                    "embedding": True,
+                    "postgres": True,
+                })
+                return result
 
         chunks = self._load_chunks(resource_ids)
         if not chunks:
-            return {"context": "", "matches": []}
+            latency_ms = self._elapsed_ms(started_at)
+            self._record_retrieval_log(query, resource_ids, [], "no_match", latency_ms, {
+                "embedding": bool(query_embedding),
+                "postgres": self.available,
+            })
+            return {"query": query, "context": "", "matches": [], "search_mode": "no_match", "latency_ms": latency_ms}
 
         scored: list[tuple[float, str, IndexedChunk]] = []
         for chunk in chunks:
@@ -260,10 +297,15 @@ class ResourceIndexStore:
             }
             for score, match_type, chunk in selected
         ]
-        context = "\n\n".join(
-            f"[{item['resource_id']}#{item['chunk_id']}]\n{item['content']}" for item in matches
-        )[:limit]
-        return {"context": context, "matches": matches}
+        matches = self._rerank_matches(matches, query, top_k)
+        search_mode = "fallback_hybrid_rerank"
+        result = self._build_search_result(query, matches, limit, search_mode)
+        result["latency_ms"] = self._elapsed_ms(started_at)
+        self._record_retrieval_log(query, resource_ids, matches, search_mode, result["latency_ms"], {
+            "embedding": bool(query_embedding),
+            "postgres": self.available,
+        })
+        return result
 
     def _search_pgvector(
         self,
@@ -312,10 +354,287 @@ class ResourceIndexStore:
             }
             for row in rows
         ]
+        return {"query": query, "matches": matches}
+
+    def overview(self) -> dict[str, Any]:
+        if self.available:
+            with self._connect() as conn:
+                with conn.cursor() as cur:
+                    cur.execute("SELECT COUNT(*), COALESCE(SUM(chunk_count), 0) FROM a12_resource_index")
+                    total_resources, total_chunks = cur.fetchone()
+                    cur.execute(
+                        """
+                        SELECT source_type, parse_status, available, allow_ai, COUNT(*), COALESCE(SUM(chunk_count), 0)
+                        FROM a12_resource_index
+                        GROUP BY source_type, parse_status, available, allow_ai
+                        ORDER BY source_type, parse_status
+                        """
+                    )
+                    groups = [
+                        {
+                            "source_type": row[0],
+                            "parse_status": row[1],
+                            "available": row[2],
+                            "allow_ai": row[3],
+                            "resource_count": row[4],
+                            "chunk_count": row[5],
+                        }
+                        for row in cur.fetchall()
+                    ]
+                    cur.execute("SELECT COUNT(*) FROM a12_retrieval_log")
+                    retrieval_log_count = cur.fetchone()[0]
+            return {
+                "postgres_available": True,
+                "embedding_dimensions": self.embedding_dimensions,
+                "resource_count": total_resources,
+                "chunk_count": total_chunks,
+                "retrieval_log_count": retrieval_log_count,
+                "groups": groups,
+                "fallback_path": str(FALLBACK_INDEX_PATH),
+            }
+
+        data = self._read_fallback()
+        resources = list(data.get("resources", {}).values())
+        return {
+            "postgres_available": False,
+            "embedding_dimensions": self.embedding_dimensions,
+            "resource_count": len(resources),
+            "chunk_count": sum(len(items) for items in data.get("chunks", {}).values()),
+            "retrieval_log_count": self._fallback_log_count(),
+            "groups": self._fallback_groups(resources),
+            "fallback_path": str(FALLBACK_INDEX_PATH),
+        }
+
+    def list_resources(
+        self,
+        source_type: str | None = None,
+        available: bool | None = None,
+        limit: int = 50,
+        offset: int = 0,
+    ) -> dict[str, Any]:
+        limit = max(1, min(limit, 200))
+        offset = max(0, offset)
+        if self.available:
+            filters = []
+            params: list[Any] = []
+            if source_type:
+                filters.append("source_type = %s")
+                params.append(source_type)
+            if available is not None:
+                filters.append("available = %s")
+                params.append(available)
+            where = ("WHERE " + " AND ".join(filters)) if filters else ""
+            with self._connect() as conn:
+                with conn.cursor() as cur:
+                    cur.execute(f"SELECT COUNT(*) FROM a12_resource_index {where}", tuple(params))
+                    total = cur.fetchone()[0]
+                    cur.execute(
+                        f"""
+                        SELECT resource_key, source_type, resource_id, title, available, allow_ai,
+                               parse_status, error_message, text_length, chunk_count, metadata, indexed_at, updated_at
+                        FROM a12_resource_index
+                        {where}
+                        ORDER BY updated_at DESC
+                        LIMIT %s OFFSET %s
+                        """,
+                        tuple(params + [limit, offset]),
+                    )
+                    items = [self._resource_row(row) for row in cur.fetchall()]
+            return {"total": total, "limit": limit, "offset": offset, "items": items}
+
+        resources = list(self._read_fallback().get("resources", {}).values())
+        if source_type:
+            resources = [item for item in resources if item.get("source_type") == source_type]
+        if available is not None:
+            resources = [item for item in resources if bool(item.get("available", True)) is available]
+        total = len(resources)
+        items = resources[offset:offset + limit]
+        return {"total": total, "limit": limit, "offset": offset, "items": items}
+
+    def get_resource(self, source_type: str, resource_id: str, chunk_limit: int = 20) -> dict[str, Any] | None:
+        key = resource_key(source_type, resource_id)
+        chunk_limit = max(0, min(chunk_limit, 200))
+        if self.available:
+            with self._connect() as conn:
+                with conn.cursor() as cur:
+                    cur.execute(
+                        """
+                        SELECT resource_key, source_type, resource_id, title, available, allow_ai,
+                               parse_status, error_message, text_length, chunk_count, metadata, indexed_at, updated_at
+                        FROM a12_resource_index
+                        WHERE resource_key = %s
+                        """,
+                        (key,),
+                    )
+                    row = cur.fetchone()
+                    if not row:
+                        return None
+                    resource = self._resource_row(row)
+                    cur.execute(
+                        """
+                        SELECT chunk_id, chunk_index, content, metadata
+                        FROM a12_resource_index_chunk
+                        WHERE resource_key = %s
+                        ORDER BY chunk_index
+                        LIMIT %s
+                        """,
+                        (key, chunk_limit),
+                    )
+                    resource["chunks"] = [
+                        {
+                            "chunk_id": chunk[0],
+                            "chunk_index": chunk[1],
+                            "content": chunk[2][:1500],
+                            "metadata": chunk[3] or {},
+                        }
+                        for chunk in cur.fetchall()
+                    ]
+                    return resource
+
+        data = self._read_fallback()
+        resource = data.get("resources", {}).get(key)
+        if not resource:
+            return None
+        result = dict(resource)
+        result["chunks"] = data.get("chunks", {}).get(key, [])[:chunk_limit]
+        return result
+
+    def list_retrieval_logs(self, limit: int = 50, offset: int = 0) -> dict[str, Any]:
+        limit = max(1, min(limit, 200))
+        offset = max(0, offset)
+        if self.available:
+            with self._connect() as conn:
+                with conn.cursor() as cur:
+                    cur.execute("SELECT COUNT(*) FROM a12_retrieval_log")
+                    total = cur.fetchone()[0]
+                    cur.execute(
+                        """
+                        SELECT id, query, resource_ids, match_count, top_score, search_mode, latency_ms, metadata, created_at
+                        FROM a12_retrieval_log
+                        ORDER BY created_at DESC
+                        LIMIT %s OFFSET %s
+                        """,
+                        (limit, offset),
+                    )
+                    items = [
+                        {
+                            "id": row[0],
+                            "query": row[1],
+                            "resource_ids": row[2] or [],
+                            "match_count": row[3],
+                            "top_score": row[4],
+                            "search_mode": row[5],
+                            "latency_ms": row[6],
+                            "metadata": row[7] or {},
+                            "created_at": row[8].isoformat() if row[8] else None,
+                        }
+                        for row in cur.fetchall()
+                    ]
+            return {"total": total, "limit": limit, "offset": offset, "items": items}
+        items = self._read_fallback_logs()
+        total = len(items)
+        return {"total": total, "limit": limit, "offset": offset, "items": items[offset:offset + limit]}
+
+    def _rerank_matches(self, matches: list[dict[str, Any]], query: str, top_k: int) -> list[dict[str, Any]]:
+        reranked: list[dict[str, Any]] = []
+        for item in matches:
+            base_score = float(item.get("score") or 0.0)
+            lexical_score = keyword_score(str(item.get("content") or ""), query)
+            metadata_score = self._metadata_score(item.get("metadata") or {}, query)
+            exact_boost = 0.08 if query and query.strip() in str(item.get("content") or "") else 0.0
+            rerank_score = (0.68 * base_score) + (0.24 * lexical_score) + metadata_score + exact_boost
+            current = dict(item)
+            current["base_score"] = round(base_score, 6)
+            current["rerank_score"] = round(rerank_score, 6)
+            current["match_type"] = f"{current.get('match_type', 'unknown')}+hybrid_rerank"
+            reranked.append(current)
+        reranked.sort(key=lambda item: item.get("rerank_score", item.get("score", 0.0)), reverse=True)
+        for rank, item in enumerate(reranked[:top_k], start=1):
+            item["rank"] = rank
+            item["score"] = item.get("rerank_score", item.get("score", 0.0))
+        return reranked[:top_k]
+
+    def _metadata_score(self, metadata: dict[str, Any], query: str) -> float:
+        if not query:
+            return 0.0
+        haystack = " ".join([
+            str(metadata.get("title") or ""),
+            str(metadata.get("subject") or ""),
+            " ".join(str(item) for item in metadata.get("tags", []) if item is not None) if isinstance(metadata.get("tags"), list) else str(metadata.get("tags") or ""),
+            " ".join(str(item) for item in metadata.get("categories", []) if item is not None) if isinstance(metadata.get("categories"), list) else str(metadata.get("categories") or ""),
+        ])
+        return min(keyword_score(haystack, query) * 0.12, 0.12)
+
+    def _build_search_result(self, query: str, matches: list[dict[str, Any]], limit: int, search_mode: str) -> dict[str, Any]:
         context = "\n\n".join(
-            f"[{item['resource_id']}#{item['chunk_id']} score={item['score']}]\n{item['content']}" for item in matches
+            f"[{item['resource_id']}#{item['chunk_id']} score={item.get('score', 0)}]\n{item['content']}"
+            for item in matches
         )[:limit]
-        return {"query": query, "context": context, "matches": matches}
+        return {
+            "query": query,
+            "context": context,
+            "matches": matches,
+            "search_mode": search_mode,
+        }
+
+    def _record_retrieval_log(
+        self,
+        query: str,
+        resource_ids: list[str],
+        matches: list[dict[str, Any]],
+        search_mode: str,
+        latency_ms: int,
+        metadata: dict[str, Any],
+    ) -> None:
+        top_score = max((float(item.get("score") or 0.0) for item in matches), default=None)
+        log_metadata = {
+            **metadata,
+            "top_matches": [
+                {
+                    "resource_id": item.get("resource_id"),
+                    "chunk_id": item.get("chunk_id"),
+                    "score": item.get("score"),
+                    "rank": item.get("rank"),
+                }
+                for item in matches[:5]
+            ],
+        }
+        if self.available:
+            try:
+                with self._connect() as conn:
+                    with conn.cursor() as cur:
+                        cur.execute(
+                            """
+                            INSERT INTO a12_retrieval_log(query, resource_ids, match_count, top_score, search_mode, latency_ms, metadata)
+                            VALUES(%s, %s::jsonb, %s, %s, %s, %s, %s::jsonb)
+                            """,
+                            (
+                                query[:4000],
+                                json.dumps(resource_ids, ensure_ascii=False),
+                                len(matches),
+                                top_score,
+                                search_mode,
+                                latency_ms,
+                                json.dumps(log_metadata, ensure_ascii=False),
+                            ),
+                        )
+                return
+            except Exception:
+                pass
+        self._append_fallback_log({
+            "id": None,
+            "query": query[:4000],
+            "resource_ids": resource_ids,
+            "match_count": len(matches),
+            "top_score": top_score,
+            "search_mode": search_mode,
+            "latency_ms": latency_ms,
+            "metadata": log_metadata,
+            "created_at": datetime.now(timezone.utc).isoformat(),
+        })
+
+    def _elapsed_ms(self, started_at: float) -> int:
+        return int((time.perf_counter() - started_at) * 1000)
 
     def _build_metadata(self, request: ResourceIndexSyncRequest) -> dict[str, Any]:
         metadata = dict(request.metadata or {})
@@ -508,6 +827,67 @@ class ResourceIndexStore:
                 continue
             chunks.extend(IndexedChunk(**chunk) for chunk in data.get("chunks", {}).get(key, []))
         return chunks
+
+    def _resource_row(self, row: tuple[Any, ...]) -> dict[str, Any]:
+        return {
+            "resource_key": row[0],
+            "source_type": row[1],
+            "resource_id": row[2],
+            "title": row[3],
+            "available": row[4],
+            "allow_ai": row[5],
+            "parse_status": row[6],
+            "error_message": row[7],
+            "text_length": row[8],
+            "chunk_count": row[9],
+            "metadata": row[10] or {},
+            "indexed_at": row[11].isoformat() if row[11] else None,
+            "updated_at": row[12].isoformat() if row[12] else None,
+        }
+
+    def _fallback_groups(self, resources: list[dict[str, Any]]) -> list[dict[str, Any]]:
+        groups: dict[tuple[str, str, bool, bool], dict[str, Any]] = {}
+        for item in resources:
+            key = (
+                str(item.get("source_type") or "unknown"),
+                str(item.get("parse_status") or "unknown"),
+                bool(item.get("available", True)),
+                bool(item.get("allow_ai", True)),
+            )
+            group = groups.setdefault(key, {
+                "source_type": key[0],
+                "parse_status": key[1],
+                "available": key[2],
+                "allow_ai": key[3],
+                "resource_count": 0,
+                "chunk_count": 0,
+            })
+            group["resource_count"] += 1
+            group["chunk_count"] += int(item.get("chunk_count") or 0)
+        return list(groups.values())
+
+    def _fallback_log_count(self) -> int:
+        if not FALLBACK_RETRIEVAL_LOG_PATH.exists():
+            return 0
+        return sum(1 for line in FALLBACK_RETRIEVAL_LOG_PATH.read_text(encoding="utf-8").splitlines() if line.strip())
+
+    def _read_fallback_logs(self) -> list[dict[str, Any]]:
+        if not FALLBACK_RETRIEVAL_LOG_PATH.exists():
+            return []
+        items: list[dict[str, Any]] = []
+        for line in FALLBACK_RETRIEVAL_LOG_PATH.read_text(encoding="utf-8").splitlines():
+            if not line.strip():
+                continue
+            try:
+                items.append(json.loads(line))
+            except Exception:
+                continue
+        items.reverse()
+        return items
+
+    def _append_fallback_log(self, item: dict[str, Any]) -> None:
+        with FALLBACK_RETRIEVAL_LOG_PATH.open("a", encoding="utf-8") as file:
+            file.write(json.dumps(item, ensure_ascii=False) + "\n")
 
     def _default_embedding_dimensions(self) -> int:
         model = (self.settings.embedding_model or "").lower()

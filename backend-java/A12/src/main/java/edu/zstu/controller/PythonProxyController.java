@@ -69,6 +69,37 @@ public class PythonProxyController {
         return callJson(() -> pythonPptClient.updateResourceIndexMetadata(payload));
     }
 
+    @GetMapping("/resources/index/overview")
+    public Map<String, Object> resourceIndexOverview() {
+        return callJson(pythonPptClient::resourceIndexOverview);
+    }
+
+    @GetMapping("/resources/index/resources")
+    public Map<String, Object> listResourceIndexResources(@RequestParam(required = false) String source_type,
+                                                          @RequestParam(required = false) Boolean available,
+                                                          @RequestParam(required = false) Integer limit,
+                                                          @RequestParam(required = false) Integer offset) {
+        return callJson(() -> pythonPptClient.listResourceIndexResources(source_type, available, limit, offset));
+    }
+
+    @GetMapping("/resources/index/resources/{sourceType}/{resourceId}")
+    public Map<String, Object> getResourceIndexResource(@PathVariable String sourceType,
+                                                        @PathVariable String resourceId,
+                                                        @RequestParam(required = false) Integer chunk_limit) {
+        return callJson(() -> pythonPptClient.getResourceIndexResource(sourceType, resourceId, chunk_limit));
+    }
+
+    @GetMapping("/resources/index/logs")
+    public Map<String, Object> listResourceIndexLogs(@RequestParam(required = false) Integer limit,
+                                                     @RequestParam(required = false) Integer offset) {
+        return callJson(() -> pythonPptClient.listResourceIndexLogs(limit, offset));
+    }
+
+    @PostMapping("/resources/index/search")
+    public Map<String, Object> searchResourceIndex(@RequestBody Map<String, Object> payload) {
+        return callJson(() -> pythonPptClient.searchResourceIndex(payload));
+    }
+
     @DeleteMapping("/resources/index/{sourceType}/{resourceId}")
     public Map<String, Object> deleteResourceIndex(@PathVariable String sourceType,
                                                    @PathVariable String resourceId) {

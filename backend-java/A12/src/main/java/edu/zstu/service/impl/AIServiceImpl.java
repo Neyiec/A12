@@ -8,8 +8,10 @@ import edu.zstu.dto.PlanConfirmationDTO;
 import edu.zstu.dto.TaskCreateDTO;
 import edu.zstu.entity.AI_Conversation;
 import edu.zstu.entity.AI_Task;
+import edu.zstu.entity.Kb_Retrieval_Log;
 import edu.zstu.mapper.AiConversationMapper;
 import edu.zstu.mapper.AiTaskMapper;
+import edu.zstu.mapper.KbRetrievalLogMapper;
 import edu.zstu.service.AIService;
 import edu.zstu.service.BusinessLogService;
 import edu.zstu.service.PythonPptClient;
@@ -34,17 +36,20 @@ public class AIServiceImpl implements AIService {
     private final BusinessLogService businessLogService;
     private final PythonPptClient pythonPptClient;
     private final ObjectMapper objectMapper;
+    private final KbRetrievalLogMapper retrievalLogMapper;
 
     public AIServiceImpl(AiConversationMapper conversationMapper,
                          AiTaskMapper taskMapper,
                          BusinessLogService businessLogService,
                          PythonPptClient pythonPptClient,
-                         ObjectMapper objectMapper) {
+                         ObjectMapper objectMapper,
+                         KbRetrievalLogMapper retrievalLogMapper) {
         this.conversationMapper = conversationMapper;
         this.taskMapper = taskMapper;
         this.businessLogService = businessLogService;
         this.pythonPptClient = pythonPptClient;
         this.objectMapper = objectMapper;
+        this.retrievalLogMapper = retrievalLogMapper;
     }
 
     @Override
@@ -159,7 +164,7 @@ public class AIServiceImpl implements AIService {
         conversation.setLast_question(pythonResult.question == null ? "" : pythonResult.question);
         conversationMapper.update(conversation);
 
-        updateTaskFromPythonResult(task, pythonResult);
+        updateTaskFromPythonResult(task, pythonResult, userMessage);
         taskMapper.update(task);
 
         businessLogService.record("operation", "ai", "send_message", "ai_conversation", conversation.getId(),
@@ -387,7 +392,7 @@ public class AIServiceImpl implements AIService {
         return manualMessage.trim() + "\n" + transcript.trim();
     }
 
-    private void updateTaskFromPythonResult(AI_Task task, PythonPptClient.OutlineChatResult result) {
+    private void updateTaskFromPythonResult(AI_Task task, PythonPptClient.OutlineChatResult result, String userMessage) {
         task.setGeneration_mode("python");
         if (!isBlank(result.pythonSessionId)) task.setPython_session_id(result.pythonSessionId);
         if (!isBlank(result.outlineId)) task.setPython_outline_id(result.outlineId);
@@ -403,6 +408,7 @@ public class AIServiceImpl implements AIService {
             task.setReflections(buildGenerationReflections(result));
             task.setExec_steps("[{\"step\":\"python_outline_chat\",\"status\":\"completed\"}]");
             task.setError_message("");
+            recordRetrievalLog(task, result, userMessage);
         } else if ("failed".equals(result.status)) {
             task.setStatus("failed");
             task.setError_message(result.errorMessage);
@@ -415,6 +421,33 @@ public class AIServiceImpl implements AIService {
         return conversation;
     }
 
+    private void recordRetrievalLog(AI_Task task, PythonPptClient.OutlineChatResult result, String userMessage) {
+        try {
+            Object toolTrace = result.finalData == null ? null : result.finalData.get("tool_trace");
+            if (!(toolTrace instanceof List<?> traces)) {
+                return;
+            }
+            Object ragTrace = traces.stream()
+                    .filter(item -> item instanceof Map<?, ?> map && "rag_search".equals(String.valueOf(map.get("tool"))))
+                    .findFirst()
+                    .orElse(null);
+            if (ragTrace == null) {
+                return;
+            }
+            Kb_Retrieval_Log logItem = new Kb_Retrieval_Log();
+            logItem.setUser_id(task.getUser_id());
+            logItem.setTask_id(task.getId());
+            logItem.setType("retrieval");
+            logItem.setQuery_text(userMessage);
+            logItem.setResult_chunks(objectMapper.writeValueAsString(ragTrace));
+            logItem.setPrompt_context(truncateString(String.valueOf(result.finalData.getOrDefault("title", "")), 1000));
+            logItem.setGenerated_content(null);
+            logItem.setModel_name("python-rag-hybrid-rerank");
+            retrievalLogMapper.insert(logItem);
+        } catch (Exception e) {
+            log.warn("recordRetrievalLog failed taskId={}: {}", task.getId(), e.getMessage());
+        }
+    }
     private AI_Task requireTaskByConversation(String id) {
         AI_Task task = taskMapper.findByConversationId(parseId(id));
         if (task == null) throw new RuntimeException("会话任务不存在");
@@ -565,6 +598,16 @@ public class AIServiceImpl implements AIService {
         }
     }
 
+    private String truncateString(String value, int maxLength) {
+        if (value == null) {
+            return null;
+        }
+        if (value.length() <= maxLength) {
+            return value;
+        }
+        return value.substring(0, maxLength);
+    }
+
     private String escapeJson(String value) {
         return value == null ? "" : value.replace("\\", "\\\\").replace("\"", "\\\"");
     }
@@ -581,5 +624,3 @@ public class AIServiceImpl implements AIService {
         return vo;
     }
 }
-
-

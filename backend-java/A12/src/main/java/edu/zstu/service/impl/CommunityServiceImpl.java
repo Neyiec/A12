@@ -1,6 +1,8 @@
 package edu.zstu.service.impl;
 
 import cn.hutool.core.bean.BeanUtil;
+import com.fasterxml.jackson.core.type.TypeReference;
+import com.fasterxml.jackson.databind.ObjectMapper;
 import com.github.pagehelper.PageHelper;
 import com.github.pagehelper.PageInfo;
 import edu.zstu.dto.*;
@@ -45,11 +47,13 @@ public class CommunityServiceImpl implements CommunityService {
     private final BusinessLogService businessLogService;
     private final RedisCacheUtil redisCacheUtil;
     private final StringRedisTemplate redisTemplate;
+    private final ObjectMapper objectMapper;
 
     public CommunityServiceImpl(ComContentMapper contentMapper, ComInteractionMapper interactionMapper,
                                 AdmAuditMapper auditMapper, ProjectService projectService,
                                 BusinessLogService businessLogService, RedisCacheUtil redisCacheUtil,
-                                StringRedisTemplate redisTemplate) {
+                                StringRedisTemplate redisTemplate,
+                                ObjectMapper objectMapper) {
         this.contentMapper = contentMapper;
         this.interactionMapper = interactionMapper;
         this.auditMapper = auditMapper;
@@ -57,6 +61,7 @@ public class CommunityServiceImpl implements CommunityService {
         this.businessLogService = businessLogService;
         this.redisCacheUtil = redisCacheUtil;
         this.redisTemplate = redisTemplate;
+        this.objectMapper = objectMapper;
     }
 
     @Override
@@ -75,8 +80,10 @@ public class CommunityServiceImpl implements CommunityService {
     @Override
     public ContentVO getItem(Integer id) {
         log.info("getItem itemId={}", id);
-        ContentVO vo = cachedContent(id);
-        if (vo == null) throw new RuntimeException("内容不存在");
+        Com_Content content = requirePublicContent(id);
+        ContentVO vo = toContentVO(content);
+        vo.setView_count(vo.getView_count() + pendingCounter(id, "view"));
+        vo.setUse_count(vo.getUse_count() + pendingCounter(id, "use"));
         return vo;
     }
 
@@ -84,8 +91,7 @@ public class CommunityServiceImpl implements CommunityService {
     @Transactional
     public void favorite(Integer itemId, Integer userId) {
         log.info("favorite userId={}, itemId={}", userId, itemId);
-        Com_Content c = contentMapper.findById(itemId);
-        if (c == null) throw new RuntimeException("内容不存在");
+        Com_Content c = requirePublicContent(itemId);
         String lockKey = "lock:community:favorite:" + userId + ":" + itemId;
         Boolean locked = redisTemplate.opsForValue().setIfAbsent(lockKey, "1", Duration.ofSeconds(5));
         if (!Boolean.TRUE.equals(locked)) {
@@ -131,6 +137,7 @@ public class CommunityServiceImpl implements CommunityService {
                     PageInfo<Com_Interaction> info = new PageInfo<>(interactions);
                     List<ContentVO> records = interactions == null ? List.of() : interactions.stream()
                             .map(i -> cachedContent(i.getTarget_id()))
+                            .filter(item -> item == null || "public".equals(item.getStatus()))
                             .filter(Objects::nonNull)
                             .toList();
                     return new PageResult<>(info.getTotal(), page, size, records);
@@ -141,8 +148,7 @@ public class CommunityServiceImpl implements CommunityService {
     @Transactional
     public void recordView(Integer itemId, Integer userId) {
         log.info("recordView userId={}, itemId={}", userId, itemId);
-        Com_Content c = contentMapper.findById(itemId);
-        if (c == null) throw new RuntimeException("内容不存在");
+        Com_Content c = requirePublicContent(itemId);
         interactionMapper.deleteByUserAndTarget(userId, c.getContent_type(), itemId, "view");
         Com_Interaction inter = new Com_Interaction();
         inter.setUser_id(userId);
@@ -185,12 +191,10 @@ public class CommunityServiceImpl implements CommunityService {
     @Override
     @Transactional
     public ProjectVO reuseItem(Integer id, InteractionDTO dto, Integer userId) {
-        log.info("reuseItem userId={}, itemId={}, targetVersion={}", userId, id, dto.getTarget_version());
-        Com_Content c = contentMapper.findById(id);
-        if (c == null) throw new RuntimeException("内容不存在");
-        if (!"public".equals(c.getStatus())) throw new RuntimeException("该内容不可复用");
+        log.info("reuseItem userId={}, itemId={}, targetVersion={}", userId, id, dto == null ? null : dto.getTarget_version());
+        Com_Content c = requirePublicContent(id);
         ProjectCreateDTO projectDTO = new ProjectCreateDTO();
-        projectDTO.setProject_name(c.getTitle() + " - 复用");
+        projectDTO.setProject_name(c.getTitle() + " - reuse");
         projectDTO.setProject_type("mixed");
         projectDTO.setStatus("draft");
         ProjectVO project = projectService.createProject(projectDTO, userId);
@@ -199,7 +203,7 @@ public class CommunityServiceImpl implements CommunityService {
         inter.setAction_type("derivation");
         inter.setTarget_type(c.getContent_type());
         inter.setTarget_id(id);
-        inter.setTarget_version(dto.getTarget_version() != null ? dto.getTarget_version() : c.getVersion());
+        inter.setTarget_version(dto != null && dto.getTarget_version() != null ? dto.getTarget_version() : c.getVersion());
         inter.setTarget_project_id(project.getId());
         interactionMapper.insert(inter);
         incrementCachedCounter(id, "use");
@@ -212,13 +216,14 @@ public class CommunityServiceImpl implements CommunityService {
     @Override
     @Transactional
     public ContentVO createSubmission(ContentDTO dto, Integer userId) {
-        log.info("createSubmission userId={}, title={}, contentType={}", userId, dto.getTitle(), dto.getContent_type());
-        if (dto.getContent_type() == null || dto.getTitle() == null || dto.getLicense() == null)
-            throw new RuntimeException("缺少必填字段: content_type, title, license");
+        log.info("createSubmission userId={}, title={}, contentType={}", userId, dto == null ? null : dto.getTitle(), dto == null ? null : dto.getContent_type());
+        validateContentDto(dto, true);
         Com_Content c = new Com_Content();
         BeanUtil.copyProperties(dto, c);
+        c.setContent_type(normalizeContentType(dto.getContent_type()));
         c.setAuthor_id(userId);
         c.setVersion(1);
+        c.setVersion_history("[]");
         c.setStatus("draft");
         c.setView_count(0);
         c.setUse_count(0);
@@ -254,9 +259,11 @@ public class CommunityServiceImpl implements CommunityService {
     public ContentVO updateSubmission(Integer id, ContentDTO dto, Integer userId) {
         log.info("updateSubmission userId={}, contentId={}", userId, id);
         Com_Content c = contentMapper.findById(id);
-        if (c == null) throw new RuntimeException("投稿不存在");
-        if (!Objects.equals(c.getAuthor_id(), userId)) throw new RuntimeException("无权修改");
-        if (!"draft".equals(c.getStatus())) throw new RuntimeException("只有草稿状态可以修改");
+        if (c == null) throw new RuntimeException("Submission not found");
+        if (!Objects.equals(c.getAuthor_id(), userId)) throw new RuntimeException("No permission to edit this submission");
+        if (!"draft".equals(c.getStatus())) throw new RuntimeException("Only draft submissions can be edited");
+        validateContentDto(dto, false);
+        if (dto.getContent_type() != null) c.setContent_type(normalizeContentType(dto.getContent_type()));
         if (dto.getTitle() != null) c.setTitle(dto.getTitle());
         if (dto.getDescription() != null) c.setDescription(dto.getDescription());
         if (dto.getSubject() != null) c.setSubject(dto.getSubject());
@@ -277,9 +284,10 @@ public class CommunityServiceImpl implements CommunityService {
     public Map<String, Object> saveSubmissionVersion(Integer id, String description, Integer userId) {
         log.info("saveSubmissionVersion userId={}, contentId={}, hasDescription={}", userId, id, description != null && !description.isBlank());
         Com_Content c = contentMapper.findById(id);
-        if (c == null) throw new RuntimeException("投稿不存在");
-        if (!Objects.equals(c.getAuthor_id(), userId)) throw new RuntimeException("无权操作");
+        if (c == null) throw new RuntimeException("Submission not found");
+        if (!Objects.equals(c.getAuthor_id(), userId)) throw new RuntimeException("No permission to save this submission version");
         int newVersion = c.getVersion() + 1;
+        c.setVersion_history(appendVersionHistory(c, newVersion, description));
         c.setVersion(newVersion);
         contentMapper.update(c);
         evictContentCache(id);
@@ -296,9 +304,12 @@ public class CommunityServiceImpl implements CommunityService {
     public void submitForReview(Integer id, ReviewSubmissionDTO dto, Integer userId) {
         log.info("submitForReview userId={}, contentId={}", userId, id);
         Com_Content c = contentMapper.findById(id);
-        if (c == null) throw new RuntimeException("投稿不存在");
-        if (!Objects.equals(c.getAuthor_id(), userId)) throw new RuntimeException("无权操作");
-        if (!"draft".equals(c.getStatus())) throw new RuntimeException("只有草稿状态可以提交审核");
+        if (c == null) throw new RuntimeException("Submission not found");
+        if (!Objects.equals(c.getAuthor_id(), userId)) throw new RuntimeException("No permission to submit this content");
+        if (!"draft".equals(c.getStatus())) throw new RuntimeException("Only draft submissions can be submitted for review");
+        if (hasPendingAudit("audit", c.getContent_type(), id, null)) {
+            throw new RuntimeException("Submission already has a pending review task");
+        }
         c.setStatus("reviewing");
         contentMapper.update(c);
         evictContentCache(id);
@@ -307,7 +318,7 @@ public class CommunityServiceImpl implements CommunityService {
         audit.setTarget_type(c.getContent_type());
         audit.setTarget_id(id);
         audit.setReporter_id(userId);
-        audit.setReason(dto.getNotes());
+        audit.setReason(dto == null ? null : dto.getNotes());
         audit.setStatus("pending");
         auditMapper.insert(audit);
         businessLogService.record("audit", "community", "submit_for_review", "content", id,
@@ -317,18 +328,29 @@ public class CommunityServiceImpl implements CommunityService {
     @Override
     @Transactional
     public int createReport(AuditDTO dto, Integer userId) {
-        log.info("createReport userId={}, targetType={}, targetId={}", userId, dto.getTarget_type(), dto.getTarget_id());
+        log.info("createReport userId={}, targetType={}, targetId={}", userId, dto == null ? null : dto.getTarget_type(), dto == null ? null : dto.getTarget_id());
+        if (dto == null || dto.getTarget_id() <= 0) throw new RuntimeException("target_id is required");
+        Com_Content target = requirePublicContent(dto.getTarget_id());
+        String targetType = dto.getTarget_type() == null || dto.getTarget_type().isBlank()
+                ? target.getContent_type()
+                : normalizeContentType(dto.getTarget_type());
+        if (!Objects.equals(target.getContent_type(), targetType)) {
+            throw new RuntimeException("target_type does not match content type");
+        }
+        if (hasPendingAudit("report", targetType, dto.getTarget_id(), userId)) {
+            throw new RuntimeException("You already have a pending report for this content");
+        }
         Adm_Audit audit = new Adm_Audit();
         audit.setAudit_type("report");
-        audit.setTarget_type(dto.getTarget_type());
+        audit.setTarget_type(targetType);
         audit.setTarget_id(dto.getTarget_id());
         audit.setReporter_id(userId);
         audit.setReason(dto.getReason());
         audit.setComment(dto.getComment());
         audit.setStatus("pending");
         auditMapper.insert(audit);
-        businessLogService.record("audit", "community", "create_report", dto.getTarget_type(), dto.getTarget_id(),
-                Map.of("report_id", audit.getId(), "reason", dto.getReason()));
+        businessLogService.record("audit", "community", "create_report", targetType, dto.getTarget_id(),
+                Map.of("report_id", audit.getId(), "reason", dto.getReason() == null ? "" : dto.getReason()));
         return audit.getId();
     }
 
@@ -337,8 +359,8 @@ public class CommunityServiceImpl implements CommunityService {
         log.info("listReports userId={}, status={}, page={}, size={}", userId, status, page, size);
         PageHelper.startPage(page, size);
         List<Adm_Audit> list = status != null && !status.isBlank()
-                ? auditMapper.findByReporterAndStatus(userId, status)
-                : auditMapper.findByReporter(userId);
+                ? auditMapper.findByReporterTypeAndStatus(userId, "report", status)
+                : auditMapper.findByReporterAndType(userId, "report");
         PageInfo<Adm_Audit> info = new PageInfo<>(list);
         List<AuditVO> records = info.getList().stream().map(a -> {
             AuditVO vo = new AuditVO();
@@ -352,7 +374,7 @@ public class CommunityServiceImpl implements CommunityService {
     public AuditVO getReport(Integer id, Integer userId) {
         log.info("getReport userId={}, reportId={}", userId, id);
         Adm_Audit a = auditMapper.findById(id);
-        if (a == null) throw new RuntimeException("举报不存在");
+        if (a == null || !"report".equals(a.getAudit_type())) throw new RuntimeException("Report not found");
         if (!Objects.equals(a.getReporter_id(), userId)) throw new RuntimeException("无权查看");
         AuditVO vo = new AuditVO();
         BeanUtil.copyProperties(a, vo);
@@ -386,7 +408,7 @@ public class CommunityServiceImpl implements CommunityService {
                     vo.setViewed_at(v.getCreated_at());
                     return vo;
                 })
-                .filter(v -> v.getItem() != null)
+                .filter(v -> v.getItem() != null && "public".equals(v.getItem().getStatus()))
                 .toList();
         redisTemplate.expire(recentViewsKey(userId), Duration.ofDays(30));
         return new PageResult<>(info.getTotal(), page, size, records);
@@ -395,7 +417,7 @@ public class CommunityServiceImpl implements CommunityService {
     private RecentViewVO toRecentView(String rawId, Double score) {
         if (rawId == null) return null;
         ContentVO content = cachedContent(Integer.valueOf(rawId));
-        if (content == null) return null;
+        if (content == null || !"public".equals(content.getStatus())) return null;
         RecentViewVO vo = new RecentViewVO();
         vo.setItem(content);
         long millis = score == null ? System.currentTimeMillis() : score.longValue();
@@ -454,6 +476,110 @@ public class CommunityServiceImpl implements CommunityService {
     private int pendingCounter(Integer id, String type) {
         String raw = redisTemplate.opsForValue().get("community:counter:" + type + ":" + id);
         return raw == null ? 0 : Integer.parseInt(raw);
+    }
+
+    private Com_Content requirePublicContent(Integer id) {
+        Com_Content content = contentMapper.findById(id);
+        if (content == null || !"public".equals(content.getStatus())) {
+            throw new RuntimeException("Public content not found");
+        }
+        return content;
+    }
+
+    private void validateContentDto(ContentDTO dto, boolean creating) {
+        if (dto == null) {
+            throw new RuntimeException("Request body is required");
+        }
+        if (creating) {
+            if (isBlank(dto.getContent_type()) || isBlank(dto.getTitle()) || isBlank(dto.getLicense())) {
+                throw new RuntimeException("Missing required fields: content_type, title, license");
+            }
+        }
+        if (dto.getContent_type() != null) {
+            normalizeContentType(dto.getContent_type());
+        }
+        validateJsonObject(dto.getContent_data(), "content_data", false);
+        validateJsonObject(dto.getInput_variables(), "input_variables", true);
+    }
+
+    private String normalizeContentType(String value) {
+        if (isBlank(value)) {
+            throw new RuntimeException("content_type is required");
+        }
+        String normalized = value.trim();
+        if ("case".equals(normalized)) {
+            normalized = "lesson_case";
+        }
+        if (!List.of("skill", "lesson_case").contains(normalized)) {
+            throw new RuntimeException("Unsupported content_type: " + value);
+        }
+        return normalized;
+    }
+
+    private void validateJsonObject(String raw, String field, boolean allowArray) {
+        if (isBlank(raw)) {
+            return;
+        }
+        try {
+            Object parsed = objectMapper.readValue(raw, new TypeReference<Object>() {});
+            if (parsed instanceof Map<?, ?> || (allowArray && parsed instanceof List<?>)) {
+                return;
+            }
+        } catch (Exception e) {
+            throw new RuntimeException(field + " must be valid JSON");
+        }
+        throw new RuntimeException(field + " must be a JSON object" + (allowArray ? " or array" : ""));
+    }
+
+    private String appendVersionHistory(Com_Content content, int version, String description) {
+        List<Map<String, Object>> history = new ArrayList<>();
+        if (!isBlank(content.getVersion_history())) {
+            try {
+                Object parsed = objectMapper.readValue(content.getVersion_history(), new TypeReference<Object>() {});
+                if (parsed instanceof List<?> list) {
+                    for (Object item : list) {
+                        if (item instanceof Map<?, ?> map) {
+                            history.add(new LinkedHashMap<>((Map<String, Object>) map));
+                        }
+                    }
+                }
+            } catch (Exception ignored) {
+            }
+        }
+        Map<String, Object> snapshot = new LinkedHashMap<>();
+        snapshot.put("version_number", version);
+        snapshot.put("description", description == null ? "" : description);
+        snapshot.put("title", content.getTitle());
+        snapshot.put("description_text", content.getDescription());
+        snapshot.put("subject", content.getSubject());
+        snapshot.put("grade", content.getGrade());
+        snapshot.put("lesson_type", content.getLesson_type());
+        snapshot.put("content_data", content.getContent_data());
+        snapshot.put("input_variables", content.getInput_variables());
+        snapshot.put("example_effect", content.getExample_effect());
+        snapshot.put("license", content.getLicense());
+        snapshot.put("created_at", LocalDateTime.now().toString());
+        history.add(snapshot);
+        return toJson(history);
+    }
+
+    private boolean hasPendingAudit(String auditType, String targetType, Integer targetId, Integer reporterId) {
+        return auditMapper.findByTarget(targetType, targetId).stream()
+                .anyMatch(audit -> Objects.equals(audit.getAudit_type(), auditType)
+                        && Objects.equals(audit.getStatus(), "pending")
+                        && (reporterId == null || Objects.equals(audit.getReporter_id(), reporterId)));
+    }
+
+    private boolean isBlank(String value) {
+        return value == null || value.isBlank();
+    }
+
+    private String toJson(Object value) {
+        try {
+            return objectMapper.writeValueAsString(value);
+        } catch (Exception e) {
+            return "[]";
+        }
     }
 
     private ContentVO toContentVO(Com_Content c) {

@@ -12,6 +12,22 @@
     <select id="findById" resultMap="BaseResultMap">SELECT <include refid="Base_Columns"/> FROM kb_retrieval_log WHERE id = #{id}</select>
     <select id="findByUserId" resultMap="BaseResultMap">SELECT <include refid="Base_Columns"/> FROM kb_retrieval_log WHERE user_id = #{userId} ORDER BY created_at DESC</select>
     <select id="findByTaskId" resultMap="BaseResultMap">SELECT <include refid="Base_Columns"/> FROM kb_retrieval_log WHERE task_id = #{taskId} ORDER BY created_at DESC</select>
+    <select id="findRecent" resultMap="BaseResultMap">
+        SELECT <include refid="Base_Columns"/>
+        FROM kb_retrieval_log
+        WHERE user_id = #{userId}
+        <if test="type != null and type != ''">AND type = #{type}</if>
+        <if test="taskId != null">AND task_id = #{taskId}</if>
+        ORDER BY created_at DESC
+        LIMIT #{size} OFFSET #{offset}
+    </select>
+    <select id="countRecent" resultType="long">
+        SELECT COUNT(*)
+        FROM kb_retrieval_log
+        WHERE user_id = #{userId}
+        <if test="type != null and type != ''">AND type = #{type}</if>
+        <if test="taskId != null">AND task_id = #{taskId}</if>
+    </select>
     <insert id="insert" useGeneratedKeys="true" keyProperty="id">
         INSERT INTO kb_retrieval_log(user_id, type, task_id, query_text, result_chunks, prompt_context, generated_content, model_name, created_at)
         VALUES(#{user_id}, #{type}, #{task_id}, #{query_text}, #{result_chunks}, #{prompt_context}, #{generated_content}, #{model_name}, NOW())

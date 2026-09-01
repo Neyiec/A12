@@ -60,3 +60,6 @@ a12:
     base-url: http://127.0.0.1:8001
     connect-timeout-seconds: 5
     request-timeout-seconds: 180
+  export:
+    local-dir: data/exports
+    public-prefix: /exports
