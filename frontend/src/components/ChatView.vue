@@ -705,6 +705,7 @@ async function restoreSession() {
                 class="resource-template-change"
                 type="primary"
                 plain
+                round
                 size="small"
                 :icon="Brush"
                 :disabled="phase === 'generating_resource'"
@@ -1069,7 +1070,7 @@ async function restoreSession() {
 .resource-template-change {
   height: 24px;
   padding: 0 9px;
-  border-radius: var(--zh-radius6);
+  border-radius: var(--zh-radius20);
   font-size: var(--zh-font-size11);
   font-weight: 600;
 }
