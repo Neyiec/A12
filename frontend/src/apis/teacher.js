@@ -169,6 +169,12 @@ export const transcribeAudio = (formData) => apiRequest({ url: '/api/v1/python/a
 export const generateInteractiveModule = (data) => post('/api/v1/python/interactive-modules/generate', data)
 
 /**
+ * 获取 Python PPT 生成模板列表。
+ * `theme` 是后续调用 PPT 生成接口时应传入的模板值。
+ */
+export const listPptTemplates = () => get('/api/v1/python/templates')
+
+/**
  * 保存教师个人偏好设置
  * @param {{ teaching_style: string, template_style: string, interaction_forms: string[] }} data - 偏好数据
  * @returns {Promise} 后端返回更新后的偏好配置
