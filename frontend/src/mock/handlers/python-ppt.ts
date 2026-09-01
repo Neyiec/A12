@@ -8,6 +8,7 @@
 
 import { http, HttpResponse } from 'msw'
 import { success, error, generateId, now } from '../data/common'
+import { mockMaterials } from '../data/resources'
 
 /** 模板列表 */
 const mockTemplates = [
@@ -22,6 +23,50 @@ const mockTemplates = [
 const pythonSessions = new Map<string, Record<string, unknown>>()
 const presentations = new Map<string, Record<string, unknown>>()
 const lessonPlans = new Map<string, Record<string, unknown>>()
+const mockIndexResources = new Map<string, Record<string, unknown>>()
+const mockIndexLogs: Record<string, unknown>[] = []
+
+function parseIndexList(value: unknown): string[] {
+  if (Array.isArray(value)) return value.map(String)
+  try {
+    const parsed = JSON.parse(String(value || '[]'))
+    return Array.isArray(parsed) ? parsed.map(String) : []
+  } catch { return [] }
+}
+
+function toMockIndexResource(material: typeof mockMaterials[number]) {
+  return {
+    resource_key: `personal:${material.id}`,
+    source_type: 'personal',
+    resource_id: String(material.id),
+    title: material.file_name,
+    available: material.status === 1,
+    allow_ai: material.allow_ai === 1,
+    parse_status: material.allow_ai === 1 ? 'completed' : 'disabled',
+    error_message: null,
+    text_length: material.file_size > 0 ? 2048 : 0,
+    chunk_count: material.allow_ai === 1 ? 5 : 0,
+    metadata: {
+      title: material.file_name,
+      source_type: 'personal',
+      resource_id: String(material.id),
+      file_url: material.file_url,
+      file_type: material.file_type,
+      file_size: material.file_size,
+      owner_user_id: String(material.user_id),
+      categories: parseIndexList(material.categories),
+      tags: parseIndexList(material.tags),
+      access_type: material.access_type,
+    },
+    indexed_at: material.ai_indexed_at,
+    updated_at: material.updated_at,
+  }
+}
+
+function ensureMockIndexResources() {
+  if (mockIndexResources.size) return
+  mockMaterials.forEach((material) => mockIndexResources.set(`personal:${material.id}`, toMockIndexResource(material)))
+}
 
 /** 生成模拟 PPT HTML */
 function mockSlideHtml(slideNo: number, title: string): string {
@@ -76,19 +121,56 @@ export const pythonPptHandlers = [
   }),
 
   // ========== API-135-1 同步资源索引 ==========
-  http.post('/api/v1/python/resources/index/sync', async () => {
-    return HttpResponse.json(success({
-      resource_key: `public:1`,
-      status: 'indexed',
+  http.post('/api/v1/python/resources/index/sync', async ({ request }) => {
+    const body = await request.json() as Record<string, unknown>
+    const sourceType = body.source_type === 'public' ? 'public' : 'personal'
+    const resourceId = String(body.resource_id || '1')
+    const resourceKey = `${sourceType}:${resourceId}`
+    const current = {
+      resource_key: resourceKey,
+      source_type: sourceType,
+      resource_id: resourceId,
+      title: body.title || '未命名资源',
+      available: body.available !== false,
+      allow_ai: body.allow_ai !== false,
+      parse_status: 'completed',
+      error_message: null,
       text_length: 3500,
       chunk_count: 5,
-      error_message: null,
-    }))
+      metadata: body.metadata || { file_url: body.file_url, file_type: body.file_type, file_size: body.file_size },
+      indexed_at: now(),
+      updated_at: now(),
+    }
+    mockIndexResources.set(resourceKey, current)
+    return HttpResponse.json(success({ resource_key: resourceKey, status: 'indexed', text_length: 3500, chunk_count: 5, error_message: null }))
   }),
 
   // ========== API-135-2 批量初始化索引 ==========
-  http.post('/api/v1/python/resources/index/bootstrap', async () => {
-    return HttpResponse.json(success({ total: 3, indexed: 2, skipped: 1, failed: 0, results: [] }))
+  http.post('/api/v1/python/resources/index/bootstrap', async ({ request }) => {
+    const body = await request.json() as { resources?: Record<string, unknown>[]; force_reparse?: boolean }
+    const resources = body.resources || []
+    resources.forEach((resource) => {
+      const sourceType = resource.source_type === 'public' ? 'public' : 'personal'
+      const resourceId = String(resource.resource_id || '')
+      if (!resourceId) return
+      const resourceKey = `${sourceType}:${resourceId}`
+      mockIndexResources.set(resourceKey, {
+        resource_key: resourceKey,
+        source_type: sourceType,
+        resource_id: resourceId,
+        title: resource.title || '未命名资源',
+        available: resource.available !== false,
+        allow_ai: resource.allow_ai !== false,
+        parse_status: 'completed',
+        error_message: null,
+        text_length: 3500,
+        chunk_count: 5,
+        metadata: resource.metadata || {},
+        indexed_at: now(),
+        updated_at: now(),
+      })
+    })
+    return HttpResponse.json(success({ total: resources.length, indexed: resources.length, skipped: 0, failed: 0, results: [] }))
   }),
 
   // ========== API-135-3 更新索引metadata ==========
@@ -98,7 +180,66 @@ export const pythonPptHandlers = [
 
   // ========== API-135-4 删除索引 ==========
   http.delete('/api/v1/python/resources/index/:sourceType/:resourceId', async ({ params }) => {
-    return HttpResponse.json(success({ resource_key: `${params.sourceType}:${params.resourceId}`, status: 'deleted' }))
+    const resourceKey = `${params.sourceType}:${params.resourceId}`
+    mockIndexResources.delete(resourceKey)
+    return HttpResponse.json(success({ resource_key: resourceKey, status: 'deleted' }))
+  }),
+
+  // ========== API-135-5 索引概览 ==========
+  http.get('/api/v1/python/resources/index/overview', async () => {
+    ensureMockIndexResources()
+    const resources = [...mockIndexResources.values()]
+    return HttpResponse.json(success({
+      postgres_available: false,
+      embedding_dimensions: 1536,
+      resource_count: resources.length,
+      chunk_count: resources.reduce((sum, item) => sum + Number(item.chunk_count || 0), 0),
+      retrieval_log_count: mockIndexLogs.length,
+      groups: [{ source_type: 'personal', parse_status: 'completed', available: true, allow_ai: true, resource_count: resources.length, chunk_count: resources.reduce((sum, item) => sum + Number(item.chunk_count || 0), 0) }],
+      fallback_path: 'mock://a12-resource-index.json',
+    }))
+  }),
+
+  // ========== API-135-6 索引资源列表 ==========
+  http.get('/api/v1/python/resources/index/resources', async ({ request }) => {
+    ensureMockIndexResources()
+    const url = new URL(request.url)
+    const sourceType = url.searchParams.get('source_type')
+    const available = url.searchParams.get('available')
+    const limit = Math.min(Number(url.searchParams.get('limit') || 50), 200)
+    const offset = Number(url.searchParams.get('offset') || 0)
+    let items = [...mockIndexResources.values()]
+    if (sourceType) items = items.filter((item) => item.source_type === sourceType)
+    if (available !== null) items = items.filter((item) => String(item.available) === available)
+    return HttpResponse.json(success({ total: items.length, limit, offset, items: items.slice(offset, offset + limit) }))
+  }),
+
+  // ========== API-135-9 检索日志 ==========
+  http.get('/api/v1/python/resources/index/logs', async ({ request }) => {
+    const url = new URL(request.url)
+    const limit = Math.min(Number(url.searchParams.get('limit') || 50), 200)
+    const offset = Number(url.searchParams.get('offset') || 0)
+    return HttpResponse.json(success({ total: mockIndexLogs.length, limit, offset, items: mockIndexLogs.slice(offset, offset + limit) }))
+  }),
+
+  // ========== API-135-8 索引检索 ==========
+  http.post('/api/v1/python/resources/index/search', async ({ request }) => {
+    ensureMockIndexResources()
+    const body = await request.json() as { query?: string; top_k?: number }
+    const query = String(body.query || '')
+    const matches = [...mockIndexResources.values()].slice(0, Number(body.top_k) || 8).map((item, index) => ({
+      resource_id: item.resource_id,
+      chunk_id: `${item.resource_key}-chunk-${index + 1}`,
+      content: `模拟检索片段：${query} 与 ${item.title} 相关的教学资料内容。`,
+      metadata: item.metadata,
+      base_score: 0.9 - index * 0.05,
+      rerank_score: 0.9 - index * 0.05,
+      score: 0.9 - index * 0.05,
+      rank: index + 1,
+      match_type: 'mock_hybrid',
+    }))
+    mockIndexLogs.unshift({ id: generateId('log'), query, resource_ids: [], match_count: matches.length, top_score: matches[0]?.score || 0, search_mode: 'mock', latency_ms: 18, metadata: {}, created_at: now() })
+    return HttpResponse.json(success({ query, context: matches.map((item) => item.content).join('\n\n'), matches, search_mode: 'mock', latency_ms: 18 }))
   }),
 
   // ========== API-136 生成大纲 ==========

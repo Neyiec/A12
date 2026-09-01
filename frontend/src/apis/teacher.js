@@ -41,6 +41,24 @@ export const updateResource = (id, data) => apiRequest({ url: `/api/v1/resources
 export const batchResourceAction = (data) => post('/api/v1/resources/batch-actions', data)
 export const getResourcePermission = (id) => get(`/api/v1/resources/${id}/permission`)
 export const setResourcePermission = (id, data) => put(`/api/v1/resources/${id}/permission`, data)
+export const listResourceTags = () => get('/api/v1/resources/tags')
+export const createResourceTag = (data) => post('/api/v1/resources/tags', data)
+export const updateResourceTag = (id, data) => apiRequest({ url: `/api/v1/resources/tags/${id}`, method: 'patch', data })
+export const deleteResourceTag = (id) => del(`/api/v1/resources/tags/${id}`)
+export const listResourceCategories = () => get('/api/v1/resources/categories')
+export const createResourceCategory = (data) => post('/api/v1/resources/categories', data)
+export const updateResourceCategory = (id, data) => apiRequest({ url: `/api/v1/resources/categories/${id}`, method: 'patch', data })
+export const deleteResourceCategory = (id) => del(`/api/v1/resources/categories/${id}`)
+
+export const syncResourceIndex = (data) => post('/api/v1/python/resources/index/sync', data)
+export const bootstrapResourceIndex = (data) => post('/api/v1/python/resources/index/bootstrap', data)
+export const updateResourceIndexMetadata = (data) => apiRequest({ url: '/api/v1/python/resources/index/metadata', method: 'patch', data })
+export const getResourceIndexOverview = () => get('/api/v1/python/resources/index/overview')
+export const listResourceIndexResources = (params) => get('/api/v1/python/resources/index/resources', params)
+export const getResourceIndexResource = (sourceType, resourceId, params) => get(`/api/v1/python/resources/index/resources/${sourceType}/${resourceId}`, params)
+export const listResourceIndexLogs = (params) => get('/api/v1/python/resources/index/logs', params)
+export const searchResourceIndex = (data) => post('/api/v1/python/resources/index/search', data)
+export const deleteResourceIndex = (sourceType, resourceId) => del(`/api/v1/python/resources/index/${sourceType}/${resourceId}`)
 
 export const listCommunityItems = (params) => get('/api/v1/community/items', params)
 export const favoriteCommunityItem = (id) => put(`/api/v1/community/items/${id}/favorite`)
@@ -111,6 +129,13 @@ export function streamOutlineChat(body) {
 export const createProject = (data) => post('/api/v1/projects', data)
 export const listProjects = (params) => get('/api/v1/projects', params)
 export const getProject = (id) => get(`/api/v1/projects/${id}`)
+export const listProjectPages = (id) => get(`/api/v1/projects/${id}/pages`)
+export const getProjectPage = (id, pageId) => get(`/api/v1/projects/${id}/pages/${pageId}`)
+export const createProjectPage = (id, data) => post(`/api/v1/projects/${id}/pages`, data)
+export const saveProjectPage = (id, pageId, data) => put(`/api/v1/projects/${id}/pages/${pageId}`, data)
+export const batchSaveProjectPages = (id, data) => post(`/api/v1/projects/${id}/pages/batch-save`, data)
+export const deleteProjectPage = (id, pageId) => del(`/api/v1/projects/${id}/pages/${pageId}`)
+export const validateProjectComponent = (data) => post('/api/v1/projects/tools/validate-component', data)
 export const copyProject = (id, data = {}) => post(`/api/v1/projects/${id}/copies`, data)
 export const archiveProject = (id) => post(`/api/v1/projects/${id}/archive`)
 export const restoreProject = (id) => post(`/api/v1/projects/${id}/restore`)
@@ -135,6 +160,13 @@ export const getTeacherPreferences = () => get('/api/v1/teachers/me/preferences'
  * @returns {Promise} 后端返回 { text, language, model, ... }
  */
 export const transcribeAudio = (formData) => apiRequest({ url: '/api/v1/python/audio/asr', method: 'post', data: formData })
+
+/**
+ * 生成可独立运行或嵌入课件页面的互动模块。
+ * @param {Object} data - API-144 InteractiveModuleGenerateRequest
+ * @returns {Promise} 后端返回 { module_id, html, usage_suggestions, metadata, ... }
+ */
+export const generateInteractiveModule = (data) => post('/api/v1/python/interactive-modules/generate', data)
 
 /**
  * 保存教师个人偏好设置

@@ -31,6 +31,11 @@ export interface MockPage {
   page_title: string
   page_content: string
   components: string
+  page_version?: number
+  client_version?: string
+  autosave?: boolean
+  dirty?: boolean
+  last_saved_at?: string | null
   created_at: string
   updated_at: string
 }

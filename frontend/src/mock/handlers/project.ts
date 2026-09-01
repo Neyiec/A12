@@ -89,6 +89,167 @@ export const projectHandlers = [
     return HttpResponse.json(success({ ...project, pages }))
   }),
 
+  // ========== 页面级 API：API-19A ~ API-19F ==========
+  http.get('/api/v1/projects/:id/pages', async ({ request, params }) => {
+    const token = extractToken(request.headers.get('Authorization'))
+    const user = mockSessions.get(token || '')
+    if (!user) return HttpResponse.json(error(401, '请先登录'), { status: 401 })
+    const projectId = parseInt(params.id as string, 10)
+    const project = mockProjects.find((item) => item.id === projectId)
+    if (!project) return HttpResponse.json(error(404, '项目不存在'), { status: 404 })
+    const permissions = JSON.parse(project.permissions || '[]') as number[]
+    if (project.user_id !== user.id && !permissions.includes(user.id)) return HttpResponse.json(error(403, '无权访问该项目'), { status: 403 })
+    return HttpResponse.json(success(mockPages.filter((page) => page.project_id === projectId).sort((a, b) => a.page_order - b.page_order)))
+  }),
+
+  http.get('/api/v1/projects/:id/pages/:pageId', async ({ request, params }) => {
+    const token = extractToken(request.headers.get('Authorization'))
+    const user = mockSessions.get(token || '')
+    if (!user) return HttpResponse.json(error(401, '请先登录'), { status: 401 })
+    const projectId = parseInt(params.id as string, 10)
+    const project = mockProjects.find((item) => item.id === projectId)
+    if (!project) return HttpResponse.json(error(404, '项目不存在'), { status: 404 })
+    const permissions = JSON.parse(project.permissions || '[]') as number[]
+    if (project.user_id !== user.id && !permissions.includes(user.id)) return HttpResponse.json(error(403, '无权访问该项目'), { status: 403 })
+    const page = mockPages.find((item) => item.project_id === projectId && item.id === parseInt(params.pageId as string, 10))
+    if (!page) return HttpResponse.json(error(404, '页面不存在'), { status: 404 })
+    return HttpResponse.json(success(page))
+  }),
+
+  http.post('/api/v1/projects/:id/pages', async ({ request, params }) => {
+    const token = extractToken(request.headers.get('Authorization'))
+    const user = mockSessions.get(token || '')
+    if (!user) return HttpResponse.json(error(401, '请先登录'), { status: 401 })
+    const projectId = parseInt(params.id as string, 10)
+    const project = mockProjects.find((item) => item.id === projectId)
+    if (!project) return HttpResponse.json(error(404, '项目不存在'), { status: 404 })
+    const permissions = JSON.parse(project.permissions || '[]') as number[]
+    if (project.user_id !== user.id && !permissions.includes(user.id)) return HttpResponse.json(error(403, '无权修改该项目'), { status: 403 })
+    const body = (await request.json()) as Record<string, unknown>
+    const page = {
+      id: getNextPageId(), project_id: projectId,
+      page_order: Number(body.page_order || mockPages.filter((item) => item.project_id === projectId).length + 1),
+      page_type: (body.page_type as string) || 'content', page_title: (body.page_title as string) || '',
+      page_content: (body.page_content as string) || '{}', components: (body.components as string) || '[]',
+      page_version: 1, client_version: body.client_version as string | undefined,
+      autosave: Boolean(body.autosave), dirty: Boolean(body.dirty), last_saved_at: now(),
+      created_at: now(), updated_at: now(),
+    }
+    mockPages.push(page)
+    project.current_version += 1
+    project.updated_at = now()
+    return HttpResponse.json(success(page))
+  }),
+
+  http.put('/api/v1/projects/:id/pages/:pageId', async ({ request, params }) => {
+    const token = extractToken(request.headers.get('Authorization'))
+    const user = mockSessions.get(token || '')
+    if (!user) return HttpResponse.json(error(401, '请先登录'), { status: 401 })
+    const projectId = parseInt(params.id as string, 10)
+    const project = mockProjects.find((item) => item.id === projectId)
+    if (!project) return HttpResponse.json(error(404, '项目不存在'), { status: 404 })
+    const permissions = JSON.parse(project.permissions || '[]') as number[]
+    if (project.user_id !== user.id && !permissions.includes(user.id)) return HttpResponse.json(error(403, '无权修改该项目'), { status: 403 })
+    const page = mockPages.find((item) => item.project_id === projectId && item.id === parseInt(params.pageId as string, 10))
+    if (!page) return HttpResponse.json(error(404, '页面不存在'), { status: 404 })
+    const body = (await request.json()) as Record<string, unknown>
+    const expectedVersion = Number(body.expected_page_version)
+    if (!expectedVersion || expectedVersion !== (page.page_version || 1)) return HttpResponse.json(error(400, 'Version conflict, please refresh and retry'))
+    if (body.page_order !== undefined) page.page_order = Number(body.page_order)
+    if (body.page_type) page.page_type = body.page_type as string
+    if (body.page_title !== undefined) page.page_title = body.page_title as string
+    if (body.page_content !== undefined) page.page_content = body.page_content as string
+    if (body.components !== undefined) page.components = body.components as string
+    page.page_version = (page.page_version || 1) + 1
+    page.client_version = body.client_version as string | undefined
+    page.autosave = Boolean(body.autosave)
+    page.dirty = Boolean(body.dirty)
+    page.last_saved_at = now()
+    page.updated_at = now()
+    project.current_version += 1
+    project.updated_at = now()
+    return HttpResponse.json(success(page))
+  }),
+
+  http.post('/api/v1/projects/:id/pages/batch-save', async ({ request, params }) => {
+    const token = extractToken(request.headers.get('Authorization'))
+    const user = mockSessions.get(token || '')
+    if (!user) return HttpResponse.json(error(401, '请先登录'), { status: 401 })
+    const projectId = parseInt(params.id as string, 10)
+    const project = mockProjects.find((item) => item.id === projectId)
+    if (!project) return HttpResponse.json(error(404, '项目不存在'), { status: 404 })
+    const permissions = JSON.parse(project.permissions || '[]') as number[]
+    if (project.user_id !== user.id && !permissions.includes(user.id)) return HttpResponse.json(error(403, '无权修改该项目'), { status: 403 })
+    const body = (await request.json()) as { pages?: Array<Record<string, unknown>>, client_version?: string, autosave?: boolean }
+    if (!Array.isArray(body.pages) || !body.pages.length) return HttpResponse.json(error(400, 'pages cannot be empty'))
+    const saved = []
+    for (const pageBody of body.pages) {
+      const pageId = Number(pageBody.page_id)
+      const page = pageId ? mockPages.find((item) => item.project_id === projectId && item.id === pageId) : null
+      if (page) {
+        const expectedVersion = Number(pageBody.expected_page_version)
+        if (!expectedVersion || expectedVersion !== (page.page_version || 1)) return HttpResponse.json(error(400, 'Version conflict, please refresh and retry'))
+        page.page_order = Number(pageBody.page_order || page.page_order)
+        page.page_type = (pageBody.page_type as string) || page.page_type
+        page.page_title = (pageBody.page_title as string) ?? page.page_title
+        page.page_content = (pageBody.page_content as string) ?? page.page_content
+        page.components = (pageBody.components as string) ?? page.components
+        page.page_version = (page.page_version || 1) + 1
+        page.client_version = (pageBody.client_version as string) || body.client_version
+        page.autosave = Boolean(pageBody.autosave ?? body.autosave)
+        page.dirty = Boolean(pageBody.dirty)
+        page.last_saved_at = now()
+        page.updated_at = now()
+        saved.push(page)
+        continue
+      }
+      const created = {
+        id: getNextPageId(), project_id: projectId,
+        page_order: Number(pageBody.page_order || mockPages.filter((item) => item.project_id === projectId).length + 1),
+        page_type: (pageBody.page_type as string) || 'content', page_title: (pageBody.page_title as string) || '',
+        page_content: (pageBody.page_content as string) || '{}', components: (pageBody.components as string) || '[]',
+        page_version: 1, client_version: (pageBody.client_version as string) || body.client_version,
+        autosave: Boolean(pageBody.autosave ?? body.autosave), dirty: Boolean(pageBody.dirty), last_saved_at: now(),
+        created_at: now(), updated_at: now(),
+      }
+      mockPages.push(created)
+      saved.push(created)
+    }
+    project.current_version += saved.length
+    project.updated_at = now()
+    return HttpResponse.json(success(saved))
+  }),
+
+  http.delete('/api/v1/projects/:id/pages/:pageId', async ({ request, params }) => {
+    const token = extractToken(request.headers.get('Authorization'))
+    const user = mockSessions.get(token || '')
+    if (!user) return HttpResponse.json(error(401, '请先登录'), { status: 401 })
+    const projectId = parseInt(params.id as string, 10)
+    const project = mockProjects.find((item) => item.id === projectId)
+    if (!project) return HttpResponse.json(error(404, '项目不存在'), { status: 404 })
+    if (project.user_id !== user.id) return HttpResponse.json(error(403, '无权修改该项目'), { status: 403 })
+    const index = mockPages.findIndex((item) => item.project_id === projectId && item.id === parseInt(params.pageId as string, 10))
+    if (index < 0) return HttpResponse.json(error(404, '页面不存在'), { status: 404 })
+    mockPages.splice(index, 1)
+    project.current_version += 1
+    project.updated_at = now()
+    return HttpResponse.json(success(null, '页面已删除'))
+  }),
+
+  http.post('/api/v1/projects/tools/validate-component', async ({ request }) => {
+    const token = extractToken(request.headers.get('Authorization'))
+    const user = mockSessions.get(token || '')
+    if (!user) return HttpResponse.json(error(401, '请先登录'), { status: 401 })
+    const body = (await request.json()) as Record<string, unknown>
+    const type = String(body.type || '')
+    const data = (body.data || {}) as Record<string, unknown>
+    const errors: string[] = []
+    if (type === 'math_formula' && !String(data.latex || '').trim()) errors.push('latex 不能为空')
+    if (type === 'chart' && !data.option) errors.push('data.option 不能为空')
+    if (type === 'table' && data.rows === undefined && data.columns === undefined) errors.push('需要 rows 或 columns')
+    return HttpResponse.json(success({ valid: errors.length === 0, normalized: body, render_hint: {}, errors, warnings: [] }))
+  }),
+
   // ========== API-23 修改项目 ==========
   http.patch('/api/v1/projects/:id', async ({ request, params }) => {
     const token = extractToken(request.headers.get('Authorization'))
