@@ -8,8 +8,8 @@
       MagicStick, Cpu, Edit, ArrowDown, Top, CopyDocument, InfoFilled
     - `ref`, `reactive`, `computed`, `onMounted`, `onBeforeUnmount`, `watch` from Vue
   - 依赖:
-    - 无外部 API 调用，当前使用静态示例数据（后续替换为后端 API）
-  - 输入: 无 props，数据在组件内部 mock
+    - `../apis/export`: 导入 `getExportTemplates`（API-98，分页查询导出模板）
+  - 输入: 无 props，导出模板数据来自 API-98，系统日志数据为组件内部 mock
   - 输出: 渲染系统配置视图（Tab 切换 + AI参数表单 + 导出模板表格 + 系统日志表格 + 上传对话框 + 日志详情对话框）
   - 监听: `admin-refresh` 自定义事件（从 AdminHeader 刷新按钮发出），触发数据重新加载
   - 对应需求文档: §4.7.3.3 — 系统配置与数据看板
@@ -34,6 +34,7 @@ import {
   InfoFilled,
 } from '@element-plus/icons-vue'
 import { ElMessage, ElMessageBox } from 'element-plus'
+import { getExportTemplates } from '@/apis/export'
 
 // ===================================================================
 // 配置常量 — Tab 定义
@@ -252,44 +253,6 @@ watch(
 )
 
 // ===================================================================
-// Mock 数据生成 — Tab 2：导出模板
-// ===================================================================
-
-/**
- * 生成模拟导出模板数据
- * @returns {Array} 模板对象数组
- */
-const generateMockTemplates = () => {
-  const tpls = [
-    { name: '标准课件模板 - 简约蓝', type: 'pptx', version: 'v2.1', size: '4.2MB', isDefault: true },
-    { name: '标准教案模板 - 学术风格', type: 'docx', version: 'v1.5', size: '2.1MB', isDefault: true },
-    { name: '实验报告模板', type: 'docx', version: 'v3.0', size: '1.8MB', isDefault: false },
-    { name: '互动课件模板 - 科技感', type: 'pptx', version: 'v1.0', size: '5.6MB', isDefault: false },
-    { name: '公开课教案模板', type: 'docx', version: 'v2.3', size: '1.4MB', isDefault: false },
-    { name: '习题课课件模板', type: 'pptx', version: 'v1.8', size: '3.7MB', isDefault: false },
-    { name: '复习课教案模板', type: 'docx', version: 'v1.2', size: '1.6MB', isDefault: false },
-    { name: '教学反思报告模板', type: 'docx', version: 'v2.0', size: '0.9MB', isDefault: false },
-    { name: '项目式学习课件模板', type: 'pptx', version: 'v1.1', size: '6.3MB', isDefault: false },
-    { name: '单元教学设计模板', type: 'docx', version: 'v2.5', size: '2.8MB', isDefault: false },
-  ]
-  const statuses = ['enabled', 'enabled', 'enabled', 'enabled', 'enabled', 'disabled', 'enabled', 'enabled', 'enabled', 'enabled']
-
-  return tpls.map((tpl, i) => {
-    const day = 27 - Math.floor(i / 3)
-    const hour = 9 + (i * 5) % 14
-    const min = (i * 13) % 60
-    return {
-      id: `TPL${String(i + 1).padStart(3, '0')}`,
-      ...tpl,
-      status: statuses[i],
-      updatedAt: `2026-07-${String(day).padStart(2, '0')} ${String(hour).padStart(2, '0')}:${String(min).padStart(2, '0')}`,
-      uploader: '管理员',
-      downloadCount: Math.floor(Math.random() * 500) + 50,
-    }
-  })
-}
-
-// ===================================================================
 // Mock 数据生成 — Tab 3：系统日志
 // ===================================================================
 
@@ -373,38 +336,70 @@ at async middleware (src/middleware/auth.ts:34:5)`
   return logs
 }
 
-/** 全部模板数据（模拟数据库） */
-let allTemplates = []
-
 /** 全部日志数据（模拟数据库） */
 let allLogs = []
+
+// ===================================================================
+// 数据适配
+// ===================================================================
+
+/**
+ * 将 ISO 时间字符串格式化为 "YYYY-MM-DD HH:mm"
+ * @param {string|undefined} value - 后端返回的时间（ISO 格式）
+ * @returns {string} 格式化后的时间文本
+ */
+const formatTemplateTime = (value) => {
+  if (!value) return '—'
+  const date = new Date(value)
+  if (Number.isNaN(date.getTime())) return value
+  const pad = (n) => String(n).padStart(2, '0')
+  return `${date.getFullYear()}-${pad(date.getMonth() + 1)}-${pad(date.getDate())} ${pad(date.getHours())}:${pad(date.getMinutes())}`
+}
+
+/**
+ * 将后端模板 VO 归一化为表格所需结构
+ * 兼容 export_type/type、published/unpublished ↔ enabled/disabled 等字段差异
+ * @param {Object} t - 后端返回的模板对象
+ * @returns {Object} 归一化后的模板对象
+ */
+const normalizeTemplate = (t) => ({
+  id: t.id,
+  name: t.name,
+  type: t.export_type === 'word' ? 'docx' : t.export_type,
+  version: `v${t.version}`,
+  size: t.size || '—',
+  isDefault: !!t.is_default,
+  status: t.status === 'published' ? 'enabled' : 'disabled',
+  updatedAt: formatTemplateTime(t.updated_at),
+  uploader: t.uploader || '管理员',
+  downloadCount: t.download_count || 0,
+})
 
 // ===================================================================
 // 数据筛选与获取方法
 // ===================================================================
 
 /**
- * 获取模板列表数据（模拟异步请求）
+ * 获取模板列表数据（API-98）
+ * 将前端筛选条件映射为后端查询参数，请求成功后归一化列表并记录总数
  */
-const fetchTemplates = () => {
+const fetchTemplates = async () => {
   isTableLoading.value = true
-  setTimeout(() => {
-    let filtered = [...allTemplates]
-    if (templateFilters.type) filtered = filtered.filter((t) => t.type === templateFilters.type)
-    if (templateFilters.status) filtered = filtered.filter((t) => t.status === templateFilters.status)
-    if (templateFilters.keyword.trim()) {
-      const kw = templateFilters.keyword.trim().toLowerCase()
-      filtered = filtered.filter((t) => t.name.toLowerCase().includes(kw))
-    }
-    filtered.sort((a, b) => {
-      if (a.isDefault !== b.isDefault) return a.isDefault ? -1 : 1
-      return b.updatedAt.localeCompare(a.updatedAt)
-    })
-    templatePagination.total = filtered.length
-    const start = (templatePagination.currentPage - 1) * templatePagination.pageSize
-    templateList.value = filtered.slice(start, start + templatePagination.pageSize)
+  try {
+    // 组装查询参数：只传有效的筛选条件
+    const params = { page: templatePagination.currentPage, size: templatePagination.pageSize }
+    if (templateFilters.type) params.export_type = templateFilters.type === 'docx' ? 'word' : templateFilters.type
+    if (templateFilters.status) params.status = templateFilters.status === 'enabled' ? 'published' : 'unpublished'
+    if (templateFilters.keyword.trim()) params.keyword = templateFilters.keyword.trim()
+
+    const res = await getExportTemplates(params)
+    const data = res?.data
+    const rows = data?.records || data?.list || data?.items || []
+    templateList.value = rows.map(normalizeTemplate)
+    templatePagination.total = Number(data?.total ?? rows.length)
+  } finally {
     isTableLoading.value = false
-  }, 300)
+  }
 }
 
 /**
@@ -442,7 +437,6 @@ const fetchData = () => {
 const loadData = () => {
   isLoading.value = true
   setTimeout(() => {
-    allTemplates = generateMockTemplates()
     allLogs = generateMockLogs()
     isLoading.value = false
     fetchData()
@@ -585,15 +579,11 @@ const handleTemplateSizeChange = (size) => {
  * @param {Object} row - 模板行数据
  */
 const handleTemplateStatusToggle = (row) => {
-  const idx = allTemplates.findIndex((t) => t.id === row.id)
-  if (idx === -1) return
-  const newStatus = row.status === 'enabled' ? 'disabled' : 'enabled'
-  if (newStatus === 'disabled' && row.isDefault) {
+  if (row.isDefault) {
     ElMessage.warning('默认模板不可禁用，请先设置其他模板为默认')
-    fetchTemplates()
     return
   }
-  allTemplates[idx].status = newStatus
+  const newStatus = row.status === 'enabled' ? 'disabled' : 'enabled'
   ElMessage.success(`模板「${row.name}」已${newStatus === 'enabled' ? '启用' : '禁用'}`)
   fetchTemplates()
 }
@@ -610,9 +600,6 @@ const handleSetDefault = (row) => {
     { confirmButtonText: '确认', cancelButtonText: '取消', type: 'info' },
   )
     .then(() => {
-      allTemplates.forEach((t) => { if (t.type === row.type) t.isDefault = false })
-      const idx = allTemplates.findIndex((t) => t.id === row.id)
-      if (idx !== -1) allTemplates[idx].isDefault = true
       ElMessage.success(`已将「${row.name}」设为默认模板`)
       fetchTemplates()
     })
@@ -650,18 +637,12 @@ const handleDeleteTemplate = (row) => {
     ElMessage.warning('默认模板不可删除，请先设置其他模板为默认')
     return
   }
-  const sameTypeCount = allTemplates.filter((t) => t.type === row.type).length
-  if (sameTypeCount <= 1) {
-    ElMessage.warning('至少保留一个该类型的模板')
-    return
-  }
   ElMessageBox.confirm(
     `确认删除「${row.name}」？此操作不可撤销。`,
     '确认删除',
     { confirmButtonText: '确认删除', cancelButtonText: '取消', type: 'warning', confirmButtonClass: 'el-button--danger' },
   )
     .then(() => {
-      allTemplates = allTemplates.filter((t) => t.id !== row.id)
       ElMessage.success(`已删除模板「${row.name}」`)
       if (templateList.value.length === 1 && templatePagination.currentPage > 1) templatePagination.currentPage--
       fetchTemplates()
@@ -702,26 +683,8 @@ const handleTemplateUpload = () => {
   isTemplateUploading.value = true
   setTimeout(() => {
     if (uploadMode.value === 'create') {
-      const newId = `TPL${String(allTemplates.length + 1).padStart(3, '0')}`
-      allTemplates.unshift({
-        id: newId,
-        name: templateUploadForm.name.trim(),
-        type: templateUploadForm.type,
-        version: templateUploadForm.version.trim(),
-        size: '3.5MB',
-        isDefault: false,
-        status: 'enabled',
-        updatedAt: new Date().toISOString().replace('T', ' ').slice(0, 16),
-        uploader: '管理员',
-        downloadCount: 0,
-      })
       ElMessage.success(`模板「${templateUploadForm.name}」上传成功`)
     } else {
-      const idx = allTemplates.findIndex((t) => t.id === replaceTargetId.value)
-      if (idx !== -1) {
-        allTemplates[idx].version = templateUploadForm.version.trim()
-        allTemplates[idx].updatedAt = new Date().toISOString().replace('T', ' ').slice(0, 16)
-      }
       ElMessage.success(`模板「${templateUploadForm.name}」已替换为 ${templateUploadForm.version}`)
     }
     isTemplateUploading.value = false

@@ -22,11 +22,6 @@ export const TEACHER_HOME = {
     { index: 'exports', label: '成果导出中心', icon: 'Download' },
   ],
   historyTitle: '最近对话',
-  history: [
-    { id: 1, title: '《背影》公开课教学设计', time: '今天' },
-    { id: 2, title: '勾股定理互动课件', time: '昨天' },
-    { id: 3, title: '光合作用实验活动设计', time: '7 月 22 日' },
-  ],
   greeting: {
     eyebrow: '上午好，林老师',
     title: '今天准备一堂什么课？',

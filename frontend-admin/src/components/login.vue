@@ -15,7 +15,7 @@ import { ref, reactive, computed, onBeforeUnmount } from 'vue'
 import { useRouter } from 'vue-router'
 import { ElMessage } from 'element-plus'
 import { User, Lock, Message, Phone, Key } from '@element-plus/icons-vue'
-import { login, register, sendVerificationCode } from '../apis/login.js'
+import { login, register, sendVerificationCode, resetPassword } from '../apis/login.js'
 import { LOGIN_TEXT, VALIDATION_RULES } from '../config/login.config.js'
 import { useUserStore } from '../storage/user.js'
 
@@ -70,6 +70,17 @@ const stepFields = [
   ['email', 'verificationCode'],
   ['password', 'confirmPassword'],
 ]
+
+// ========== 重置密码状态 ==========
+
+/** 重置密码对话框是否可见 */
+const resetVisible = ref(false)
+/** 确认重置按钮加载态 */
+const resetLoading = ref(false)
+/** 发送验证码按钮加载态 */
+const resetCodeLoading = ref(false)
+/** 重置密码表单数据 */
+const resetForm = reactive({ username: '', code: '', new_password: '', confirmPassword: '' })
 
 // ========== 表单校验规则 ==========
 
@@ -385,6 +396,32 @@ const handleRegister = async () => {
   }
 }
 
+/** 发送重置密码邮箱验证码 — 调用 sendVerificationCode，成功后提示 */
+const sendResetCode = async () => {
+  if (!resetForm.username) return ElMessage.warning('请输入登录账号')
+  resetCodeLoading.value = true
+  try {
+    const res = await sendVerificationCode({ username: resetForm.username, scene: 'password_reset', channel: 'email' })
+    if (res.code !== 0 && res.code !== 200) return ElMessage.error(res.message || '验证码发送失败')
+    ElMessage.success('验证码已发送至该账号绑定的邮箱')
+  } catch { ElMessage.error('验证码发送失败，请稍后重试') } finally { resetCodeLoading.value = false }
+}
+
+/** 提交重置密码 — 校验并调用 resetPassword，成功后关闭对话框并清空表单 */
+const submitReset = async () => {
+  if (!resetForm.username || !resetForm.code || !resetForm.new_password) return ElMessage.warning('请完整填写重置资料')
+  if (resetForm.new_password.length < 6) return ElMessage.warning('新密码至少 6 位')
+  if (resetForm.new_password !== resetForm.confirmPassword) return ElMessage.warning('两次输入的密码不一致')
+  resetLoading.value = true
+  try {
+    const res = await resetPassword({ username: resetForm.username, code: resetForm.code, new_password: resetForm.new_password })
+    if (res.code !== 0 && res.code !== 200) return ElMessage.error(res.message || '密码重置失败')
+    ElMessage.success('密码重置成功，请使用新密码登录')
+    resetVisible.value = false
+    Object.assign(resetForm, { username: '', code: '', new_password: '', confirmPassword: '' })
+  } catch { ElMessage.error('密码重置失败，请稍后重试') } finally { resetLoading.value = false }
+}
+
 // ========== 生命周期 ==========
 
 /** 组件卸载前清理倒计时定时器，防止内存泄漏 */
@@ -400,8 +437,8 @@ onBeforeUnmount(() => {
   <!-- 全屏容器：左右分栏 -->
   <div class="flex h-screen overflow-hidden bg-(--zh-background-primary)">
 
-    <!-- ========== 左侧：品牌展示区 (lg:w-5/12) ========== -->
-    <aside class="hidden lg:flex lg:w-5/12 relative overflow-hidden">
+    <!-- ========== 左侧：品牌展示区 (lg:w-8/12) ========== -->
+    <aside class="hidden lg:flex lg:w-8/12 relative overflow-hidden">
       <!--
         [此处需填写：AI生成的品牌插图]
         提示词: A futuristic digital classroom scene with a glowing holographic brain at the center
@@ -412,7 +449,7 @@ onBeforeUnmount(() => {
       -->
       <img
         class="absolute inset-0 w-full h-full object-cover"
-        src="/image_384866672794550.png"
+        src="/智核品牌插图.png"
         alt="智核品牌插图"
       />
       <!-- 底部渐变遮罩，确保文字可读性 -->
@@ -434,7 +471,7 @@ onBeforeUnmount(() => {
       </div>
     </aside>
 
-    <!-- ========== 右侧：登录/注册表单区 (lg:w-7/12) ========== -->
+    <!-- ========== 右侧：登录/注册表单区 (lg:w-4/12) ========== -->
     <main class="flex-1 flex items-center justify-center px-6 sm:px-10 lg:px-16">
       <div class="w-full max-w-[440px]">
 
@@ -493,6 +530,10 @@ onBeforeUnmount(() => {
                   show-password
                 />
               </el-form-item>
+
+              <div class="flex justify-end -mt-3 mb-4">
+                <el-button text type="primary" size="small" @click="resetVisible = true">忘记密码？</el-button>
+              </div>
 
               <!-- 隐私协议勾选 -->
               <el-form-item prop="agreeToPrivacy">
@@ -720,6 +761,17 @@ onBeforeUnmount(() => {
       </div>
     </main>
   </div>
+
+  <el-dialog v-model="resetVisible" title="重置密码" width="420px" :close-on-click-modal="false">
+    <p class="reset-tip">验证码将发送至该账号绑定的邮箱。</p>
+    <el-form label-position="top" @submit.prevent="submitReset">
+      <el-form-item label="登录账号"><el-input v-model="resetForm.username" :prefix-icon="User" autocomplete="username" /></el-form-item>
+      <el-form-item label="邮箱验证码"><div class="code-row"><el-input v-model="resetForm.code" :prefix-icon="Key" maxlength="6" /><el-button :loading="resetCodeLoading" @click="sendResetCode">发送验证码</el-button></div></el-form-item>
+      <el-form-item label="新密码"><el-input v-model="resetForm.new_password" :prefix-icon="Lock" type="password" show-password autocomplete="new-password" /></el-form-item>
+      <el-form-item label="确认新密码"><el-input v-model="resetForm.confirmPassword" :prefix-icon="Lock" type="password" show-password autocomplete="new-password" @keyup.enter="submitReset" /></el-form-item>
+    </el-form>
+    <template #footer><el-button @click="resetVisible = false">取消</el-button><el-button type="primary" :loading="resetLoading" @click="submitReset">确认重置</el-button></template>
+  </el-dialog>
 </template>
 
 <style scoped>
@@ -804,13 +856,16 @@ onBeforeUnmount(() => {
   color: var(--zh-text-primary);
 }
 
-/** 大号输入框高度微调 */
+/** 大号输入框：统一高度48px，上下留空0、左右留空8px */
 :deep(.el-input--large .el-input__wrapper) {
-  padding: 12px 16px;
+  padding: 0 8px;
+  height: 48px;
 }
 
 /** 发送验证码按钮：取消 ElementPlus 固定高度，与同行输入框自然对齐 */
 :deep(.send-code-btn) {
   height: auto;
 }
+.reset-tip { margin: -8px 0 18px; color: var(--zh-text-caption); font-size: var(--zh-font-size13); }
+.code-row { display: flex; width: 100%; gap: 8px; }.code-row .el-button { flex: 0 0 auto; }
 </style>

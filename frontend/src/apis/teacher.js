@@ -74,6 +74,10 @@ export const createExportPreviewUrl = (id) => post(`/api/v1/export-artifacts/${i
 
 export const patchProject = (id, data) => apiRequest({ url: `/api/v1/projects/${id}`, method: 'patch', data })
 export const createAiSession = (data) => post('/api/v1/ai/sessions', data)
+export const listAiSessions = () => get('/api/v1/ai/sessions')
+export const getAiSession = (id) => get(`/api/v1/ai/sessions/${id}`)
+export const updateAiSession = (id, data) => apiRequest({ url: `/api/v1/ai/sessions/${id}`, method: 'patch', data })
+export const deleteAiSession = (id) => del(`/api/v1/ai/sessions/${id}`)
 export const sendAiSessionMessage = (id, data) => post(`/api/v1/ai/sessions/${id}/messages`, data)
 export const getAiPlan = (id) => get(`/api/v1/ai/sessions/${id}/plan`)
 export const confirmAiPlan = (id, data) => post(`/api/v1/ai/sessions/${id}/plan-confirmations`, data)
@@ -124,6 +128,13 @@ export const addProjectPermission = (id, data) => post(`/api/v1/projects/${id}/p
  * @returns {Promise} 后端返回 { teaching_style, template_style, interaction_forms }
  */
 export const getTeacherPreferences = () => get('/api/v1/teachers/me/preferences')
+
+/**
+ * 调用 Python 语音转写 ASR，返回识别文本。
+ * @param {FormData} formData - 表单数据，含语音文件（file）与可选语言（language）
+ * @returns {Promise} 后端返回 { text, language, model, ... }
+ */
+export const transcribeAudio = (formData) => apiRequest({ url: '/api/v1/python/audio/asr', method: 'post', data: formData })
 
 /**
  * 保存教师个人偏好设置

@@ -33,10 +33,20 @@ const alerts: Record<string, unknown>[] = [
   { id: 2, level: 'info', source: 'storage', title: 'OSS 存储空间使用率80%', detail: '当前使用800GB/1TB', status: 'acknowledged', acknowledged_by: 90001, resolved_by: null, created_at: timeOffset(-2), acknowledged_at: timeOffset(-1), resolved_at: null },
 ]
 
-/** 导出模板内存存储 */
+/** 导出模板内存存储（API-98~101） */
 const exportTemplates = [
-  { id: 1, name: '标准PPT模板', export_type: 'pptx', version: 1, status: 'published', created_at: timeOffset(-90), updated_at: timeOffset(-30) },
-  { id: 2, name: '教案Word模板', export_type: 'word', version: 3, status: 'published', created_at: timeOffset(-60), updated_at: timeOffset(-7) },
+  { id: 1, name: '标准课件模板 - 简约蓝', export_type: 'pptx', version: 2, status: 'published', size: '4.2MB', is_default: true, uploader: '管理员', download_count: 328, created_at: timeOffset(-90), updated_at: timeOffset(-30) },
+  { id: 2, name: '标准教案模板 - 学术风格', export_type: 'word', version: 3, status: 'published', size: '2.1MB', is_default: true, uploader: '管理员', download_count: 265, created_at: timeOffset(-60), updated_at: timeOffset(-7) },
+  { id: 3, name: '实验报告模板', export_type: 'word', version: 5, status: 'published', size: '1.8MB', is_default: false, uploader: '教务处', download_count: 412, created_at: timeOffset(-75), updated_at: timeOffset(-3) },
+  { id: 4, name: '互动课件模板 - 科技感', export_type: 'pptx', version: 1, status: 'unpublished', size: '5.6MB', is_default: false, uploader: '李老师', download_count: 0, created_at: timeOffset(-20), updated_at: timeOffset(-1) },
+  { id: 5, name: '公开课教案模板', export_type: 'word', version: 4, status: 'published', size: '1.4MB', is_default: false, uploader: '教研组', download_count: 189, created_at: timeOffset(-55), updated_at: timeOffset(-12) },
+  { id: 6, name: '习题课课件模板', export_type: 'pptx', version: 2, status: 'published', size: '3.7MB', is_default: false, uploader: '王老师', download_count: 143, created_at: timeOffset(-40), updated_at: timeOffset(-6) },
+  { id: 7, name: '复习课教案模板', export_type: 'word', version: 1, status: 'published', size: '1.6MB', is_default: false, uploader: '教研组', download_count: 96, created_at: timeOffset(-32), updated_at: timeOffset(-14) },
+  { id: 8, name: '教学反思报告模板', export_type: 'word', version: 3, status: 'unpublished', size: '0.9MB', is_default: false, uploader: '张老师', download_count: 0, created_at: timeOffset(-8), updated_at: timeOffset(-2) },
+  { id: 9, name: '项目式学习课件模板', export_type: 'pptx', version: 1, status: 'published', size: '6.3MB', is_default: false, uploader: '赵老师', download_count: 57, created_at: timeOffset(-28), updated_at: timeOffset(-18) },
+  { id: 10, name: '单元教学设计模板', export_type: 'word', version: 2, status: 'published', size: '2.8MB', is_default: false, uploader: '教务处', download_count: 231, created_at: timeOffset(-50), updated_at: timeOffset(-9) },
+  { id: 11, name: '说课稿模板', export_type: 'word', version: 1, status: 'unpublished', size: '1.1MB', is_default: false, uploader: '孙老师', download_count: 0, created_at: timeOffset(-4), updated_at: timeOffset(-4) },
+  { id: 12, name: '微课课件模板', export_type: 'pptx', version: 2, status: 'published', size: '4.8MB', is_default: false, uploader: '钱老师', download_count: 174, created_at: timeOffset(-45), updated_at: timeOffset(-5) },
 ]
 
 export const adminHandlers = [
@@ -331,12 +341,22 @@ export const adminHandlers = [
 
   // ==================== 十一、导出模板模块（API-98 ~ API-101） ====================
 
+  // ========== API-98 分页查询导出模板 ==========
   http.get('/api/v1/admin/export-templates', async ({ request }) => {
     const url = new URL(request.url)
     const { page, size } = getPagination(url.searchParams)
-    const total = exportTemplates.length
+    const exportType = url.searchParams.get('export_type')
+    const status = url.searchParams.get('status')
+    const keyword = (url.searchParams.get('keyword') || '').trim()
+
+    let filtered = [...exportTemplates]
+    if (exportType) filtered = filtered.filter((t) => t.export_type === exportType)
+    if (status) filtered = filtered.filter((t) => t.status === status)
+    if (keyword) filtered = filtered.filter((t) => t.name.includes(keyword))
+
+    const total = filtered.length
     const start = (page - 1) * size
-    return HttpResponse.json(success(pageResult(exportTemplates.slice(start, start + size), total, page, size)))
+    return HttpResponse.json(success(pageResult(filtered.slice(start, start + size), total, page, size)))
   }),
 
   http.post('/api/v1/admin/export-templates', async ({ request }) => {

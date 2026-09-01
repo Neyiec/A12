@@ -13,6 +13,18 @@ import { ref } from 'vue'
  */
 export const requestNewChat = ref(false)
 
+/**
+ * 跨组件通信信号：TeacherLayout 侧栏"历史对话"条目点击时写入 { id, title }，
+ * TeacherHome 监听到后打开对应会话的聊天视图，并由 ChatView 依据 sessionId 拉取消息恢复历史。
+ */
+export const openChatSession = ref(null)
+
+/**
+ * 跨组件通信信号：ChatView 挂载时写入最新会话 { id, title, updated_at }，
+ * TeacherLayout 监听到后在页面未刷新时将条目插入历史列表顶部（暂时性显示）。
+ */
+export const latestSessionPush = ref(null)
+
 /** SSE 事件类型常量 */
 export const SSE_EVENT = {
   SESSION: 'session',
@@ -44,9 +56,6 @@ export const OUTLINE_ACTIONS = {
   modify: '修改要求',
   regenerate: '重新生成',
 }
-
-/** 教学设计方案 Markdown 流式生成 SSE 端点 */
-export const DESIGN_STREAM_URL = '/api/v1/python/designs/stream'
 
 /** 大纲操作栏文案（Markdown 消息下方的操作按钮） */
 export const DESIGN_ACTION_BAR = {
@@ -95,10 +104,17 @@ export const RESOURCE_CARD_LABELS = {
 /** 聊天输入区文案 */
 export const CHAT_COMPOSER = {
   placeholder: '输入补充要求或修改建议…',
+  clarificationPlaceholder: '请回复以上问题，以帮助生成更贴合的教学大纲…',
   hint: '智核可能会出错，重要教学内容请核查。',
   attach: '添加资料',
   knowledge: '引用知识库',
   send: '发送',
+}
+
+/** 澄清问题相关文案 */
+export const CLARIFICATION_LABELS = {
+  title: '需要补充确认',
+  hint: '为生成更贴合你意图的大纲，请补充回答以下问题后再继续。',
 }
 
 /** 聊天头部文案 */
@@ -114,6 +130,11 @@ export const SYSTEM_MESSAGES = {
   timeout: '生成超时，请点击重试按钮重新尝试。',
   outlineConfirmed: '教学设计大纲已确认，请选择要生成的资源类型。',
   generatingResource: '正在根据教学设计生成资源…',
+}
+
+/** 历史会话恢复文案 */
+export const CHAT_RESUME = {
+  loading: '恢复历史对话…',
 }
 
 /** 创作类型模态框文案 */
