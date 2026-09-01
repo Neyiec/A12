@@ -11,6 +11,7 @@ CREATE EXTENSION IF NOT EXISTS vector;
 
 DROP TABLE IF EXISTS a12_resource_index_chunk CASCADE;
 DROP TABLE IF EXISTS a12_resource_index CASCADE;
+DROP TABLE IF EXISTS a12_retrieval_log CASCADE;
 DROP TABLE IF EXISTS a12_outline_generation_record CASCADE;
 DROP TABLE IF EXISTS a12_teacher_style_memory CASCADE;
 DROP TABLE IF EXISTS a12_outline_chat_message CASCADE;
@@ -196,3 +197,25 @@ CREATE INDEX idx_a12_resource_chunk_metadata_gin ON a12_resource_index_chunk USI
 CREATE INDEX idx_a12_resource_chunk_embedding_hnsw
   ON a12_resource_index_chunk
   USING hnsw (embedding_vector vector_cosine_ops);
+
+-- =============================================
+-- RAG retrieval audit log
+-- Stores direct index searches and outline-generation RAG calls.
+-- =============================================
+CREATE TABLE a12_retrieval_log (
+  id BIGSERIAL PRIMARY KEY,
+  query TEXT NOT NULL,
+  resource_ids JSONB NOT NULL DEFAULT '[]'::jsonb,
+  match_count INTEGER NOT NULL DEFAULT 0,
+  top_score DOUBLE PRECISION DEFAULT NULL,
+  search_mode TEXT NOT NULL DEFAULT 'unknown',
+  latency_ms INTEGER NOT NULL DEFAULT 0,
+  metadata JSONB NOT NULL DEFAULT '{}'::jsonb,
+  created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+
+COMMENT ON TABLE a12_retrieval_log IS 'A12-PY RAG retrieval log for observability and evaluation';
+COMMENT ON COLUMN a12_retrieval_log.metadata IS 'Top match summaries, fallback mode, embedding/postgres status';
+
+CREATE INDEX idx_a12_retrieval_log_created ON a12_retrieval_log (created_at DESC);
+CREATE INDEX idx_a12_retrieval_log_metadata_gin ON a12_retrieval_log USING GIN (metadata);

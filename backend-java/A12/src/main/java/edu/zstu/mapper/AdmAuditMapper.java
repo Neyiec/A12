@@ -15,6 +15,10 @@ public interface AdmAuditMapper {
     int process(Adm_Audit audit);
     List<Adm_Audit> findByReporter(@Param("reporterId") Integer reporterId);
     List<Adm_Audit> findByReporterAndStatus(@Param("reporterId") Integer reporterId, @Param("status") String status);
+    List<Adm_Audit> findByReporterAndType(@Param("reporterId") Integer reporterId, @Param("auditType") String auditType);
+    List<Adm_Audit> findByReporterTypeAndStatus(@Param("reporterId") Integer reporterId,
+                                                @Param("auditType") String auditType,
+                                                @Param("status") String status);
     List<Adm_Audit> searchAudits(@Param("auditType") String auditType,
                                   @Param("status") String status,
                                   @Param("targetType") String targetType,

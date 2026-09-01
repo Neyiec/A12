@@ -32,6 +32,16 @@
         WHERE reporter_id = #{reporterId} AND status = #{status}
         ORDER BY created_at DESC
     </select>
+    <select id="findByReporterAndType" resultMap="BaseResultMap">
+        SELECT <include refid="Base_Columns"/> FROM adm_audit
+        WHERE reporter_id = #{reporterId} AND audit_type = #{auditType}
+        ORDER BY created_at DESC
+    </select>
+    <select id="findByReporterTypeAndStatus" resultMap="BaseResultMap">
+        SELECT <include refid="Base_Columns"/> FROM adm_audit
+        WHERE reporter_id = #{reporterId} AND audit_type = #{auditType} AND status = #{status}
+        ORDER BY created_at DESC
+    </select>
     <select id="searchAudits" resultMap="BaseResultMap">
         SELECT <include refid="Base_Columns"/> FROM adm_audit
         <where>

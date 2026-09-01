@@ -38,6 +38,19 @@ Important fields: `session_id`, `need_clarification`, `missing_fields`, `clarifi
 
 Java stores Python generation reflection, tool trace and quality report in `AiTask.reflections`; final outline JSON is stored in `AiTask.plan_json`.
 
+RAG index is now upgraded with semantic chunking, subject-aware chunk windows, hybrid rerank, direct search API, index overview/resource/detail APIs, Python retrieval logs, and Java `kb_retrieval_log` persistence for outline-generation RAG traces.
+
+## 2A. PPTX/Word Export Service
+
+| Endpoint | Change |
+|---|---|
+| `POST /api/v1/python/presentations/export/pptx` | Converts final slide JSON/HTML into `.pptx`; high-fidelity image mode falls back to editable text mode. |
+| `POST /api/v1/python/lesson-plans/export/docx` | Converts lesson-plan JSON into `.docx` with fixed teaching-plan sections and page footer. |
+| `POST /api/v1/export-tasks` | Java export task now calls Python, saves the real generated file under `a12.export.local-dir`, fills `file_size/file_url/download_url`, and writes `quality_report`. |
+| `/exports/**` | Java exposes locally saved export files through a static resource handler. |
+
+Export configuration keys supported by Java task mode: `slides`, `lesson_plan`, `outline`, `title`, `filename`, `subject`, `grade`, `duration_minutes`, `teaching_goals`, `requirements`, `reference_text`, `fidelity`, `package_static_assets`.
+
 ## 3. Creative Workspace Page JSON API
 
 | Endpoint | Change |
@@ -91,6 +104,35 @@ Resource deletion now soft-deletes MySQL data, deletes Python index `personal:{i
 Migration: `backend-java/A12/database/20260810_res_metadata_dictionary_migration.sql`.
 
 New/changed classes: `ResourceTaxonomyDTO`, `Res_Metadata_Dictionary`, `ResMetadataDictionaryMapper`, `MaterialQueryDTO`, `Res_Material`, `MaterialVO`.
+
+## 5A. Community Publishing And Moderation
+
+| Endpoint | Change |
+|---|---|
+| `GET /api/v1/community/items/{id}` | Now only returns `status=public` content; draft/review/offline content is hidden from public detail. |
+| `PUT /api/v1/community/items/{id}/favorite` | Favorite now validates that the target is public content and uses its real `content_type`. |
+| `POST /api/v1/community/items/{id}/view-events` | View events now validate public visibility before writing view interaction and counters. |
+| `POST /api/v1/community/items/{id}/reuse` | Reuse now validates public visibility before copying into a personal project. |
+| `POST /api/v1/community/submissions` | Creates validated draft content; `content_data` must be JSON object and `input_variables` can be JSON object/array. |
+| `PATCH /api/v1/community/submissions/{id}` | Draft-only update now persists all editable fields including `content_type/subject/grade/lesson_type`. |
+| `POST /api/v1/community/submissions/{id}/versions` | Version save now appends a JSON snapshot into `version_history` and increments `version`. |
+| `POST /api/v1/community/submissions/{id}/submit` | Submit now blocks duplicate pending review tasks and moves content to `reviewing`. |
+| `POST /api/v1/community/reports` | Report creation now validates target content, target type, public visibility and duplicate pending reports by the same user. |
+| `GET /api/v1/community/reports` | User report list now only returns `audit_type=report`, not submission review tasks. |
+| `POST /api/v1/admin/moderation/tasks/{id}/decisions` | Review decision now enforces pending-only processing and updates content status with a clear state machine. |
+| `POST /api/v1/admin/reports/{id}/resolution` | Report resolution now enforces pending-only processing and can offline or restore reported content. |
+
+Community content states: `draft` -> `reviewing` -> `public` after approval; `reject` moves content to `offline`; `rework` moves content back to `draft`.
+
+## 5B. Admin Dashboard Statistics
+
+| Endpoint | Change |
+|---|---|
+| `GET /api/v1/admin/dashboard` | Dashboard now reads real business tables instead of placeholder values. |
+
+Dashboard data now includes totals, today's increments, 7-day trend, status/type distributions, quality metrics, and recent activities.
+
+Data sources: `sys_user`, `res_material`, `adm_resource`, `ai_task`, `exp_task`, `adm_audit`, `com_content`, `sys_log`.
 
 ## 6. Dependency/Runtime Note
 
@@ -1366,7 +1408,7 @@ Python requirements were pinned for the outline workflow stack: `langchain-core>
 
 ## API-48 POST /api/v1/export-tasks
 
-**功能**: 绑定项目快照、模板版本和导出参数，创建异步导出任务
+**功能**: 创建导出任务并生成真实文件。Java 会读取项目页面 JSON 或 `config.slides/config.lesson_plan`，调用 Python 文件生成服务，保存文件到 `a12.export.local-dir`，并返回可访问的 `file_url/download_url`。
 
 **请求体 (JSON)**
 | 字段 | 类型 | 必填 | 说明 |
@@ -1378,6 +1420,20 @@ Python requirements were pinned for the outline workflow stack: `langchain-core>
 
 **后端 DTO**: `ExportTaskDTO { project_id, snapshot_version, export_type, config }`
 **响应 VO**: `Result<ExportTaskVO>`
+
+**config 支持字段**
+| 字段 | 类型 | 说明 |
+|---|---|---|
+| `slides` | List<Object> | PPTX/package 导出优先使用；为空时从 `ws_page.page_content` 自动转换 |
+| `lesson_plan` | Object | Word 导出优先使用；为空时 Java 先调用 Python `/lesson-plans/generate` 生成教案 JSON |
+| `outline` | Object | 生成 Word 教案时作为大纲输入 |
+| `title` | String | 导出标题 |
+| `filename` | String | 文件名 |
+| `fidelity` | String | PPTX 导出模式：`high_fidelity` / `editable_text` |
+| `package_static_assets` | Boolean | 是否打包互动资源 |
+| `subject/grade/duration_minutes/teaching_goals/requirements/reference_text` | Mixed | 生成 Word 教案时传给 Python |
+
+**文件保存规则**: 文件保存到 `a12.export.local-dir`，默认 `data/exports`；访问前缀为 `a12.export.public-prefix`，默认 `/exports`。生成成功时 `file_size > 0`，`file_status=available`，`status=success`；生成失败时 `status=failed`，`error_msg` 和 `quality_report.errors` 会记录失败原因。
 
 ---
 
@@ -1494,7 +1550,7 @@ Python requirements were pinned for the outline workflow stack: `langchain-core>
 ---
 
 ## API-58 GET /api/v1/community/items/{id}
-**功能**: 获取用途、变量、示例、作者、版本和授权信息
+**功能**: 获取公开内容的用途、变量、示例、作者、版本和授权信息；仅允许读取 `status=public` 的内容
 **路径参数**: `id` — 内容ID
 **响应 VO**: `Result<ContentVO>`
 
@@ -1524,7 +1580,7 @@ Python requirements were pinned for the outline workflow stack: `langchain-core>
 ---
 
 ## API-59 PUT /api/v1/community/items/{id}/favorite
-**功能**: 收藏指定社区内容
+**功能**: 收藏指定公开社区内容；若内容不存在或非 `public` 状态则拒绝
 **路径参数**: `id` — 内容ID
 **响应 VO**: `Result<Void>`
 
@@ -1538,7 +1594,7 @@ Python requirements were pinned for the outline workflow stack: `langchain-core>
 ---
 
 ## API-61 POST /api/v1/community/items/{id}/view-events
-**功能**: 记录浏览事件（按用户和内容幂等更新）
+**功能**: 记录公开内容浏览事件（按用户和内容幂等更新）；非公开内容不会写入浏览记录
 **路径参数**: `id` — 内容ID
 **响应 VO**: `Result<Void>`
 
@@ -1566,7 +1622,7 @@ Python requirements were pinned for the outline workflow stack: `langchain-core>
 ---
 
 ## API-65 POST /api/v1/community/items/{id}/reuse
-**功能**: 校验内容状态、版本和授权，复制到个人空间并返回派生项目
+**功能**: 校验公开状态、版本和授权，复制到个人空间并返回派生项目
 **路径参数**: `id` — 内容ID
 **请求体 (JSON)**
 | 字段 | 类型 | 必填 | 说明 |
@@ -1579,7 +1635,7 @@ Python requirements were pinned for the outline workflow stack: `langchain-core>
 ---
 
 ## API-66 POST /api/v1/community/submissions
-**功能**: 创建投稿草稿
+**功能**: 创建投稿草稿；后端会规范化 `content_type` 并校验 JSON 字段
 **请求体 (JSON)**
 | 字段 | 类型 | 必填 | 说明 |
 |---|---|---|---|
@@ -1589,12 +1645,14 @@ Python requirements were pinned for the outline workflow stack: `langchain-core>
 | `subject` | String | 否 | 学科 |
 | `grade` | String | 否 | 年级 |
 | `lesson_type` | String | 否 | 课型 |
-| `content_data` | String(JSON) | 否 | 内容数据 |
-| `input_variables` | String(JSON) | 否 | 输入变量 |
+| `content_data` | String(JSON Object) | 否 | 内容数据，必须是合法 JSON 对象 |
+| `input_variables` | String(JSON Object/Array) | 否 | 输入变量，必须是合法 JSON 对象或数组 |
 | `example_effect` | String | 否 | 示例效果 |
 | `license` | String | **是** | 授权协议 |
 **后端 DTO**: `ContentDTO { content_type, title, description, subject, grade, lesson_type, content_data, input_variables, example_effect, license }`
 **响应 VO**: `Result<ContentVO>`
+
+**校验规则**: `content_type` 支持 `skill`、`lesson_case`，兼容 `case -> lesson_case`；创建时 `content_type/title/license` 必填；新建内容初始状态为 `draft`，`version=1`，`version_history=[]`。
 
 ---
 
@@ -1614,24 +1672,28 @@ Python requirements were pinned for the outline workflow stack: `langchain-core>
 ---
 
 ## API-69 PATCH /api/v1/community/submissions/{id}
-**功能**: 修改草稿或退回修改状态的投稿
+**功能**: 修改当前教师自己的草稿投稿；当前后端仅允许 `status=draft` 修改
 **路径参数**: `id` — 投稿ID
 **请求体**: 与 API-66 相同结构，全选填
 **后端 DTO**: `ContentDTO`
 **响应 VO**: `Result<ContentVO>`
 
+**可更新字段**: `content_type/title/description/subject/grade/lesson_type/content_data/input_variables/example_effect/license`。其中 `content_data` 和 `input_variables` 使用 API-66 相同 JSON 校验规则。
+
 ---
 
 ## API-70 POST /api/v1/community/submissions/{id}/versions
-**功能**: 保存投稿不可变版本
+**功能**: 保存投稿版本快照
 **路径参数**: `id` — 投稿ID
 **请求体**: description(否)
 **响应 VO**: `Result<{version_id, version_number}>`
 
+**版本规则**: 后端将当前 `title/subject/grade/lesson_type/content_data/input_variables/example_effect/license` 等字段追加到 `version_history` JSON 数组，并将 `version` 自增。
+
 ---
 
 ## API-71 POST /api/v1/community/submissions/{id}/submit
-**功能**: 提交审核（首期MVP由功能开关禁用）
+**功能**: 提交审核；状态从 `draft` 变更为 `reviewing`，并创建一条 `audit_type=audit` 的待审任务
 **路径参数**: `id` — 投稿ID
 **请求体 (JSON)**
 | 字段 | 类型 | 必填 | 说明 |
@@ -1640,31 +1702,35 @@ Python requirements were pinned for the outline workflow stack: `langchain-core>
 | `notes` | String | 否 | 审核备注 |
 **响应 VO**: `Result<Void>`
 
+**约束**: 仅作者本人可提交；仅 `draft` 可提交；同一内容存在 `pending` 审核任务时会拒绝重复提交。
+
 ---
 
 ## API-72 POST /api/v1/community/reports
-**功能**: 创建举报记录
+**功能**: 创建举报记录；后端校验举报目标存在、类型匹配且为公开内容
 **请求体 (JSON)**
 | 字段 | 类型 | 必填 | 说明 |
 |---|---|---|---|
-| `target_type` | String | **是** | 举报对象类型 |
+| `target_type` | String | **是** | 举报对象类型: `skill` / `lesson_case`，可兼容 `case` |
 | `target_id` | int | **是** | 举报对象ID |
 | `reason` | String | **是** | 举报原因 |
 | `description` | String | 否 | 详细描述 |
 **后端 DTO**: `AuditDTO { audit_type, target_type, target_id, reason, action, comment }`
 **响应 VO**: `Result<{report_id: int}>`
 
+**约束**: 同一用户对同一内容已有 `pending` 举报时拒绝重复提交；举报任务写入 `adm_audit.audit_type=report`。
+
 ---
 
 ## API-73 GET /api/v1/community/reports
-**功能**: 分页查询本人举报及处理状态
+**功能**: 分页查询本人举报及处理状态；仅返回 `audit_type=report`
 **查询参数**: status(否), page(否), size(否)
 **响应 VO**: `Result<PageResult<AuditVO>>`
 
 ---
 
 ## API-74 GET /api/v1/community/reports/{id}
-**功能**: 获取举报受理状态及处理结果
+**功能**: 获取举报受理状态及处理结果；仅允许举报人读取自己的举报
 **路径参数**: `id` — 举报ID
 **响应 VO**: `Result<AuditVO>`
 
@@ -1848,14 +1914,14 @@ Python requirements were pinned for the outline workflow stack: `langchain-core>
 ---
 
 ## API-91 GET /api/v1/admin/moderation/tasks/{id}
-**功能**: 获取待审内容、投稿人、来源版本、授权信息和检测结果
+**功能**: 获取待审内容、投稿人、来源版本、授权信息和检测结果；仅返回 `audit_type=audit` 的审核任务
 **路径参数**: `id` — 审核任务ID
 **响应 VO**: `Result<AuditVO>`
 
 ---
 
 ## API-92 POST /api/v1/admin/moderation/tasks/{id}/decisions
-**功能**: 提交审核决定
+**功能**: 提交审核决定；仅允许处理 `pending` 审核任务
 **路径参数**: `id` — 审核任务ID
 **请求体 (JSON)**
 | 字段 | 类型 | 必填 | 说明 |
@@ -1865,13 +1931,17 @@ Python requirements were pinned for the outline workflow stack: `langchain-core>
 **后端 DTO**: `AuditDTO { audit_type, target_type, target_id, reason, action, comment }`
 **响应 VO**: `Result<Void>`
 
+**状态机**: `approve -> content.status=public`；`reject -> content.status=offline`；`rework -> content.status=draft`。处理完成后 `adm_audit.status=processed`。
+
 ---
 
 ## API-93 PUT /api/v1/admin/community-items/{id}/status
 **功能**: 上架/下架/停用社区内容
 **路径参数**: `id` — 社区内容ID
-**请求体**: status(String) **是** `published`/`unpublished`/`disabled`
+**请求体**: status(String) **是** 支持 `published/public`、`unpublished/disabled/offline`、`reviewing`、`draft`
 **响应 VO**: `Result<ContentVO>`
+
+**落库规则**: `published/public -> public`；`unpublished/disabled/offline -> offline`；`reviewing` 和 `draft` 保持原值。
 
 ---
 
@@ -1881,7 +1951,7 @@ Python requirements were pinned for the outline workflow stack: `langchain-core>
 **请求体 (JSON)**
 | 字段 | 类型 | 必填 | 说明 |
 |---|---|---|---|
-| `is_top` | int | **是** | 0=取消, 1=推荐, 2=置顶 |
+| `is_top` | int | **是** | 0=取消推荐, 1=推荐 |
 | `expires_at` | LocalDateTime | 否 | 到期时间 |
 **响应 VO**: `Result<ContentVO>`
 
@@ -1895,22 +1965,24 @@ Python requirements were pinned for the outline workflow stack: `langchain-core>
 ---
 
 ## API-96 GET /api/v1/admin/reports/{id}
-**功能**: 查看举报详情
+**功能**: 查看举报详情；仅返回 `audit_type=report` 的举报任务
 **路径参数**: `id` — 举报ID
 **响应 VO**: `Result<AuditVO>`
 
 ---
 
 ## API-97 POST /api/v1/admin/reports/{id}/resolution
-**功能**: 提交举报处理结论
+**功能**: 提交举报处理结论；仅允许处理 `pending` 举报任务
 **路径参数**: `id` — 举报ID
 **请求体 (JSON)**
 | 字段 | 类型 | 必填 | 说明 |
 |---|---|---|---|
-| `action` | String | **是** | `dismiss`/`warn`/`remove`/`ban` |
+| `action` | String | **是** | `approve` / `offline` / `ignore` / `reject` / `restore` |
 | `comment` | String | 否 | 处理说明 |
 **后端 DTO**: `AuditDTO`
 **响应 VO**: `Result<Void>`
+
+**状态机**: `approve/offline -> content.status=offline`；`restore -> content.status=public`；`ignore/reject` 只记录处理结论不改变内容状态。处理完成后 `adm_audit.status=processed`。
 
 ---
 
@@ -2051,8 +2123,84 @@ Python requirements were pinned for the outline workflow stack: `langchain-core>
 ---
 
 ## API-128 GET /api/v1/admin/dashboard
-**功能**: 查询业务指标
-**响应 VO**: `Result<{user_count, resource_count, ai_task_count, export_task_count, moderation_pending_count}>`
+**功能**: 查询后台数据看板。后端从用户、资源、AI任务、导出任务、社区内容、审核举报、日志等真实业务表聚合统计，并缓存 60 秒。
+
+**响应 VO**: `Result<Map<String, Object>>`
+
+| 顶层字段 | 类型 | 说明 |
+|---|---|---|
+| `user_count` | long | 启用且未删除用户数 |
+| `resource_count` | long | 可用个人资源 + 可用平台资源总数 |
+| `personal_resource_count` | long | 可用个人资源数 |
+| `platform_resource_count` | long | 可用平台资源数 |
+| `ai_task_count` | long | AI 教学任务总数 |
+| `export_task_count` | long | 导出任务总数 |
+| `community_content_count` | long | 社区内容总数 |
+| `moderation_pending_count` | long | 待处理审核/举报总数 |
+| `review_pending_count` | long | 待审核投稿数 |
+| `report_pending_count` | long | 待处理举报数 |
+| `log_count` | long | 系统日志总数 |
+| `today` | Object | 今日新增指标 |
+| `trend_7d` | Array<Object> | 近 7 天趋势 |
+| `distribution` | Object | 类型/状态分布 |
+| `quality` | Object | 成功率和失败数 |
+| `recent_activities` | Array<Object> | 最近 10 条操作日志 |
+| `generated_at` | String | 看板生成时间 |
+
+**today 字段**:
+| 字段 | 类型 | 说明 |
+|---|---|---|
+| `new_user_count` | long | 今日新增用户 |
+| `new_resource_count` | long | 今日新增资源 |
+| `new_ai_task_count` | long | 今日新增 AI 任务 |
+| `new_export_task_count` | long | 今日新增导出任务 |
+| `new_community_content_count` | long | 今日新增社区内容 |
+| `new_log_count` | long | 今日新增日志 |
+
+**trend_7d 每项字段**:
+| 字段 | 类型 | 说明 |
+|---|---|---|
+| `date` | String | 日期，格式 `yyyy-MM-dd` |
+| `new_users` | long | 当日新增用户 |
+| `new_resources` | long | 当日新增资源 |
+| `ai_tasks` | long | 当日 AI 任务数 |
+| `export_tasks` | long | 当日导出任务数 |
+| `community_contents` | long | 当日社区内容数 |
+| `logs` | long | 当日日志数 |
+
+**distribution 字段**:
+| 字段 | 类型 | 说明 |
+|---|---|---|
+| `users_by_type` | Object | 按 `teacher/admin/auditor` 等用户类型统计 |
+| `resources_by_type` | Object | 按个人资源 `file_type` 和平台资源 `resource_type` 合并统计 |
+| `materials_by_ai_index_status` | Object | 个人资源 AI 索引状态分布 |
+| `ai_tasks_by_status` | Object | AI 任务状态分布 |
+| `export_tasks_by_status` | Object | 导出任务状态分布 |
+| `moderation_by_type_status` | Object | 审核/举报按 `audit_type:status` 组合统计 |
+| `community_by_status` | Object | 社区内容状态分布 |
+| `logs_by_type` | Object | 日志类型分布 |
+
+**quality 字段**:
+| 字段 | 类型 | 说明 |
+|---|---|---|
+| `ai_task_success_rate` | double | AI 任务完成率，百分比，保留两位 |
+| `export_success_rate` | double | 导出成功率，百分比，保留两位 |
+| `export_failed_count` | long | 导出失败数 |
+| `ai_task_failed_count` | long | AI 任务失败数 |
+| `avg_export_duration_ms` | long | 有开始/完成时间的导出任务平均耗时 |
+
+**recent_activities 每项字段**:
+| 字段 | 类型 | 说明 |
+|---|---|---|
+| `id` | long | 日志ID |
+| `user_id` | Integer | 操作者ID |
+| `log_type` | String | 日志类型 |
+| `module` | String | 模块 |
+| `action` | String | 动作 |
+| `target_type` | String | 目标类型 |
+| `target_id` | Integer | 目标ID |
+| `status` | String | 日志状态 |
+| `created_at` | LocalDateTime | 日志创建时间 |
 
 ---
 
@@ -2419,6 +2567,102 @@ Python requirements were pinned for the outline workflow stack: `langchain-core>
 **路径参数**: `source_type=public|personal`，`resource_id=MySQL资源ID`
 
 **响应 VO**: `Result<{resource_key, status}>`
+
+---
+
+## API-135-5 GET /api/v1/python/resources/index/overview
+
+**功能**: 查看 RAG 索引总览，用于后台管理和演示验收。
+
+**响应字段**: `postgres_available`、`embedding_dimensions`、`resource_count`、`chunk_count`、`retrieval_log_count`、`groups`、`fallback_path`。
+
+**Java 代理**: `GET /api/v1/python/resources/index/overview`
+
+---
+
+## API-135-6 GET /api/v1/python/resources/index/resources
+
+**功能**: 分页查看已进入 RAG 索引库的资源。
+
+**查询参数**
+| 字段 | 类型 | 必填 | 说明 |
+|---|---|---|---|
+| `source_type` | String | 否 | `public` 或 `personal` |
+| `available` | Boolean | 否 | 是否可检索 |
+| `limit` | int | 否 | 默认 50，最大 200 |
+| `offset` | int | 否 | 默认 0 |
+
+**响应字段**: `total`、`limit`、`offset`、`items[]`。`items[]` 包含 `resource_key/source_type/resource_id/title/available/allow_ai/parse_status/text_length/chunk_count/metadata/indexed_at/updated_at`。
+
+**Java 代理**: `GET /api/v1/python/resources/index/resources`
+
+---
+
+## API-135-7 GET /api/v1/python/resources/index/resources/{source_type}/{resource_id}
+
+**功能**: 查看单个资源索引详情和前 N 个 chunk。
+
+**查询参数**: `chunk_limit`，默认 20，最大 200。
+
+**Java 代理**: `GET /api/v1/python/resources/index/resources/{sourceType}/{resourceId}`
+
+---
+
+## API-135-8 POST /api/v1/python/resources/index/search
+
+**功能**: 直接测试 RAG 检索。检索流程为：query embedding -> pgvector candidate search -> keyword/metadata hybrid rerank -> context assembly -> retrieval log.
+
+**请求体 (JSON)**
+```json
+{
+  "query": "初中生物 光合作用 实验设计",
+  "resource_ids": [],
+  "limit": 12000,
+  "top_k": 8
+}
+```
+
+**说明**: `resource_ids` 为空时搜索全部可用知识库资源；传 `public:12` / `personal:8` 时限定搜索范围。上传参考材料仍只用于 query enrichment，不作为 RAG 范围。
+
+**响应字段**: `query`、`context`、`matches[]`、`search_mode`、`latency_ms`。`matches[]` 包含 `resource_id/chunk_id/content/metadata/base_score/rerank_score/score/rank/match_type`。
+
+**Java 代理**: `POST /api/v1/python/resources/index/search`
+
+---
+
+## API-135-9 GET /api/v1/python/resources/index/logs
+
+**功能**: 查看 Python RAG 检索日志。包括直接 search API 和大纲生成中的 RAG 调用。
+
+**查询参数**: `limit` 默认 50，最大 200；`offset` 默认 0。
+
+**响应字段**: `total`、`limit`、`offset`、`items[]`。`items[]` 包含 `query/resource_ids/match_count/top_score/search_mode/latency_ms/metadata/created_at`。
+
+**Java 代理**: `GET /api/v1/python/resources/index/logs`
+
+---
+
+## API-135-10 GET /api/v1/kb/retrieval-logs
+
+**功能**: 查看 Java/MySQL `kb_retrieval_log` 中的用户检索记录。大纲对话完成且调用 RAG 后，Java 会把 `rag_search` trace 写入该表。
+
+**查询参数**
+| 字段 | 类型 | 必填 | 说明 |
+|---|---|---|---|
+| `type` | String | 否 | 例如 `retrieval` |
+| `task_id` | int | 否 | 关联 `ai_task.id` |
+| `page` | int | 否 | 默认 1 |
+| `size` | int | 否 | 默认 20，最大 100 |
+
+**响应 VO**: `Result<PageResult<Kb_Retrieval_Log>>`
+
+---
+
+## API-135-11 GET /api/v1/kb/retrieval-logs/{id}
+
+**功能**: 查看单条 Java/MySQL 检索日志。只能查看当前登录用户自己的记录。
+
+**响应 VO**: `Result<Kb_Retrieval_Log>`
 
 ---
 

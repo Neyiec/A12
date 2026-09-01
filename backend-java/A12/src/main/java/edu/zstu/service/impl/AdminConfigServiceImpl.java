@@ -5,12 +5,8 @@ import edu.zstu.dto.ConfigDTO;
 import edu.zstu.dto.LogQueryDTO;
 import edu.zstu.dto.RollbackDTO;
 import edu.zstu.dto.SecurityPolicyDTO;
-import edu.zstu.entity.AiConfigVersion;
-import edu.zstu.entity.Sys_Config;
-import edu.zstu.entity.Sys_Log;
-import edu.zstu.mapper.AiConfigVersionMapper;
-import edu.zstu.mapper.SysConfigMapper;
-import edu.zstu.mapper.SysLogMapper;
+import edu.zstu.entity.*;
+import edu.zstu.mapper.*;
 import edu.zstu.service.AdminConfigService;
 import edu.zstu.service.BusinessLogService;
 import edu.zstu.utils.CurrentHolder;
@@ -24,8 +20,13 @@ import org.springframework.transaction.annotation.Transactional;
 
 import java.time.LocalDateTime;
 import java.time.Duration;
+import java.time.LocalDate;
+import java.util.ArrayList;
+import java.util.Comparator;
+import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.Objects;
 import java.util.stream.Collectors;
 
 @Slf4j
@@ -35,15 +36,32 @@ public class AdminConfigServiceImpl implements AdminConfigService {
     private final SysConfigMapper configMapper;
     private final AiConfigVersionMapper versionMapper;
     private final SysLogMapper logMapper;
+    private final SysUserMapper userMapper;
+    private final ResMaterialMapper materialMapper;
+    private final AdmResourceMapper admResourceMapper;
+    private final AiTaskMapper aiTaskMapper;
+    private final ExpTaskMapper expTaskMapper;
+    private final AdmAuditMapper auditMapper;
+    private final ComContentMapper contentMapper;
     private final BusinessLogService businessLogService;
     private final RedisCacheUtil redisCacheUtil;
 
     public AdminConfigServiceImpl(SysConfigMapper configMapper, AiConfigVersionMapper versionMapper,
-                                  SysLogMapper logMapper, BusinessLogService businessLogService,
-                                  RedisCacheUtil redisCacheUtil) {
+                                  SysLogMapper logMapper, SysUserMapper userMapper,
+                                  ResMaterialMapper materialMapper, AdmResourceMapper admResourceMapper,
+                                  AiTaskMapper aiTaskMapper, ExpTaskMapper expTaskMapper,
+                                  AdmAuditMapper auditMapper, ComContentMapper contentMapper,
+                                  BusinessLogService businessLogService, RedisCacheUtil redisCacheUtil) {
         this.configMapper = configMapper;
         this.versionMapper = versionMapper;
         this.logMapper = logMapper;
+        this.userMapper = userMapper;
+        this.materialMapper = materialMapper;
+        this.admResourceMapper = admResourceMapper;
+        this.aiTaskMapper = aiTaskMapper;
+        this.expTaskMapper = expTaskMapper;
+        this.auditMapper = auditMapper;
+        this.contentMapper = contentMapper;
         this.businessLogService = businessLogService;
         this.redisCacheUtil = redisCacheUtil;
     }
@@ -271,10 +289,74 @@ public class AdminConfigServiceImpl implements AdminConfigService {
                 new com.fasterxml.jackson.core.type.TypeReference<Map<String, Object>>() {},
                 Duration.ofSeconds(60),
                 () -> {
-                    long aiConfigCount = configMapper.findByGroup("ai_model").size();
-                    long logCount = logMapper.findAll().size();
-                    return Map.of("user_count", 0, "resource_count", 0, "ai_task_count", aiConfigCount,
-                            "export_task_count", 0, "moderation_pending_count", 0, "log_count", logCount);
+                    List<Sys_User> users = userMapper.findAll();
+                    List<Res_Material> materials = materialMapper.findAll();
+                    List<Adm_Resource> platformResources = admResourceMapper.findAll();
+                    List<AI_Task> aiTasks = aiTaskMapper.findAll();
+                    List<Exp_Task> exportTasks = expTaskMapper.findAll();
+                    List<Adm_Audit> audits = auditMapper.findAll();
+                    List<Com_Content> communityContents = contentMapper.findAll();
+                    List<Sys_Log> logs = logMapper.findAll();
+
+                    long activeUserCount = users.stream().filter(u -> u.getDeleted_at() == null && u.getIs_active() == 1).count();
+                    long activeMaterialCount = materials.stream().filter(m -> Objects.equals(m.getStatus(), 1)).count();
+                    long activePlatformResourceCount = platformResources.stream().filter(r -> Objects.equals(r.getStatus(), 1)).count();
+                    long pendingModerationCount = audits.stream().filter(a -> "pending".equals(a.getStatus())).count();
+                    long pendingReviewCount = audits.stream().filter(a -> "audit".equals(a.getAudit_type()) && "pending".equals(a.getStatus())).count();
+                    long pendingReportCount = audits.stream().filter(a -> "report".equals(a.getAudit_type()) && "pending".equals(a.getStatus())).count();
+                    long aiCompletedCount = aiTasks.stream().filter(t -> "completed".equals(t.getStatus())).count();
+                    long exportSuccessCount = exportTasks.stream().filter(t -> "success".equals(t.getStatus())).count();
+
+                    LocalDateTime todayStart = LocalDate.now().atStartOfDay();
+                    Map<String, Object> totals = new LinkedHashMap<>();
+                    totals.put("user_count", activeUserCount);
+                    totals.put("resource_count", activeMaterialCount + activePlatformResourceCount);
+                    totals.put("personal_resource_count", activeMaterialCount);
+                    totals.put("platform_resource_count", activePlatformResourceCount);
+                    totals.put("ai_task_count", aiTasks.size());
+                    totals.put("export_task_count", exportTasks.size());
+                    totals.put("community_content_count", communityContents.size());
+                    totals.put("moderation_pending_count", pendingModerationCount);
+                    totals.put("review_pending_count", pendingReviewCount);
+                    totals.put("report_pending_count", pendingReportCount);
+                    totals.put("log_count", logs.size());
+
+                    Map<String, Object> today = new LinkedHashMap<>();
+                    today.put("new_user_count", countSince(users, Sys_User::getCreated_at, todayStart));
+                    today.put("new_resource_count", countSince(materials, Res_Material::getCreated_at, todayStart)
+                            + countSince(platformResources, Adm_Resource::getCreated_at, todayStart));
+                    today.put("new_ai_task_count", countSince(aiTasks, AI_Task::getCreated_at, todayStart));
+                    today.put("new_export_task_count", countSince(exportTasks, Exp_Task::getCreated_at, todayStart));
+                    today.put("new_community_content_count", countSince(communityContents, Com_Content::getCreated_at, todayStart));
+                    today.put("new_log_count", countSince(logs, Sys_Log::getCreate_at, todayStart));
+
+                    Map<String, Object> distribution = new LinkedHashMap<>();
+                    distribution.put("users_by_type", groupCount(users, Sys_User::getUser_type));
+                    distribution.put("resources_by_type", mergeCounts(groupCount(materials, Res_Material::getFile_type),
+                            groupCount(platformResources, Adm_Resource::getResource_type)));
+                    distribution.put("materials_by_ai_index_status", groupCount(materials, Res_Material::getAi_index_status));
+                    distribution.put("ai_tasks_by_status", groupCount(aiTasks, AI_Task::getStatus));
+                    distribution.put("export_tasks_by_status", groupCount(exportTasks, Exp_Task::getStatus));
+                    distribution.put("moderation_by_type_status", auditTypeStatusCount(audits));
+                    distribution.put("community_by_status", groupCount(communityContents, Com_Content::getStatus));
+                    distribution.put("logs_by_type", groupCount(logs, Sys_Log::getLog_type));
+
+                    Map<String, Object> quality = new LinkedHashMap<>();
+                    quality.put("ai_task_success_rate", rate(aiCompletedCount, aiTasks.size()));
+                    quality.put("export_success_rate", rate(exportSuccessCount, exportTasks.size()));
+                    quality.put("export_failed_count", exportTasks.stream().filter(t -> "failed".equals(t.getStatus())).count());
+                    quality.put("ai_task_failed_count", aiTasks.stream().filter(t -> "failed".equals(t.getStatus())).count());
+                    quality.put("avg_export_duration_ms", averageExportDurationMs(exportTasks));
+
+                    Map<String, Object> result = new LinkedHashMap<>();
+                    result.putAll(totals);
+                    result.put("today", today);
+                    result.put("trend_7d", buildSevenDayTrend(users, materials, platformResources, aiTasks, exportTasks, communityContents, logs));
+                    result.put("distribution", distribution);
+                    result.put("quality", quality);
+                    result.put("recent_activities", recentActivities(logs, 10));
+                    result.put("generated_at", LocalDateTime.now().toString());
+                    return result;
                 });
     }
 
@@ -332,6 +414,119 @@ public class AdminConfigServiceImpl implements AdminConfigService {
 
     private String blankToAll(String value) {
         return value == null || value.isBlank() ? "all" : value;
+    }
+
+    private <T> long countSince(List<T> items, java.util.function.Function<T, LocalDateTime> timeGetter, LocalDateTime start) {
+        return items.stream()
+                .map(timeGetter)
+                .filter(Objects::nonNull)
+                .filter(time -> !time.isBefore(start))
+                .count();
+    }
+
+    private <T> Map<String, Long> groupCount(List<T> items, java.util.function.Function<T, String> keyGetter) {
+        Map<String, Long> result = new LinkedHashMap<>();
+        for (T item : items) {
+            String key = keyGetter.apply(item);
+            if (key == null || key.isBlank()) {
+                key = "unknown";
+            }
+            result.put(key, result.getOrDefault(key, 0L) + 1);
+        }
+        return result;
+    }
+
+    private Map<String, Long> mergeCounts(Map<String, Long> left, Map<String, Long> right) {
+        Map<String, Long> result = new LinkedHashMap<>(left);
+        right.forEach((key, value) -> result.put(key, result.getOrDefault(key, 0L) + value));
+        return result;
+    }
+
+    private Map<String, Long> auditTypeStatusCount(List<Adm_Audit> audits) {
+        Map<String, Long> result = new LinkedHashMap<>();
+        for (Adm_Audit audit : audits) {
+            String type = audit.getAudit_type() == null ? "unknown" : audit.getAudit_type();
+            String status = audit.getStatus() == null ? "unknown" : audit.getStatus();
+            String key = type + ":" + status;
+            result.put(key, result.getOrDefault(key, 0L) + 1);
+        }
+        return result;
+    }
+
+    private double rate(long numerator, long denominator) {
+        if (denominator <= 0) {
+            return 0.0;
+        }
+        return Math.round((numerator * 10000.0 / denominator)) / 100.0;
+    }
+
+    private long averageExportDurationMs(List<Exp_Task> exportTasks) {
+        List<Long> durations = exportTasks.stream()
+                .filter(t -> t.getStarted_at() != null && t.getCompleted_at() != null)
+                .map(t -> Duration.between(t.getStarted_at(), t.getCompleted_at()).toMillis())
+                .filter(v -> v >= 0)
+                .toList();
+        if (durations.isEmpty()) {
+            return 0;
+        }
+        return Math.round(durations.stream().mapToLong(Long::longValue).average().orElse(0));
+    }
+
+    private List<Map<String, Object>> buildSevenDayTrend(List<Sys_User> users,
+                                                         List<Res_Material> materials,
+                                                         List<Adm_Resource> platformResources,
+                                                         List<AI_Task> aiTasks,
+                                                         List<Exp_Task> exportTasks,
+                                                         List<Com_Content> communityContents,
+                                                         List<Sys_Log> logs) {
+        List<Map<String, Object>> trend = new ArrayList<>();
+        LocalDate today = LocalDate.now();
+        for (int i = 6; i >= 0; i--) {
+            LocalDate date = today.minusDays(i);
+            LocalDateTime start = date.atStartOfDay();
+            LocalDateTime end = date.plusDays(1).atStartOfDay();
+            Map<String, Object> row = new LinkedHashMap<>();
+            row.put("date", date.toString());
+            row.put("new_users", countBetween(users, Sys_User::getCreated_at, start, end));
+            row.put("new_resources", countBetween(materials, Res_Material::getCreated_at, start, end)
+                    + countBetween(platformResources, Adm_Resource::getCreated_at, start, end));
+            row.put("ai_tasks", countBetween(aiTasks, AI_Task::getCreated_at, start, end));
+            row.put("export_tasks", countBetween(exportTasks, Exp_Task::getCreated_at, start, end));
+            row.put("community_contents", countBetween(communityContents, Com_Content::getCreated_at, start, end));
+            row.put("logs", countBetween(logs, Sys_Log::getCreate_at, start, end));
+            trend.add(row);
+        }
+        return trend;
+    }
+
+    private <T> long countBetween(List<T> items, java.util.function.Function<T, LocalDateTime> timeGetter,
+                                  LocalDateTime start, LocalDateTime end) {
+        return items.stream()
+                .map(timeGetter)
+                .filter(Objects::nonNull)
+                .filter(time -> !time.isBefore(start) && time.isBefore(end))
+                .count();
+    }
+
+    private List<Map<String, Object>> recentActivities(List<Sys_Log> logs, int limit) {
+        return logs.stream()
+                .sorted(Comparator.comparing(Sys_Log::getCreate_at,
+                        Comparator.nullsLast(Comparator.reverseOrder())))
+                .limit(limit)
+                .map(log -> {
+                    Map<String, Object> item = new LinkedHashMap<>();
+                    item.put("id", log.getId());
+                    item.put("user_id", log.getUser_id());
+                    item.put("log_type", log.getLog_type());
+                    item.put("module", log.getModule());
+                    item.put("action", log.getAction());
+                    item.put("target_type", log.getTarget_type());
+                    item.put("target_id", log.getTarget_id());
+                    item.put("status", log.getStatus());
+                    item.put("created_at", log.getCreate_at());
+                    return item;
+                })
+                .toList();
     }
 
     private List<LogVO> filterLogs(LogQueryDTO dto, String forcedType) {

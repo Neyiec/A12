@@ -180,3 +180,10 @@ class ResourceIndexMetadataRequest(BaseModel):
     available: bool | None = None
     allow_ai: bool | None = None
     metadata: dict[str, Any] = Field(default_factory=dict)
+
+
+class ResourceIndexSearchRequest(BaseModel):
+    query: str = Field(..., min_length=1)
+    resource_ids: list[str] = Field(default_factory=list)
+    limit: int = Field(default=12000, ge=1000, le=30000)
+    top_k: int = Field(default=8, ge=1, le=30)

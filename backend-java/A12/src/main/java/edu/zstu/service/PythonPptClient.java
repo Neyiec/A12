@@ -195,6 +195,10 @@ public class PythonPptClient {
         return postBytes("/api/v1/python/lesson-plans/export/docx", payload, "调用Python教案导出服务失败");
     }
 
+    public PythonFileResult exportLessonPlanFile(Map<String, Object> payload) {
+        return postFile("/api/v1/python/lesson-plans/export/docx", payload, "调用Python教案导出服务失败");
+    }
+
     public Map<String, Object> generateInteractiveModule(Map<String, Object> payload) {
         log.info("generateInteractiveModule title={}, type={}", payload.get("title"), payload.get("module_type"));
         return postJson("/api/v1/python/interactive-modules/generate", payload);
@@ -217,6 +221,37 @@ public class PythonPptClient {
         log.info("updateResourceIndexMetadata sourceType={}, resourceId={}, available={}",
                 payload.get("source_type"), payload.get("resource_id"), payload.get("available"));
         return patchJson("/api/v1/python/resources/index/metadata", payload);
+    }
+
+    public Map<String, Object> resourceIndexOverview() {
+        return getJson("/api/v1/python/resources/index/overview", Map.of());
+    }
+
+    public Map<String, Object> listResourceIndexResources(String sourceType, Boolean available, Integer limit, Integer offset) {
+        Map<String, Object> query = new LinkedHashMap<>();
+        if (sourceType != null && !sourceType.isBlank()) query.put("source_type", sourceType);
+        if (available != null) query.put("available", available);
+        if (limit != null) query.put("limit", limit);
+        if (offset != null) query.put("offset", offset);
+        return getJson("/api/v1/python/resources/index/resources", query);
+    }
+
+    public Map<String, Object> getResourceIndexResource(String sourceType, String resourceId, Integer chunkLimit) {
+        Map<String, Object> query = new LinkedHashMap<>();
+        if (chunkLimit != null) query.put("chunk_limit", chunkLimit);
+        String path = "/api/v1/python/resources/index/resources/" + urlEncode(sourceType) + "/" + urlEncode(resourceId);
+        return getJson(path, query);
+    }
+
+    public Map<String, Object> listResourceIndexLogs(Integer limit, Integer offset) {
+        Map<String, Object> query = new LinkedHashMap<>();
+        if (limit != null) query.put("limit", limit);
+        if (offset != null) query.put("offset", offset);
+        return getJson("/api/v1/python/resources/index/logs", query);
+    }
+
+    public Map<String, Object> searchResourceIndex(Map<String, Object> payload) {
+        return postJson("/api/v1/python/resources/index/search", payload);
     }
 
     public Map<String, Object> deleteResourceIndex(String sourceType, Object resourceId) {

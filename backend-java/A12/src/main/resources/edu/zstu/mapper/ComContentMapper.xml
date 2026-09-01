@@ -30,6 +30,10 @@
     <update id="update">
         UPDATE com_content <set>
         <if test="title != null">title = #{title},</if><if test="description != null">description = #{description},</if>
+        <if test="content_type != null">content_type = #{content_type},</if>
+        <if test="subject != null">subject = #{subject},</if>
+        <if test="grade != null">grade = #{grade},</if>
+        <if test="lesson_type != null">lesson_type = #{lesson_type},</if>
         <if test="content_data != null">content_data = #{content_data},</if>
         <if test="input_variables != null">input_variables = #{input_variables},</if>
         <if test="example_effect != null">example_effect = #{example_effect},</if>
@@ -46,7 +50,7 @@
     <select id="searchPublic" resultMap="BaseResultMap">
         SELECT <include refid="Base_Columns"/> FROM com_content
         WHERE status = 'public'
-        <if test="contentType != null and contentType != ''">AND content_type = #{contentType}</if>
+        <if test="content_type != null and content_type != ''">AND content_type = #{content_type}</if>
         <if test="subject != null and subject != ''">AND subject = #{subject}</if>
         <if test="grade != null and grade != ''">AND grade = #{grade}</if>
         <if test="keyword != null and keyword != ''">AND (title LIKE CONCAT('%',#{keyword},'%') OR description LIKE CONCAT('%',#{keyword},'%'))</if>

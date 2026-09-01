@@ -33,6 +33,7 @@ from a12_ppt.models import (
     PresentationModifyRequest,
     ResourceIndexBootstrapRequest,
     ResourceIndexMetadataRequest,
+    ResourceIndexSearchRequest,
     ResourceIndexSyncRequest,
     Result,
     SlideModifyRequest,
@@ -120,6 +121,51 @@ async def bootstrap_resource_index(request: ResourceIndexBootstrapRequest) -> Re
 @app.patch("/api/v1/python/resources/index/metadata")
 async def update_resource_index_metadata(request: ResourceIndexMetadataRequest) -> Result:
     return Result(data=resource_index_store.update_metadata(request))
+
+
+@app.get("/api/v1/python/resources/index/overview")
+async def resource_index_overview() -> Result:
+    return Result(data=resource_index_store.overview())
+
+
+@app.get("/api/v1/python/resources/index/resources")
+async def list_resource_index_resources(
+    source_type: str | None = Query(default=None),
+    available: bool | None = Query(default=None),
+    limit: int = Query(50, ge=1, le=200),
+    offset: int = Query(0, ge=0),
+) -> Result:
+    return Result(data=resource_index_store.list_resources(source_type, available, limit, offset))
+
+
+@app.get("/api/v1/python/resources/index/resources/{source_type}/{resource_id}")
+async def get_resource_index_resource(
+    source_type: str,
+    resource_id: str,
+    chunk_limit: int = Query(20, ge=0, le=200),
+) -> Result:
+    resource = resource_index_store.get_resource(source_type, resource_id, chunk_limit)
+    if not resource:
+        raise HTTPException(status_code=404, detail="Resource index not found")
+    return Result(data=resource)
+
+
+@app.get("/api/v1/python/resources/index/logs")
+async def list_resource_index_logs(
+    limit: int = Query(50, ge=1, le=200),
+    offset: int = Query(0, ge=0),
+) -> Result:
+    return Result(data=resource_index_store.list_retrieval_logs(limit, offset))
+
+
+@app.post("/api/v1/python/resources/index/search")
+async def search_resource_index(request: ResourceIndexSearchRequest) -> Result:
+    return Result(data=await resource_index_store.search_context(
+        request.resource_ids,
+        request.query,
+        request.limit,
+        request.top_k,
+    ))
 
 
 @app.delete("/api/v1/python/resources/index/{source_type}/{resource_id}")
