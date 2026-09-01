@@ -11,6 +11,46 @@ import { mockSessions } from '../data/users'
 import { mockMaterials, mockAuditLogs, getNextMaterialId } from '../data/resources'
 import { success, error, extractToken, now, getPagination, pageResult, generateId } from '../data/common'
 
+type MockTaxonomy = { id: number; name: string; color: string | null; sort_order: number; deleted?: boolean }
+
+const mockTaxonomies: Record<'category' | 'tag', MockTaxonomy[]> = {
+  category: [
+    { id: 101, name: '生物', color: '#2f6feb', sort_order: 10 },
+    { id: 102, name: '七年级', color: '#35a06f', sort_order: 20 },
+    { id: 103, name: '初中', color: '#9b6cf0', sort_order: 30 },
+  ],
+  tag: [
+    { id: 201, name: '教材', color: '#2f6feb', sort_order: 10 },
+    { id: 202, name: '光合作用', color: '#35a06f', sort_order: 20 },
+    { id: 203, name: '教学设计', color: '#9b6cf0', sort_order: 30 },
+  ],
+}
+
+let nextTaxonomyId = 301
+
+function parseTaxonomyValues(value: string): string[] {
+  try {
+    const parsed = JSON.parse(value || '[]')
+    return Array.isArray(parsed) ? parsed.map(String) : []
+  } catch { return [] }
+}
+
+function getTaxonomyItems(kind: 'category' | 'tag', userId: number) {
+  const field = kind === 'category' ? 'categories' : 'tags'
+  const ownResources = mockMaterials.filter((item) => item.user_id === userId)
+  const counts = new Map<string, number>()
+  ownResources.forEach((item) => parseTaxonomyValues(item[field]).forEach((name) => counts.set(name, (counts.get(name) || 0) + 1)))
+  const managedNames = new Set<string>()
+  const managed = mockTaxonomies[kind].filter((item) => !item.deleted).map((item) => {
+    managedNames.add(item.name)
+    return { ...item, type: kind, count: counts.get(item.name) || 0, managed: true }
+  })
+  const unmanaged = [...counts.entries()]
+    .filter(([name]) => !managedNames.has(name))
+    .map(([name, count]) => ({ id: null, name, type: kind, count, color: null, sort_order: 1000, managed: false }))
+  return [...managed, ...unmanaged].sort((left, right) => left.sort_order - right.sort_order || left.name.localeCompare(right.name, 'zh-CN'))
+}
+
 export const resourceHandlers = [
   // ========== API-36 获取 OSS 上传 Token ==========
   http.post('/api/v1/resources/upload-tokens', async ({ request }) => {
@@ -90,6 +130,78 @@ export const resourceHandlers = [
     const records = filtered.slice(start, start + size)
 
     return HttpResponse.json(success(pageResult(records, total, page, size)))
+  }),
+
+  // ========== API-38A/B 资源分类与标签词典 ==========
+  http.get('/api/v1/resources/tags', async ({ request }) => {
+    const token = extractToken(request.headers.get('Authorization'))
+    const user = mockSessions.get(token || '')
+    if (!user) return HttpResponse.json(error(401, '请先登录'), { status: 401 })
+    return HttpResponse.json(success(getTaxonomyItems('tag', user.id)))
+  }),
+
+  http.get('/api/v1/resources/categories', async ({ request }) => {
+    const token = extractToken(request.headers.get('Authorization'))
+    const user = mockSessions.get(token || '')
+    if (!user) return HttpResponse.json(error(401, '请先登录'), { status: 401 })
+    return HttpResponse.json(success(getTaxonomyItems('category', user.id)))
+  }),
+
+  // ========== API-38C/D/F/G 管理资源分类与标签词典 ==========
+  http.post('/api/v1/resources/tags', async ({ request }) => {
+    const body = (await request.json()) as { name?: string; color?: string; sort_order?: number }
+    const name = body.name?.trim()
+    if (!name) return HttpResponse.json(error(400, '词条名称不能为空'), { status: 400 })
+    const existing = mockTaxonomies.tag.find((item) => item.name === name)
+    if (existing) { existing.deleted = false; existing.color = body.color || existing.color; return HttpResponse.json(success(getTaxonomyItems('tag', 10001).find((item) => item.id === existing.id))) }
+    const item = { id: nextTaxonomyId++, name, color: body.color || null, sort_order: Number(body.sort_order) || 1000 }
+    mockTaxonomies.tag.push(item)
+    return HttpResponse.json(success(getTaxonomyItems('tag', 10001).find((entry) => entry.id === item.id)))
+  }),
+
+  http.post('/api/v1/resources/categories', async ({ request }) => {
+    const body = (await request.json()) as { name?: string; color?: string; sort_order?: number }
+    const name = body.name?.trim()
+    if (!name) return HttpResponse.json(error(400, '词条名称不能为空'), { status: 400 })
+    const existing = mockTaxonomies.category.find((item) => item.name === name)
+    if (existing) { existing.deleted = false; existing.color = body.color || existing.color; return HttpResponse.json(success(getTaxonomyItems('category', 10001).find((item) => item.id === existing.id))) }
+    const item = { id: nextTaxonomyId++, name, color: body.color || null, sort_order: Number(body.sort_order) || 1000 }
+    mockTaxonomies.category.push(item)
+    return HttpResponse.json(success(getTaxonomyItems('category', 10001).find((entry) => entry.id === item.id)))
+  }),
+
+  http.patch('/api/v1/resources/tags/:dictId', async ({ request, params }) => {
+    const item = mockTaxonomies.tag.find((entry) => entry.id === Number(params.dictId) && !entry.deleted)
+    if (!item) return HttpResponse.json(error(404, '标签不存在'), { status: 404 })
+    const body = (await request.json()) as { name?: string; color?: string; sort_order?: number }
+    if (body.name?.trim()) item.name = body.name.trim()
+    if (body.color !== undefined) item.color = body.color || null
+    if (body.sort_order !== undefined) item.sort_order = Number(body.sort_order) || 0
+    return HttpResponse.json(success(getTaxonomyItems('tag', 10001).find((entry) => entry.id === item.id)))
+  }),
+
+  http.patch('/api/v1/resources/categories/:dictId', async ({ request, params }) => {
+    const item = mockTaxonomies.category.find((entry) => entry.id === Number(params.dictId) && !entry.deleted)
+    if (!item) return HttpResponse.json(error(404, '分类不存在'), { status: 404 })
+    const body = (await request.json()) as { name?: string; color?: string; sort_order?: number }
+    if (body.name?.trim()) item.name = body.name.trim()
+    if (body.color !== undefined) item.color = body.color || null
+    if (body.sort_order !== undefined) item.sort_order = Number(body.sort_order) || 0
+    return HttpResponse.json(success(getTaxonomyItems('category', 10001).find((entry) => entry.id === item.id)))
+  }),
+
+  http.delete('/api/v1/resources/tags/:dictId', async ({ params }) => {
+    const item = mockTaxonomies.tag.find((entry) => entry.id === Number(params.dictId))
+    if (!item) return HttpResponse.json(error(404, '标签不存在'), { status: 404 })
+    item.deleted = true
+    return HttpResponse.json(success(null, '标签已删除'))
+  }),
+
+  http.delete('/api/v1/resources/categories/:dictId', async ({ params }) => {
+    const item = mockTaxonomies.category.find((entry) => entry.id === Number(params.dictId))
+    if (!item) return HttpResponse.json(error(404, '分类不存在'), { status: 404 })
+    item.deleted = true
+    return HttpResponse.json(success(null, '分类已删除'))
   }),
 
   // ========== API-39 获取资源详情 ==========

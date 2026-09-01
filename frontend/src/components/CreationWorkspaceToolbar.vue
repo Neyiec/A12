@@ -1,6 +1,6 @@
 <script setup>
 import { computed, ref } from 'vue'
-import { ArrowDown, ArrowLeft, Check, CircleCheck, Download, EditPen, Grid, Histogram, Monitor, Picture } from '@element-plus/icons-vue'
+import { ArrowDown, ArrowLeft, Check, CircleCheck, Download, EditPen, Grid, Histogram, MagicStick, Monitor, Picture } from '@element-plus/icons-vue'
 import WorkspaceToolButton from './WorkspaceToolButton.vue'
 
 const props = defineProps({
@@ -10,7 +10,7 @@ const props = defineProps({
   modelValue: { type: String, default: '' },
 })
 
-const emit = defineEmits(['update:modelValue', 'tool-select', 'back', 'preview', 'export'])
+const emit = defineEmits(['update:modelValue', 'tool-select', 'back', 'preview', 'export', 'generate-interactive'])
 
 const tools = [
   { id: 'text', label: '文本', icon: EditPen },
@@ -49,6 +49,7 @@ const selectShape = (shapeKind) => {
 const goBack = () => emit('back')
 const openPreview = () => emit('preview')
 const exportProject = () => emit('export')
+const openInteractiveGenerator = () => emit('generate-interactive')
 </script>
 
 <template>
@@ -107,6 +108,7 @@ const exportProject = () => emit('export')
 
     <div class="toolbar-actions">
       <el-button :icon="Monitor" @click="openPreview">预览</el-button>
+      <el-button :icon="MagicStick" @click="openInteractiveGenerator">生成互动</el-button>
       <el-button type="primary" :icon="Download" @click="exportProject">导出</el-button>
     </div>
   </header>

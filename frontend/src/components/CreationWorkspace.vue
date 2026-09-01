@@ -3,7 +3,7 @@ import { computed, onBeforeUnmount, onMounted, reactive, ref, watch } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { ElMessage } from 'element-plus'
 import { FullScreen, Plus, Promotion, VideoPlay } from '@element-plus/icons-vue'
-import { addProjectComponent, addProjectPermission, createAiRun, createProject, getAiRun, getProject, getProjectVersionDiff, listProjectVersions, restoreProjectVersion, reviseProjectWithAi, saveProjectVersion, sendAiSessionMessage, updateProjectComponent } from '../apis/teacher'
+import { addProjectPermission, batchSaveProjectPages, createAiRun, createProject, createProjectPage, deleteProjectPage, generateInteractiveModule, getAiRun, getProject, getProjectPage, getProjectVersionDiff, listProjectPages, listProjectVersions, patchProject, restoreProjectVersion, reviseProjectWithAi, saveProjectVersion, sendAiSessionMessage, saveProjectPage, validateProjectComponent } from '../apis/teacher'
 import IntentClarificationDialog from './IntentClarificationDialog.vue'
 import CreationWorkspaceToolbar from './CreationWorkspaceToolbar.vue'
 import WorkspacePropertiesPanel from './WorkspacePropertiesPanel.vue'
@@ -17,6 +17,30 @@ const selectedElementId = ref(null)
 const draggingElementId = ref(null)
 const activePanel = ref('style')
 const previewVisible = ref(false)
+const interactiveDialogVisible = ref(false)
+const interactivePreviewVisible = ref(false)
+const interactiveGenerating = ref(false)
+const interactiveModule = ref(null)
+const interactivePreviewSource = ref('generated')
+const interactiveForm = reactive({
+  title: '',
+  topic: '',
+  module_type: 'animation',
+  subject: '',
+  grade: '',
+  knowledge_points: '',
+  requirements: '',
+  theme: '',
+  embed_mode: 'standalone',
+  language: 'zh-CN',
+})
+const interactiveModuleTypes = [
+  { value: 'animation', label: '知识动画', description: '用动画演示概念变化与过程' },
+  { value: 'quiz_game', label: '问答游戏', description: '适合课堂练习与即时反馈' },
+  { value: 'matching_game', label: '匹配游戏', description: '将概念、图示或答案进行配对' },
+  { value: 'timeline_game', label: '时间线游戏', description: '按时间或步骤组织互动内容' },
+  { value: 'simulation', label: '模拟实验', description: '模拟实验过程与参数变化' },
+]
 const clarificationDialogVisible = ref(false)
 const clarificationSubmitting = ref(false)
 const clarificationQuestion = ref(null)
@@ -27,12 +51,16 @@ const runStage = ref('')
 const versionDialogVisible = ref(false)
 const permissionDialogVisible = ref(false)
 const versionLoading = ref(false)
-const savingComponent = ref(false)
 const versions = ref([])
 const versionDiff = ref(null)
 const permissionUserId = ref('')
 const autosaveState = ref('已保存')
 const testCaseBootstrapping = ref(false)
+const hydratingProject = ref(false)
+const savingPage = ref(false)
+const workspaceClientVersion = `workspace-${Date.now()}`
+const loadedPageDetailIds = new Set()
+const componentValidationCache = new Map()
 let eventSource = null
 let runPollTimer = null
 let autosaveTimer = null
@@ -70,7 +98,9 @@ const createMockImageSrc = (label = '课堂观察') => {
 const elementPresets = [
   { id: 'title', type: 'text', name: '页面标题', target: 'title', content: '', position: { x: 8, y: 13, width: 62, height: 15, rotation: 0, zIndex: 4 }, style: { color: '#102d54', fontSize: 40, fontWeight: 700, opacity: 100, textAlign: 'left', lineHeight: 1.2 } },
   { id: 'description', type: 'text', name: '引导文案', target: 'description', content: '', position: { x: 8, y: 30, width: 57, height: 14, rotation: 0, zIndex: 4 }, style: { color: '#607491', fontSize: 15, fontWeight: 400, opacity: 100, textAlign: 'left', lineHeight: 1.65 } },
-  { id: 'visual', type: 'formula', name: '公式', target: 'formula', content: 'a² + b² = c²', position: { x: 8, y: 47, width: 48, height: 28, rotation: 0, zIndex: 3 }, style: { color: '#2563eb', fontSize: 32, fontWeight: 700, opacity: 100, textAlign: 'center', lineHeight: 1.2 } },
+  { id: 'formula-diagram', type: 'shape', name: '公式示意图', target: null, shapeKind: 'formula-diagram', content: '', position: { x: 8, y: 48, width: 14, height: 25, rotation: 0, zIndex: 3 }, style: { fillColor: '#2563eb', borderColor: '#2563eb', borderWidth: 5, borderRadius: 0, opacity: 100 } },
+  { id: 'formula-text', type: 'formula', name: '公式文字', target: null, content: 'a² + b² = c²', position: { x: 25, y: 50, width: 31, height: 12, rotation: 0, zIndex: 3 }, style: { color: '#2563eb', fontSize: 32, fontWeight: 700, opacity: 100, textAlign: 'center', lineHeight: 1.2 } },
+  { id: 'formula-caption', type: 'text', name: '公式说明', target: null, content: '公式元素，可在右侧修改内容', position: { x: 25, y: 64, width: 31, height: 7, rotation: 0, zIndex: 3 }, style: { color: '#7c8da4', fontSize: 10, fontWeight: 600, opacity: 100, textAlign: 'center', lineHeight: 1.4 } },
   { id: 'shape', type: 'shape', name: '几何形状', target: 'shape', shapeKind: 'circle', content: '', position: { x: 57, y: 54, width: 7, height: 11, rotation: 0, zIndex: 3 }, style: { fillColor: '#dbeafe', borderColor: '#2563eb', borderWidth: 2, borderRadius: 50, opacity: 100 } },
   { id: 'image', type: 'image', name: '课堂图片', target: 'image', content: '校园测量示意图', src: createMockImageSrc(), position: { x: 66, y: 46, width: 25, height: 29, rotation: 0, zIndex: 3 }, style: { tintColor: '#2563eb', borderColor: '#bfdbfe', borderWidth: 1, borderRadius: 14, opacity: 100, objectFit: 'cover' } },
   { id: 'chart', type: 'chart', name: '测量图表', target: 'chart', content: '三组测量数据', data: [{ label: 'A组', value: 68 }, { label: 'B组', value: 82 }, { label: 'C组', value: 56 }, { label: 'D组', value: 91 }], position: { x: 64, y: 13, width: 27, height: 27, rotation: 0, zIndex: 3 }, style: { color: '#2563eb', backgroundColor: '#eff6ff', borderColor: '#bfdbfe', borderWidth: 1, borderRadius: 14, opacity: 100 } },
@@ -110,7 +140,18 @@ const slides = reactive([
 slides.forEach((slide) => { slide.elements = createMockElements() })
 const current = computed(() => slides[selectedSlide.value])
 const theme = computed(() => themes.find((item) => item.id === current.value.theme) || themes[0])
-const unwrapResponse = (response) => response?.data || response
+const unwrapResponse = (response) => {
+  if (response && typeof response === 'object' && Object.prototype.hasOwnProperty.call(response, 'code')) {
+    const code = Number(response.code)
+    if (![0, 200].includes(code)) {
+      const error = new Error(response.message || '请求失败')
+      error.code = code
+      throw error
+    }
+    return Object.prototype.hasOwnProperty.call(response, 'data') ? response.data : response
+  }
+  return response
+}
 const sessionId = computed(() => route.query.sessionId)
 const projectId = computed(() => route.query.projectId)
 const project = ref(null)
@@ -157,19 +198,48 @@ const extractElementContent = (element) => [
   element?.data?.content,
   element?.data?.value,
 ].map(readableElementContent).find((value) => value.trim()) || ''
+const expandLegacyFormulaElement = (element, normalized, content, index) => {
+  const baseId = normalized.id || `formula-${index + 1}`
+  const basePosition = normalized.position || {}
+  const baseStyle = normalized.style || {}
+  const makePart = (presetId, suffix, relative, overrides = {}) => {
+    const preset = elementPresets.find((item) => item.id === presetId)
+    const part = cloneElementData(preset)
+    part.id = `${baseId}-${suffix}`
+    part.name = overrides.name || part.name
+    part.target = null
+    part.position = {
+      ...part.position,
+      x: Number((Number(basePosition.x || 0) + Number(basePosition.width || 48) * relative.x).toFixed(2)),
+      y: Number((Number(basePosition.y || 0) + Number(basePosition.height || 28) * relative.y).toFixed(2)),
+      width: Number((Number(basePosition.width || 48) * relative.width).toFixed(2)),
+      height: Number((Number(basePosition.height || 28) * relative.height).toFixed(2)),
+      zIndex: basePosition.zIndex ?? 3,
+    }
+    if (baseStyle.color && presetId === 'formula-diagram') part.style = { ...part.style, fillColor: baseStyle.color, borderColor: baseStyle.color }
+    if (baseStyle.color && presetId === 'formula-text') part.style = { ...part.style, color: baseStyle.color }
+    part.content = overrides.content ?? part.content
+    return part
+  }
+  return [
+    makePart('formula-diagram', 'diagram', { x: 0, y: 0.08, width: 0.31, height: 0.82 }, { name: '公式示意图' }),
+    makePart('formula-text', 'text', { x: 0.35, y: 0.12, width: 0.65, height: 0.42 }, { name: '公式文字', content }),
+    makePart('formula-caption', 'caption', { x: 0.35, y: 0.62, width: 0.65, height: 0.22 }, { name: '公式说明' }),
+  ]
+}
 const normalizeElements = (rawElements) => {
   const parsed = typeof rawElements === 'string' ? parseJson(rawElements, []) : rawElements
   const root = Array.isArray(parsed) && parsed.length === 1 && parsed[0]?.elements ? parsed[0] : parsed
   const nested = Array.isArray(root) ? root : (root?.elements ?? root?.components ?? root?.items ?? [])
   const source = typeof nested === 'string' ? parseJson(nested, []) : nested
   if (!Array.isArray(source) || !source.length) return createMockElements()
-  return source.map((element, index) => {
+  return source.flatMap((element, index) => {
     const type = normalizeElementType(element)
     const rawId = element?.id ?? element?.element_id ?? element?.component_id
     const preset = allElementPresets.find((item) => item.id === rawId) || allElementPresets.find((item) => item.type === type) || elementPresets[0]
     const rawPosition = element?.position || element?.bounds || element?.rect || {}
     const content = extractElementContent(element) || readableElementContent(preset.content)
-    return {
+    const normalized = {
       ...cloneElementData(preset),
       ...element,
       id: rawId || `${type}-${index + 1}`,
@@ -191,6 +261,9 @@ const normalizeElements = (rawElements) => {
       shapeKind: element?.shapeKind || element?.shape_kind || element?.shapeType || element?.variant || preset.shapeKind,
       src: element?.src || element?.url || element?.image_url || preset.src || (type === 'image' ? createMockImageSrc() : undefined),
     }
+    return type === 'formula' && (rawId === 'visual' || element?.target === 'formula')
+      ? expandLegacyFormulaElement(element, normalized, content || 'a² + b² = c²', index)
+      : [normalized]
   })
 }
 const elementById = (id) => current.value?.elements?.find((element) => element.id === id)
@@ -518,9 +591,7 @@ const handleImageError = (element) => {
   element.src = createMockImageSrc(elementContent(element) || '图片加载失败')
   WorkspaceMessage.warning('图片加载失败，已恢复示例图')
 }
-const updateSlideField = ({ key, value }) => {
-  if (current.value) current.value[key] = value
-}
+const updateSlideField = ({ key, value }) => { if (current.value) current.value[key] = value }
 const elementTypeLabels = { text: '文本', formula: '公式', image: '图片', shape: '形状', chart: '图表', audio: '音频', video: '视频', table: '表格', h5: 'H5组件', subject: '学科工具' }
 const shapeDefaults = {
   rectangle: { shapeKind: 'rectangle', label: '矩形', borderRadius: 0 },
@@ -571,11 +642,147 @@ const insertElement = (type, options = {}, positionOverride = {}, preparedElemen
   WorkspaceMessage.success(`${elementTypeLabels[type] || '元素'}已添加`)
 }
 const handleToolSelect = (tool) => beginElementPlacement(tool)
+const interactiveAssetFromModule = (module) => ({
+  module_id: module?.module_id || module?.moduleId,
+  title: module?.title || module?.name || module?.content || '互动模块',
+  module_type: module?.module_type || module?.moduleType || 'animation',
+  topic: module?.topic || '',
+  html: module?.html || '',
+  embed_mode: module?.embed_mode || module?.embedMode || 'standalone',
+  usage_suggestions: Array.isArray(module?.usage_suggestions) ? module.usage_suggestions : (module?.usageSuggestions || []),
+  metadata: module?.metadata || {},
+})
+const appendInteractiveAsset = (slide, module) => {
+  if (!slide || !module?.html) return
+  const asset = interactiveAssetFromModule(module)
+  const moduleId = String(asset.module_id || '')
+  const assets = Array.isArray(slide.interactive_assets) ? slide.interactive_assets : []
+  slide.interactive_assets = [
+    ...assets.filter((item) => String(item?.module_id || '') !== moduleId),
+    asset,
+  ]
+}
+const createInteractiveElement = (module, position = {}) => {
+  const moduleId = String(module?.module_id || module?.moduleId || `interactive_${Date.now()}`)
+  return {
+    id: `h5-${moduleId}`,
+    type: 'h5',
+    name: module?.title || '互动模块',
+    content: module?.title || '互动模块',
+    html: module?.html || '',
+    moduleId,
+    module_id: moduleId,
+    moduleType: module?.module_type || module?.moduleType || 'animation',
+    topic: module?.topic || '',
+    embedMode: module?.embed_mode || module?.embedMode || 'standalone',
+    usageSuggestions: Array.isArray(module?.usage_suggestions) ? module.usage_suggestions : (module?.usageSuggestions || []),
+    metadata: module?.metadata || {},
+    position: { x: 8, y: 47, width: 84, height: 38, rotation: 0, zIndex: 3, ...position },
+    style: { color: '#ff6b3f', backgroundColor: '#fff7ed', borderColor: '#fed7aa', borderWidth: 1, borderRadius: 12, opacity: 100 },
+  }
+}
+const openInteractiveDialog = () => {
+  const slideTitle = String(current.value?.title || '本页内容').trim()
+  const eyebrowParts = String(current.value?.eyebrow || '').split('·')
+  interactiveForm.title = `${slideTitle} · 课堂互动`
+  interactiveForm.topic = slideTitle
+  interactiveForm.subject = eyebrowParts[0]?.trim() || ''
+  interactiveForm.grade = ''
+  interactiveForm.knowledge_points = String(current.value?.description || '').trim()
+  interactiveForm.requirements = ''
+  interactiveForm.theme = theme.value?.name || ''
+  interactiveForm.embed_mode = 'standalone'
+  interactiveDialogVisible.value = true
+}
+const handleGenerateInteractiveModule = async () => {
+  const title = interactiveForm.title.trim()
+  const topic = interactiveForm.topic.trim()
+  if (!title || !topic) return WorkspaceMessage.warning('请先填写互动模块标题和主题')
+  interactiveGenerating.value = true
+  try {
+    const knowledgePoints = interactiveForm.knowledge_points
+      .split(/[,，\n]/)
+      .map((item) => item.trim())
+      .filter(Boolean)
+    const response = unwrapResponse(await generateInteractiveModule({
+      title,
+      topic,
+      module_type: interactiveForm.module_type,
+      subject: interactiveForm.subject.trim() || undefined,
+      grade: interactiveForm.grade.trim() || undefined,
+      knowledge_points: knowledgePoints,
+      requirements: interactiveForm.requirements.trim() || undefined,
+      theme: interactiveForm.theme.trim() || undefined,
+      embed_mode: interactiveForm.embed_mode,
+      language: interactiveForm.language || 'zh-CN',
+    }))
+    if (!response?.html) throw new Error('互动模块接口未返回可预览的 HTML 内容')
+    interactiveModule.value = response
+    interactivePreviewSource.value = 'generated'
+    interactiveDialogVisible.value = false
+    interactivePreviewVisible.value = true
+    WorkspaceMessage.success('互动模块已生成')
+  } catch (error) {
+    WorkspaceMessage.error(error?.message || '互动模块生成失败')
+  } finally {
+    interactiveGenerating.value = false
+  }
+}
+const previewInteractiveElement = (element) => {
+  if (!element?.html) return WorkspaceMessage.warning('该互动组件没有可预览内容')
+  interactiveModule.value = interactiveAssetFromModule({
+    ...element,
+    module_id: element.module_id || element.moduleId,
+    module_type: element.module_type || element.moduleType,
+    embed_mode: element.embed_mode || element.embedMode,
+    usage_suggestions: element.usage_suggestions || element.usageSuggestions,
+  })
+  interactivePreviewSource.value = 'existing'
+  interactivePreviewVisible.value = true
+}
+const reopenInteractiveDialog = () => {
+  interactivePreviewVisible.value = false
+  interactiveDialogVisible.value = true
+}
+const insertGeneratedInteractiveModule = (target = 'current') => {
+  if (!interactiveModule.value?.html) return WorkspaceMessage.warning('请先生成互动模块')
+  const module = interactiveModule.value
+  const element = createInteractiveElement(module, target === 'new-page' ? { x: 10, y: 43, width: 80, height: 43 } : {})
+  if (target === 'new-page') {
+    const newSlide = {
+      ...defaultSlide(slides.length + 1),
+      title: module.title || '互动模块',
+      eyebrow: '互动模块 · 独立页面',
+      description: module.topic || '可独立运行的课堂互动模块。',
+      layout: '重点陈述',
+      theme: current.value?.theme || 'blue',
+      elements: [element],
+      interactive_assets: [],
+      dirty: true,
+    }
+    appendInteractiveAsset(newSlide, module)
+    slides.splice(selectedSlide.value + 1, 0, newSlide)
+    selectedSlide.value += 1
+    selectedElementId.value = element.id
+    WorkspaceMessage.success('互动模块已作为独立页面插入，正在自动保存')
+  } else {
+    current.value.elements.push(element)
+    appendInteractiveAsset(current.value, module)
+    selectedElementId.value = element.id
+    activePanel.value = 'style'
+    WorkspaceMessage.success('互动模块已插入当前页面，正在自动保存')
+  }
+  interactivePreviewVisible.value = false
+  interactiveModule.value = null
+}
 const removeElement = (id = selectedElementId.value) => {
   if (!current.value || !id) return
   const index = current.value.elements.findIndex((element) => element.id === id)
   if (index < 0) return
   const [removed] = current.value.elements.splice(index, 1)
+  if (removed?.type === 'h5' && removed?.moduleId && Array.isArray(current.value.interactive_assets)) {
+    current.value.interactive_assets = current.value.interactive_assets.filter((asset) => String(asset?.module_id || '') !== String(removed.moduleId))
+  }
   selectedElementId.value = null
   WorkspaceMessage.success(`${removed?.name || '元素'}已删除`)
 }
@@ -711,7 +918,13 @@ const pageToSlide = (page = {}, index) => {
     ...defaultSlide(index + 1),
     ...content,
     elements: normalizeElements(elements),
+    pageId: page.id || page.page_id || content.pageId || content.page_id,
     componentId: page.id || page.component_id || page.page_id || content.componentId,
+    pageVersion: Number(page.page_version || content.pageVersion || content.page_version || 1),
+    clientVersion: page.client_version || content.clientVersion || workspaceClientVersion,
+    autosave: page.autosave ?? content.autosave ?? false,
+    dirty: page.dirty ?? content.dirty ?? false,
+    lastSavedAt: page.last_saved_at || content.lastSavedAt || null,
     title: content.title || page.page_title || page.title || `第 ${index + 1} 页`,
   }
 }
@@ -744,6 +957,8 @@ const applyGeneratedPage = (rawResponse) => {
   const page = {
     ...candidate,
     id: candidate.id || candidate.component_id || candidate.page_id || current.value.componentId,
+    page_version: candidate.page_version || current.value.pageVersion || 1,
+    client_version: candidate.client_version || current.value.clientVersion || workspaceClientVersion,
     page_title: candidate.page_title || nextContent.title,
     page_content: JSON.stringify(nextContent),
     components: typeof elementPayload === 'string' ? elementPayload : JSON.stringify(elementPayload),
@@ -752,14 +967,57 @@ const applyGeneratedPage = (rawResponse) => {
   selectedElementId.value = null
   return true
 }
+const loadProjectPageDetail = async (index) => {
+  const slide = slides[index]
+  if (!projectId.value || !slide?.pageId) return
+  const detailKey = `${projectId.value}:${slide.pageId}`
+  if (loadedPageDetailIds.has(detailKey)) return
+  loadedPageDetailIds.add(detailKey)
+  hydratingProject.value = true
+  try {
+    const detail = unwrapResponse(await getProjectPage(projectId.value, slide.pageId))
+    if (detail && slides[index] === slide) slides.splice(index, 1, pageToSlide(detail, index))
+  } catch (error) {
+    loadedPageDetailIds.delete(detailKey)
+    WorkspaceMessage.warning(error?.message || '页面详情加载失败，已使用页面列表数据')
+  } finally {
+    hydratingProject.value = false
+  }
+}
+const syncProjectMetadataIfNeeded = async () => {
+  const requestedName = String(route.query.templateTitle || '').trim()
+  if (!projectId.value || !project.value || !requestedName || requestedName === project.value.project_name) return
+  try {
+    const response = unwrapResponse(await patchProject(projectId.value, {
+      project_name: requestedName,
+      project_type: project.value.project_type || 'mixed',
+      status: 'editing',
+      current_version: Number(project.value.current_version || 1),
+    }))
+    project.value = { ...project.value, ...(response || {}) }
+  } catch (error) {
+    WorkspaceMessage.warning(error?.message || '项目元数据同步失败，页面内容仍可保存')
+  }
+}
 const loadProject = async () => {
   if (!projectId.value) return
+  hydratingProject.value = true
   try {
     project.value = unwrapResponse(await getProject(projectId.value))
-    const pages = Array.isArray(project.value?.pages) ? project.value.pages : []
+    let pages = []
+    try {
+      const listedPages = unwrapResponse(await listProjectPages(projectId.value))
+      pages = Array.isArray(listedPages) ? listedPages : []
+    } catch (error) {
+      pages = Array.isArray(project.value?.pages) ? project.value.pages : []
+      WorkspaceMessage.warning(error?.message || '页面列表加载失败，已使用项目详情中的页面')
+    }
+    loadedPageDetailIds.clear()
     slides.splice(0, slides.length, ...(pages.length ? pages.map(pageToSlide) : [defaultSlide()]))
     selectedSlide.value = 0
-  } catch (error) { WorkspaceMessage.error(error?.message || '项目内容加载失败') }
+  } catch (error) { WorkspaceMessage.error(error?.message || '项目内容加载失败') } finally { hydratingProject.value = false }
+  await loadProjectPageDetail(0)
+  await syncProjectMetadataIfNeeded()
 }
 const loadTestCase = () => {
   if (!route.query.testCase) return
@@ -784,6 +1042,81 @@ const loadTestCase = () => {
   selectedSlide.value = 0
 }
 
+const componentValidationPayload = (element) => {
+  if (!element) return null
+  const common = {
+    component_id: String(element.id || ''),
+    render: { ...(element.render || {}) },
+    style: { ...(element.style || {}) },
+  }
+  if (element.type === 'formula') {
+    return { ...common, type: 'math_formula', data: { latex: elementContent(element) || 'a^2+b^2=c^2', display_mode: true } }
+  }
+  if (element.type === 'chart') {
+    const items = Array.isArray(element.data) ? element.data : []
+    return {
+      ...common,
+      type: 'chart',
+      data: {
+        option: {
+          xAxis: { type: 'category', data: items.map((item) => String(item?.label || '')) },
+          yAxis: { type: 'value' },
+          series: [{ type: 'bar', data: items.map((item) => Number(item?.value) || 0) }],
+        },
+      },
+    }
+  }
+  if (element.type === 'table') return { ...common, type: 'table', data: { rows: Array.isArray(element.data) ? element.data : [] } }
+  if (element.type === 'subject' || (element.type === 'shape' && element.shapeKind === 'formula-diagram')) {
+    return { ...common, type: 'geometry', data: { construction: elementContent(element) || 'right_triangle', commands: ['draw_right_triangle'] } }
+  }
+  return null
+}
+const validateSlideComponents = async (slide) => {
+  const components = (slide?.elements || []).map(componentValidationPayload).filter(Boolean)
+  for (const component of components) {
+    const signature = JSON.stringify(component)
+    const cached = componentValidationCache.get(signature)
+    const result = cached || unwrapResponse(await validateProjectComponent(component))
+    if (!cached) componentValidationCache.set(signature, result)
+    if (result?.valid === false) {
+      const errors = Array.isArray(result.errors) ? result.errors.filter(Boolean).join('；') : ''
+      throw new Error(`${component.type} 组件校验失败${errors ? `：${errors}` : ''}`)
+    }
+  }
+}
+const pagePayloadForSlide = (slide, index, overrides = {}) => ({
+  page_order: index + 1,
+  page_type: index === 0 ? 'cover' : 'content',
+  page_title: slide.title,
+  page_content: JSON.stringify(slide),
+  components: JSON.stringify(slide.elements || []),
+  client_version: slide.clientVersion || workspaceClientVersion,
+  autosave: false,
+  dirty: Boolean(slide.dirty),
+  ...overrides,
+})
+const batchCreateProjectPages = async (targetProjectId, slideList) => {
+  for (const slide of slideList) await validateSlideComponents(slide)
+  const result = unwrapResponse(await batchSaveProjectPages(targetProjectId, {
+    client_version: workspaceClientVersion,
+    autosave: false,
+    pages: slideList.map((slide, index) => pagePayloadForSlide(slide, index)),
+  }))
+  const savedPages = Array.isArray(result) ? result : result?.pages || result?.items || []
+  savedPages.forEach((page, index) => {
+    const slide = slideList[index]
+    if (!slide) return
+    slide.pageId = page.id || page.page_id
+    slide.componentId = slide.pageId
+    slide.pageVersion = Number(page.page_version || 1)
+    slide.clientVersion = page.client_version || slide.clientVersion || workspaceClientVersion
+    slide.dirty = Boolean(page.dirty)
+    slide.lastSavedAt = page.last_saved_at || null
+  })
+  return savedPages
+}
+
 /**
  * 将社区测试案例真正落成项目和页面记录。
  * 预览入口只负责提供可重复的测试数据，后续编辑与导出均使用项目 ID 访问 API。
@@ -801,17 +1134,7 @@ const bootstrapTestCaseProject = async () => {
     const createdId = created?.id || created?.project_id
     if (!createdId) throw new Error('项目创建接口未返回项目 ID')
 
-    for (const [index, slide] of slides.entries()) {
-      const saved = unwrapResponse(await addProjectComponent(createdId, {
-        project_id: Number(createdId),
-        page_order: index + 1,
-        page_type: index === 0 ? 'cover' : 'content',
-        page_title: slide.title,
-        page_content: JSON.stringify(slide),
-        components: JSON.stringify(slide.elements || []),
-      }))
-      slide.componentId = saved?.id || saved?.component_id
-    }
+    await batchCreateProjectPages(createdId, slides)
 
     await router.replace({ query: { ...route.query, projectId: String(createdId) } })
     project.value = { ...created, id: createdId }
@@ -973,17 +1296,39 @@ onMounted(async () => {
   window.addEventListener('keydown', handleWorkspaceKeydown)
 })
 onBeforeUnmount(() => { eventSource?.close(); clearInterval(runPollTimer); stopElementDrag(); cancelCanvasPlacement(); workspaceMessageInstance?.close(); window.removeEventListener('keydown', handleWorkspaceKeydown) })
-const currentPagePayload = () => ({ project_id: Number(projectId.value) || undefined, page_order: selectedSlide.value + 1, page_type: selectedSlide.value === 0 ? 'cover' : 'content', page_title: current.value.title, page_content: JSON.stringify(current.value), components: JSON.stringify(current.value.elements || []) })
+const currentPagePayload = (slide = current.value, index = selectedSlide.value, overrides = {}) => pagePayloadForSlide(slide, index, {
+  autosave: true,
+  dirty: false,
+  ...overrides,
+})
 const persistCurrentSlide = async () => {
-  if (!projectId.value || savingComponent.value) return
-  savingComponent.value = true; autosaveState.value = '保存中…'
+  if (!projectId.value || savingPage.value || hydratingProject.value) return
+  const slideIndex = selectedSlide.value
+  const slide = slides[slideIndex]
+  if (!slide) return
+  savingPage.value = true; autosaveState.value = '保存中…'
   try {
-    const payload = currentPagePayload()
-    const response = current.value.componentId ? await updateProjectComponent(projectId.value, current.value.componentId, payload) : await addProjectComponent(projectId.value, payload)
+    await validateSlideComponents(slide)
+    const payload = currentPagePayload(slide, slideIndex)
+    const response = slide.pageId
+      ? await saveProjectPage(projectId.value, slide.pageId, { ...payload, expected_page_version: Number(slide.pageVersion || 1) })
+      : await createProjectPage(projectId.value, payload)
     const saved = unwrapResponse(response)
-    current.value.componentId ||= saved?.id || saved?.component_id
+    if (slides[slideIndex] === slide) {
+      slide.pageId = saved?.id || saved?.page_id || slide.pageId
+      slide.componentId = slide.pageId
+      slide.pageVersion = Number(saved?.page_version || slide.pageVersion || 1)
+      slide.clientVersion = saved?.client_version || slide.clientVersion || workspaceClientVersion
+      slide.autosave = Boolean(saved?.autosave ?? true)
+      slide.dirty = Boolean(saved?.dirty)
+      slide.lastSavedAt = saved?.last_saved_at || slide.lastSavedAt || null
+    }
     autosaveState.value = '已保存'
-  } catch (error) { autosaveState.value = '保存失败'; WorkspaceMessage.error(error?.message || '页面保存失败') } finally { savingComponent.value = false }
+  } catch (error) {
+    autosaveState.value = '保存失败'
+    const message = error?.response?.data?.message || error?.message || '页面保存失败'
+    WorkspaceMessage.error(message.includes('Version conflict') || message.includes('版本冲突') ? '页面版本已变化，请刷新页面后重试' : message)
+  } finally { savingPage.value = false }
 }
 const loadVersions = async () => {
   if (!projectId.value) return WorkspaceMessage.warning('演示项目不支持版本管理')
@@ -995,7 +1340,7 @@ const createVersion = async () => { if (!projectId.value) return; try { await sa
 const showVersionDiff = async (version) => { try { versionDiff.value = unwrapResponse(await getProjectVersionDiff(projectId.value, version.id || version.version_id)) } catch (error) { WorkspaceMessage.error(error?.message || '差异加载失败') } }
 const restoreVersion = async (version) => { try { await restoreProjectVersion(projectId.value, version.id || version.version_id); WorkspaceMessage.success('已恢复历史版本'); await loadVersions() } catch (error) { WorkspaceMessage.error(error?.message || '版本恢复失败') } }
 const grantPermission = async () => { const userId = Number(permissionUserId.value); if (!Number.isInteger(userId) || userId <= 0) return WorkspaceMessage.warning('请输入有效用户 ID'); try { await addProjectPermission(projectId.value, { user_id: userId }); permissionUserId.value = ''; permissionDialogVisible.value = false; WorkspaceMessage.success('协作者已添加') } catch (error) { WorkspaceMessage.error(error?.message || '授权失败') } }
-watch(slides, () => { if (!projectId.value || testCaseBootstrapping.value) return; autosaveState.value = '待保存'; clearTimeout(autosaveTimer); autosaveTimer = setTimeout(persistCurrentSlide, 700) }, { deep: true })
+watch(slides, () => { if (!projectId.value || testCaseBootstrapping.value || hydratingProject.value || savingPage.value) return; autosaveState.value = '待保存'; clearTimeout(autosaveTimer); autosaveTimer = setTimeout(persistCurrentSlide, 700) }, { deep: true })
 watch(selectedSlide, () => { selectedElementId.value = null })
 onBeforeUnmount(() => clearTimeout(autosaveTimer))
 const workspaceFlowQuery = (targetProjectId = projectId.value) => ({
@@ -1017,17 +1362,7 @@ const createWorkspaceProjectForExport = async () => {
   const createdId = created?.id || created?.project_id
   if (!createdId) throw new Error('项目创建接口未返回项目 ID')
 
-  for (const [index, slide] of slides.entries()) {
-    const saved = unwrapResponse(await addProjectComponent(createdId, {
-      project_id: Number(createdId),
-      page_order: index + 1,
-      page_type: index === 0 ? 'cover' : 'content',
-      page_title: slide.title,
-      page_content: JSON.stringify(slide),
-      components: JSON.stringify(slide.elements || []),
-    }))
-    slide.componentId = saved?.id || saved?.component_id
-  }
+  await batchCreateProjectPages(createdId, slides)
   project.value = { ...created, id: createdId }
   autosaveState.value = '已保存 · 项目已落库'
   return String(createdId)
@@ -1048,10 +1383,32 @@ const exportProject = async () => {
   }
 }
 const addSlide = () => { slides.push({ ...defaultSlide(slides.length + 1), eyebrow: '新建内容' }); selectedSlide.value = slides.length - 1 }
-const copySlide = () => { slides.splice(selectedSlide.value + 1, 0, { ...current.value, title: `${current.value.title} 副本`, elements: normalizeElements(current.value.elements) }); selectedSlide.value++ }
-const removeSlide = () => { if (slides.length === 1) return WorkspaceMessage.warning('课件至少保留一页'); slides.splice(selectedSlide.value, 1); selectedSlide.value = Math.max(0, selectedSlide.value - 1) }
+const copySlide = () => {
+  const copiedSlide = {
+    ...current.value,
+    title: `${current.value.title} 副本`,
+    elements: normalizeElements(current.value.elements),
+    pageId: null,
+    componentId: null,
+    pageVersion: 1,
+    clientVersion: workspaceClientVersion,
+    dirty: true,
+  }
+  slides.splice(selectedSlide.value + 1, 0, copiedSlide)
+  selectedSlide.value++
+}
+const removeSlide = async () => {
+  if (slides.length === 1) return WorkspaceMessage.warning('课件至少保留一页')
+  const slide = slides[selectedSlide.value]
+  if (projectId.value && slide?.pageId) {
+    try { await deleteProjectPage(projectId.value, slide.pageId) }
+    catch (error) { WorkspaceMessage.error(error?.message || '页面删除失败'); return }
+  }
+  slides.splice(selectedSlide.value, 1)
+  selectedSlide.value = Math.max(0, selectedSlide.value - 1)
+}
 const sendRevision = () => submitRevision()
-const selectSlide = (index) => { selectedSlide.value = index; selectedElementId.value = null }
+const selectSlide = (index) => { selectedSlide.value = index; selectedElementId.value = null; loadProjectPageDetail(index) }
 </script>
 
 <template>
@@ -1063,6 +1420,7 @@ const selectSlide = (index) => { selectedSlide.value = index; selectedElementId.
       :project-id="route.query.projectId"
       @back="goHome"
       @preview="previewVisible = true"
+      @generate-interactive="openInteractiveDialog"
       @export="exportProject"
       @tool-select="handleToolSelect"
     />
@@ -1070,6 +1428,7 @@ const selectSlide = (index) => { selectedSlide.value = index; selectedElementId.
     <div class="workspace-grid">
       <aside class="assistant-panel" aria-label="AI 教学助手">
         <header><div class="assistant-mark">智</div><div><strong>AI 教学助手</strong><span>正在编辑第 {{ selectedSlide + 1 }} 页</span></div></header>
+        <div class="assistant-actions"><el-button type="primary" plain @click="openInteractiveDialog">生成互动模块</el-button></div>
         <section class="conversation"><article v-for="(message, index) in messages" :key="index" :class="['message', message.role]"><span v-if="message.role === 'assistant'">智</span><p>{{ message.text }}</p></article></section>
         <footer class="composer"><el-input v-model="prompt" type="textarea" :rows="3" resize="none" placeholder="例如：把提问改得更有启发性" @keydown.ctrl.enter="sendRevision" /><div><span>Ctrl + Enter 发送</span><el-button type="primary" circle :icon="Promotion" :disabled="!prompt.trim()" aria-label="发送修改" @click="sendRevision" /></div></footer>
       </aside>
@@ -1098,9 +1457,16 @@ const selectSlide = (index) => { selectedSlide.value = index; selectedElementId.
                 <p>{{ elementContent(element) }}</p>
               </footer>
               <div v-else-if="element.type === 'text'" :data-element-id="element.id" class="text-element" :class="elementClass(element)" :style="elementStyle(element.id)" @pointerdown="startElementDrag(element.id, $event)" @click.stop="selectElement(element.id, $event)">{{ elementContent(element) }}</div>
-              <div v-else-if="element.type === 'formula'" :data-element-id="element.id" class="theorem formula-element" :class="elementClass(element)" :style="elementStyle(element.id)" @pointerdown="startElementDrag(element.id, $event)" @click.stop="selectElement(element.id, $event)">
-                <div class="triangle"><i>a</i><i>b</i><i>c</i></div>
-                <div class="formula"><strong>{{ elementContent(element) || 'a² + b² = c²' }}</strong><small>公式元素，可在右侧修改内容</small></div>
+              <div v-else-if="element.type === 'formula'" :data-element-id="element.id" class="formula-text-element" :class="elementClass(element)" :style="elementStyle(element.id)" @pointerdown="startElementDrag(element.id, $event)" @click.stop="selectElement(element.id, $event)">
+                <strong>{{ elementContent(element) || 'a² + b² = c²' }}</strong>
+              </div>
+              <div v-else-if="element.type === 'shape' && element.shapeKind === 'formula-diagram'" :data-element-id="element.id" class="formula-diagram-element" :class="elementClass(element)" :style="elementStyle(element.id)" @pointerdown="startElementDrag(element.id, $event)" @click.stop="selectElement(element.id, $event)">
+                <svg class="triangle-svg" viewBox="0 0 100 100" role="img" aria-label="直角三角形示意图">
+                  <path class="triangle-outline" d="M 12 88 L 82 88 L 82 12 Z" />
+                  <text class="triangle-label" x="47" y="98" text-anchor="middle">a</text>
+                  <text class="triangle-label" x="90" y="53" text-anchor="middle">b</text>
+                  <text class="triangle-label" x="38" y="43" text-anchor="middle">c</text>
+                </svg>
               </div>
               <div v-else-if="element.type === 'shape'" :data-element-id="element.id" class="shape-element" :class="[elementClass(element), `shape-${element.shapeKind || 'rectangle'}`]" :style="elementStyle(element.id)" @pointerdown="startElementDrag(element.id, $event)" @click.stop="selectElement(element.id, $event)">
                 <svg class="shape-svg" viewBox="0 0 100 100" :preserveAspectRatio="element.shapeKind === 'circle' ? 'xMidYMid meet' : 'none'" aria-hidden="true">
@@ -1128,7 +1494,8 @@ const selectSlide = (index) => { selectedSlide.value = index; selectedElementId.
               <div v-else-if="['audio', 'video', 'h5', 'subject'].includes(element.type)" :data-element-id="element.id" class="workspace-widget" :class="[`widget-${element.type}`, elementClass(element)]" :style="elementStyle(element.id)" @pointerdown="startElementDrag(element.id, $event)" @click.stop="selectElement(element.id, $event)">
                 <span class="widget-icon">{{ element.type === 'audio' ? '♫' : element.type === 'video' ? '▶' : element.type === 'h5' ? 'H5' : '⌁' }}</span>
                 <div><strong>{{ elementContent(element) || element.name }}</strong><small>{{ elementTypeLabels[element.type] }}</small></div>
-                <span class="widget-action">{{ element.type === 'audio' ? '播放' : element.type === 'video' ? '预览' : '打开' }}</span>
+                <button v-if="element.type === 'h5' && element.html" type="button" class="widget-action widget-action-button" @click.stop="previewInteractiveElement(element)">预览</button>
+                <span v-else class="widget-action">{{ element.type === 'audio' ? '播放' : element.type === 'video' ? '预览' : '打开' }}</span>
               </div>
               <div v-else-if="element.type === 'table'" :data-element-id="element.id" class="workspace-widget table-widget" :class="elementClass(element)" :style="elementStyle(element.id)" @pointerdown="startElementDrag(element.id, $event)" @click.stop="selectElement(element.id, $event)">
                 <strong>{{ elementContent(element) || '数据表格' }}</strong>
@@ -1208,7 +1575,8 @@ const selectSlide = (index) => { selectedSlide.value = index; selectedElementId.
             <p v-else-if="element.type === 'text' && element.target === 'description'" :class="previewElementClass(element)" :style="elementStyle(element.id)">{{ elementContent(element) }}</p>
             <footer v-else-if="element.type === 'text' && element.target === 'footer'" :class="previewElementClass(element)" :style="elementStyle(element.id)"><span>{{ current.layout === '重点陈述' ? '本课目标' : '小组任务' }}</span><p>{{ elementContent(element) }}</p></footer>
             <div v-else-if="element.type === 'text'" class="text-element" :class="previewElementClass(element)" :style="elementStyle(element.id)">{{ elementContent(element) }}</div>
-            <div v-else-if="element.type === 'formula'" class="theorem formula-element" :class="previewElementClass(element)" :style="elementStyle(element.id)"><div class="triangle"><i>a</i><i>b</i><i>c</i></div><div class="formula"><strong>{{ elementContent(element) || 'a² + b² = c²' }}</strong><small>公式元素</small></div></div>
+            <div v-else-if="element.type === 'formula'" class="formula-text-element" :class="previewElementClass(element)" :style="elementStyle(element.id)"><strong>{{ elementContent(element) || 'a² + b² = c²' }}</strong></div>
+            <div v-else-if="element.type === 'shape' && element.shapeKind === 'formula-diagram'" class="formula-diagram-element" :class="previewElementClass(element)" :style="elementStyle(element.id)"><svg class="triangle-svg" viewBox="0 0 100 100" role="img" aria-label="直角三角形示意图"><path class="triangle-outline" d="M 12 88 L 82 88 L 82 12 Z" /><text class="triangle-label" x="47" y="98" text-anchor="middle">a</text><text class="triangle-label" x="90" y="53" text-anchor="middle">b</text><text class="triangle-label" x="38" y="43" text-anchor="middle">c</text></svg></div>
             <div v-else-if="element.type === 'shape'" class="shape-element" :class="[previewElementClass(element), `shape-${element.shapeKind || 'rectangle'}`]" :style="elementStyle(element.id)"><svg class="shape-svg" viewBox="0 0 100 100" :preserveAspectRatio="element.shapeKind === 'circle' ? 'xMidYMid meet' : 'none'" aria-hidden="true"><rect v-if="['rectangle', 'rounded'].includes(element.shapeKind)" class="shape-fill" x="4" y="4" width="92" height="92" :rx="element.shapeKind === 'rounded' ? Number(element.style?.borderRadius ?? 14) : 0" :ry="element.shapeKind === 'rounded' ? Number(element.style?.borderRadius ?? 14) : 0" /><circle v-else-if="element.shapeKind === 'circle'" class="shape-fill" cx="50" cy="50" r="46" /><polygon v-else-if="element.shapeKind === 'diamond'" class="shape-fill" points="50,4 96,50 50,96 4,50" /><polygon v-else-if="element.shapeKind === 'triangle'" class="shape-fill" points="50,4 96,96 4,96" /><rect v-else class="shape-fill" x="4" y="4" width="92" height="92" /></svg><span v-if="elementContent(element)">{{ elementContent(element) }}</span></div>
             <div v-else-if="element.type === 'image'" class="image-element" :class="previewElementClass(element)" :style="elementStyle(element.id)"><img :src="element.src || createMockImageSrc()" :alt="element.alt || elementContent(element) || element.name" /><span v-if="element.style?.showCaption !== false">{{ elementContent(element) || '图片 mock' }}</span></div>
             <div v-else-if="element.type === 'chart'" class="chart-element" :class="previewElementClass(element)" :style="elementStyle(element.id)"><header><strong>{{ elementContent(element) || '数据图表' }}</strong><small>MOCK DATA</small></header><div class="chart-plot"><div v-for="(item, itemIndex) in (element.data || [])" :key="`preview-${element.id}-${itemIndex}`" class="chart-bar"><span class="chart-bar-fill" :style="{ height: `${Math.max(8, Math.min(100, Number(item.value) || 0))}%` }"></span><small>{{ item.label }}</small></div></div></div>
@@ -1218,6 +1586,64 @@ const selectSlide = (index) => { selectedSlide.value = index; selectedElementId.
         </article>
       </div>
       <template #footer><el-button @click="previewVisible = false">继续编辑</el-button><el-button type="primary" :icon="VideoPlay" @click="previewVisible = false">播放预览</el-button></template>
+    </el-dialog>
+    <el-dialog v-model="interactiveDialogVisible" title="生成互动模块" width="min(720px, 92vw)" destroy-on-close>
+      <p class="dialog-hint">调用互动模块生成服务，生成后可以先预览，再插入当前页面或作为独立页面保存。</p>
+      <el-form :model="interactiveForm" label-position="top" class="interactive-form">
+        <div class="interactive-form-grid">
+          <el-form-item label="模块标题" required>
+            <el-input v-model="interactiveForm.title" maxlength="80" show-word-limit placeholder="例如：勾股定理快速问答" />
+          </el-form-item>
+          <el-form-item label="互动主题" required>
+            <el-input v-model="interactiveForm.topic" maxlength="120" placeholder="例如：直角三角形三边关系" />
+          </el-form-item>
+          <el-form-item label="模块类型" required>
+            <el-select v-model="interactiveForm.module_type" class="full-width" placeholder="选择模块类型">
+              <el-option v-for="item in interactiveModuleTypes" :key="item.value" :label="item.label" :value="item.value">
+                <span>{{ item.label }}</span><small class="interactive-option-description">{{ item.description }}</small>
+              </el-option>
+            </el-select>
+          </el-form-item>
+          <el-form-item label="嵌入方式">
+            <el-radio-group v-model="interactiveForm.embed_mode">
+              <el-radio-button label="standalone">独立运行</el-radio-button>
+              <el-radio-button label="slide_fragment">嵌入页面</el-radio-button>
+            </el-radio-group>
+          </el-form-item>
+          <el-form-item label="学科">
+            <el-input v-model="interactiveForm.subject" placeholder="例如：数学" />
+          </el-form-item>
+          <el-form-item label="年级或受众">
+            <el-input v-model="interactiveForm.grade" placeholder="例如：八年级" />
+          </el-form-item>
+        </div>
+        <el-form-item label="知识点（可用逗号或换行分隔）">
+          <el-input v-model="interactiveForm.knowledge_points" type="textarea" :rows="2" resize="none" placeholder="例如：直角三角形、平方关系、实际测量" />
+        </el-form-item>
+        <el-form-item label="生成要求（可选）">
+          <el-input v-model="interactiveForm.requirements" type="textarea" :rows="3" resize="none" placeholder="例如：适合课堂投屏，交互步骤不超过三步，提供即时反馈" />
+        </el-form-item>
+      </el-form>
+      <template #footer><el-button @click="interactiveDialogVisible = false">取消</el-button><el-button type="primary" :loading="interactiveGenerating" @click="handleGenerateInteractiveModule">生成互动模块</el-button></template>
+    </el-dialog>
+    <el-dialog v-model="interactivePreviewVisible" title="互动模块预览" width="min(900px, 94vw)" class="interactive-preview-dialog">
+      <div v-if="interactiveModule" class="interactive-preview-meta">
+        <div><strong>{{ interactiveModule.title || '互动模块' }}</strong><span>{{ interactiveModuleTypes.find((item) => item.value === (interactiveModule.module_type || interactiveModule.moduleType))?.label || '互动模块' }}</span></div>
+        <p>{{ interactiveModule.topic || '暂无主题说明' }}</p>
+      </div>
+      <iframe v-if="interactiveModule?.html" :srcdoc="interactiveModule.html" sandbox="allow-scripts" class="interactive-preview-frame" title="互动模块预览"></iframe>
+      <el-empty v-else description="暂无可预览内容" />
+      <ul v-if="interactiveModule?.usage_suggestions?.length" class="interactive-suggestions">
+        <li v-for="suggestion in interactiveModule.usage_suggestions" :key="suggestion">{{ suggestion }}</li>
+      </ul>
+      <template #footer>
+        <el-button @click="interactivePreviewVisible = false">关闭</el-button>
+        <el-button v-if="interactivePreviewSource === 'generated'" @click="reopenInteractiveDialog">返回修改</el-button>
+        <template v-if="interactivePreviewSource === 'generated'">
+          <el-button @click="insertGeneratedInteractiveModule('current')">插入当前页面</el-button>
+          <el-button type="primary" @click="insertGeneratedInteractiveModule('new-page')">作为独立页面插入</el-button>
+        </template>
+      </template>
     </el-dialog>
   </div>
     <IntentClarificationDialog v-model="clarificationDialogVisible" :question="clarificationQuestion" :loading="clarificationSubmitting" @submit="submitClarification" />
@@ -1407,6 +1833,56 @@ const selectSlide = (index) => { selectedSlide.value = index; selectedElementId.
 
 .generic-visual span {
   color: var(--element-color, var(--accent));
+}
+
+/* 公式示意图、公式文字和说明文字是三个独立画布元素，各自可选中和编辑。 */
+.formula-text-element {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  min-width: 0;
+  padding: 4px;
+  font-family: var(--zh-font-number);
+  text-align: center;
+}
+
+.formula-text-element strong {
+  max-width: 100%;
+  overflow: hidden;
+  color: var(--element-color, var(--accent));
+  font-size: inherit;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.formula-diagram-element {
+  display: grid;
+  place-items: center;
+  overflow: visible;
+  padding: 4px;
+}
+
+.triangle-svg {
+  display: block;
+  width: 100%;
+  height: 100%;
+  overflow: visible;
+}
+
+.triangle-outline {
+  fill: none;
+  stroke: var(--element-border-color, var(--element-color, var(--accent)));
+  stroke-width: var(--element-border-width, 5px);
+  stroke-linecap: round;
+  stroke-linejoin: round;
+  vector-effect: non-scaling-stroke;
+}
+
+.triangle-label {
+  fill: var(--element-color, var(--accent));
+  font-size: 12px;
+  font-style: normal;
+  font-weight: 700;
 }
 
 .slide-canvas .canvas-element {
@@ -1695,5 +2171,121 @@ const selectSlide = (index) => { selectedSlide.value = index; selectedElementId.
 :global(.workspace-message.el-message.el-message-fade-leave-to.is-center) {
   opacity: 0;
   transform: translateX(-50%);
+}
+
+.assistant-actions {
+  padding: 10px 12px 0;
+}
+
+.assistant-actions :deep(.el-button) {
+  width: 100%;
+  margin: 0;
+}
+
+.widget-action-button {
+  border: 0;
+  cursor: pointer;
+  font-family: inherit;
+}
+
+.interactive-form {
+  padding-top: 4px;
+}
+
+.interactive-form-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 0 16px;
+}
+
+.interactive-form :deep(.el-form-item) {
+  margin-bottom: 16px;
+}
+
+.interactive-form :deep(.el-form-item__label) {
+  padding-bottom: 6px;
+  color: var(--zh-text-secondary);
+  font-size: 12px;
+}
+
+.full-width {
+  width: 100%;
+}
+
+.interactive-option-description {
+  float: right;
+  margin-left: 18px;
+  color: var(--zh-text-caption);
+  font-size: 11px;
+}
+
+.interactive-preview-dialog :deep(.el-dialog__body) {
+  padding-top: 8px;
+}
+
+.interactive-preview-meta {
+  display: grid;
+  gap: 5px;
+  margin-bottom: 12px;
+}
+
+.interactive-preview-meta > div {
+  display: flex;
+  align-items: center;
+  gap: 9px;
+  min-width: 0;
+}
+
+.interactive-preview-meta strong {
+  overflow: hidden;
+  color: var(--zh-text-primary);
+  font-size: 15px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.interactive-preview-meta span {
+  flex: none;
+  padding: 4px 8px;
+  border-radius: 999px;
+  color: var(--zh-text-theme);
+  background: var(--zh-background-weaken);
+  font-size: 11px;
+}
+
+.interactive-preview-meta p {
+  margin: 0;
+  color: var(--zh-text-secondary);
+  font-size: 12px;
+}
+
+.interactive-preview-frame {
+  display: block;
+  width: 100%;
+  height: min(62vh, 620px);
+  border: 1px solid var(--zh-line-border);
+  border-radius: var(--zh-radius10);
+  background: #f8fafc;
+}
+
+.interactive-suggestions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px 18px;
+  margin: 12px 0 0;
+  padding-left: 18px;
+  color: var(--zh-text-caption);
+  font-size: 11px;
+}
+
+@media (max-width: 640px) {
+  .interactive-form-grid {
+    grid-template-columns: 1fr;
+  }
+
+  .interactive-preview-frame {
+    height: 58vh;
+  }
+
 }
 </style>
