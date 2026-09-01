@@ -17,9 +17,9 @@ import {
   Promotion,
 } from '@element-plus/icons-vue'
 import { TEACHER_HOME } from '../config/teacherHome.config.js'
-import { requestNewChat } from '../config/teacherChat.config.js'
+import { requestNewChat, openChatSession } from '../config/teacherChat.config.js'
 import ChatView from './ChatView.vue'
-import { archiveProject, copyProject, createAiSession, createProject, deleteProject, listProjects, listResources, restoreProject, uploadResource } from '../apis/teacher'
+import { archiveProject, copyProject, createAiSession, createProject, deleteProject, listProjects, listResources, restoreProject, transcribeAudio, uploadResource } from '../apis/teacher'
 
 const router = useRouter()
 const route = useRoute()
@@ -43,6 +43,14 @@ const uploadedResourceNames = ref([])
 const uploadDragging = ref(false)
 const voiceDialogVisible = ref(false)
 const voiceLanguage = ref('zh-CN')
+/** 语音录音与转写状态 */
+const voiceRecording = ref(false)
+const voiceTranscribing = ref(false)
+const voiceSeconds = ref(0)
+let voiceMediaStream = null
+let voiceRecorder = null
+let voiceChunks = []
+let voiceTimer = null
 const archivedVisible = ref(false)
 const archivedProjects = ref([])
 const archivedLoading = ref(false)
@@ -54,10 +62,19 @@ const viewMode = ref('welcome') // 'welcome' | 'chat'
 const chatSessionId = ref(null)
 const chatPrompt = ref('')
 const chatResourceIds = ref([])
+/** 是否以"恢复历史"方式打开会话（由侧栏历史对话触发，ChatView 据此拉取消息回显） */
+const chatResume = ref(false)
 
 const filteredAvailableResources = computed(() => {
   const query = resourceSearch.value.trim().toLowerCase()
   return query ? availableResources.value.filter((item) => (item.file_name || '').toLowerCase().includes(query)) : availableResources.value
+})
+
+/** 语音状态栏文案：随录音/转写状态实时变化。 */
+const voiceStatusText = computed(() => {
+  if (voiceTranscribing.value) return '正在识别语音，请稍候…'
+  if (voiceRecording.value) return '正在录音，请说出你的备课需求'
+  return '点击开始录音，说出你的备课需求'
 })
 
 const openProject = (project) => router.push({
@@ -82,6 +99,108 @@ const applySuggestion = (suggestion) => {
   prompt.value = suggestion.prompt
   activeSuggestionId.value = suggestion.id
   requestAnimationFrame(() => composerInput.value?.focus())
+}
+
+/** 将播放录音时长格式化为 mm:ss。 */
+const formatVoiceSeconds = (total) => {
+  const minutes = Math.floor(total / 60)
+  const seconds = total % 60
+  return `${String(minutes).padStart(2, '0')}:${String(seconds).padStart(2, '0')}`
+}
+
+/** 开始录音：申请麦克风权限并用 MediaRecorder 采集音频。 */
+const startVoiceRecording = async () => {
+  if (voiceRecording.value || voiceTranscribing.value) return
+  if (!navigator.mediaDevices?.getUserMedia || !window.MediaRecorder) {
+    ElMessage.error('当前浏览器不支持录音，请使用最新版 Chrome/Edge')
+    return
+  }
+  try {
+    voiceMediaStream = await navigator.mediaDevices.getUserMedia({ audio: true })
+    voiceChunks = []
+    voiceRecorder = new MediaRecorder(voiceMediaStream)
+    voiceRecorder.ondataavailable = (event) => {
+      if (event.data?.size) voiceChunks.push(event.data)
+    }
+    voiceRecorder.onstop = handleVoiceRecordingStop
+    voiceRecorder.start()
+    voiceRecording.value = true
+    voiceSeconds.value = 0
+    voiceTimer = window.setInterval(() => { voiceSeconds.value += 1 }, 1000)
+  } catch {
+    ElMessage.error('无法访问麦克风，请检查浏览器权限设置')
+  }
+}
+
+/** 停止录音并释放麦克风，recorder 停止时触发 onstop 回调。 */
+const stopVoiceRecording = () => {
+  if (!voiceRecording.value || !voiceRecorder) return
+  voiceRecorder.stop()
+  voiceRecorder = null
+}
+
+/** 切换录音状态：空闲时开始，录音中停止（点击圆形麦克风调用）。 */
+const toggleVoiceRecording = () => {
+  if (voiceTranscribing.value) return
+  if (voiceRecording.value) stopVoiceRecording()
+  else startVoiceRecording()
+}
+
+/** 关闭语音对话框时兜底清理：结束未停止的录音并重置计时器。 */
+const handleVoiceDialogClosed = () => {
+  window.clearInterval(voiceTimer)
+  voiceSeconds.value = 0
+  if (voiceRecorder) {
+    try { voiceRecorder.stop() } catch { /* ignore */ }
+    voiceRecorder = null
+  }
+  if (voiceMediaStream) {
+    voiceMediaStream.getTracks().forEach((track) => track.stop())
+    voiceMediaStream = null
+  }
+  voiceRecording.value = false
+  voiceTranscribing.value = false
+}
+
+/** 录音结束后：构造音频文件上传 ASR，成功后把识别文本填入输入框。 */
+const handleVoiceRecordingStop = async () => {
+  voiceRecording.value = false
+  window.clearInterval(voiceTimer)
+  if (voiceMediaStream) {
+    voiceMediaStream.getTracks().forEach((track) => track.stop())
+    voiceMediaStream = null
+  }
+  if (!voiceChunks.length) {
+    ElMessage.warning('未录制到有效音频')
+    voiceChunks = []
+    return
+  }
+  const blob = new Blob(voiceChunks, { type: 'audio/webm' })
+  voiceChunks = []
+  voiceTranscribing.value = true
+  try {
+    const file = new File([blob], 'voice_recording.webm', { type: 'audio/webm' })
+    const formData = new FormData()
+    formData.append('file', file)
+    formData.append('language', /^en/i.test(voiceLanguage.value) ? 'en' : 'zh')
+    const res = await transcribeAudio(formData)
+    const text = (res?.data?.text || '').trim()
+    if (!text) {
+      ElMessage.warning('未能识别到有效语音，请再试一次')
+      return
+    }
+    // 将识别文本追加到欢迎页输入框已有内容之后，用户确认后可手动发送
+    const current = prompt.value.trim()
+    prompt.value = current ? `${current} ${text}` : text
+    activeSuggestionId.value = null
+    voiceDialogVisible.value = false
+    requestAnimationFrame(() => composerInput.value?.focus())
+    ElMessage.success('语音已识别，正在整理你的备课需求')
+  } catch {
+    ElMessage.error('语音识别失败，请检查网络后重试')
+  } finally {
+    voiceTranscribing.value = false
+  }
 }
 
 /**
@@ -110,6 +229,7 @@ const sendPrompt = async () => {
     chatSessionId.value = sessionId
     chatPrompt.value = text
     chatResourceIds.value = [...selectedResourceIds.value]
+    chatResume.value = false
     viewMode.value = 'chat'
     ElMessage.success('备课会话已创建，正在生成教学大纲')
   } catch (error) {
@@ -123,6 +243,7 @@ const closeChatView = () => {
   chatSessionId.value = null
   chatPrompt.value = ''
   chatResourceIds.value = []
+  chatResume.value = false
   prompt.value = ''
   loadProjects()
 }
@@ -137,6 +258,20 @@ watch(requestNewChat, (val) => {
     requestNewChat.value = false
   }
 })
+
+/**
+ * 监听 TeacherLayout 侧栏"历史对话"跨组件信号，切换到对应会话的聊天视图。
+ * 使用 immediate：支持"先导航到首页再发信号"的场景，挂载时即读取当前信号打开会话。
+ */
+watch(openChatSession, (target) => {
+  if (!target?.id) return
+  chatSessionId.value = target.id
+  chatPrompt.value = target.title || ''
+  chatResourceIds.value = []
+  chatResume.value = true
+  viewMode.value = 'chat'
+  openChatSession.value = null
+}, { immediate: true })
 
 /** 从聊天视图跳转到创作工作台 */
 const openWorkspaceFromChat = (projectId) => {
@@ -332,9 +467,11 @@ onMounted(loadProjects)
     <!-- 聊天视图 -->
     <ChatView
       v-if="viewMode === 'chat'"
+      :key="chatSessionId"
       :session-id="chatSessionId"
       :initial-prompt="chatPrompt"
       :resource-ids="chatResourceIds"
+      :resume="chatResume"
       @back="closeChatView"
       @open-workspace="openWorkspaceFromChat"
     />
@@ -367,13 +504,26 @@ onMounted(loadProjects)
       <template #footer><span class="selected-resource-count">已选择 {{ selectedResourceIds.length }} 项</span><el-button type="primary" @click="knowledgeDialogVisible = false">完成引用</el-button></template>
     </el-dialog>
 
-    <el-dialog v-model="voiceDialogVisible" title="语音输入" width="min(480px, 92vw)">
+    <el-dialog v-model="voiceDialogVisible" title="语音输入" width="min(480px, 92vw)" @closed="handleVoiceDialogClosed">
       <div class="voice-panel">
-        <div class="voice-orb" aria-hidden="true"><el-icon><Microphone /></el-icon></div>
-        <strong>说出你的备课需求</strong>
+        <button
+          type="button"
+          class="voice-orb"
+          :class="{ 'is-recording': voiceRecording, 'is-busy': voiceTranscribing }"
+          :aria-label="voiceRecording ? '停止录音' : '开始录音'"
+          :disabled="voiceTranscribing"
+          @click="toggleVoiceRecording"
+        >
+          <el-icon><Microphone /></el-icon>
+        </button>
+        <strong>{{ voiceRecording ? '录音中，再次点击可结束' : '说出你的备课需求' }}</strong>
         <p>例如：“帮我设计一节八年级物理光的折射互动课”。</p>
-        <div class="voice-wave" aria-hidden="true"><i v-for="index in 9" :key="index"></i></div>
-        <div class="voice-status"><span class="voice-status-dot"></span><span>语音识别能力暂未接入</span><time>00:00</time></div>
+        <div class="voice-wave" :class="{ 'is-recording': voiceRecording }" aria-hidden="true"><i v-for="index in 9" :key="index"></i></div>
+        <div class="voice-status">
+          <span class="voice-status-dot" :class="{ 'is-recording': voiceRecording, 'is-busy': voiceTranscribing }"></span>
+          <span>{{ voiceStatusText }}</span>
+          <time>{{ formatVoiceSeconds(voiceSeconds) }}</time>
+        </div>
         <el-form label-position="top" class="voice-settings">
           <el-form-item label="识别语言">
             <el-select v-model="voiceLanguage">
@@ -383,7 +533,6 @@ onMounted(loadProjects)
           </el-form-item>
         </el-form>
       </div>
-      <template #footer><el-button @click="voiceDialogVisible = false">取消</el-button><el-tooltip content="等待语音识别服务接入"><span><el-button type="primary" disabled>开始录音</el-button></span></el-tooltip></template>
     </el-dialog>
 
   </section>
@@ -446,7 +595,12 @@ h1 { margin: 0; font-size: clamp(36px, 4vw, 48px); line-height: 1.15; letter-spa
 .composer-hint { margin: 10px 0 0; color: var(--zh-text-caption); font-size: 11px; text-align: center; }
 .session-fields { display:grid; grid-template-columns: 1.5fr 1fr 1fr; gap:12px; }.session-fields :deep(.el-form-item){margin-bottom:0}.prompt-preview{width:100%;padding:10px 12px;border-radius:var(--zh-radius8);color:var(--zh-text-secondary);background:var(--zh-background-light);line-height:1.65;white-space:pre-wrap}.resource-picker{display:grid;gap:8px;max-height:160px;overflow:auto;padding:10px 12px;border:1px solid var(--zh-line-border);border-radius:var(--zh-radius8);background:var(--zh-background-light)}.empty-resources{color:var(--zh-text-caption);font-size:12px}
 .resource-file-input{display:none}.resource-picker-dialog{max-height:280px;margin-top:12px}.upload-dropzone{width:100%;min-height:180px;display:grid;place-items:center;align-content:center;gap:9px;padding:24px;border:1px dashed var(--zh-line-theme50);border-radius:var(--zh-radius12);color:var(--zh-text-theme);background:var(--zh-background-weaken);cursor:pointer;transition:border-color 200ms cubic-bezier(.4,0,.2,1),background-color 200ms cubic-bezier(.4,0,.2,1),transform 200ms cubic-bezier(.4,0,.2,1),box-shadow 200ms cubic-bezier(.4,0,.2,1)}.upload-dropzone:hover,.upload-dropzone:focus-visible{border-color:var(--zh-line-theme);background:var(--zh-background-option-on);transform:translateY(-1px)}.upload-dropzone.is-dragging{border-color:var(--zh-line-theme);background:var(--zh-background-option-on);box-shadow:0 0 0 4px var(--zh-line-theme20);transform:scale(1.01)}.upload-dropzone:disabled{cursor:wait;opacity:.65}.upload-dropzone .el-icon{font-size:28px}.upload-dropzone strong{color:var(--zh-text-primary);font-size:16px}.upload-dropzone span{color:var(--zh-text-caption);font-size:12px}.uploaded-resource-list{display:grid;gap:6px;margin-top:14px;padding:12px;border-radius:var(--zh-radius8);background:var(--zh-background-light)}.uploaded-resource-list>span{color:var(--zh-text-caption);font-size:12px}.uploaded-resource-list p{margin:0;color:var(--zh-text-secondary);font-size:13px}.knowledge-picker-header{display:grid;grid-template-columns:minmax(0,1fr) 240px;align-items:center;gap:16px}.knowledge-picker-header p{margin:0;color:var(--zh-text-secondary);font-size:13px;line-height:1.6}.selected-resource-count{display:inline-block;margin-right:16px;color:var(--zh-text-caption);font-size:12px}
-.voice-panel{display:grid;justify-items:center;padding:8px 8px 0;text-align:center}.voice-orb{width:78px;height:78px;display:grid;place-items:center;margin:4px 0 18px;border:1px solid var(--zh-line-theme20);border-radius:50%;color:var(--zh-text-theme);background:var(--zh-background-weaken);box-shadow:0 0 0 10px var(--zh-background-weaken)}.voice-orb .el-icon{font-size:30px}.voice-panel>strong{font-size:18px}.voice-panel>p{max-width:350px;margin:8px 0 20px;color:var(--zh-text-secondary);font-size:13px;line-height:1.65}.voice-wave{height:42px;display:flex;align-items:center;gap:5px}.voice-wave i{width:3px;height:10px;border-radius:999px;background:var(--zh-line-theme50)}.voice-wave i:nth-child(2),.voice-wave i:nth-child(8){height:16px}.voice-wave i:nth-child(3),.voice-wave i:nth-child(7){height:24px}.voice-wave i:nth-child(4),.voice-wave i:nth-child(6){height:32px}.voice-wave i:nth-child(5){height:40px}.voice-status{width:100%;display:grid;grid-template-columns:auto 1fr auto;align-items:center;gap:8px;margin-top:16px;padding:12px 14px;border-radius:var(--zh-radius8);color:var(--zh-text-secondary);background:var(--zh-background-light);font-size:12px;text-align:left}.voice-status-dot{width:7px;height:7px;border-radius:50%;background:var(--zh-text-disabled)}.voice-status time{color:var(--zh-text-caption);font-family:var(--zh-font-number)}.voice-settings{width:100%;margin-top:18px;text-align:left}.voice-settings :deep(.el-select){width:100%}
+.voice-panel{display:grid;justify-items:center;padding:8px 8px 0;text-align:center}.voice-orb{width:78px;height:78px;display:grid;place-items:center;padding:0;margin:4px 0 18px;border:1px solid var(--zh-line-theme20);border-radius:50%;color:var(--zh-text-theme);background:var(--zh-background-weaken);box-shadow:0 0 0 10px var(--zh-background-weaken);font-family:inherit;cursor:pointer;transition:border-color 200ms cubic-bezier(.4,0,.2,1),background-color 200ms cubic-bezier(.4,0,.2,1),box-shadow 200ms cubic-bezier(.4,0,.2,1),transform 200ms cubic-bezier(.4,0,.2,1)}.voice-orb:hover,.voice-orb:focus-visible{border-color:var(--zh-line-theme);box-shadow:0 0 0 10px var(--zh-line-theme20);transform:translateY(-1px)}.voice-orb:active{transform:scale(.96)}.voice-orb:disabled{cursor:wait;opacity:.75}.voice-orb.is-recording{border-color:var(--zh-red);color:var(--zh-red);background:var(--zh-danger-background);box-shadow:0 0 0 10px var(--zh-danger-background)}.voice-orb .el-icon{font-size:30px}.voice-panel>strong{font-size:18px}.voice-panel>p{max-width:350px;margin:8px 0 20px;color:var(--zh-text-secondary);font-size:13px;line-height:1.65}.voice-wave{height:42px;display:flex;align-items:center;gap:5px}.voice-wave i{width:3px;height:10px;border-radius:999px;background:var(--zh-line-theme50)}.voice-wave i:nth-child(2),.voice-wave i:nth-child(8){height:16px}.voice-wave i:nth-child(3),.voice-wave i:nth-child(7){height:24px}.voice-wave i:nth-child(4),.voice-wave i:nth-child(6){height:32px}.voice-wave i:nth-child(5){height:40px}.voice-status{width:100%;display:grid;grid-template-columns:auto 1fr auto;align-items:center;gap:8px;margin-top:16px;padding:12px 14px;border-radius:var(--zh-radius8);color:var(--zh-text-secondary);background:var(--zh-background-light);font-size:12px;text-align:left}.voice-status-dot{width:7px;height:7px;border-radius:50%;background:var(--zh-text-disabled)}
+.voice-status-dot.is-recording{background:var(--zh-red);animation:pulse 200ms cubic-bezier(.4,0,.2,1) infinite}
+.voice-status-dot.is-busy{background:var(--zh-text-theme)}.voice-status time{color:var(--zh-text-caption);font-family:var(--zh-font-number)}.voice-settings{width:100%;margin-top:18px;text-align:left}.voice-settings :deep(.el-select){width:100%}
+.voice-wave.is-recording i{height:40px;background:var(--zh-line-theme);transform-origin:center;animation:waveMove .8s cubic-bezier(.4,0,.2,1) infinite}
+.voice-wave.is-recording i:nth-child(1){animation-delay:0s}.voice-wave.is-recording i:nth-child(2){animation-delay:.08s}.voice-wave.is-recording i:nth-child(3){animation-delay:.16s}.voice-wave.is-recording i:nth-child(4){animation-delay:.24s}.voice-wave.is-recording i:nth-child(5){animation-delay:.32s}.voice-wave.is-recording i:nth-child(6){animation-delay:.4s}.voice-wave.is-recording i:nth-child(7){animation-delay:.48s}.voice-wave.is-recording i:nth-child(8){animation-delay:.56s}.voice-wave.is-recording i:nth-child(9){animation-delay:.64s}
+@keyframes waveMove{0%,100%{transform:scaleY(.35)}50%{transform:scaleY(1)}}
 
 @media (max-width: 680px) {
   .home-welcome { width: min(100% - 28px, 540px); padding-top: 54px; }

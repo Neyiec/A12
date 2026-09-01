@@ -444,8 +444,8 @@ onBeforeUnmount(() => {
   <!-- 全屏容器：左右分栏 -->
   <div class="flex h-screen overflow-hidden bg-(--zh-background-primary)">
 
-    <!-- ========== 左侧：品牌展示区 (lg:w-5/12) ========== -->
-    <aside class="hidden lg:flex lg:w-5/12 relative overflow-hidden">
+    <!-- ========== 左侧：品牌展示区 (lg:w-8/12) ========== -->
+    <aside class="hidden lg:flex lg:w-8/12 relative overflow-hidden">
       <!--
         [此处需填写：AI生成的品牌插图]
         提示词: A futuristic digital classroom scene with a glowing holographic brain at the center
@@ -456,7 +456,7 @@ onBeforeUnmount(() => {
       -->
       <img
         class="absolute inset-0 w-full h-full object-cover"
-        src="/image_384866672794550.png"
+        src="/智核品牌插图.png"
         alt="智核品牌插图"
       />
       <!-- 底部渐变遮罩，确保文字可读性 -->
@@ -478,7 +478,7 @@ onBeforeUnmount(() => {
       </div>
     </aside>
 
-    <!-- ========== 右侧：登录/注册表单区 (lg:w-7/12) ========== -->
+    <!-- ========== 右侧：登录/注册表单区 (lg:w-4/12) ========== -->
     <main class="flex-1 flex items-center justify-center px-6 sm:px-10 lg:px-16">
       <div class="w-full max-w-[440px]">
 
@@ -864,9 +864,10 @@ onBeforeUnmount(() => {
   color: var(--zh-text-primary);
 }
 
-/** 大号输入框高度微调 */
+/** 大号输入框：统一高度48px，上下留空0、左右留空8px */
 :deep(.el-input--large .el-input__wrapper) {
-  padding: 12px 16px;
+  height: 48px;
+  padding: 0 8px;
 }
 
 /** 发送验证码按钮：取消 ElementPlus 固定高度，与同行输入框自然对齐 */

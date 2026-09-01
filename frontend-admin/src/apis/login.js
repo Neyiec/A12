@@ -41,11 +41,19 @@ export function sendVerificationCode(params) {
   return post('/api/v1/auth/verification-codes', params)
 }
 
-/**
- * 获取动态路由菜单
+/** 获取动态路由菜单
  * 根据当前登录用户的角色/权限返回可访问的菜单树
  * @returns {Promise} 后端返回 { menus: Array } 菜单树数据
  */
 export function getRouters() {
   return get('/api/v1/menu/routers')
+}
+
+/**
+ * 通过邮箱验证码重置密码
+ * @param {{ username: string, code: string, new_password: string }} data - 重置资料
+ * @returns {Promise<Result<Void>>} 后端返回重置结果
+ */
+export function resetPassword(data) {
+  return post('/api/v1/auth/password-reset', data)
 }

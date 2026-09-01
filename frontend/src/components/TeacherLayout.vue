@@ -1,18 +1,20 @@
 <!--
   [数据交互说明]
-  - 导入: 教师端导航配置、Vue Router、Element Plus 图标
+  - 导入: 教师端导航配置、Vue Router、Element Plus 图标、`listAiSessions`（GET /api/v1/ai/sessions）会话历史、`latestSessionPush`（ChatView 推送的最新会话）
   - 输出: 教师端所有独立页面共用的侧栏与顶栏布局
 -->
 <script setup>
-import { computed, onMounted, ref } from 'vue'
+import { computed, onMounted, ref, watch } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
+import { ElMessageBox } from 'element-plus'
 import {
-  Bell, ChatDotRound, Download, FolderOpened, Grid,
+  Bell, ChatDotRound, Delete, Download, EditPen, FolderOpened, Grid,
   Moon, MoreFilled, Plus, Setting, Sunny,
 } from '@element-plus/icons-vue'
 import { TEACHER_HOME } from '../config/teacherHome.config.js'
-import { requestNewChat } from '../config/teacherChat.config.js'
+import { requestNewChat, latestSessionPush, openChatSession } from '../config/teacherChat.config.js'
 import { getCurrentUser } from '../apis/login.js'
+import { deleteAiSession, listAiSessions, updateAiSession } from '../apis/teacher.js'
 import { useUserStore } from '../storage/user.js'
 
 const route = useRoute()
@@ -20,6 +22,10 @@ const router = useRouter()
 const isDark = ref(document.documentElement.dataset.theme === 'dark')
 const settingsReturnTarget = ref('/main')
 const userStore = useUserStore()
+/** 侧栏最近对话历史，数据来自 GET /api/v1/ai/sessions */
+const history = ref([])
+/** 当前打开的历史会话 id（用于侧栏高亮） */
+const activeHistoryId = ref(null)
 const iconMap = { ChatDotRound, FolderOpened, Grid, Download }
 const routeMap = {
   home: '/main',
@@ -71,6 +77,91 @@ onMounted(async () => {
     const res = await getCurrentUser()
     if (res.code === 0 || res.code === 200) userStore.setUserInfo(res.data)
   } catch { /* 请求层会统一处理失效会话 */ }
+  loadHistory()
+})
+
+/** 拉取会话历史并映射为侧栏最近对话的展示数据。 */
+const loadHistory = async () => {
+  try {
+    const res = await listAiSessions()
+    const sessions = (res.code === 0 || res.code === 200) ? res.data : []
+    // 侧栏仅保留展示所需的最小字段，完整消息在点击时通过 GET 获取
+    history.value = (Array.isArray(sessions) ? sessions : []).map((item) => ({
+      id: item.id,
+      title: item.title,
+      time: formatRelativeTime(item.updated_at),
+    }))
+  } catch { /* 请求层会统一处理失效会话 */ }
+}
+
+/** 点击历史对话：跳回首页并通知首页打开对应会话，由 ChatView 依据 sessionId 拉取消息恢复历史。 */
+const openHistorySession = (item) => {
+  activeHistoryId.value = String(item.id)
+  if (route.path !== '/main') {
+    router.push({ path: '/main', query: route.query.preview ? { preview: '1' } : {} })
+  }
+  openChatSession.value = { id: item.id, title: item.title }
+}
+
+/** 处理历史记录行的操作菜单命令：删除弹出危险确认框，重命名弹出输入框。 */
+const handleHistoryCommand = (command, item) => {
+  if (command === 'delete') confirmDeleteHistory(item)
+  if (command === 'rename') renameHistory(item)
+}
+
+/** 弹出危险确认框，确认后调用删除接口并从侧栏移除对应会话。 */
+const confirmDeleteHistory = (item) => {
+  ElMessageBox.confirm('删除后不可恢复，确定要删除该历史会话吗？', '删除历史记录', {
+    type: 'warning',
+    confirmButtonText: '删除',
+    cancelButtonText: '取消',
+    confirmButtonClass: 'is-danger',
+  }).then(async () => {
+    await deleteAiSession(item.id)
+    history.value = history.value.filter((h) => String(h.id) !== String(item.id))
+    // 若删除的是当前高亮会话，同步清除高亮
+    if (activeHistoryId.value === String(item.id)) activeHistoryId.value = null
+  }).catch(() => {})
+}
+
+/** 弹出输入框，确认后调用重命名接口并同步侧栏标题（含当前打开会话标题）。 */
+const renameHistory = (item) => {
+  ElMessageBox.prompt('请输入新的会话名称', '重命名历史记录', {
+    inputValue: item.title,
+    confirmButtonText: '保存',
+    cancelButtonText: '取消',
+  }).then(async ({ value }) => {
+    const newTitle = (value || '').trim()
+    if (!newTitle) return
+    await updateAiSession(item.id, { title: newTitle })
+    item.title = newTitle
+    if (String(openChatSession.value?.id) === String(item.id)) {
+      openChatSession.value = { ...openChatSession.value, title: newTitle }
+    }
+  }).catch(() => {})
+}
+
+/** 将 ISO 时间格式化为"今天/昨天/M 月 D 日"。 */
+const formatRelativeTime = (iso) => {
+  if (!iso) return ''
+  const date = new Date(iso)
+  const startOfToday = (new Date()).setHours(0, 0, 0, 0)
+  const diffDays = Math.round((startOfToday - new Date(date).setHours(0, 0, 0, 0)) / 86400000)
+  if (diffDays === 0) return '今天'
+  if (diffDays === 1) return '昨天'
+  return `${date.getMonth() + 1} 月 ${date.getDate()} 日`
+}
+
+/** 监听 ChatView 推送的最新会话，去重后插入历史列表顶部（页面未刷新时的暂时性显示）。 */
+watch(latestSessionPush, (session) => {
+  if (!session || !session.id) return
+  const index = history.value.findIndex((item) => String(item.id) === String(session.id))
+  if (index >= 0) history.value.splice(index, 1)
+  history.value.unshift({
+    id: session.id,
+    title: session.title,
+    time: formatRelativeTime(session.updated_at),
+  })
 })
 </script>
 
@@ -85,9 +176,11 @@ onMounted(async () => {
           <span>{{ TEACHER_HOME.brand.subtitle }}</span>
         </div>
       </header>
+
       <el-button type="primary" class="new-chat-button" :icon="Plus" @click="requestNewChat = true">
         {{ TEACHER_HOME.actions.newChat }}
       </el-button>
+
       <nav class="primary-nav">
         <el-menu :key="activeMenu" :default-active="activeMenu" @select="handleMenuSelect">
           <el-menu-item v-for="item in TEACHER_HOME.navigation" :key="item.index" :index="item.index">
@@ -96,15 +189,46 @@ onMounted(async () => {
           </el-menu-item>
         </el-menu>
       </nav>
+
       <section class="history" aria-labelledby="history-title">
+        <!-- 标题行固定在顶部，不随历史条目滚动；仅下方条目区域可滚动 -->
         <div class="section-label-row">
           <span id="history-title">{{ TEACHER_HOME.historyTitle }}</span>
-          <el-button text circle aria-label="更多历史记录"><el-icon><MoreFilled /></el-icon></el-button>
         </div>
-        <button v-for="item in TEACHER_HOME.history" :key="item.id" class="history-item" type="button">
-          <span>{{ item.title }}</span><small>{{ item.time }}</small>
-        </button>
+        <div class="history-scroll">
+          <div
+            v-for="item in history"
+            :key="item.id"
+            class="history-item"
+            :class="{ 'is-active': activeHistoryId === String(item.id) }"
+          >
+            <button type="button" class="history-item-main" @click="openHistorySession(item)">
+              <span>{{ item.title }}</span><small>{{ item.time }}</small>
+            </button>
+            <el-dropdown
+              class="history-item-actions"
+              trigger="click"
+              placement="bottom-end"
+              @command="(command) => handleHistoryCommand(command, item)"
+            >
+              <el-button text circle size="small" aria-label="历史会话更多操作">
+                <el-icon><MoreFilled /></el-icon>
+              </el-button>
+              <template #dropdown>
+                <el-dropdown-menu>
+                  <el-dropdown-item command="rename">
+                    <el-icon><EditPen /></el-icon>重命名
+                  </el-dropdown-item>
+                  <el-dropdown-item command="delete" divided style="color: var(--zh-red)">
+                    <el-icon><Delete /></el-icon>删除
+                  </el-dropdown-item>
+                </el-dropdown-menu>
+              </template>
+            </el-dropdown>
+          </div>
+        </div>
       </section>
+      
       <footer class="teacher-profile">
         <button type="button" class="avatar-button" :aria-label="settingsActionLabel" @click="toggleSettings">
           <el-avatar :size="38" shape="square" :src="avatarUrl">{{ avatarText }}</el-avatar>
@@ -178,12 +302,21 @@ onMounted(async () => {
 .primary-nav :deep(.el-menu-item:hover) { background: var(--zh-background-option); color: var(--zh-text-primary); }
 .primary-nav :deep(.el-menu-item:hover .el-icon) { transform: translateX(2px) scale(1.04); }
 .primary-nav :deep(.el-menu-item.is-active) { color: var(--zh-text-theme); background: var(--zh-background-option-on); font-weight: 600; }
-.history { min-height: 0; margin-top: 20px; overflow-y: auto; }
-.section-label-row { display: flex; align-items: center; justify-content: space-between; padding: 0 8px 5px; color: var(--zh-text-caption); font-size: 12px; }
-.history-item { width: 100%; display: flex; flex-direction: column; gap: 3px; padding: 10px 8px; border: 0; border-radius: var(--zh-radius8); color: var(--zh-text-secondary); background: transparent; text-align: left; cursor: pointer; transition: color 200ms cubic-bezier(0.4, 0, 0.2, 1), background-color 200ms cubic-bezier(0.4, 0, 0.2, 1), transform 200ms cubic-bezier(0.4, 0, 0.2, 1); }
-.history-item:hover { color: var(--zh-text-primary); background: var(--zh-background-option); }
-.history-item span { overflow: hidden; font-size: 13px; text-overflow: ellipsis; white-space: nowrap; }
-.history-item small { color: var(--zh-text-caption); font-size: 11px; }
+.history { min-height: 0; margin-top: 20px; display: flex; flex-direction: column; }
+.history-scroll { min-height: 0; flex: 1; overflow-y: auto; }
+.section-label-row { display: flex; align-items: center; justify-content: space-between; flex-shrink: 0; padding: 0 8px 5px; color: var(--zh-text-caption); font-size: 12px; }
+.history-item { width: 100%; display: flex; align-items: center; gap: 4px; padding: 4px 6px 4px 8px; border-radius: var(--zh-radius8); transition: background-color 200ms cubic-bezier(0.4, 0, 0.2, 1); }
+.history-item:hover, .history-item:focus-within { background: var(--zh-background-option); }
+.history-item.is-active { background: var(--zh-background-option-on); }
+.history-item-main { min-width: 0; flex: 1; display: flex; flex-direction: column; gap: 3px; padding: 6px 2px; border: 0; background: transparent; color: var(--zh-text-secondary); text-align: left; cursor: pointer; transition: color 200ms cubic-bezier(0.4, 0, 0.2, 1); }
+.history-item:hover .history-item-main { color: var(--zh-text-primary); }
+.history-item.is-active .history-item-main { color: var(--zh-text-theme); font-weight: 600; }
+.history-item-main span { overflow: hidden; font-size: 13px; text-overflow: ellipsis; white-space: nowrap; }
+.history-item-main small { color: var(--zh-text-caption); font-size: 11px; }
+.history-item-actions { flex: 0 0 auto; opacity: 0; pointer-events: none; transition: opacity 200ms cubic-bezier(0.4, 0, 0.2, 1); }
+.history-item:hover .history-item-actions, .history-item:focus-within .history-item-actions { opacity: 1; pointer-events: auto; }
+.history-item-actions :deep(.el-button) { color: var(--zh-text-caption); }
+.history-item-actions :deep(.el-button .el-icon) { font-size: 16px; }
 .teacher-profile { display: grid; grid-template-columns: auto 1fr auto; align-items: center; gap: 10px; margin-top: auto; padding: 13px 8px 0; border-top: 1px solid var(--zh-line-border); }
 .teacher-profile :deep(.el-avatar), .teacher-topbar :deep(.el-avatar) { color: white; background: var(--zh-theme-primary); }
 .avatar-button { display: grid; place-items: center; padding: 0; border: 0; border-radius: var(--zh-radius8); background: transparent; cursor: pointer; transition: transform 200ms cubic-bezier(0.4, 0, 0.2, 1); }

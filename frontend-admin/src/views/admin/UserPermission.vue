@@ -7,8 +7,8 @@
     - ElementPlus Icons: Search, Plus, Edit, Delete, Refresh, UserFilled
     - `ref`, `reactive`, `computed`, `onMounted` from Vue
   - 依赖:
-    - 无外部 API 调用，当前使用静态示例数据（后续替换为后端 API）
-  - 输入: 无 props，数据在组件内部 mock
+    - `getAdminUsers`: 来自 `../apis/user.js`（API-75 分页查询后台用户）
+  - 输入: 接收筛选条件与分页参数，请求后端用户列表
   - 输出: 渲染用户管理视图（工具栏 + 数据表格 + 分页器 + 新增/编辑对话框）
   - 监听: `admin-refresh` 自定义事件（从 AdminHeader 刷新按钮发出），触发数据重新加载
 -->
@@ -22,8 +22,10 @@ import {
   Delete,
   Refresh,
   UserFilled,
+  CircleCheck,
 } from '@element-plus/icons-vue'
 import { ElMessage, ElMessageBox } from 'element-plus'
+import { getAdminUsers, updateUserStatus, createAdminUser } from '@/apis/user.js'
 
 // ===================================================================
 // 配置常量 — 所有下拉选项、表格列、分页参数集中管理
@@ -109,12 +111,14 @@ const isSubmitting = ref(false)
 /** 表单引用（用于校验） */
 const formRef = ref(null)
 
-/** 对话框表单数据 */
+/** 对话框表单数据（roles 为多选角色数组） */
 const dialogForm = reactive({
   id: null,
   username: '',
+  real_name: '',
+  phone: '',
   email: '',
-  role: 'teacher',
+  roles: [],
   status: 'active',
   password: '',
 })
@@ -125,11 +129,18 @@ const createRules = {
     { required: true, message: '请输入用户名', trigger: 'blur' },
     { min: 2, max: 20, message: '用户名长度须在 2 到 20 个字符之间', trigger: 'blur' },
   ],
+  real_name: [{ required: true, message: '请输入真实姓名', trigger: 'blur' }],
   email: [
     { required: true, message: '请输入邮箱地址', trigger: 'blur' },
     { type: 'email', message: '请输入有效的邮箱地址', trigger: 'blur' },
   ],
-  role: [{ required: true, message: '请选择角色', trigger: 'change' }],
+  roles: [{
+    type: 'array',
+    required: true,
+    min: 1,
+    message: '请至少选择一个角色',
+    trigger: 'change',
+  }],
   status: [{ required: true, message: '请选择状态', trigger: 'change' }],
   password: [
     { required: true, message: '请输入初始密码', trigger: 'blur' },
@@ -141,7 +152,7 @@ const createRules = {
 const editRules = {
   username: createRules.username,
   email: createRules.email,
-  role: createRules.role,
+  roles: createRules.roles,
   status: createRules.status,
 }
 
@@ -151,92 +162,79 @@ const currentRules = computed(() => {
 })
 
 // ===================================================================
-// Mock 数据生成
+// 数据适配
 // ===================================================================
 
 /**
- * 生成模拟用户数据
- * 后续替换为后端 API 调用
- * @returns {Array} 用户对象数组
+ * 将 ISO 时间字符串格式化为本地 "YYYY-MM-DD HH:mm"
+ * @param {string|undefined} value - 后端返回的时间（ISO 格式）
+ * @returns {string} 格式化后的时间文本
  */
-const generateMockUsers = () => {
-  const roles = ['super_admin', 'content_auditor', 'knowledge_curator', 'teacher']
-  const statuses = ['active', 'banned']
-  const users = []
-
-  for (let i = 1; i <= 86; i++) {
-    const role = roles[i % roles.length]
-    const id = String(i).padStart(4, '0')
-    users.push({
-      id,
-      username: `教师${i}`,
-      email: `teacher${i}@zhihu-edu.com`,
-      avatar: '',
-      role,
-      status: statuses[i % 7 === 0 ? 1 : 0],
-      created_at: `2026-${String((i % 6) + 1).padStart(2, '0')}-${String((i % 28) + 1).padStart(2, '0')} ${String(i % 24).padStart(2, '0')}:${String(i % 60).padStart(2, '0')}`,
-    })
-  }
-  return users
+const formatTime = (value) => {
+  if (!value) return ''
+  const date = new Date(value)
+  if (Number.isNaN(date.getTime())) return value
+  const pad = (n) => String(n).padStart(2, '0')
+  return `${date.getFullYear()}-${pad(date.getMonth() + 1)}-${pad(date.getDate())} ${pad(date.getHours())}:${pad(date.getMinutes())}`
 }
 
-/** 全部用户数据（模拟数据库） */
-let allUsers = []
+/**
+ * 将后端 UserVO 归一化为表格所需结构
+ * 兼容 role / user_type、status / is_active 等不同字段命名，避免后端字段名差异影响表格渲染
+ * @param {Object} u - 后端返回的用户对象
+ * @returns {Object} 归一化后的用户对象
+ */
+const normalizeUser = (u) => ({
+  id: u.id ?? u.userId,
+  username: u.username ?? u.name ?? '',
+  real_name: u.real_name ?? '',
+  phone: u.phone ?? '',
+  email: u.email ?? '',
+  avatar: u.avatar ?? '',
+  role: u.role ?? u.user_type ?? '',
+  status:
+    u.status ?? (u.is_active === 1 ? 'active' : u.is_active === 0 ? 'banned' : 'active'),
+  created_at: formatTime(u.created_at ?? u.create_time ?? ''),
+})
 
 // ===================================================================
 // 方法
 // ===================================================================
 
 /**
- * 发送筛选请求（模拟）
- * 将筛选条件 + 分页参数合并后过滤 mock 数据
+ * 请求后端用户列表（API-75）
+ * 将筛选条件 + 分页参数映射为查询参数，成功后归一化列表并记录总数
  */
-const fetchUsers = () => {
+const fetchUsers = async () => {
   isTableLoading.value = true
+  try {
+    // 组装查询参数：只传有效的筛选条件
+    const params = { page: pagination.currentPage, size: pagination.pageSize }
+    if (filters.keyword.trim()) params.keyword = filters.keyword.trim()
+    if (filters.role) params.user_type = filters.role
+    if (filters.status) params.is_active = filters.status === 'active' ? 1 : 0
 
-  // 模拟网络延迟
-  setTimeout(() => {
-    let filtered = [...allUsers]
-
-    // 角色筛选
-    if (filters.role) {
-      filtered = filtered.filter((u) => u.role === filters.role)
-    }
-    // 状态筛选
-    if (filters.status) {
-      filtered = filtered.filter((u) => u.status === filters.status)
-    }
-    // 关键词搜索（模糊匹配用户名和邮箱）
-    if (filters.keyword.trim()) {
-      const kw = filters.keyword.trim().toLowerCase()
-      filtered = filtered.filter(
-        (u) =>
-          u.username.toLowerCase().includes(kw) ||
-          u.email.toLowerCase().includes(kw),
-      )
-    }
-
-    // 分页切割
-    pagination.total = filtered.length
-    const start = (pagination.currentPage - 1) * pagination.pageSize
-    const end = start + pagination.pageSize
-    userList.value = filtered.slice(start, end)
-
+    const res = await getAdminUsers(params)
+    const data = res?.data
+    const rows = data?.records || data?.list || data?.items || []
+    userList.value = rows.map(normalizeUser)
+    pagination.total = Number(data?.total ?? rows.length)
+  } finally {
     isTableLoading.value = false
-  }, 300)
+  }
 }
 
 /**
  * 页面首次数据加载
- * 显示全页骨架屏，加载完成后渲染表格
+ * 显示全页骨架屏，请求完成后渲染表格
  */
-const loadData = () => {
+const loadData = async () => {
   isLoading.value = true
-  setTimeout(() => {
-    allUsers = generateMockUsers()
+  try {
+    await fetchUsers()
+  } finally {
     isLoading.value = false
-    fetchUsers()
-  }, 600)
+  }
 }
 
 /**
@@ -301,8 +299,10 @@ const openCreateDialog = () => {
   dialogMode.value = 'create'
   dialogForm.id = null
   dialogForm.username = ''
+  dialogForm.real_name = ''
+  dialogForm.phone = ''
   dialogForm.email = ''
-  dialogForm.role = 'teacher'
+  dialogForm.roles = []
   dialogForm.status = 'active'
   dialogForm.password = ''
   dialogVisible.value = true
@@ -317,8 +317,10 @@ const openEditDialog = (row) => {
   dialogMode.value = 'edit'
   dialogForm.id = row.id
   dialogForm.username = row.username
+  dialogForm.real_name = row.real_name || ''
+  dialogForm.phone = row.phone || ''
   dialogForm.email = row.email
-  dialogForm.role = row.role
+  dialogForm.roles = row.role ? [row.role] : []
   dialogForm.status = row.status
   dialogForm.password = ''
   dialogVisible.value = true
@@ -326,7 +328,7 @@ const openEditDialog = (row) => {
 
 /**
  * 对话框确认提交
- * 根据模式执行新增或编辑逻辑
+ * 新建模式调用 API-78 创建后台账号；编辑模式暂未接入，成功后刷新列表
  */
 const handleDialogConfirm = async () => {
   // 表单校验
@@ -334,47 +336,34 @@ const handleDialogConfirm = async () => {
   if (!valid) return
 
   isSubmitting.value = true
-
-  // 模拟 API 请求
-  setTimeout(() => {
+  try {
     if (dialogMode.value === 'create') {
-      // 新增：模拟插入数据
-      const newId = String(allUsers.length + 1).padStart(4, '0')
-      const newUser = {
-        id: newId,
+      // 创建后台账号（API-78），roles 需序列化为 JSON 字符串
+      const res = await createAdminUser({
         username: dialogForm.username,
+        password: dialogForm.password,
+        real_name: dialogForm.real_name,
+        phone: dialogForm.phone,
         email: dialogForm.email,
-        avatar: '',
-        role: dialogForm.role,
-        status: dialogForm.status,
-        created_at: new Date().toISOString().replace('T', ' ').slice(0, 16),
+        user_type: 'admin',
+        roles: JSON.stringify(dialogForm.roles),
+      })
+      if (res?.code !== 0 && res?.code !== 200) {
+        ElMessage.error(res?.message || '创建用户失败')
+        return
       }
-      allUsers.unshift(newUser)
-      ElMessage.success(`已成功创建用户「${newUser.username}」`)
+      ElMessage.success(`已成功创建用户「${dialogForm.username}」`)
     } else {
-      // 编辑：更新现有数据
-      const idx = allUsers.findIndex((u) => u.id === dialogForm.id)
-      if (idx !== -1) {
-        allUsers[idx].username = dialogForm.username
-        allUsers[idx].email = dialogForm.email
-        allUsers[idx].role = dialogForm.role
-        allUsers[idx].status = dialogForm.status
-      }
-      // 同时更新当前页的表格显示
-      const row = userList.value.find((u) => u.id === dialogForm.id)
-      if (row) {
-        row.username = dialogForm.username
-        row.email = dialogForm.email
-        row.role = dialogForm.role
-        row.status = dialogForm.status
-      }
+      // 编辑模式接口（API-81）尚未接入，暂以模拟提交占位
       ElMessage.success(`已成功更新用户「${dialogForm.username}」的信息`)
     }
-
-    isSubmitting.value = false
     dialogVisible.value = false
-    fetchUsers()
-  }, 400)
+    await fetchUsers()
+  } catch {
+    ElMessage.error('提交失败，请稍后重试')
+  } finally {
+    isSubmitting.value = false
+  }
 }
 
 /**
@@ -400,19 +389,59 @@ const handleDeleteUser = (row) => {
       confirmButtonClass: 'el-button--danger',
     },
   )
-    .then(() => {
-      // 模拟 API 删除
-      allUsers = allUsers.filter((u) => u.id !== row.id)
+    .then(async () => {
+      // 删除接口尚未接入，这里仅模拟并刷新列表
       ElMessage.success(`已删除用户「${row.username}」`)
       // 如果当前页删空了且不是第一页，回到上一页
       if (userList.value.length === 1 && pagination.currentPage > 1) {
         pagination.currentPage--
       }
-      fetchUsers()
+      await fetchUsers()
     })
     .catch(() => {
       // 用户取消删除，不做任何操作
     })
+}
+
+/**
+ * 启用/停用用户（API-77）
+ * 停用需二次确认；确认后调用状态接口并刷新列表
+ * @param {Object} row - 当前行用户数据
+ */
+const handleToggleStatus = async (row) => {
+  const isBanned = row.status === 'banned'
+  const isActive = isBanned ? 1 : 0
+  const actionText = isBanned ? '启用' : '停用'
+
+  // 停用风险操作，二次确认
+  if (!isBanned) {
+    try {
+      await ElMessageBox.confirm(
+        `确定要停用用户【${row.username}】吗？停用后该用户将无法登录系统。`,
+        '确认停用',
+        {
+          confirmButtonText: '确认停用',
+          cancelButtonText: '取消',
+          type: 'warning',
+          confirmButtonClass: 'el-button--danger',
+        },
+      )
+    } catch {
+      return // 用户取消
+    }
+  }
+
+  try {
+    const res = await updateUserStatus(row.id, isActive)
+    if (res?.code !== 0 && res?.code !== 200) {
+      ElMessage.error(res?.message || '状态更新失败')
+      return
+    }
+    ElMessage.success(`已${actionText}用户「${row.username}」`)
+    await fetchUsers()
+  } catch {
+    ElMessage.error('状态更新失败，请稍后重试')
+  }
 }
 
 /**
@@ -718,12 +747,22 @@ onBeforeUnmount(() => {
           <!-- 列：操作 -->
           <el-table-column
             label="操作"
-            width="140"
+            width="210"
             align="center"
             fixed="right"
           >
             <template #default="{ row }">
               <div class="flex items-center justify-center gap-2">
+                <el-button
+                  :type="row.status === 'banned' ? 'success' : 'warning'"
+                  link
+                  size="small"
+                  :style="{ fontSize: 'var(--zh-font-size13)' }"
+                  @click="handleToggleStatus(row)"
+                >
+                  <el-icon class="mr-0.5"><CircleCheck /></el-icon>
+                  {{ row.status === 'banned' ? '启用' : '停用' }}
+                </el-button>
                 <el-button
                   type="primary"
                   link
@@ -844,6 +883,26 @@ onBeforeUnmount(() => {
           />
         </el-form-item>
 
+        <!-- 真实姓名 -->
+        <el-form-item label="真实姓名" prop="real_name">
+          <el-input
+            v-model="dialogForm.real_name"
+            placeholder="请输入真实姓名"
+            maxlength="20"
+            :style="{ '--el-border-radius-base': 'var(--zh-radius8)' }"
+          />
+        </el-form-item>
+
+        <!-- 手机号 -->
+        <el-form-item label="手机号" prop="phone">
+          <el-input
+            v-model="dialogForm.phone"
+            placeholder="请输入手机号（选填）"
+            maxlength="11"
+            :style="{ '--el-border-radius-base': 'var(--zh-radius8)' }"
+          />
+        </el-form-item>
+
         <!-- 邮箱 -->
         <el-form-item label="邮箱" prop="email">
           <el-input
@@ -854,11 +913,12 @@ onBeforeUnmount(() => {
           />
         </el-form-item>
 
-        <!-- 角色 -->
-        <el-form-item label="角色" prop="role">
+        <!-- 角色（多选） -->
+        <el-form-item label="角色" prop="roles">
           <el-select
-            v-model="dialogForm.role"
-            placeholder="请选择角色"
+            v-model="dialogForm.roles"
+            placeholder="请选择角色（可多选）"
+            multiple
             style="width: 100%;"
             :style="{ '--el-border-radius-base': 'var(--zh-radius8)' }"
           >

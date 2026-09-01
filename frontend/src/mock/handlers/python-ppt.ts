@@ -200,7 +200,9 @@ export const pythonPptHandlers = [
     })
   }),
 
-  // ========== API-137A-2 教学设计方案流式生成（新版 Markdown SSE） ==========
+  // ========== [已弃用] 假 designs/stream 端点 ==========
+  // 前端大纲生成已改走 Java 网关（API-13 → API-14），不再直连当前端点。
+  // 保留仅作历史参考，可直接删除；如需恢复前端直连流式可回滚。
   http.post('/api/v1/python/designs/stream', async ({ request }) => {
     const body = (await request.json()) as Record<string, unknown>
     const sessionId = (body.session_id as string) || generateId('design_chat')
