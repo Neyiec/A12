@@ -10,7 +10,7 @@
 <script setup>
 import { computed, nextTick, onMounted, reactive, ref } from 'vue'
 import { ElMessage } from 'element-plus'
-import { Document, Promotion } from '@element-plus/icons-vue'
+import { Brush, Document, Promotion } from '@element-plus/icons-vue'
 import MarkdownRender from 'markstream-vue'
 import { useUserStore } from '../storage/user.js'
 import { confirmAiPlan, getAiPlan, getAiSession, listPptTemplates, sendAiSessionMessage } from '../apis/teacher.js'
@@ -701,7 +701,15 @@ async function restoreSession() {
             <span>{{ genResource.description }}</span>
             <div class="resource-template-choice">
               <span>生成模板：{{ pptTemplateName || '加载中…' }}</span>
-              <el-button text size="small" :disabled="phase === 'generating_resource'" @click="openPptTemplateDialog">
+              <el-button
+                class="resource-template-change"
+                type="primary"
+                plain
+                size="small"
+                :icon="Brush"
+                :disabled="phase === 'generating_resource'"
+                @click="openPptTemplateDialog"
+              >
                 {{ pptTemplateName ? '更换模板' : '选择模板' }}
               </el-button>
             </div>
@@ -1058,10 +1066,12 @@ async function restoreSession() {
   color: var(--zh-text-secondary);
   font-size: var(--zh-font-size11);
 }
-.resource-template-choice .el-button {
-  height: auto;
-  padding: 0;
+.resource-template-change {
+  height: 24px;
+  padding: 0 9px;
+  border-radius: var(--zh-radius6);
   font-size: var(--zh-font-size11);
+  font-weight: 600;
 }
 
 /* ===== 底部输入区（flex 布局固定在页面底部，不随消息滚动） ===== */
