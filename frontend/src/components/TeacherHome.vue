@@ -273,14 +273,17 @@ watch(openChatSession, (target) => {
   openChatSession.value = null
 }, { immediate: true })
 
-/** 从聊天视图跳转到创作工作台 */
-const openWorkspaceFromChat = (projectId) => {
+/** 从聊天视图跳转到创作工作台，并携带生成前已选定的 PPT 模板 */
+const openWorkspaceFromChat = (payload) => {
+  const projectId = payload && typeof payload === 'object' ? payload.projectId : payload
+  const pptTheme = payload && typeof payload === 'object' ? payload.pptTheme : ''
   router.push({
     path: '/main/workspace',
     query: {
       ...(route.query.preview ? { preview: '1' } : {}),
       sessionId: chatSessionId.value,
       ...(projectId ? { projectId } : {}),
+      ...(pptTheme ? { pptTheme } : {}),
     },
   })
 }

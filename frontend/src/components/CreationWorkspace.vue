@@ -3,7 +3,7 @@ import { computed, onBeforeUnmount, onMounted, reactive, ref, watch } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { ElMessage } from 'element-plus'
 import { FullScreen, Plus, Promotion, VideoPlay } from '@element-plus/icons-vue'
-import { addProjectPermission, batchSaveProjectPages, createAiRun, createProject, createProjectPage, deleteProjectPage, generateInteractiveModule, getAiRun, getProject, getProjectPage, getProjectVersionDiff, listPptTemplates, listProjectPages, listProjectVersions, patchProject, restoreProjectVersion, reviseProjectWithAi, saveProjectVersion, sendAiSessionMessage, saveProjectPage, validateProjectComponent } from '../apis/teacher'
+import { addProjectPermission, batchSaveProjectPages, createAiRun, createProject, createProjectPage, deleteProjectPage, generateInteractiveModule, getAiRun, getProject, getProjectPage, getProjectVersionDiff, listProjectPages, listProjectVersions, patchProject, restoreProjectVersion, reviseProjectWithAi, saveProjectVersion, sendAiSessionMessage, saveProjectPage, validateProjectComponent } from '../apis/teacher'
 import IntentClarificationDialog from './IntentClarificationDialog.vue'
 import CreationWorkspaceToolbar from './CreationWorkspaceToolbar.vue'
 import WorkspacePropertiesPanel from './WorkspacePropertiesPanel.vue'
@@ -22,12 +22,6 @@ const interactivePreviewVisible = ref(false)
 const interactiveGenerating = ref(false)
 const interactiveModule = ref(null)
 const interactivePreviewSource = ref('generated')
-const pptTemplateDialogVisible = ref(false)
-const pptTemplateLoading = ref(false)
-const pptTemplateLoadError = ref('')
-const pptTemplates = ref([])
-const selectedPptTemplateTheme = ref('')
-const pptTemplateDraftTheme = ref('')
 const interactiveForm = reactive({
   title: '',
   topic: '',
@@ -161,90 +155,6 @@ const unwrapResponse = (response) => {
 const sessionId = computed(() => route.query.sessionId)
 const projectId = computed(() => route.query.projectId)
 const project = ref(null)
-const normalizePptTemplate = (template) => {
-  const theme = String(template?.theme || '').trim()
-  if (!theme) return null
-  return {
-    theme,
-    name: String(template?.template_name || theme).trim() || theme,
-    description: String(template?.description || '适用于课堂课件生成的 PPT 模板。').trim(),
-    aliases: Array.isArray(template?.aliases) ? template.aliases.map((item) => String(item).trim()).filter(Boolean).slice(0, 4) : [],
-    isDefault: Boolean(template?.is_default),
-    filename: String(template?.filename || '').trim(),
-  }
-}
-const selectedPptTemplate = computed(() => pptTemplates.value.find((item) => item.theme === selectedPptTemplateTheme.value) || null)
-const draftPptTemplate = computed(() => pptTemplates.value.find((item) => item.theme === pptTemplateDraftTheme.value) || null)
-const pptTemplateName = computed(() => selectedPptTemplate.value?.name || selectedPptTemplateTheme.value || '')
-const pptTemplateStorageKey = () => {
-  const scope = projectId.value
-    ? `project:${projectId.value}`
-    : sessionId.value
-      ? `session:${sessionId.value}`
-      : `draft:${String(route.query.templateTitle || 'default')}`
-  return `a12:ppt-template:${scope}`
-}
-const readStoredPptTemplateTheme = () => {
-  try { return window.localStorage.getItem(pptTemplateStorageKey()) || '' } catch { return '' }
-}
-const persistPptTemplateTheme = () => {
-  if (!selectedPptTemplateTheme.value) return
-  try { window.localStorage.setItem(pptTemplateStorageKey(), selectedPptTemplateTheme.value) } catch { /* 浏览器禁用本地存储时仍保留本次选择 */ }
-}
-const templateAccent = (template) => {
-  const name = String(template?.theme || '')
-  if (/科技|赛博|终端/.test(name)) return '#2563eb'
-  if (/中国|中式|宣纸|竹简|饺子/.test(name)) return '#b37536'
-  if (/森林|清新|莫奈/.test(name)) return '#1f993f'
-  if (/星月|黑|日落|红|速度/.test(name)) return '#ff6b3f'
-  return '#64748b'
-}
-const loadPptTemplates = async (force = false) => {
-  if (pptTemplateLoading.value) return pptTemplates.value
-  if (pptTemplates.value.length && !force) return pptTemplates.value
-  pptTemplateLoading.value = true
-  pptTemplateLoadError.value = ''
-  try {
-    const response = unwrapResponse(await listPptTemplates())
-    const source = Array.isArray(response) ? response : response?.templates
-    const templates = (Array.isArray(source) ? source : []).map(normalizePptTemplate).filter(Boolean)
-    if (!templates.length) throw new Error('后端暂未提供可用的 PPT 模板')
-    pptTemplates.value = templates
-    const availableThemes = new Set(templates.map((item) => item.theme))
-    const preferredThemes = [
-      String(route.query.pptTheme || '').trim(),
-      String(project.value?.ppt_theme || project.value?.pptTemplateTheme || project.value?.template_theme || '').trim(),
-      readStoredPptTemplateTheme(),
-      String(response?.default_theme || '').trim(),
-      templates.find((item) => item.isDefault)?.theme || '',
-      templates[0].theme,
-    ]
-    selectedPptTemplateTheme.value = preferredThemes.find((theme) => availableThemes.has(theme)) || templates[0].theme
-    persistPptTemplateTheme()
-    return templates
-  } catch (error) {
-    pptTemplateLoadError.value = error?.response?.data?.message || error?.message || 'PPT 模板加载失败'
-    return []
-  } finally {
-    pptTemplateLoading.value = false
-  }
-}
-const openPptTemplateDialog = async () => {
-  pptTemplateDialogVisible.value = true
-  await loadPptTemplates()
-  pptTemplateDraftTheme.value = selectedPptTemplateTheme.value
-}
-const choosePptTemplate = (template) => {
-  if (!template?.theme) return
-  pptTemplateDraftTheme.value = template.theme
-}
-const confirmPptTemplate = () => {
-  if (!draftPptTemplate.value) return WorkspaceMessage.warning('请先选择一个 PPT 模板')
-  selectedPptTemplateTheme.value = pptTemplateDraftTheme.value
-  persistPptTemplateTheme()
-  pptTemplateDialogVisible.value = false
-  WorkspaceMessage.success(`已选择“${selectedPptTemplate.value.name}”，后续生成 PPT 时将使用此模板`)
-}
 const defaultSlide = (index = 1) => ({ title: `新建页面 ${index}`, eyebrow: '教学内容', description: '在右侧完善页面文案与布局，或通过 AI 对话继续创作。', layout: '图文并置', theme: 'blue', elements: createMockElements() })
 const parseJson = (value, fallback = {}) => { try { return typeof value === 'string' ? JSON.parse(value) : (value || fallback) } catch { return fallback } }
 const normalizeElementType = (element) => {
@@ -780,7 +690,7 @@ const openInteractiveDialog = () => {
   interactiveForm.grade = ''
   interactiveForm.knowledge_points = String(current.value?.description || '').trim()
   interactiveForm.requirements = ''
-  interactiveForm.theme = selectedPptTemplateTheme.value || theme.value?.name || ''
+  interactiveForm.theme = theme.value?.name || ''
   interactiveForm.embed_mode = 'standalone'
   interactiveDialogVisible.value = true
 }
@@ -1383,7 +1293,6 @@ onMounted(async () => {
   initializeSessionFlow()
   await bootstrapTestCaseProject()
   await loadProject()
-  await loadPptTemplates()
   window.addEventListener('keydown', handleWorkspaceKeydown)
 })
 onBeforeUnmount(() => { eventSource?.close(); clearInterval(runPollTimer); stopElementDrag(); cancelCanvasPlacement(); workspaceMessageInstance?.close(); window.removeEventListener('keydown', handleWorkspaceKeydown) })
@@ -1438,7 +1347,7 @@ const workspaceFlowQuery = (targetProjectId = projectId.value) => ({
   ...(route.query.preview ? { preview: '1' } : {}),
   ...(route.query.testCase ? { testCase: route.query.testCase } : {}),
   ...(route.query.templateTitle ? { templateTitle: route.query.templateTitle } : {}),
-  ...(selectedPptTemplateTheme.value ? { pptTheme: selectedPptTemplateTheme.value } : {}),
+  ...(route.query.pptTheme ? { pptTheme: route.query.pptTheme } : {}),
   ...(targetProjectId ? { projectId: String(targetProjectId) } : {}),
   // 导出中心消费此标记后会自动完成“快照 → 预检 → 创建任务”。
   autoExport: '1',
@@ -1510,11 +1419,9 @@ const selectSlide = (index) => { selectedSlide.value = index; selectedElementId.
       :title="current.title"
       :autosave-state="autosaveState"
       :project-id="route.query.projectId"
-      :ppt-template-name="pptTemplateName"
       @back="goHome"
       @preview="previewVisible = true"
       @generate-interactive="openInteractiveDialog"
-      @template-select="openPptTemplateDialog"
       @export="exportProject"
       @tool-select="handleToolSelect"
     />
@@ -1680,60 +1587,6 @@ const selectSlide = (index) => { selectedSlide.value = index; selectedElementId.
         </article>
       </div>
       <template #footer><el-button @click="previewVisible = false">继续编辑</el-button><el-button type="primary" :icon="VideoPlay" @click="previewVisible = false">播放预览</el-button></template>
-    </el-dialog>
-    <el-dialog v-model="pptTemplateDialogVisible" title="选择 PPT 生成模板" width="min(960px, 94vw)" class="ppt-template-dialog" destroy-on-close>
-      <div class="ppt-template-intro">
-        <div>
-          <p>模板用于生成 PPT 页面，选择后会保存后端约定的 <code>theme</code> 值，供课件生成流程使用。</p>
-          <small>导出模板与 PPT 生成模板相互独立；当前选择会保存在本项目的工作台中。</small>
-        </div>
-        <el-tag v-if="draftPptTemplate" effect="plain">当前：{{ draftPptTemplate.name }}</el-tag>
-      </div>
-
-      <div v-loading="pptTemplateLoading" class="ppt-template-grid">
-        <el-skeleton v-if="pptTemplateLoading && !pptTemplates.length" :rows="6" animated />
-        <el-empty v-else-if="pptTemplateLoadError" :description="pptTemplateLoadError">
-          <el-button @click="loadPptTemplates(true)">重新加载</el-button>
-        </el-empty>
-        <el-empty v-else-if="!pptTemplates.length" description="暂无可用的 PPT 模板" />
-        <template v-if="!pptTemplateLoading && !pptTemplateLoadError && pptTemplates.length">
-          <el-card
-            v-for="template in pptTemplates"
-            :key="template.theme"
-            shadow="never"
-            class="ppt-template-card"
-            :class="{ 'is-selected': pptTemplateDraftTheme === template.theme }"
-          >
-            <div class="ppt-template-preview" :style="{ '--template-accent': templateAccent(template) }" aria-hidden="true">
-              <i></i><i></i><i></i><b></b>
-            </div>
-            <div class="ppt-template-card-body">
-              <div class="ppt-template-card-heading">
-                <strong>{{ template.name }}</strong>
-                <el-tag v-if="template.isDefault" size="small" type="success" effect="plain">默认</el-tag>
-              </div>
-              <p>{{ template.description }}</p>
-              <div v-if="template.aliases.length" class="ppt-template-aliases">
-                <span v-for="alias in template.aliases" :key="alias">{{ alias }}</span>
-              </div>
-              <el-button
-                class="ppt-template-select-button"
-                :type="pptTemplateDraftTheme === template.theme ? 'primary' : 'default'"
-                :plain="pptTemplateDraftTheme !== template.theme"
-                size="small"
-                @click="choosePptTemplate(template)"
-              >
-                {{ pptTemplateDraftTheme === template.theme ? '已选择' : '选择模板' }}
-              </el-button>
-            </div>
-          </el-card>
-        </template>
-      </div>
-
-      <template #footer>
-        <el-button @click="pptTemplateDialogVisible = false">取消</el-button>
-        <el-button type="primary" :disabled="!draftPptTemplate" @click="confirmPptTemplate">使用当前模板</el-button>
-      </template>
     </el-dialog>
     <el-dialog v-model="interactiveDialogVisible" title="生成互动模块" width="min(720px, 92vw)" destroy-on-close>
       <p class="dialog-hint">调用互动模块生成服务，生成后可以先预览，再插入当前页面或作为独立页面保存。</p>
@@ -2426,209 +2279,9 @@ const selectSlide = (index) => { selectedSlide.value = index; selectedElementId.
   font-size: 11px;
 }
 
-.ppt-template-dialog :deep(.el-dialog__body) {
-  padding-top: 10px;
-}
-
-.ppt-template-intro {
-  display: flex;
-  align-items: flex-start;
-  justify-content: space-between;
-  gap: 16px;
-  margin-bottom: 16px;
-  padding: 13px 15px;
-  border: 1px solid var(--zh-line-theme20);
-  border-radius: var(--zh-radius10);
-  background: var(--zh-background-weaken);
-}
-
-.ppt-template-intro p,
-.ppt-template-intro small {
-  display: block;
-  margin: 0;
-  color: var(--zh-text-secondary);
-  font-size: 12px;
-  line-height: 1.6;
-}
-
-.ppt-template-intro small {
-  margin-top: 3px;
-  color: var(--zh-text-caption);
-  font-size: 11px;
-}
-
-.ppt-template-intro code {
-  padding: 1px 4px;
-  border-radius: var(--zh-radius4);
-  color: var(--zh-text-theme);
-  background: var(--zh-background-primary);
-  font-family: var(--zh-font-code);
-  font-size: 11px;
-}
-
-.ppt-template-grid {
-  display: grid;
-  grid-template-columns: repeat(3, minmax(0, 1fr));
-  gap: 12px;
-  min-height: 160px;
-  max-height: min(60vh, 560px);
-  overflow-y: auto;
-  padding: 2px 4px 4px 2px;
-}
-
-.ppt-template-grid > .el-skeleton,
-.ppt-template-grid > .el-empty {
-  grid-column: 1 / -1;
-}
-
-.ppt-template-card {
-  min-width: 0;
-  border-color: var(--zh-line-border);
-  border-radius: var(--zh-radius12);
-  background: var(--zh-background-capsule);
-  transition: border-color .18s ease, box-shadow .18s ease, transform .18s ease;
-}
-
-.ppt-template-card:hover {
-  border-color: var(--zh-line-theme50);
-  box-shadow: var(--zh-shadow1);
-  transform: translateY(-1px);
-}
-
-.ppt-template-card.is-selected {
-  border-color: var(--zh-line-theme);
-  box-shadow: 0 0 0 2px var(--zh-line-theme20), var(--zh-shadow1);
-}
-
-.ppt-template-card :deep(.el-card__body) {
-  display: grid;
-  gap: 12px;
-  height: 100%;
-  padding: 12px;
-}
-
-.ppt-template-preview {
-  position: relative;
-  display: grid;
-  align-content: center;
-  gap: 7px;
-  height: 74px;
-  overflow: hidden;
-  padding: 14px 16px;
-  border-radius: var(--zh-radius8);
-  background: var(--zh-background-light);
-}
-
-.ppt-template-preview::before {
-  position: absolute;
-  top: -26px;
-  right: -18px;
-  width: 76px;
-  height: 76px;
-  border-radius: 50%;
-  background: color-mix(in srgb, var(--template-accent) 16%, transparent);
-  content: '';
-}
-
-.ppt-template-preview i,
-.ppt-template-preview b {
-  position: relative;
-  display: block;
-  width: 64%;
-  height: 5px;
-  border-radius: 999px;
-  background: color-mix(in srgb, var(--template-accent) 82%, white);
-}
-
-.ppt-template-preview i:nth-child(2) {
-  width: 42%;
-  background: color-mix(in srgb, var(--template-accent) 34%, white);
-}
-
-.ppt-template-preview i:nth-child(3) {
-  width: 52%;
-  background: color-mix(in srgb, var(--template-accent) 22%, white);
-}
-
-.ppt-template-preview b {
-  position: absolute;
-  right: 16px;
-  bottom: 14px;
-  width: 28px;
-  height: 28px;
-  border: 3px solid var(--template-accent);
-  border-radius: 50%;
-  background: transparent;
-}
-
-.ppt-template-card-body {
-  display: grid;
-  grid-template-rows: auto minmax(34px, auto) minmax(20px, auto) auto;
-  gap: 7px;
-  min-width: 0;
-  flex: 1;
-}
-
-.ppt-template-card-heading {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: 8px;
-}
-
-.ppt-template-card-heading strong {
-  overflow: hidden;
-  color: var(--zh-text-primary);
-  font-size: 14px;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-
-.ppt-template-card-body > p {
-  display: -webkit-box;
-  min-height: 34px;
-  margin: 0;
-  overflow: hidden;
-  color: var(--zh-text-secondary);
-  font-size: 11px;
-  line-height: 1.55;
-  -webkit-box-orient: vertical;
-  -webkit-line-clamp: 2;
-}
-
-.ppt-template-aliases {
-  display: flex;
-  flex-wrap: wrap;
-  gap: 5px;
-  min-height: 20px;
-}
-
-.ppt-template-aliases span {
-  padding: 3px 7px;
-  border: 1px solid var(--zh-line-tag);
-  border-radius: 999px;
-  color: var(--zh-text-caption);
-  background: var(--zh-background-tag);
-  font-size: 10px;
-}
-
-.ppt-template-select-button {
-  width: 100%;
-  margin-top: 2px;
-}
-
 @media (max-width: 640px) {
   .interactive-form-grid {
     grid-template-columns: 1fr;
-  }
-
-  .ppt-template-intro {
-    flex-direction: column;
-    gap: 8px;
-  }
-
-  .ppt-template-grid {
-    grid-template-columns: repeat(2, minmax(0, 1fr));
   }
 
   .interactive-preview-frame {

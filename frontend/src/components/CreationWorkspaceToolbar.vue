@@ -1,17 +1,16 @@
 <script setup>
 import { computed, ref } from 'vue'
-import { ArrowDown, ArrowLeft, Brush, Check, CircleCheck, Download, EditPen, Grid, Histogram, MagicStick, Monitor, Picture } from '@element-plus/icons-vue'
+import { ArrowDown, ArrowLeft, Check, CircleCheck, Download, EditPen, Grid, Histogram, MagicStick, Monitor, Picture } from '@element-plus/icons-vue'
 import WorkspaceToolButton from './WorkspaceToolButton.vue'
 
 const props = defineProps({
   title: { type: String, default: '未命名课件' },
   autosaveState: { type: String, default: '已保存' },
   projectId: { type: [String, Number], default: '' },
-  pptTemplateName: { type: String, default: '' },
   modelValue: { type: String, default: '' },
 })
 
-const emit = defineEmits(['update:modelValue', 'tool-select', 'back', 'preview', 'export', 'generate-interactive', 'template-select'])
+const emit = defineEmits(['update:modelValue', 'tool-select', 'back', 'preview', 'export', 'generate-interactive'])
 
 const tools = [
   { id: 'text', label: '文本', icon: EditPen },
@@ -51,7 +50,6 @@ const goBack = () => emit('back')
 const openPreview = () => emit('preview')
 const exportProject = () => emit('export')
 const openInteractiveGenerator = () => emit('generate-interactive')
-const openTemplatePicker = () => emit('template-select')
 </script>
 
 <template>
@@ -111,9 +109,6 @@ const openTemplatePicker = () => emit('template-select')
     <div class="toolbar-actions">
       <el-button :icon="Monitor" @click="openPreview">预览</el-button>
       <el-button :icon="MagicStick" @click="openInteractiveGenerator">生成互动</el-button>
-      <el-button :icon="Brush" :title="props.pptTemplateName ? `当前模板：${props.pptTemplateName}` : '选择 PPT 生成模板'" @click="openTemplatePicker">
-        <span>PPT模板</span><span v-if="props.pptTemplateName" class="toolbar-template-name">· {{ props.pptTemplateName }}</span>
-      </el-button>
       <el-button type="primary" :icon="Download" @click="exportProject">导出</el-button>
     </div>
   </header>
@@ -235,14 +230,6 @@ const openTemplatePicker = () => emit('template-select')
   overflow: visible;
 }
 
-.toolbar-template-name {
-  max-width: 84px;
-  overflow: hidden;
-  color: var(--zh-text-caption);
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-
 @media (max-width: 820px) {
   .toolbar {
     grid-template-columns: 1fr auto;
@@ -253,7 +240,4 @@ const openTemplatePicker = () => emit('template-select')
   }
 }
 
-@media (max-width: 1180px) {
-  .toolbar-template-name { display: none; }
-}
 </style>
