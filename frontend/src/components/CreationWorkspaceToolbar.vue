@@ -8,6 +8,7 @@ const props = defineProps({
   autosaveState: { type: String, default: '已保存' },
   projectId: { type: [String, Number], default: '' },
   modelValue: { type: String, default: '' },
+  htmlMode: { type: Boolean, default: false },
 })
 
 const emit = defineEmits(['update:modelValue', 'tool-select', 'back', 'preview', 'export', 'generate-interactive'])
@@ -33,6 +34,7 @@ const activeToolLabel = computed(() => {
   if (props.modelValue === 'shape') return selectedShape.value.label
   return tools.find((item) => item.id === props.modelValue)?.label || ''
 })
+const toolStatus = computed(() => props.htmlMode ? '点击工具直接插入 HTML 元素' : '选择元素后在画布中放置')
 
 const selectTool = (tool) => {
   emit('update:modelValue', tool.id)
@@ -103,7 +105,7 @@ const openInteractiveGenerator = () => emit('generate-interactive')
           <WorkspaceToolButton v-else :icon="tool.icon" :label="tool.label" :active="modelValue === tool.id" @click="selectTool(tool)" />
         </template>
       </nav>
-      <span class="tool-placement-status" aria-live="polite">{{ activeToolLabel ? `正在放置${activeToolLabel}` : '选择元素后在画布中放置' }}</span>
+      <span class="tool-placement-status" aria-live="polite">{{ activeToolLabel ? (htmlMode ? `正在插入${activeToolLabel}` : `正在放置${activeToolLabel}`) : toolStatus }}</span>
     </div>
 
     <div class="toolbar-actions">

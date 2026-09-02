@@ -419,7 +419,7 @@ function startGenerateResource() {
   }
   phase.value = 'generating_resource'
   // 模板选择发生在生成前；进入工作台后继续编辑 AI 生成的页面内容。
-  emit('open-workspace', { pptTheme: selectedPptTemplateTheme.value })
+  emit('open-workspace', { pptTheme: selectedPptTemplateTheme.value, generationKey: String(Date.now()) })
 }
 
 // ========== 生命周期 ==========
