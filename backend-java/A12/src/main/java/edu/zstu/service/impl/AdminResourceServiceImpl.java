@@ -76,7 +76,7 @@ public class AdminResourceServiceImpl implements AdminResourceService {
         String fileType = detectFileType(dto.getFile_type(), dto.getFile_name(), dto.getFile_url(), dto.getTitle());
         String objectKey = "public/" + dto.getResource_type() + "/" + resource.getId() + "_" + UUID.randomUUID()
                 + extensionForFileType(fileType, dto.getFile_name(), dto.getFile_url(), dto.getTitle());
-        URL signedUrl = ossUtil.generateUploadUrl(objectKey, 120);
+        URL signedUrl = ossUtil.generateUploadUrl(objectKey, dto.getFile_type(),120);
         log.info("createUploadSession signedUrlCreated resourceId={}, objectKey={}", resource.getId(), objectKey);
 
         // 暂存 objectKey（用于 complete 时拼接 file_url）

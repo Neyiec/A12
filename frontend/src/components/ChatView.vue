@@ -16,6 +16,7 @@ import { useUserStore } from '../storage/user.js'
 import { confirmAiPlan, getAiPlan, getAiSession, sendAiSessionMessage } from '../apis/teacher.js'
 import {
   CHAT_COMPOSER, CLASS_LEVEL_OPTIONS, CLARIFICATION_LABELS,
+  STAGE_OPTIONS, SUBJECT_OPTIONS, GRADE_OPTIONS, TEXTBOOK_OPTIONS,
   CHAT_RESUME, DESIGN_ACTION_BAR, GEN_RESOURCE_DEFAULTS, INFO_FORM_DEFAULTS,
   latestSessionPush, RESOURCE_CARD_LABELS, SYSTEM_MESSAGES,
 } from '../config/teacherChat.config.js'
@@ -163,11 +164,11 @@ async function sendMessageToBackend(message) {
       resource_ids: JSON.stringify(props.resourceIds || []),
       enable_rag: props.resourceIds.length > 0,
       enable_web: false,
-      known_context: {
+      known_context: JSON.stringify({
         title: infoForm.courseName.trim(),
         subject: infoForm.subject,
         grade: infoForm.grade,
-      },
+      }),
     })
     if (!isOk(res)) {
       ElMessage.error(res?.message || SYSTEM_MESSAGES.connectionError)
@@ -376,17 +377,28 @@ function parsePlanJson(raw) {
 async function restoreSession() {
   resumeLoading.value = true
   try {
-    const [sessionRes, planRes] = await Promise.all([
-      getAiSession(props.sessionId),
-      getAiPlan(props.sessionId).catch(() => null),
-    ])
+    const sessionRes = await getAiSession(props.sessionId)
     const session = isOk(sessionRes) ? sessionRes.data : null
+
+    // 会话中存储的全部用户消息（过滤 role 异常/内容为空）
+    const storedUserMessages = parseStoredMessages(session?.messages)
+      .filter((msg) => msg.role === 'user' && msg.content)
+
+    // 若只有一条用户消息（欢迎页首条输入，尚未发起大纲生成）：
+    // 直接展示首条消息与补充信息卡片，不请求 plan
+    if (storedUserMessages.length <= 1) {
+      storedUserMessages.forEach((msg) => addMessage('user', 'text', msg.content))
+      phase.value = 'info'
+      addMessage('assistant', 'info_form', '补充信息')
+      await scrollToBottom()
+      return
+    }
+
+    const planRes = await getAiPlan(props.sessionId).catch(() => null)
     const task = isOk(planRes) ? planRes.data : null
 
     // 前两条用户消息作为"初始输入 + 补充信息"气泡渲染（后续各轮 user 皆修改要求，不再重复展示）
-    const userMessages = parseStoredMessages(session?.messages)
-      .filter((msg) => msg.role === 'user' && msg.content)
-      .slice(0, 2)
+    const userMessages = storedUserMessages.slice(0, 2)
     userMessages.forEach((msg) => addMessage('user', 'text', msg.content))
 
     // 有最新大纲：渲染大纲 + 操作栏，并按确认状态进入资源生成或待确认
@@ -457,12 +469,73 @@ async function restoreSession() {
               </div>
 
               <div class="info-table">
-                <!-- 基础信息行 -->
+                <!-- 基础信息行：学段/学科/年级/教材（可填写） -->
                 <div class="info-row">
                   <span class="info-label">基础信息</span>
                   <span class="info-desc">学段/学科/年级/教材</span>
                   <span class="info-value-cell">
-                    <span class="info-readonly">{{ infoForm.stage }} / {{ infoForm.subject }}</span>
+                    <div class="info-basic-grid">
+                      <label class="info-sub-field">
+                        <span class="info-sub-label">学段</span>
+                        <el-select
+                          v-model="infoForm.stage"
+                          placeholder="请选择学段"
+                          :disabled="phase !== 'info'"
+                        >
+                          <el-option
+                            v-for="opt in STAGE_OPTIONS"
+                            :key="opt"
+                            :label="opt"
+                            :value="opt"
+                          />
+                        </el-select>
+                      </label>
+                      <label class="info-sub-field">
+                        <span class="info-sub-label">学科</span>
+                        <el-select
+                          v-model="infoForm.subject"
+                          placeholder="请选择学科"
+                          :disabled="phase !== 'info'"
+                        >
+                          <el-option
+                            v-for="opt in SUBJECT_OPTIONS"
+                            :key="opt"
+                            :label="opt"
+                            :value="opt"
+                          />
+                        </el-select>
+                      </label>
+                      <label class="info-sub-field">
+                        <span class="info-sub-label">年级</span>
+                        <el-select
+                          v-model="infoForm.grade"
+                          placeholder="请选择年级"
+                          :disabled="phase !== 'info'"
+                        >
+                          <el-option
+                            v-for="opt in GRADE_OPTIONS"
+                            :key="opt"
+                            :label="opt"
+                            :value="opt"
+                          />
+                        </el-select>
+                      </label>
+                      <label class="info-sub-field">
+                        <span class="info-sub-label">教材</span>
+                        <el-select
+                          v-model="infoForm.textbook"
+                          placeholder="请选择教材版本"
+                          :disabled="phase !== 'info'"
+                        >
+                          <el-option
+                            v-for="opt in TEXTBOOK_OPTIONS"
+                            :key="opt"
+                            :label="opt"
+                            :value="opt"
+                          />
+                        </el-select>
+                      </label>
+                    </div>
                   </span>
                 </div>
                 <!-- 班级学情行 -->
@@ -472,7 +545,7 @@ async function restoreSession() {
                   <span class="info-value-cell">
                     <el-select
                       v-model="infoForm.classLevel"
-                      size="small"
+                      placeholder="请选择学情"
                       :disabled="phase !== 'info'"
                     >
                       <el-option
@@ -491,7 +564,6 @@ async function restoreSession() {
                   <span class="info-value-cell">
                     <el-input
                       v-model="infoForm.courseName"
-                      size="small"
                       placeholder="请输入课程名称"
                       :disabled="phase !== 'info'"
                     />
@@ -506,7 +578,7 @@ async function restoreSession() {
                       v-model="infoForm.requirements"
                       type="textarea"
                       :autosize="{ minRows: 2, maxRows: 4 }"
-                      size="small"
+                      placeholder="请输入教学侧重点与风格偏好"
                       :disabled="phase !== 'info'"
                     />
                   </span>
@@ -806,19 +878,37 @@ async function restoreSession() {
 .info-value-cell {
   width: auto;
 }
-.info-readonly {
-  color: var(--zh-text-secondary);
-  font-size: var(--zh-font-size13);
+/* 基础信息子项栅格：学段/学科/年级/教材（可填写） */
+.info-basic-grid {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px 16px;
+}
+.info-sub-field {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  min-width: 0;
+}
+.info-sub-label {
+  font-size: var(--zh-font-size11);
+  color: var(--zh-text-caption);
 }
 .info-value-cell :deep(.el-select) {
-  width: 140px;
+  width: 180px;
 }
 .info-value-cell :deep(.el-input) {
   width: 100%;
 }
+/* 基础信息子项下拉：固定较窄宽度并保持文字可读 */
+.info-value-cell .info-sub-field :deep(.el-select),
+.info-value-cell .info-sub-field :deep(.el-input) {
+  width: 128px;
+}
 .info-value-cell :deep(.el-textarea__inner) {
-  font-size: var(--zh-font-size13);
+  font-size: var(--zh-font-size15);
   color: var(--zh-text-primary);
+  line-height: 1.6;
 }
 
 /* 补充信息确认按钮 */

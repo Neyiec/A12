@@ -95,8 +95,8 @@ const formatFileSize = (bytes) => {
   const size = Number(bytes) || 0
   if (size < 1024) return `${size} B`
   const units = ['KB', 'MB', 'GB', 'TB']
-  const unitIndex = Math.min(Math.floor(Math.log(size) / Math.log(1024)), units.length - 1)
-  return `${(size / (1024 ** (unitIndex + 1))).toFixed(size >= 1024 ** (unitIndex + 2) ? 1 : 0)} ${units[unitIndex]}`
+  const unitIndex = Math.min(Math.floor(Math.log(size) / Math.log(1024)), units.length)
+  return `${Number((size / (1024 ** unitIndex)).toFixed(2))} ${units[unitIndex - 1]}`
 }
 
 const formatUpdatedAt = (value) => {
@@ -676,7 +676,15 @@ onBeforeUnmount(clearUploadProgressTimers)
         <el-table v-loading="loading" :data="visibleFiles" @selection-change="selectedRows = $event">
           <el-table-column type="selection" width="42" />
           <el-table-column label="素材" min-width="260">
-            <template #default="{ row }"><div class="file-cell"><span class="file-mark">{{ row.type.slice(0, 1) }}</span><div><strong>{{ row.name }}</strong><small>{{ row.course }} · {{ row.size }}</small></div></div></template>
+            <template #default="{ row }">
+              <div class="file-cell">
+                <span class="file-mark">{{ row.type.slice(0, 1) }}</span>
+                <div>
+                  <strong>{{ row.name }}</strong>
+                  <small>{{ row.course }} · {{ row.size }}</small>
+                </div>
+              </div>
+            </template>
           </el-table-column>
           <el-table-column prop="date" label="更新时间" min-width="120" />
           <el-table-column label="解析状态" width="110"><template #default="{ row }"><el-tag :type="row.status === '已解析' ? 'success' : row.status === '解析中' ? 'warning' : 'info'" effect="light">{{ row.status }}</el-tag></template></el-table-column>
