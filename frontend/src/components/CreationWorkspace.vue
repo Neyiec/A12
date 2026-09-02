@@ -18,6 +18,10 @@ const activeTool = ref('')
 const selectedElementId = ref(null)
 const draggingElementId = ref(null)
 const activePanel = ref('content')
+const canvasZoom = ref(86)
+const CANVAS_ZOOM_MIN = 50
+const CANVAS_ZOOM_MAX = 200
+const CANVAS_ZOOM_STEP = 10
 const previewVisible = ref(false)
 const previewSlideIndex = ref(0)
 const previewDeckRef = ref(null)
@@ -162,6 +166,10 @@ const htmlCanvasFrameSource = computed(() => {
     ? htmlCanvasSource.value
     : String(current.value.html)
 })
+const adjustCanvasZoom = (delta) => {
+  canvasZoom.value = Math.min(CANVAS_ZOOM_MAX, Math.max(CANVAS_ZOOM_MIN, canvasZoom.value + delta))
+}
+const resetCanvasZoom = () => { canvasZoom.value = 86 }
 watch(current, (slide) => syncHtmlCanvasSource(slide), { immediate: true })
 const themeForSlide = (slide) => themes.find((item) => item.id === slide?.theme) || themes[0]
 const theme = computed(() => themeForSlide(current.value))
@@ -2705,10 +2713,10 @@ const selectSlide = (index) => { selectedSlide.value = index; selectedElementId.
             <span v-if="placementMode" class="canvas-placement-status"><b>{{ placementInstruction }}</b><small>Esc 取消</small></span>
             <span>16:9 · 自适应窗口</span>
           </div>
-          <article v-if="current.html" class="slide-canvas html-slide-canvas" :aria-label="`${current.title} HTML PPT`">
+          <article v-if="current.html" class="slide-canvas html-slide-canvas" :style="{ '--canvas-zoom': canvasZoom / 100 }" :aria-label="`${current.title} HTML PPT`">
             <iframe class="editable-html-frame" :srcdoc="htmlCanvasFrameSource" sandbox="allow-same-origin" :title="`${current.title} HTML PPT`" @load="fitHtmlFrame"></iframe>
           </article>
-          <article v-else class="slide-canvas" :class="[`layout-${current.layout}`, { 'is-placing': placementMode }]" :style="{ '--accent': theme.color }" @pointerdown="startCanvasPlacement" @pointermove="handleCanvasPlacementMove" @click="handleSlideCanvasClick">
+          <article v-else class="slide-canvas" :class="[`layout-${current.layout}`, { 'is-placing': placementMode }]" :style="{ '--accent': theme.color, '--canvas-zoom': canvasZoom / 100 }" @pointerdown="startCanvasPlacement" @pointermove="handleCanvasPlacementMove" @click="handleSlideCanvasClick">
             <span class="slide-eyebrow">{{ current.eyebrow }}</span>
             <template v-for="element in current.elements" :key="element.id">
               <h1 v-if="element.type === 'text' && element.target === 'title'" :data-element-id="element.id" :class="elementClass(element)" :style="elementStyle(element.id)" @pointerdown="startElementDrag(element.id, $event)" @click.stop="selectElement(element.id, $event)">{{ elementContent(element) }}</h1>
@@ -2797,7 +2805,10 @@ const selectSlide = (index) => { selectedSlide.value = index; selectedElementId.
             </div>
           </article>
           <div class="canvas-controls" @click.stop>
-            <button aria-label="缩小">−</button><span>86%</span><button aria-label="放大">+</button><button aria-label="全屏预览" @click="openPreview"><el-icon><FullScreen /></el-icon></button>
+            <button type="button" aria-label="缩小画布" title="缩小画布" :disabled="canvasZoom <= CANVAS_ZOOM_MIN" @click="adjustCanvasZoom(-CANVAS_ZOOM_STEP)">−</button>
+            <button type="button" class="canvas-zoom-value" aria-label="重置画布缩放" title="重置为 86%" @click="resetCanvasZoom">{{ canvasZoom }}%</button>
+            <button type="button" aria-label="放大画布" title="放大画布" :disabled="canvasZoom >= CANVAS_ZOOM_MAX" @click="adjustCanvasZoom(CANVAS_ZOOM_STEP)">+</button>
+            <button type="button" aria-label="全屏预览" title="全屏预览" @click="openPreview"><el-icon><FullScreen /></el-icon></button>
           </div>
         </main>
       </section>
@@ -3777,4 +3788,18 @@ const selectSlide = (index) => { selectedSlide.value = index; selectedElementId.
   }
 }
 
+.canvas-area .slide-canvas {
+  transform: scale(var(--canvas-zoom, 1));
+  transform-origin: center center;
+}
+
+.canvas-controls button:disabled {
+  cursor: not-allowed;
+  opacity: .4;
+}
+
+.canvas-controls .canvas-zoom-value {
+  min-width: 54px;
+  cursor: pointer;
+}
 </style>
