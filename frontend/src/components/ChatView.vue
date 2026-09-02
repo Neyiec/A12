@@ -8,18 +8,19 @@
   - 流程说明: 大纲生成走 Java 网关，非流式。若 API-13 返回 last_question，转入澄清阶段等待教师补充回复后继续。修改要求通过再次发送 API-13 消息实现重生成。
 -->
 <script setup>
-import { nextTick, onMounted, reactive, ref } from 'vue'
+import { computed, nextTick, onMounted, reactive, ref } from 'vue'
 import { ElMessage } from 'element-plus'
-import { Document, Promotion } from '@element-plus/icons-vue'
+import { Brush, Document, Promotion } from '@element-plus/icons-vue'
 import MarkdownRender from 'markstream-vue'
 import { useUserStore } from '../storage/user.js'
-import { confirmAiPlan, getAiPlan, getAiSession, sendAiSessionMessage } from '../apis/teacher.js'
+import { confirmAiPlan, getAiPlan, getAiSession, listPptTemplates, sendAiSessionMessage } from '../apis/teacher.js'
 import {
   CHAT_COMPOSER, CLASS_LEVEL_OPTIONS, CLARIFICATION_LABELS,
   STAGE_OPTIONS, SUBJECT_OPTIONS, GRADE_OPTIONS, TEXTBOOK_OPTIONS,
   CHAT_RESUME, DESIGN_ACTION_BAR, GEN_RESOURCE_DEFAULTS, INFO_FORM_DEFAULTS,
   latestSessionPush, RESOURCE_CARD_LABELS, SYSTEM_MESSAGES,
 } from '../config/teacherChat.config.js'
+import PptTemplatePicker from './PptTemplatePicker.vue'
 
 const props = defineProps({
   sessionId: { type: String, required: true },
@@ -75,6 +76,14 @@ const composerInput = ref('')
 // ========== 资源生成卡片数据 ==========
 /** 使用配置模块的默认值初始化资源生成卡片 */
 const genResource = reactive({ ...GEN_RESOURCE_DEFAULTS })
+/** 生成 PPT 前选择的后端模板；工作台只负责编辑生成结果，不在此阶段换肤。 */
+const pptTemplateDialogVisible = ref(false)
+const pptTemplateLoading = ref(false)
+const pptTemplateLoadError = ref('')
+const pptTemplates = ref([])
+const selectedPptTemplateTheme = ref('')
+const pptTemplateDraftTheme = ref('')
+let pptTemplateRequest = null
 
 // ========== 大纲对话框 ==========
 /** 教学大纲确认/修改模态框 */
@@ -89,6 +98,89 @@ const planSubmitting = ref(false)
 const planComment = ref('')
 
 // ========== 辅助函数 ==========
+
+const normalizePptTemplate = (template) => {
+  const theme = String(template?.theme || '').trim()
+  if (!theme) return null
+  return {
+    theme,
+    name: String(template?.template_name || theme).trim() || theme,
+    description: String(template?.description || '适用于课堂课件生成的 PPT 模板。').trim(),
+    aliases: Array.isArray(template?.aliases)
+      ? template.aliases.map((item) => String(item).trim()).filter(Boolean).slice(0, 4)
+      : [],
+    isDefault: Boolean(template?.is_default),
+    filename: String(template?.filename || '').trim(),
+  }
+}
+
+const selectedPptTemplate = computed(() => pptTemplates.value.find((item) => item.theme === selectedPptTemplateTheme.value) || null)
+const pptTemplateName = computed(() => selectedPptTemplate.value?.name || selectedPptTemplateTheme.value || '')
+const pptTemplateStorageKey = () => `a12:ppt-template:session:${props.sessionId}`
+const readStoredPptTemplateTheme = () => {
+  try { return window.localStorage.getItem(pptTemplateStorageKey()) || '' } catch { return '' }
+}
+const persistPptTemplateTheme = () => {
+  if (!selectedPptTemplateTheme.value) return
+  try { window.localStorage.setItem(pptTemplateStorageKey(), selectedPptTemplateTheme.value) } catch { /* 浏览器禁用本地存储时仍保留本次选择 */ }
+}
+
+const loadPptTemplates = async (force = false) => {
+  if (pptTemplateRequest) return pptTemplateRequest
+  if (pptTemplates.value.length && !force) return pptTemplates.value
+  pptTemplateLoading.value = true
+  pptTemplateLoadError.value = ''
+  pptTemplateRequest = (async () => {
+    try {
+      const response = await listPptTemplates()
+      const data = isOk(response) ? response.data : response
+      const source = Array.isArray(data) ? data : data?.templates
+      const templates = (Array.isArray(source) ? source : []).map(normalizePptTemplate).filter(Boolean)
+      if (!templates.length) throw new Error('后端暂未提供可用的 PPT 模板')
+      pptTemplates.value = templates
+      const availableThemes = new Set(templates.map((item) => item.theme))
+      const preferredThemes = [
+        readStoredPptTemplateTheme(),
+        String(data?.default_theme || '').trim(),
+        templates.find((item) => item.isDefault)?.theme || '',
+        templates[0].theme,
+      ]
+      selectedPptTemplateTheme.value = preferredThemes.find((theme) => availableThemes.has(theme)) || templates[0].theme
+      persistPptTemplateTheme()
+      if (outlineData.value) fillGenResource(outlineData.value)
+      return templates
+    } catch (error) {
+      pptTemplateLoadError.value = error?.response?.data?.message || error?.message || 'PPT 模板加载失败'
+      return []
+    } finally {
+      pptTemplateLoading.value = false
+    }
+  })()
+  try {
+    return await pptTemplateRequest
+  } finally {
+    pptTemplateRequest = null
+  }
+}
+
+const openPptTemplateDialog = async () => {
+  pptTemplateDialogVisible.value = true
+  pptTemplateDraftTheme.value = selectedPptTemplateTheme.value
+  await loadPptTemplates()
+  pptTemplateDraftTheme.value = selectedPptTemplateTheme.value
+}
+
+const confirmPptTemplate = (template) => {
+  const theme = template?.theme || pptTemplateDraftTheme.value
+  const selected = pptTemplates.value.find((item) => item.theme === theme)
+  if (!selected) return ElMessage.warning('请先选择一个 PPT 模板')
+  selectedPptTemplateTheme.value = selected.theme
+  pptTemplateDraftTheme.value = selected.theme
+  persistPptTemplateTheme()
+  pptTemplateDialogVisible.value = false
+  fillGenResource(outlineData.value)
+  ElMessage.success(`已选择“${selected.name}”，生成 PPT 时将采用此模板`)
+}
 
 /** 添加消息到列表并自动滚动 */
 function addMessage(role, type, content, data) {
@@ -257,7 +349,7 @@ function fillGenResource(data) {
   const slideCount = data?.slideCount || 0
   genResource.name = (infoForm.courseName.trim() || data?.title || '教学设计') + ' 课件'
   genResource.slideCount = slideCount || GEN_RESOURCE_DEFAULTS.slideCount
-  genResource.theme = GEN_RESOURCE_DEFAULTS.theme
+  genResource.theme = pptTemplateName.value || GEN_RESOURCE_DEFAULTS.theme
   genResource.description = RESOURCE_CARD_LABELS.pptDesc
     .replace('{count}', genResource.slideCount)
     .replace('{theme}', genResource.theme)
@@ -274,6 +366,7 @@ async function confirmOutline() {
   } catch {
     ElMessage.warning('大纲确认状态同步失败，但可继续生成资源。')
   }
+  await loadPptTemplates()
   fillGenResource(data)
 }
 
@@ -318,11 +411,16 @@ function confirmOutlineFromDialog() {
 
 // ========== 资源生成 ==========
 
-/** 点击"生成"按钮：跳转到创作工作台 */
+/** 点击"生成"按钮：确认模板后跳转到创作工作台编辑生成结果。 */
 function startGenerateResource() {
+  if (!selectedPptTemplateTheme.value) {
+    ElMessage.warning('请先选择 PPT 生成模板')
+    void openPptTemplateDialog()
+    return
+  }
   phase.value = 'generating_resource'
-  // 跳转到创作工作台，由工作台侧完成 PPT 生成
-  emit('open-workspace', null)
+  // 模板选择发生在生成前；进入工作台后继续编辑 AI 生成的页面内容。
+  emit('open-workspace', { pptTheme: selectedPptTemplateTheme.value, generationKey: String(Date.now()) })
 }
 
 // ========== 生命周期 ==========
@@ -336,6 +434,7 @@ onMounted(async () => {
   addMessage('user', 'text', props.initialPrompt)
   // 显示补充信息卡片
   addMessage('assistant', 'info_form', '补充信息')
+  void loadPptTemplates()
   // 将最新会话推送到 TeacherLayout 历史列表（页面未刷新时的暂时性显示）
   latestSessionPush.value = {
     id: props.sessionId,
@@ -416,6 +515,7 @@ async function restoreSession() {
       addMessage('assistant', 'markdown', outlineData.value.markdown, { data: outlineData.value })
       addMessage('assistant', 'outline_actions', '', { outlineId: outlineData.value.outlineId })
       if (task?.plan_confirm_status === 'confirmed') {
+        await loadPptTemplates()
         fillGenResource(outlineData.value)
         phase.value = 'resource_ready'
       } else {
@@ -662,7 +762,7 @@ async function restoreSession() {
         <span class="dot-pulse"><i></i><i></i><i></i></span>
       </div>
 
-      <!-- 资源生成卡片：大纲确认后展示，左侧图标 + 右侧生成按钮 -->
+      <!-- 资源生成卡片：大纲确认后先选生成模板，再进入工作台编辑结果 -->
       <div v-if="phase === 'resource_ready' || phase === 'generating_resource'" class="resource-cards-area">
         <div class="resource-card">
           <el-icon class="resource-icon" :size="28">
@@ -671,14 +771,30 @@ async function restoreSession() {
           <div class="resource-info">
             <strong>{{ genResource.name }}</strong>
             <span>{{ genResource.description }}</span>
+            <div class="resource-template-choice">
+              <span>生成模板：{{ pptTemplateName || '加载中…' }}</span>
+              <el-button
+                class="resource-template-change"
+                type="primary"
+                plain
+                round
+                size="small"
+                :icon="Brush"
+                :disabled="phase === 'generating_resource'"
+                @click="openPptTemplateDialog"
+              >
+                {{ pptTemplateName ? '更换模板' : '选择模板' }}
+              </el-button>
+            </div>
           </div>
           <el-button
             type="primary"
             size="small"
+            :disabled="!selectedPptTemplateTheme"
             :loading="phase === 'generating_resource'"
             @click="startGenerateResource"
           >
-            生成
+            生成 PPT
           </el-button>
         </div>
       </div>
@@ -736,6 +852,17 @@ async function restoreSession() {
       <el-button type="primary" @click="confirmOutlineFromDialog">确认大纲</el-button>
     </template>
   </el-dialog>
+
+  <PptTemplatePicker
+    v-model="pptTemplateDialogVisible"
+    :selected-theme="pptTemplateDraftTheme"
+    :templates="pptTemplates"
+    :loading="pptTemplateLoading"
+    :error="pptTemplateLoadError"
+    @update:selected-theme="pptTemplateDraftTheme = $event"
+    @retry="loadPptTemplates(true)"
+    @confirm="confirmPptTemplate"
+  />
 </template>
 
 <style scoped>
@@ -1021,6 +1148,22 @@ async function restoreSession() {
   font-size: var(--zh-font-size11);
   color: var(--zh-text-caption);
 }
+.resource-template-choice {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 4px 8px;
+  margin-top: 2px;
+  color: var(--zh-text-secondary);
+  font-size: var(--zh-font-size11);
+}
+.resource-template-change {
+  height: 24px;
+  padding: 0 9px;
+  border-radius: var(--zh-radius20);
+  font-size: var(--zh-font-size11);
+  font-weight: 600;
+}
 
 /* ===== 底部输入区（flex 布局固定在页面底部，不随消息滚动） ===== */
 .chat-composer {
@@ -1107,6 +1250,12 @@ async function restoreSession() {
   .info-label,
   .info-desc {
     display: none;
+  }
+  .resource-card {
+    align-items: flex-start;
+  }
+  .resource-card > .el-button {
+    flex-shrink: 0;
   }
 }
 

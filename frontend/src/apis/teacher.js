@@ -169,6 +169,46 @@ export const transcribeAudio = (formData) => apiRequest({ url: '/api/v1/python/a
 export const generateInteractiveModule = (data) => post('/api/v1/python/interactive-modules/generate', data)
 
 /**
+ * 获取 Python PPT 生成模板列表。
+ * `theme` 是后续调用 PPT 生成接口时应传入的模板值。
+ */
+export const listPptTemplates = () => get('/api/v1/python/templates')
+
+// Python 端单次模型请求为 120 秒，兼容客户端可能自动重试 2 次；前端留出完整响应时间。
+const PYTHON_PPT_REQUEST_TIMEOUT = 420000
+
+export const generatePresentation = (data) => apiRequest({
+  url: '/api/v1/python/presentations/generate',
+  method: 'post',
+  data,
+  timeout: PYTHON_PPT_REQUEST_TIMEOUT
+})
+
+/**
+ * 根据自然语言修改当前 HTML PPT 页面。
+ * @param {Object} data - API-139 SlideModifyRequest
+ * @returns {Promise} 后端返回 { presentation_id, slide_no, html, change_summary, ... }
+ */
+export const modifyPresentationSlide = (data) => apiRequest({
+  url: '/api/v1/python/presentations/slides/modify',
+  method: 'post',
+  data,
+  timeout: PYTHON_PPT_REQUEST_TIMEOUT
+})
+
+/**
+ * 根据自然语言修改整套 HTML PPT。
+ * @param {Object} data - API-139A PresentationModifyRequest
+ * @returns {Promise} 后端返回修改后的 slides
+ */
+export const modifyPresentation = (data) => apiRequest({
+  url: '/api/v1/python/presentations/modify',
+  method: 'post',
+  data,
+  timeout: PYTHON_PPT_REQUEST_TIMEOUT
+})
+
+/**
  * 保存教师个人偏好设置
  * @param {{ teaching_style: string, template_style: string, interaction_forms: string[] }} data - 偏好数据
  * @returns {Promise} 后端返回更新后的偏好配置
