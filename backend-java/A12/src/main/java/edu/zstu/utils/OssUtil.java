@@ -1,12 +1,15 @@
 package edu.zstu.utils;
 
 import com.aliyun.oss.OSS;
+import com.aliyun.oss.internal.OSSHeaders;
 import com.aliyun.oss.model.GeneratePresignedUrlRequest;
 import org.springframework.stereotype.Component;
 
 import java.io.InputStream;
 import java.net.URL;
 import java.util.Date;
+import java.util.HashMap;
+import java.util.Map;
 
 @Component
 public class OssUtil {
@@ -20,11 +23,14 @@ public class OssUtil {
     }
 
     /** 生成 OSS 文件上传签名 URL（PUT） */
-    public URL generateUploadUrl(String objectKey, long expiresMinutes) {
+    public URL generateUploadUrl(String objectKey, String content_type, long expiresMinutes) {
         Date expiration = new Date(System.currentTimeMillis() + expiresMinutes * 60 * 1000);
         GeneratePresignedUrlRequest request = new GeneratePresignedUrlRequest(
                 ossConfig.getBucketName(), objectKey, com.aliyun.oss.HttpMethod.PUT);
         request.setExpiration(expiration);
+        Map<String, String> headers = new HashMap<String, String>();
+        headers.put(OSSHeaders.CONTENT_TYPE, content_type);
+        request.setHeaders(headers);
         return ossClient.generatePresignedUrl(request);
     }
 

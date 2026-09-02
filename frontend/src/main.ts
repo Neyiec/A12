@@ -26,10 +26,10 @@ import piniaPluginPersistedstate from 'pinia-plugin-persistedstate'
  */
 async function bootstrap() {
   // 开发模式下启动 MSW Mock Service Worker，拦截 API 请求
-  if (import.meta.env.DEV) {
-    const { startMockWorker } = await import('./mock/browser.ts')
-    await startMockWorker()
-  }
+  // if (import.meta.env.DEV) {
+  //   const { startMockWorker } = await import('./mock/browser.ts')
+  //   await startMockWorker()
+  // }
 
   const app = createApp(App)
   const pinia = createPinia()
@@ -42,14 +42,14 @@ async function bootstrap() {
   app.use(ElementPlus)
 
   // 预览或工作台自动导出入口都先建立 mock 会话，避免跳转后因鉴权失败而静默没有任务。
-  if (import.meta.env.DEV && (window.location.hash.includes('preview=1') || window.location.hash.includes('autoExport=1'))) {
-    try {
-      const { ensureDevelopmentPreviewSession } = await import('./utils/previewSession.js')
-      await ensureDevelopmentPreviewSession()
-    } catch (error) {
-      console.error('[preview] mock 登录失败:', error)
-    }
-  }
+  // if (import.meta.env.DEV && (window.location.hash.includes('preview=1') || window.location.hash.includes('autoExport=1'))) {
+  //   try {
+  //     const { ensureDevelopmentPreviewSession } = await import('./utils/previewSession.js')
+  //     await ensureDevelopmentPreviewSession()
+  //   } catch (error) {
+  //     console.error('[preview] mock 登录失败:', error)
+  //   }
+  // }
 
   app.mount('#app')
 }

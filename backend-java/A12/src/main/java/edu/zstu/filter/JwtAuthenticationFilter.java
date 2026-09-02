@@ -69,7 +69,7 @@ public class JwtAuthenticationFilter implements Filter {
             writeUnauthorized(res, "令牌无效");
             return;
         }
-        String userId = claims.get("user_id", String.class);
+        Integer userId = claims.get("user_id", Integer.class);
         if (userId == null) {
             log.warn("jwt auth missing userId path={}, method={}", req.getRequestURI(), req.getMethod());
             writeUnauthorized(res, "令牌无效");
@@ -88,7 +88,7 @@ public class JwtAuthenticationFilter implements Filter {
         // 续期 → 7 天
         redisTemplate.expire(redisKey, 7, TimeUnit.DAYS);
 
-        CurrentHolder.setCurrentId(Integer.parseInt(userId));
+        CurrentHolder.setCurrentId(userId);
         log.debug("jwt auth success userId={}, path={}, method={}", userId, req.getRequestURI(), req.getMethod());
 
         chain.doFilter(request, response);
