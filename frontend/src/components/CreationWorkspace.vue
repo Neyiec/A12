@@ -19,6 +19,7 @@ const selectedElementId = ref(null)
 const draggingElementId = ref(null)
 const activePanel = ref('content')
 const canvasZoom = ref(86)
+const canvasZoomInput = ref('86')
 const CANVAS_ZOOM_MIN = 50
 const CANVAS_ZOOM_MAX = 200
 const CANVAS_ZOOM_STEP = 10
@@ -166,10 +167,19 @@ const htmlCanvasFrameSource = computed(() => {
     ? htmlCanvasSource.value
     : String(current.value.html)
 })
-const adjustCanvasZoom = (delta) => {
-  canvasZoom.value = Math.min(CANVAS_ZOOM_MAX, Math.max(CANVAS_ZOOM_MIN, canvasZoom.value + delta))
+const setCanvasZoom = (value) => {
+  const rawValue = String(value ?? '').trim()
+  const numericValue = Number(rawValue)
+  if (!rawValue || !Number.isFinite(numericValue)) {
+    canvasZoomInput.value = String(canvasZoom.value)
+    return
+  }
+  canvasZoom.value = Math.round(Math.min(CANVAS_ZOOM_MAX, Math.max(CANVAS_ZOOM_MIN, numericValue)))
+  canvasZoomInput.value = String(canvasZoom.value)
 }
-const resetCanvasZoom = () => { canvasZoom.value = 86 }
+const adjustCanvasZoom = (delta) => setCanvasZoom(canvasZoom.value + delta)
+const resetCanvasZoom = () => setCanvasZoom(86)
+const commitCanvasZoomInput = () => setCanvasZoom(canvasZoomInput.value)
 watch(current, (slide) => syncHtmlCanvasSource(slide), { immediate: true })
 const themeForSlide = (slide) => themes.find((item) => item.id === slide?.theme) || themes[0]
 const theme = computed(() => themeForSlide(current.value))
@@ -2806,7 +2816,10 @@ const selectSlide = (index) => { selectedSlide.value = index; selectedElementId.
           </article>
           <div class="canvas-controls" @click.stop>
             <button type="button" aria-label="缩小画布" title="缩小画布" :disabled="canvasZoom <= CANVAS_ZOOM_MIN" @click="adjustCanvasZoom(-CANVAS_ZOOM_STEP)">−</button>
-            <button type="button" class="canvas-zoom-value" aria-label="重置画布缩放" title="重置为 86%" @click="resetCanvasZoom">{{ canvasZoom }}%</button>
+            <span class="canvas-zoom-field" role="group" aria-label="画布缩放比例">
+              <input v-model="canvasZoomInput" class="canvas-zoom-input" type="number" min="50" max="200" step="1" inputmode="numeric" aria-label="输入画布缩放比例" title="输入 50–200 的缩放比例" @change="commitCanvasZoomInput" @blur="commitCanvasZoomInput" @keyup.enter.prevent="commitCanvasZoomInput" @keydown.esc.prevent="resetCanvasZoom">
+              <small>%</small>
+            </span>
             <button type="button" aria-label="放大画布" title="放大画布" :disabled="canvasZoom >= CANVAS_ZOOM_MAX" @click="adjustCanvasZoom(CANVAS_ZOOM_STEP)">+</button>
             <button type="button" aria-label="全屏预览" title="全屏预览" @click="openPreview"><el-icon><FullScreen /></el-icon></button>
           </div>
@@ -3798,8 +3811,40 @@ const selectSlide = (index) => { selectedSlide.value = index; selectedElementId.
   opacity: .4;
 }
 
-.canvas-controls .canvas-zoom-value {
-  min-width: 54px;
-  cursor: pointer;
+.canvas-controls .canvas-zoom-field {
+  display: inline-flex;
+  align-items: center;
+  gap: 2px;
+  padding: 3px 5px;
+  color: var(--zh-text-secondary);
+  font-size: 11px;
+}
+
+.canvas-controls .canvas-zoom-input {
+  box-sizing: border-box;
+  width: 44px;
+  height: 24px;
+  padding: 0 3px;
+  border: 1px solid var(--zh-line-border);
+  border-radius: 5px;
+  outline: none;
+  color: var(--zh-text-secondary);
+  background: var(--zh-background-light);
+  font: inherit;
+  text-align: center;
+}
+
+.canvas-controls .canvas-zoom-input:focus {
+  border-color: var(--zh-line-theme);
+  box-shadow: 0 0 0 2px var(--zh-line-theme20);
+}
+
+.canvas-controls .canvas-zoom-input::-webkit-inner-spin-button,
+.canvas-controls .canvas-zoom-input::-webkit-outer-spin-button {
+  margin: 0;
+}
+
+.canvas-controls .canvas-zoom-field small {
+  font-size: 11px;
 }
 </style>
