@@ -11,6 +11,9 @@ import { success, error, generateId, now } from '../data/common'
 import { mockMaterials } from '../data/resources'
 
 const useRealPptApi = import.meta.env.VITE_USE_REAL_PPT_API === 'true'
+const useRealAiApi = import.meta.env.VITE_USE_REAL_AI_API === 'true'
+const useRealOutlineApi = import.meta.env.VITE_USE_REAL_OUTLINE_API === 'true'
+const useRealPptOperations = useRealPptApi || useRealAiApi
 
 /** 模板列表 */
 const mockTemplates = [
@@ -295,6 +298,12 @@ export const pythonPptHandlers = [
 
   // ========== API-137A 对话式 SSE 大纲生成 ==========
   http.post('/api/v1/python/outlines/chat/stream', async ({ request }) => {
+    // 大纲可独立切换到真实 Python 流；不要复用 VITE_USE_REAL_AI_API，
+    // 后者同时控制认证/会话 mock，打开后会让 mock 登录 token 无法访问 Java。
+    if (useRealOutlineApi || useRealAiApi) {
+      return passthrough()
+    }
+
     const body = (await request.json()) as Record<string, unknown>
     const sessionId = (body.session_id as string) || generateId('outline_chat')
     const userMessage = body.message as string || ''
@@ -651,6 +660,10 @@ ${stage}学生已具备一定的自主学习能力和合作探究意识。经过
 
   // ========== API-139 修改单页 PPT ==========
   http.post('/api/v1/python/presentations/slides/modify', async ({ request }) => {
+    if (useRealPptOperations) {
+      return passthrough()
+    }
+
     const body = (await request.json()) as Record<string, unknown>
     const slideNo = body.slide_no as number
     return HttpResponse.json(success({
@@ -664,6 +677,10 @@ ${stage}学生已具备一定的自主学习能力和合作探究意识。经过
 
   // ========== API-139A 整套课件修改 ==========
   http.post('/api/v1/python/presentations/modify', async ({ request }) => {
+    if (useRealPptOperations) {
+      return passthrough()
+    }
+
     const body = (await request.json()) as Record<string, unknown>
     const slidesInput = (body.slides as Array<Record<string, unknown>>) || []
 

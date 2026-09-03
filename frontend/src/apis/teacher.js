@@ -125,6 +125,22 @@ export function streamOutlineChat(body) {
   )
 }
 
+/**
+ * 普通主对话直连本地开发代理，由代理使用已配置的 DeepSeek/OpenAI-compatible API。
+ * 浏览器端不读取或保存大模型 API Key。
+ */
+export function streamGeneralChat(body) {
+  const userStore = useUserStore()
+  return fetch('/api/dev/llm/chat', {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/json',
+      ...(userStore.token ? { Authorization: `Bearer ${userStore.token}` } : {}),
+    },
+    body: JSON.stringify(body),
+  })
+}
+
 // 教师端项目管理
 export const createProject = (data) => post('/api/v1/projects', data)
 export const listProjects = (params) => get('/api/v1/projects', params)

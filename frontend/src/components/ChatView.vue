@@ -1,43 +1,58 @@
 <!--
   [数据交互说明]
-  - 导入: 聊天配置、Element Plus 图标、`sendAiSessionMessage`（API-13）、`getAiPlan`（API-14）、`confirmAiPlan`（API-15）
-  - Props: sessionId (Java会话ID), initialPrompt (首条用户消息), resourceIds (引用资源)
-  - Emits: @back (返回欢迎页), @open-workspace (跳转工作台), @session-created (Python会话ID)
+  - 导入: 聊天配置、Element Plus 图标、Python 大纲 SSE、`getAiPlan`（兼容 API-14）、`confirmAiPlan`（API-15）
+  - Props: sessionId (Java会话ID), initialPrompt (首条用户消息), resourceIds (引用资源), continuationHistory (切换前的普通对话)
+  - Emits: @back (返回欢迎页), @open-workspace (跳转工作台), @planning-request (普通对话切换备课)
   - 输入: 接收来自 TeacherHome 的会话初始参数
   - 输出: 聊天界面完整交互，流程：用户输入 → 补充信息卡片 → API-13 发消息生成大纲 → API-14 拉取并展示 → 确认/修改(API-15 确认) → 资源生成卡片 → 跳转工作台
-  - 流程说明: 大纲生成走 Java 网关，非流式。若 API-13 返回 last_question，转入澄清阶段等待教师补充回复后继续。修改要求通过再次发送 API-13 消息实现重生成。
+  - 流程说明: 备课模式的大纲生成默认走 Python SSE 真实大模型流；本地开发时登录和 Java 会话仍可使用 mock。若后端返回澄清问题，转入澄清阶段等待教师补充回复后继续。修改要求通过同一 Python 会话再次生成；普通模式只提供主对话，不进入备课接口。
 -->
 <script setup>
-import { computed, nextTick, onMounted, reactive, ref } from 'vue'
+import { computed, nextTick, onMounted, reactive, ref, watch } from 'vue'
 import { ElMessage } from 'element-plus'
 import { Brush, Document, Promotion } from '@element-plus/icons-vue'
 import MarkdownRender from 'markstream-vue'
 import { useUserStore } from '../storage/user.js'
-import { confirmAiPlan, getAiPlan, getAiSession, listPptTemplates, sendAiSessionMessage } from '../apis/teacher.js'
+import { confirmAiPlan, getAiPlan, getAiSession, listPptTemplates, sendAiSessionMessage, streamGeneralChat, streamOutlineChat } from '../apis/teacher.js'
+import { readOutlineDraft, saveOutlineDraft } from '../utils/presentationDraft.js'
 import {
   CHAT_COMPOSER, CLASS_LEVEL_OPTIONS, CLARIFICATION_LABELS,
-  CHAT_RESUME, DESIGN_ACTION_BAR, GEN_RESOURCE_DEFAULTS, INFO_FORM_DEFAULTS,
+  extractPlanningContext, GRADE_OPTIONS, CHAT_RESUME, DESIGN_ACTION_BAR, GEN_RESOURCE_DEFAULTS, INFO_FORM_DEFAULTS,
+  isPlanningPrompt, STAGE_OPTIONS, SUBJECT_OPTIONS,
   latestSessionPush, RESOURCE_CARD_LABELS, SYSTEM_MESSAGES,
 } from '../config/teacherChat.config.js'
+import IntentClarificationDialog from './IntentClarificationDialog.vue'
 import PptTemplatePicker from './PptTemplatePicker.vue'
 
 const props = defineProps({
   sessionId: { type: String, required: true },
   initialPrompt: { type: String, default: '' },
   resourceIds: { type: Array, default: () => [] },
+  /** 普通对话切换到备课流时，需要在当前消息列表前展示的历史消息。 */
+  continuationHistory: { type: Array, default: () => [] },
+  /** 普通主对话不进入备课补充信息流程；默认仍为备课工作流。 */
+  mode: { type: String, default: 'planning' },
   /** 是否为恢复历史会话（来自侧栏历史对话），开启时挂载后拉取消息回显 */
   resume: { type: Boolean, default: false },
 })
 
-const emit = defineEmits(['back', 'open-workspace', 'session-created'])
+const emit = defineEmits(['back', 'open-workspace', 'planning-request', 'session-created'])
 
 const userStore = useUserStore()
+const isGeneralChat = computed(() => props.mode === 'general')
+/** 大纲单独直连 Python 真实模型；不改变 mock 登录和 Java 会话开关。 */
+const useRealOutlineApi = import.meta.env.VITE_USE_REAL_OUTLINE_API === 'true'
+/** Python 大纲会话 ID，与 Java mock 会话 ID 分开保存，便于同一对话继续生成/修改。 */
+const outlinePythonSessionId = ref('')
+/** 流式生成阶段提示，便于确认请求确实进入了真实 Agent。 */
+const outlineGenerationStage = ref('')
 
 // ========== 对话阶段控制 ==========
 /**
  * 阶段状态机：
- *   'info'      → 显示补充信息卡片，等待教师填写
- *   'generating_outline' → 正在通过 API-13 + API-14 获取教学设计大纲
+ *   'info'      → 显示补充信息卡片，等待教师填写（仅备课工作流）
+ *   'general_chat' → 普通主对话，不展示备课表单
+ *   'generating_outline' → 正在通过 Python SSE Agent 获取教学设计大纲
  *   'clarifying'         → 后端返回澄清问题，等待教师补充回复
  *   'outline_ready'      → 大纲已展示，等待确认
  *   'resource_ready'     → 资源生成卡片展示，等待点击生成
@@ -47,6 +62,8 @@ const phase = ref('info')
 
 /** 正在请求提纲/大纲的加载态（用于按钮 loading 与流式指示器） */
 const isRequesterLoading = ref(false)
+/** 切换前的普通对话只在首次提交备课信息时注入一次，后续由同一 Python 会话继续记忆。 */
+const continuationInjected = ref(false)
 /** 恢复历史会话的加载态（进入已有对话时短暂展示"恢复历史对话…"） */
 const resumeLoading = ref(false)
 
@@ -57,7 +74,7 @@ let messageSeq = 0
 const messageListRef = ref(null)
 
 // ========== 教学设计方案数据 ==========
-/** 完整大纲数据（Markdown + 元数据），由 API-14 拉取的 plan_json 填充 */
+/** 完整大纲数据（Markdown + 元数据），由真实 Python SSE 或兼容 API-14 填充 */
 const outlineData = ref(null)
 /** 最新一次用于展示的大纲版本号（提交确认/修改时携带，防并发冲突） */
 const planVersion = ref(1)
@@ -71,6 +88,10 @@ const infoForm = reactive({ ...INFO_FORM_DEFAULTS })
 const lastClarification = ref('')
 /** 澄清/修改输入框内容 */
 const composerInput = ref('')
+/** 后端 Agent 返回复杂澄清问题时使用的结构化征询弹窗。首次信息直接在内嵌卡片中填写。 */
+const planningClarificationVisible = ref(false)
+const planningClarificationQuestion = ref(null)
+const planningClarificationSubmitting = ref(false)
 
 // ========== 资源生成卡片数据 ==========
 /** 使用配置模块的默认值初始化资源生成卡片 */
@@ -184,8 +205,129 @@ const confirmPptTemplate = (template) => {
 /** 添加消息到列表并自动滚动 */
 function addMessage(role, type, content, data) {
   messageSeq += 1
-  messages.push({ id: messageSeq, role, type, content, data })
+  const message = { id: messageSeq, role, type, content, data }
+  messages.push(message)
   scrollToBottom()
+  // reactive 数组会在读取时返回代理；返回数组中的元素，确保后续流式更新能触发 Vue 渲染。
+  return messages[messages.length - 1]
+}
+
+/** 规范化普通对话历史，只保留可回显、可交给模型理解的文本消息。 */
+function normalizeConversationHistory(history) {
+  return (Array.isArray(history) ? history : [])
+    .filter((item) => item && (item.role === 'user' || item.role === 'assistant') && String(item.content || '').trim())
+    .map((item) => ({ role: item.role, content: String(item.content).trim() }))
+    .slice(-16)
+}
+
+/** 将切换前的对话整理成首次备课请求可理解的背景文本。 */
+function buildContinuationContext() {
+  const history = normalizeConversationHistory(props.continuationHistory)
+  if (!history.length) return ''
+  const transcript = history
+    .map((item) => `${item.role === 'assistant' ? 'AI' : '教师'}：${item.content}`)
+    .join('\n')
+  return [
+    '这是教师进入备课流程前与 AI 的已有对话，请将其作为本次备课的背景信息。',
+    '请保留其中已经确认的教学目标、受众、内容偏好和修改要求，不要重复询问已经明确的信息。',
+    transcript,
+  ].join('\n')
+}
+
+/** 将切换前的消息接在当前备课请求之前回显。 */
+function renderContinuationHistory() {
+  normalizeConversationHistory(props.continuationHistory)
+    .forEach((item) => addMessage(item.role, 'text', item.content))
+}
+
+/** 将首句或澄清回答映射到备课表单，兼容前后端不同字段命名。 */
+function applyPlanningContext(context = {}) {
+  const valueOf = (...keys) => {
+    for (const key of keys) {
+      const value = context?.[key]
+      if (value !== undefined && value !== null && String(value).trim()) return String(value).trim()
+    }
+    return ''
+  }
+
+  const stage = valueOf('stage', 'school_stage', 'education_stage')
+  const subject = valueOf('subject', 'discipline')
+  const grade = valueOf('grade', 'class_grade', 'grade_level')
+  const textbook = valueOf('textbook', '教材', 'book')
+  const courseName = valueOf('course_name', 'courseName', 'title', 'topic', 'theme')
+  const requirements = valueOf('requirements', 'personalized_needs', 'personalizedNeeds', 'needs')
+  const classLevel = valueOf('class_level', 'classLevel', 'learning_level')
+
+  if (stage) infoForm.stage = stage
+  if (subject) infoForm.subject = subject
+  if (grade) infoForm.grade = grade
+  if (textbook) infoForm.textbook = textbook
+  if (courseName) infoForm.courseName = courseName
+  if (requirements) infoForm.requirements = requirements
+  if (classLevel) infoForm.classLevel = classLevel
+}
+
+/** 新建备课会话时只保留真正的默认偏好，不把示例学科/年级伪装成 AI 识别结果。 */
+function prepareInitialInfoForm(prompt) {
+  Object.assign(infoForm, {
+    ...INFO_FORM_DEFAULTS,
+    stage: '',
+    subject: '',
+    grade: '',
+    textbook: '',
+    courseName: '',
+  })
+  applyPlanningContext(extractPlanningContext(prompt))
+}
+
+/** 将后端字符串澄清问题也包装成结构化弹窗，避免只显示一段不可操作的追问文本。 */
+function normalizePlanningClarification(rawQuestion) {
+  if (rawQuestion && typeof rawQuestion === 'object') {
+    const question = { ...rawQuestion }
+    if (!Array.isArray(question.questions) || !question.questions.length) {
+      question.questions = [{
+        field: 'clarification',
+        label: '补充说明',
+        text: String(question.text || question.question || question.title || '请补充说明你的教学需求。'),
+        required: true,
+        allowCustom: true,
+      }]
+    }
+    question.text = String(question.text || question.question || question.title || '为了更准确地完成备课，请补充以下信息。')
+    return question
+  }
+
+  const text = String(rawQuestion || '').trim()
+  if (!text) return null
+  // 个别代理会把结构化问题作为 JSON 字符串返回，先尝试恢复对象。
+  if (text.startsWith('{')) {
+    try {
+      const parsed = JSON.parse(text)
+      if (parsed && typeof parsed === 'object') return normalizePlanningClarification(parsed)
+    } catch {
+      // 不是 JSON 时按普通问题处理。
+    }
+  }
+  return {
+    text,
+    questions: [{
+      field: 'clarification',
+      label: '补充说明',
+      text,
+      required: true,
+      allowCustom: true,
+      placeholder: '请直接填写你的补充要求',
+    }],
+  }
+}
+
+/** 打开后端 Agent 征询弹窗；关闭后仍保留内嵌表单/底部输入作为可恢复入口。 */
+function openPlanningClarification(rawQuestion) {
+  const question = normalizePlanningClarification(rawQuestion)
+  if (!question) return false
+  planningClarificationQuestion.value = question
+  planningClarificationVisible.value = true
+  return true
 }
 
 /** 滚动消息列表到底部 */
@@ -223,6 +365,244 @@ function planJsonToMarkdown(planJson) {
   return lines.join('\n')
 }
 
+/** 解析 Python 大纲接口返回的单个 SSE 事件帧。 */
+function parseOutlineSseFrame(frame) {
+  let event = 'message'
+  const dataLines = []
+  String(frame || '').split(/\r?\n/).forEach((line) => {
+    if (line.startsWith('event:')) event = line.slice(6).trim() || 'message'
+    if (line.startsWith('data:')) dataLines.push(line.slice(5).trim())
+  })
+  const rawData = dataLines.join('\n').trim()
+  if (!rawData) return { event, data: {} }
+  try {
+    return { event, data: JSON.parse(rawData) }
+  } catch {
+    return { event, data: { _raw: rawData } }
+  }
+}
+
+/**
+ * 读取 Python 大纲 Agent 的 POST SSE 流。
+ * 与普通对话的 OpenAI SSE 不同，这里需要消费 session/stage/question/final/done 等业务事件。
+ */
+async function readOutlineChatStream(response, callbacks = {}) {
+  if (!response?.ok) {
+    const responseText = await response?.text?.().catch(() => '') || ''
+    let message = ''
+    try {
+      const payload = JSON.parse(responseText)
+      message = payload?.message || payload?.detail || payload?.error || ''
+    } catch {
+      // 保留 HTTP 状态作为错误信息。
+    }
+    throw new Error(message || `大纲模型请求失败（HTTP ${response?.status || 0}）`)
+  }
+
+  const reader = response.body?.getReader()
+  if (!reader) throw new Error('大纲模型没有返回可读取的数据流')
+
+  const decoder = new TextDecoder('utf-8')
+  let buffer = ''
+  let finalData = null
+  let doneData = null
+
+  const dispatchFrame = (frame) => {
+    const parsed = parseOutlineSseFrame(frame)
+    if (!parsed.event || parsed.event === 'message') return
+    const data = parsed.data || {}
+    switch (parsed.event) {
+      case 'session':
+        callbacks.onSession?.(data)
+        break
+      case 'stage':
+        callbacks.onStage?.(data)
+        break
+      case 'question':
+        callbacks.onQuestion?.(data)
+        break
+      case 'tool_result':
+        callbacks.onToolResult?.(data)
+        break
+      case 'outline_delta':
+        callbacks.onOutlineDelta?.(data)
+        break
+      case 'final':
+        finalData = data
+        callbacks.onFinal?.(data)
+        break
+      case 'error':
+        callbacks.onError?.(data)
+        throw new Error(data.message || data.detail || '大纲模型生成失败')
+      case 'done':
+        doneData = data
+        callbacks.onDone?.(data)
+        break
+      default:
+        callbacks.onEvent?.(parsed.event, data)
+        break
+    }
+  }
+
+  const consumeFrames = (flush = false) => {
+    const chunks = buffer.split(/\r?\n\r?\n/)
+    buffer = flush ? '' : (chunks.pop() || '')
+    chunks.forEach((chunk) => {
+      if (chunk.trim()) dispatchFrame(chunk)
+    })
+  }
+
+  try {
+    while (true) {
+      const { done, value } = await reader.read()
+      buffer += decoder.decode(value || new Uint8Array(), { stream: !done })
+      consumeFrames(false)
+      if (done) break
+    }
+    // 流结束时处理没有以空行结尾的最后一个事件。
+    if (buffer.trim()) consumeFrames(true)
+  } finally {
+    reader.releaseLock?.()
+  }
+
+  if (doneData?.status === 'failed') {
+    throw new Error(doneData.message || '大纲模型生成失败')
+  }
+  if (doneData?.status === 'need_clarification') return null
+  if (!finalData) throw new Error('大纲模型未返回有效结果')
+  return finalData
+}
+
+/** 将真实 Python 返回的 response 归一化为工作台和 Markdown 共用的 plan_json。 */
+function normalizeRealOutlineResponse(response = {}) {
+  const nestedOutline = response?.outline && typeof response.outline === 'object' && !Array.isArray(response.outline)
+    ? response.outline
+    : {}
+  const nestedSlides = Array.isArray(nestedOutline.slides) ? nestedOutline.slides : []
+  const responseSlides = Array.isArray(response.slides) ? response.slides : []
+  const slides = nestedSlides.length ? nestedSlides : responseSlides
+  const planJson = {
+    ...nestedOutline,
+    title: nestedOutline.title || response.title || infoForm.courseName.trim() || '教学设计方案',
+    summary: nestedOutline.summary || response.summary || '',
+    subject: nestedOutline.subject || response.subject || infoForm.subject,
+    grade: nestedOutline.grade || response.grade || infoForm.grade,
+    requirements: nestedOutline.requirements || response.requirements || infoForm.requirements,
+    slide_count: Number(nestedOutline.slide_count) || Number(response.slide_count) || slides.length,
+    slides,
+  }
+  ;['teaching_design_chain', 'interactive_assets', 'diagram_assets', 'quality_report', 'generation_options']
+    .forEach((key) => {
+      if (planJson[key] === undefined && response[key] !== undefined) planJson[key] = response[key]
+    })
+  const outlineId = String(response.outline_id || nestedOutline.outline_id || '').trim()
+  if (outlineId) planJson.outline_id = outlineId
+  if (response.version !== undefined && planJson.version === undefined) planJson.version = response.version
+  return planJson
+}
+
+/** 展示并保存真实模型生成的大纲，供确认按钮和创作工作台继续使用。 */
+function applyRealOutlineResponse(response) {
+  const planJson = normalizeRealOutlineResponse(response)
+  if (!Array.isArray(planJson.slides) || !planJson.slides.length) throw new Error('大纲模型未返回页面结构')
+
+  const outlineId = String(response?.outline_id || planJson.outline_id || '').trim()
+  const version = Number(planJson.version) || 1
+  const task = {
+    ...(response || {}),
+    plan_json: planJson,
+    python_session_id: outlinePythonSessionId.value || String(props.sessionId || ''),
+    python_outline_id: outlineId || null,
+    plan_version: version,
+    plan_confirm_status: 'pending',
+  }
+  planTask.value = task
+  planVersion.value = version
+  outlineData.value = {
+    markdown: planJsonToMarkdown(planJson),
+    title: planJson.title || '教学设计方案',
+    slideCount: Number(planJson.slide_count) || planJson.slides.length,
+    planJson,
+    outlineId: outlineId || undefined,
+  }
+  saveOutlineDraft(props.sessionId, {
+    ...task,
+    plan_json: planJson,
+    python_session_id: task.python_session_id,
+    python_outline_id: outlineId || null,
+    plan_confirm_status: 'pending',
+  })
+  phase.value = 'outline_ready'
+  addMessage('assistant', 'markdown', outlineData.value.markdown, { data: outlineData.value })
+  addMessage('assistant', 'outline_actions', '', { outlineId: outlineData.value.outlineId })
+  void scrollToBottom()
+}
+
+/** 通过 Python SSE 真实 Agent 生成/修改大纲；请求体直接使用 Python DTO 的字段类型。 */
+async function requestRealOutlineChat(message) {
+  const resourceIds = (props.resourceIds || []).map((item) => String(item))
+  const response = await streamOutlineChat({
+    user_id: String(userStore.userInfo?.user_id || '10001'),
+    session_id: outlinePythonSessionId.value || String(props.sessionId || '') || undefined,
+    message,
+    history: normalizeConversationHistory(props.continuationHistory),
+    known_context: {
+      title: infoForm.courseName.trim(),
+      course_name: infoForm.courseName.trim(),
+      stage: infoForm.stage,
+      subject: infoForm.subject,
+      grade: infoForm.grade,
+      textbook: infoForm.textbook,
+      class_level: infoForm.classLevel,
+      requirements: infoForm.requirements,
+    },
+    resource_ids: resourceIds,
+    enable_rag: resourceIds.length > 0,
+    enable_web: false,
+    slide_count: Number(genResource.slideCount) || 8,
+    language: 'zh-CN',
+  })
+
+  let clarification = null
+  let finalResponse = null
+  await readOutlineChatStream(response, {
+    onSession: (data) => {
+      if (data?.session_id) outlinePythonSessionId.value = String(data.session_id)
+    },
+    onStage: (data) => {
+      outlineGenerationStage.value = String(data?.message || data?.name || '正在生成教学设计大纲…')
+    },
+    onQuestion: (data) => {
+      clarification = data
+    },
+    onFinal: (data) => {
+      finalResponse = data
+    },
+  })
+
+  if (clarification) {
+    const question = normalizePlanningClarification(clarification.question || clarification)
+    if (question) {
+      saveOutlineDraft(props.sessionId, {
+        ...(readOutlineDraft(props.sessionId) || {}),
+        python_session_id: outlinePythonSessionId.value || String(props.sessionId || ''),
+        clarification: question,
+        plan_confirm_status: 'pending',
+      })
+      lastClarification.value = question.text
+      phase.value = 'clarifying'
+      addMessage('assistant', 'clarification', question.text)
+      openPlanningClarification(question)
+      return { status: 'need_clarification' }
+    }
+  }
+
+  if (!finalResponse) throw new Error('大纲模型未返回有效结果')
+  const qualityCheckedResponse = await ensureOutlineQuality(finalResponse)
+  applyRealOutlineResponse(qualityCheckedResponse)
+  return { status: 'completed' }
+}
+
 // ========== 大纲请求与结果落库 ==========
 
 /**
@@ -242,49 +622,69 @@ function buildContextMessage(extra = '') {
 }
 
 /**
- * 调用 API-13 发送消息，驱动 Java 转发 Python 生成大纲。
+ * 发送消息驱动大纲 Agent；真实模式走 Python SSE，离线模式保留 Java mock 兼容路径。
  * 返回解析后的 ConversationVO；若后端需要澄清，则转入 clarifying 阶段等待教师回复。
  * @param {string} message - 本轮自然语言输入
+ * @param {Object} options - 是否把切换前的普通对话作为首次备课背景注入
  */
-async function sendMessageToBackend(message) {
+async function sendMessageToBackend(message, { includeContinuation = false } = {}) {
   phase.value = 'generating_outline'
   isRequesterLoading.value = true
+  outlineGenerationStage.value = useRealOutlineApi ? '正在连接大纲模型…' : ''
+  const shouldInjectContinuation = includeContinuation && !continuationInjected.value
+  const continuationContext = shouldInjectContinuation ? buildContinuationContext() : ''
+  const requestMessage = continuationContext
+    ? `${continuationContext}\n\n当前备课请求：\n${message}`
+    : message
   try {
+    if (useRealOutlineApi) {
+      // 真实大纲流不再调用 Java API-13/API-14，避免被前端固定 plan mock 覆盖。
+      await requestRealOutlineChat(requestMessage)
+      if (shouldInjectContinuation) continuationInjected.value = true
+      return
+    }
+
     const res = await sendAiSessionMessage(props.sessionId, {
-      message,
+      message: requestMessage,
       resource_ids: JSON.stringify(props.resourceIds || []),
       enable_rag: props.resourceIds.length > 0,
       enable_web: false,
-      known_context: {
+      // Java ConversationDTO.known_context 是 JSON 字符串，不能直接传对象。
+      known_context: JSON.stringify({
         title: infoForm.courseName.trim(),
         subject: infoForm.subject,
         grade: infoForm.grade,
-      },
+      }),
     })
     if (!isOk(res)) {
       ElMessage.error(res?.message || SYSTEM_MESSAGES.connectionError)
       phase.value = 'info'
       return
     }
+    if (shouldInjectContinuation) continuationInjected.value = true
     const data = res.data
-    // 归一化澄清问题：真实后端 last_question 为字符串，mock 可能为对象
-    const question = (typeof data?.last_question === 'string' && data.last_question.trim())
-      ? data.last_question
-      : (typeof data?.last_question === 'object' && data.last_question?.text) || ''
+    // 归一化澄清问题：真实后端可能返回字符串，Agent/mock 也可能返回结构化对象。
+    const rawQuestion = data?.last_question
+      ?? data?.clarification_question
+      ?? data?.question
+      ?? (data?.status === 'need_clarification' ? data : null)
+    const question = normalizePlanningClarification(rawQuestion)
     if (question) {
-      // 需要澄清：记录问题并等待教师回复
-      lastClarification.value = question
+      // 需要澄清：记录问题并弹出可操作的征询界面；关闭弹窗后仍可用底部输入回复。
+      lastClarification.value = question.text
       phase.value = 'clarifying'
-      addMessage('assistant', 'clarification', question)
+      addMessage('assistant', 'clarification', question.text)
+      openPlanningClarification(question)
       return
     }
-    // 无需澄清：拉取最新大纲
+    // 离线兼容路径：从 Java 会话拉取 mock/真实网关持久化的大纲。
     await loadPlan()
-  } catch {
-    ElMessage.error(SYSTEM_MESSAGES.connectionError)
+  } catch (error) {
+    ElMessage.error(error?.message || SYSTEM_MESSAGES.connectionError)
     phase.value = 'info'
   } finally {
     isRequesterLoading.value = false
+    outlineGenerationStage.value = ''
   }
 }
 
@@ -317,15 +717,19 @@ async function loadPlan() {
 
 // ========== 补充信息确认 ==========
 
-/** 确认补充信息，发起教学大纲生成（API-13 → API-14） */
-async function confirmInfo() {
+/** 确认补充信息，发起教学大纲生成（真实模式：Python SSE；兼容模式：API-13 → API-14） */
+async function confirmInfo({ summary = '' } = {}) {
+  if (!infoForm.stage || !infoForm.subject || !infoForm.grade) {
+    ElMessage.warning('请先补充学段、学科和年级')
+    return
+  }
   // 校验课程名称必填
   if (!infoForm.courseName.trim()) {
     ElMessage.warning('请输入课程名称')
     return
   }
-  addMessage('user', 'text', infoForm.courseName.trim())
-  await sendMessageToBackend(buildContextMessage())
+  addMessage('user', 'text', summary || infoForm.courseName.trim())
+  await sendMessageToBackend(buildContextMessage(), { includeContinuation: true })
 }
 
 /** 澄清回复：把教师针对问题的回复作为下一轮输入继续生成 */
@@ -338,6 +742,253 @@ async function handleClarificationReply() {
   addMessage('user', 'text', text)
   composerInput.value = ''
   await sendMessageToBackend(text)
+}
+
+/** 提交后端 Agent 返回的结构化澄清问题。 */
+async function submitPlanningClarification(payload = {}) {
+  if (planningClarificationSubmitting.value) return
+  planningClarificationSubmitting.value = true
+  try {
+    const answer = String(payload.answer || payload.value || '').trim()
+    if (!answer) return
+    planningClarificationVisible.value = false
+    addMessage('user', 'text', answer)
+    await sendMessageToBackend(answer)
+  } finally {
+    planningClarificationSubmitting.value = false
+  }
+}
+
+/** 提取普通主对话的上下文，发送给本地开发代理背后的真实大模型。 */
+function getGeneralChatHistory() {
+  return messages
+    .filter((item) => item.type === 'text' && (item.role === 'user' || item.role === 'assistant') && String(item.content || '').trim())
+    .map((item) => ({ role: item.role, content: String(item.content).trim() }))
+    .slice(-12)
+}
+
+/** 读取 OpenAI-compatible SSE，将模型增量内容实时写入当前消息。 */
+async function readGeneralChatStream(response, assistantMessage) {
+  const reader = response.body?.getReader()
+  if (!reader) throw new Error('模型没有返回可读取的数据流')
+  const decoder = new TextDecoder()
+  let buffer = ''
+  let content = ''
+
+  const consumeLine = (line) => {
+    if (!line.startsWith('data:')) return
+    const data = line.slice(5).trim()
+    if (!data || data === '[DONE]') return
+    try {
+      const payload = JSON.parse(data)
+      const delta = payload?.choices?.[0]?.delta?.content ?? payload?.choices?.[0]?.message?.content
+      if (typeof delta === 'string' && delta) {
+        content += String(delta)
+        assistantMessage.content = content
+        void scrollToBottom()
+      }
+    } catch {
+      // 忽略不完整或非 JSON 的 SSE 行，下一次读取会补齐内容。
+    }
+  }
+
+  while (true) {
+    const { done, value } = await reader.read()
+    buffer += decoder.decode(value || new Uint8Array(), { stream: !done })
+    // 以行解析而不是依赖空行分隔，兼容代理把多个 SSE 事件合并到同一块数据的情况。
+    const lines = buffer.split(/\r?\n/)
+    buffer = lines.pop() || ''
+    lines.forEach(consumeLine)
+    if (done) break
+  }
+  if (buffer.trim()) consumeLine(buffer)
+  assistantMessage.content = content
+  if (!content.trim()) throw new Error('模型未返回有效内容')
+}
+
+/** 从模型文本中提取 JSON 对象，兼容模型偶尔附带的代码围栏。 */
+function parseModelJsonObject(text) {
+  const raw = String(text || '').trim()
+  const fenced = raw.match(/```(?:json)?\s*([\s\S]*?)```/i)
+  const candidate = (fenced?.[1] || raw).trim()
+  const start = candidate.indexOf('{')
+  const end = candidate.lastIndexOf('}')
+  if (start < 0 || end <= start) return null
+  try {
+    const parsed = JSON.parse(candidate.slice(start, end + 1))
+    return parsed && typeof parsed === 'object' && !Array.isArray(parsed) ? parsed : null
+  } catch {
+    return null
+  }
+}
+
+/** 兼容 Python 返回顶层 slides 和嵌套 outline.slides 两种结构。 */
+function outlineCandidate(value = {}) {
+  return value?.outline && typeof value.outline === 'object' && !Array.isArray(value.outline)
+    ? value.outline
+    : value
+}
+
+/** 检测 Python 回退大纲特征，避免重复内容继续进入确认和 PPT 生成。 */
+function outlineNeedsRepair(value = {}) {
+  const outline = outlineCandidate(value)
+  const slides = Array.isArray(outline?.slides) ? outline.slides.filter((slide) => slide && typeof slide === 'object') : []
+  if (slides.length < 4) return false
+
+  const fallbackTitleCount = slides
+    .slice(1)
+    .filter((slide) => /^重点解析\s*\d+$/.test(String(slide.title || '').trim()))
+    .length
+  if (fallbackTitleCount > 0) return true
+
+  const pointFrequency = new Map()
+  slides.forEach((slide) => {
+    const points = Array.isArray(slide.content_points)
+      ? [...new Set(slide.content_points.map((point) => String(point || '').trim()).filter(Boolean))]
+      : []
+    points.forEach((point) => pointFrequency.set(point, (pointFrequency.get(point) || 0) + 1))
+  })
+  const commonPointCount = [...pointFrequency.values()].filter((count) => count >= Math.ceil(slides.length * 0.6)).length
+  const intents = new Set(slides.map((slide) => String(slide.teaching_intent || '').trim()).filter(Boolean))
+  const visuals = new Set(slides.map((slide) => String(slide.visual_suggestion || '').trim()).filter(Boolean))
+  return commonPointCount >= 2 && (intents.size <= Math.ceil(slides.length * 0.5) || visuals.size <= Math.ceil(slides.length * 0.5))
+}
+
+function outlineRepairPrompt(response) {
+  const outline = outlineCandidate(response) || {}
+  const context = {
+    title: infoForm.courseName.trim() || outline.title || '教学设计方案',
+    subject: infoForm.subject,
+    grade: infoForm.grade,
+    requirements: infoForm.requirements,
+  }
+  return [
+    '请修复下面这份教学 PPT 大纲。原大纲疑似使用了回退模板，多个页面的教学要点、教学意图和视觉建议重复。',
+    '请保留教师的课程主题和真实需求，重新设计每一页的教学任务与内容。每页必须有不同的标题、content_points、teaching_intent 和 visual_suggestion，不能只替换页码或标题。',
+    '请保留或补全 cover、agenda、content、activity/practice、summary 等教学结构，页数保持不变。只输出完整 JSON 对象，不要 Markdown、解释或代码围栏。',
+    `课程上下文：${JSON.stringify(context, null, 2)}`,
+    `待修复大纲：${JSON.stringify(outline, null, 2)}`,
+    'JSON 至少包含 title、summary、slides；每个 slide 至少包含 slide_no、title、slide_type、content_points（数组）、teaching_intent、visual_suggestion。',
+  ].join('\n\n')
+}
+
+/** 使用前端开发代理调用同一大模型，修复后端回退导致的重复大纲；不改后端源码。 */
+async function requestOutlineRepairWithModel(response) {
+  const modelResponse = await streamGeneralChat({
+    mode: 'outline-repair',
+    user_id: String(userStore.userInfo?.user_id || '10001'),
+    messages: [{ role: 'user', content: outlineRepairPrompt(response) }],
+  })
+  if (!modelResponse.ok) {
+    let message = ''
+    try {
+      const payload = await modelResponse.json()
+      message = payload?.message || ''
+    } catch {
+      // 保留 HTTP 状态作为错误信息。
+    }
+    throw new Error(message || `大纲重写请求失败（HTTP ${modelResponse.status}）`)
+  }
+
+  const assistantMessage = { content: '' }
+  await readGeneralChatStream(modelResponse, assistantMessage)
+  const parsed = parseModelJsonObject(assistantMessage.content)
+  const parsedOutline = outlineCandidate(parsed || {})
+  const slides = Array.isArray(parsedOutline?.slides) ? parsedOutline.slides : []
+  if (!slides.length) throw new Error('大纲重写模型未返回有效页面结构')
+
+  const originalOutline = outlineCandidate(response) || {}
+  const repairedOutline = {
+    ...originalOutline,
+    ...(parsedOutline || {}),
+    slides,
+    slide_count: slides.length,
+  }
+  return {
+    ...response,
+    ...(parsed || {}),
+    outline: repairedOutline,
+    slides,
+    slide_count: slides.length,
+    client_outline_repair: true,
+  }
+}
+
+async function ensureOutlineQuality(response) {
+  if (!useRealOutlineApi || !outlineNeedsRepair(response)) return response
+  outlineGenerationStage.value = '检测到大纲内容重复，正在请求模型重新设计…'
+  const repaired = await requestOutlineRepairWithModel(response)
+  if (outlineNeedsRepair(repaired)) throw new Error('模型重写后仍存在重复内容，请点击重试')
+  ElMessage.success('已自动修复重复大纲，页面内容已重新设计')
+  return repaired
+}
+
+/** 通过本地开发代理调用已配置的 DeepSeek/OpenAI-compatible 大模型。 */
+async function requestGeneralChatReply() {
+  const history = getGeneralChatHistory()
+  const assistantMessage = addMessage('assistant', 'text', '')
+  isRequesterLoading.value = true
+  try {
+    const response = await streamGeneralChat({
+      user_id: String(userStore.userInfo?.user_id || '10001'),
+      messages: history,
+    })
+    if (!response.ok) {
+      let message = ''
+      try {
+        const payload = await response.json()
+        message = payload?.message || ''
+      } catch {
+        // 保留 HTTP 状态作为错误信息。
+      }
+      throw new Error(message || `模型请求失败（HTTP ${response.status}）`)
+    }
+    await readGeneralChatStream(response, assistantMessage)
+  } catch (error) {
+    assistantMessage.content = `大模型暂时无法回复：${error?.message || '连接失败，请检查模型配置。'}`
+    ElMessage.error(error?.message || '大模型连接失败，请检查配置')
+  } finally {
+    isRequesterLoading.value = false
+    await scrollToBottom()
+  }
+}
+
+/** 普通主对话发送消息。备课澄清仍沿用 API-13 流程。 */
+async function handleGeneralMessage() {
+  if (isRequesterLoading.value) return
+  const text = composerInput.value.trim()
+  if (!text) return
+  addMessage('user', 'text', text)
+  composerInput.value = ''
+
+  // 普通聊天中途明确提出制作课件/备课时，交给父级创建真正的备课会话，
+  // 保证后续进入结构化征询，而不是继续让普通模型用文字追问。
+  if (isPlanningPrompt(text)) {
+    emit('planning-request', {
+      prompt: text,
+      resourceIds: [...(props.resourceIds || [])],
+      // 当前这条备课请求由父级作为新流程的首条消息传入，这里只传切换前的历史。
+      history: getGeneralChatHistory().slice(0, -1),
+    })
+    return
+  }
+
+  await requestGeneralChatReply()
+}
+
+function handleComposerSubmit() {
+  if (isGeneralChat.value) {
+    void handleGeneralMessage()
+    return
+  }
+  if (phase.value === 'clarifying') void handleClarificationReply()
+}
+
+/** 聊天快捷键：Enter 发送，Shift+Enter 换行；中文输入法候选确认不触发发送。 */
+function handleComposerKeydown(event) {
+  if (event.isComposing || event.keyCode === 229 || event.shiftKey) return
+  event.preventDefault()
+  handleComposerSubmit()
 }
 
 // ========== 大纲操作 ==========
@@ -365,6 +1016,14 @@ async function confirmOutline() {
   } catch {
     ElMessage.warning('大纲确认状态同步失败，但可继续生成资源。')
   }
+  const localOutlineDraft = readOutlineDraft(props.sessionId)
+  if (localOutlineDraft) {
+    saveOutlineDraft(props.sessionId, {
+      ...localOutlineDraft,
+      plan_confirm_status: 'confirmed',
+      plan_version: planVersion.value,
+    })
+  }
   await loadPptTemplates()
   fillGenResource(data)
 }
@@ -388,7 +1047,7 @@ async function modifyOutline() {
   }
 }
 
-/** 修改要求：必须填写说明 → 作为新消息重新生成大纲（API-13 → API-14） */
+/** 修改要求：必须填写说明 → 在同一 Agent 会话中重新生成大纲 */
 async function submitModifyRequirement() {
   if (!planComment.value.trim()) {
     ElMessage.warning('请填写修改要求')
@@ -422,6 +1081,40 @@ function startGenerateResource() {
   emit('open-workspace', { pptTheme: selectedPptTemplateTheme.value, generationKey: String(Date.now()) })
 }
 
+/** 普通对话切换到备课后，在同一条消息时间线里追加补充信息卡片。 */
+async function enterPlanningInCurrentConversation() {
+  outlineData.value = null
+  planVersion.value = 1
+  outlinePythonSessionId.value = String(props.sessionId || '')
+  outlineGenerationStage.value = ''
+  phase.value = 'info'
+  isRequesterLoading.value = false
+  continuationInjected.value = false
+  lastClarification.value = ''
+  planningClarificationVisible.value = false
+  planningClarificationQuestion.value = null
+  prepareInitialInfoForm(props.initialPrompt)
+  addMessage('assistant', 'info_form', '补充信息')
+  void loadPptTemplates()
+  latestSessionPush.value = {
+    id: props.sessionId,
+    title: props.initialPrompt.trim().slice(0, 40) || '未命名对话',
+    updated_at: new Date().toISOString(),
+  }
+  await scrollToBottom()
+}
+
+/** 只监听普通→备课的内部状态变化，避免切换时销毁并重建 ChatView。 */
+watch(
+  () => [props.mode, props.sessionId, props.resume],
+  async ([mode, sessionId, resume], previous = []) => {
+    const [previousMode, previousSessionId, previousResume] = previous
+    if (resume || mode !== 'planning' || previousMode !== 'general' || !sessionId || sessionId === previousSessionId || previousResume) return
+    await enterPlanningInCurrentConversation()
+  },
+  { flush: 'post' }
+)
+
 // ========== 生命周期 ==========
 onMounted(async () => {
   // 恢复历史会话：拉取会话详情与大纲重建消息与阶段，不透传首条消息
@@ -429,9 +1122,19 @@ onMounted(async () => {
     await restoreSession()
     return
   }
-  // 新会话：首条用户消息气泡 + 补充信息卡片
+  // 普通主对话：只显示消息和普通回复，不进入备课表单。
+  if (isGeneralChat.value) {
+    addMessage('user', 'text', props.initialPrompt)
+    phase.value = 'general_chat'
+    await requestGeneralChatReply()
+    return
+  }
+
+  // 备课会话：先接上切换前的普通对话，再显示本次备课请求和内嵌补充信息卡片。
+  outlinePythonSessionId.value = String(props.sessionId || '')
+  renderContinuationHistory()
   addMessage('user', 'text', props.initialPrompt)
-  // 显示补充信息卡片
+  prepareInitialInfoForm(props.initialPrompt)
   addMessage('assistant', 'info_form', '补充信息')
   void loadPptTemplates()
   // 将最新会话推送到 TeacherLayout 历史列表（页面未刷新时的暂时性显示）
@@ -469,8 +1172,8 @@ function parsePlanJson(raw) {
 }
 
 /**
- * 恢复已有会话：按"固定三条"还原对话——先渲染前两条用户消息（初始输入、补充信息），再渲染最新大纲。
- * 阶段判定只看 getPlan 返回的 plan_confirm_status：已确认进资源生成；未确认待确认；无大纲则按澄清/补充信息回落。
+ * 恢复已有会话：按后端 messages 的原始顺序还原用户与 AI 文本消息，再渲染当前阶段卡片。
+ * 大纲和澄清问题分别由独立的结构化消息渲染，避免与 messages 中的摘要重复出现。
  */
 async function restoreSession() {
   resumeLoading.value = true
@@ -481,28 +1184,79 @@ async function restoreSession() {
     ])
     const session = isOk(sessionRes) ? sessionRes.data : null
     const task = isOk(planRes) ? planRes.data : null
-
-    // 前两条用户消息作为"初始输入 + 补充信息"气泡渲染（后续各轮 user 皆修改要求，不再重复展示）
-    const userMessages = parseStoredMessages(session?.messages)
-      .filter((msg) => msg.role === 'user' && msg.content)
-      .slice(0, 2)
-    userMessages.forEach((msg) => addMessage('user', 'text', msg.content))
+    const localOutlineDraft = readOutlineDraft(props.sessionId)
+    outlinePythonSessionId.value = String(
+      localOutlineDraft?.python_session_id
+      || task?.python_session_id
+      || props.sessionId
+      || '',
+    )
 
     // 有最新大纲：渲染大纲 + 操作栏，并按确认状态进入资源生成或待确认
-    const planJson = parsePlanJson(task?.plan_json)
+    // Java mock 会话并不知道真实 Python 流生成的 plan_json，因此优先使用本地真实大纲快照。
+    let planJson = parsePlanJson(task?.plan_json)
+      || parsePlanJson(localOutlineDraft?.plan_json ?? localOutlineDraft?.outline ?? localOutlineDraft)
+    let outlineWasRepaired = false
+
+    // 历史会话可能保存过 Python 回退大纲；恢复时也要先做质量检查，避免绕过新生成流程。
+    if (planJson && useRealOutlineApi && outlineNeedsRepair(planJson)) {
+      try {
+        const repairedResponse = await ensureOutlineQuality({
+          ...planJson,
+          outline: planJson,
+          slides: planJson.slides,
+        })
+        planJson = normalizeRealOutlineResponse(repairedResponse)
+        outlineWasRepaired = true
+        saveOutlineDraft(props.sessionId, {
+          ...(localOutlineDraft || {}),
+          plan_json: planJson,
+          client_outline_repair: true,
+          python_session_id: outlinePythonSessionId.value || String(props.sessionId || ''),
+          // 修复会产生新版本，必须重新确认后才能进入 PPT 生成。
+          plan_confirm_status: 'pending',
+        })
+      } catch (error) {
+        planJson = null
+        ElMessage.warning(error?.message || '历史大纲内容重复，请重新生成')
+      } finally {
+        outlineGenerationStage.value = ''
+      }
+    }
+
+    // 恢复完整文本消息。旧实现只保留 user，导致已有 AI 回复在重新打开会话时消失。
+    // 当前阶段的结构化问题/大纲稍后单独渲染，因此跳过对应的摘要消息，避免重复。
+    const storedMessages = parseStoredMessages(session?.messages)
+      .filter((msg) => msg && (msg.role === 'user' || msg.role === 'assistant') && String(msg.content || '').trim())
+    storedMessages.forEach((msg) => {
+      const isCurrentStructuredReply = msg.role === 'assistant' && (
+        (msg.type === 'question' && session?.last_question)
+        || (planJson && msg.outline_id)
+      )
+      if (!isCurrentStructuredReply) {
+        addMessage(msg.role, 'text', String(msg.content).trim())
+      }
+    })
+
     if (planJson) {
       outlineData.value = {
         markdown: planJsonToMarkdown(planJson),
         title: planJson.title || '教学设计方案',
         slideCount: Number(planJson.slide_count) || 0,
         planJson,
-        outlineId: task?.python_outline_id || planJson.outline_id,
+        outlineId: task?.python_outline_id || localOutlineDraft?.python_outline_id || planJson.outline_id,
       }
-      planTask.value = task
-      planVersion.value = Number(task?.plan_version) || Number(planJson.version) || 1
+      planTask.value = {
+        ...(localOutlineDraft || {}),
+        ...(task || {}),
+        plan_json: planJson,
+        python_session_id: task?.python_session_id || localOutlineDraft?.python_session_id || outlinePythonSessionId.value,
+        python_outline_id: task?.python_outline_id || localOutlineDraft?.python_outline_id || planJson.outline_id || null,
+      }
+      planVersion.value = Number(task?.plan_version) || Number(localOutlineDraft?.plan_version) || Number(planJson.version) || 1
       addMessage('assistant', 'markdown', outlineData.value.markdown, { data: outlineData.value })
       addMessage('assistant', 'outline_actions', '', { outlineId: outlineData.value.outlineId })
-      if (task?.plan_confirm_status === 'confirmed') {
+      if (!outlineWasRepaired && (task?.plan_confirm_status === 'confirmed' || localOutlineDraft?.plan_confirm_status === 'confirmed')) {
         await loadPptTemplates()
         fillGenResource(outlineData.value)
         phase.value = 'resource_ready'
@@ -514,13 +1268,13 @@ async function restoreSession() {
     }
 
     // 尚未生成大纲：有待答澄清 → 澄清；否则回落到补充信息卡继续发起
-    if (session?.last_question) {
-      const question = (typeof session.last_question === 'string' && session.last_question.trim())
-        ? session.last_question
-        : (typeof session.last_question === 'object' && session.last_question?.text) || ''
-      lastClarification.value = question
+    const restoredQuestion = session?.last_question || localOutlineDraft?.clarification
+    if (restoredQuestion) {
+      const question = normalizePlanningClarification(restoredQuestion)
+      lastClarification.value = question?.text || ''
       phase.value = 'clarifying'
-      addMessage('assistant', 'clarification', question)
+      addMessage('assistant', 'clarification', question?.text || String(restoredQuestion))
+      openPlanningClarification(question)
     } else {
       phase.value = 'info'
       addMessage('assistant', 'info_form', '补充信息')
@@ -561,8 +1315,17 @@ async function restoreSession() {
                 <div class="info-row">
                   <span class="info-label">基础信息</span>
                   <span class="info-desc">学段/学科/年级/教材</span>
-                  <span class="info-value-cell">
-                    <span class="info-readonly">{{ infoForm.stage }} / {{ infoForm.subject }}</span>
+                  <span class="info-value-cell info-basic-fields">
+                    <el-select v-model="infoForm.stage" size="small" placeholder="学段" :disabled="phase !== 'info'" clearable>
+                      <el-option v-for="stage in STAGE_OPTIONS" :key="stage" :label="stage" :value="stage" />
+                    </el-select>
+                    <el-select v-model="infoForm.subject" size="small" placeholder="学科" :disabled="phase !== 'info'" filterable allow-create default-first-option clearable>
+                      <el-option v-for="subject in SUBJECT_OPTIONS" :key="subject" :label="subject" :value="subject" />
+                    </el-select>
+                    <el-select v-model="infoForm.grade" size="small" placeholder="年级" :disabled="phase !== 'info'" filterable allow-create default-first-option clearable>
+                      <el-option v-for="grade in GRADE_OPTIONS" :key="grade" :label="grade" :value="grade" />
+                    </el-select>
+                    <el-input v-model="infoForm.textbook" size="small" placeholder="教材版本（可选）" :disabled="phase !== 'info'" />
                   </span>
                 </div>
                 <!-- 班级学情行 -->
@@ -688,6 +1451,7 @@ async function restoreSession() {
       <!-- 加载指示器：正在请求大纲时显示三个依次闪烁的点 -->
       <div v-if="isRequesterLoading" class="streaming-indicator">
         <span class="dot-pulse"><i></i><i></i><i></i></span>
+        <span v-if="outlineGenerationStage" class="streaming-stage">{{ outlineGenerationStage }}</span>
       </div>
 
       <!-- 资源生成卡片：大纲确认后先选生成模板，再进入工作台编辑结果 -->
@@ -731,27 +1495,27 @@ async function restoreSession() {
     <!-- 底部输入区（flex 布局固定在页面底部，不随消息滚动）
          澄清阶段启用输入框，供教师补充回复后端提出的澄清问题 -->
     <footer class="chat-composer">
-      <div class="composer-input-row" :class="{ 'is-editable': phase === 'clarifying' }">
+      <div class="composer-input-row" :class="{ 'is-editable': isGeneralChat || phase === 'clarifying' }">
         <el-input
           v-model="composerInput"
           type="textarea"
           :autosize="{ minRows: 2, maxRows: 5 }"
           resize="none"
-          :placeholder="phase === 'clarifying' ? CHAT_COMPOSER.clarificationPlaceholder : CHAT_COMPOSER.placeholder"
-          :readonly="phase !== 'clarifying'"
-          @keydown.enter.exact.prevent="handleClarificationReply"
+          :placeholder="isGeneralChat ? CHAT_COMPOSER.generalPlaceholder : (phase === 'clarifying' ? CHAT_COMPOSER.clarificationPlaceholder : CHAT_COMPOSER.placeholder)"
+          :readonly="isRequesterLoading || (!isGeneralChat && phase !== 'clarifying')"
+          @keydown.enter="handleComposerKeydown"
         />
         <el-button
           type="primary"
           circle
           :icon="Promotion"
-          :disabled="phase !== 'clarifying'"
+          :disabled="isRequesterLoading || (!isGeneralChat && phase !== 'clarifying')"
           :loading="isRequesterLoading"
           :aria-label="CHAT_COMPOSER.send"
-          @click="handleClarificationReply"
+          @click="handleComposerSubmit"
         />
       </div>
-      <p class="composer-hint">{{ CHAT_COMPOSER.hint }}</p>
+      <p class="composer-hint">{{ CHAT_COMPOSER.hint }} · Enter 发送 · Shift + Enter 换行</p>
     </footer>
   </div>
 
@@ -786,10 +1550,18 @@ async function restoreSession() {
     :selected-theme="pptTemplateDraftTheme"
     :templates="pptTemplates"
     :loading="pptTemplateLoading"
-    :error="pptTemplateLoadError"
-    @update:selected-theme="pptTemplateDraftTheme = $event"
-    @retry="loadPptTemplates(true)"
-    @confirm="confirmPptTemplate"
+      :error="pptTemplateLoadError"
+      @update:selected-theme="pptTemplateDraftTheme = $event"
+      @retry="loadPptTemplates(true)"
+      @confirm="confirmPptTemplate"
+    />
+
+  <!-- Agent 意图澄清：仅承载后端返回的复杂澄清问题；首次备课信息直接填写上方卡片。 -->
+  <IntentClarificationDialog
+    v-model="planningClarificationVisible"
+    :question="planningClarificationQuestion"
+    :loading="planningClarificationSubmitting || isRequesterLoading"
+    @submit="submitPlanningClarification"
   />
 </template>
 
@@ -933,14 +1705,28 @@ async function restoreSession() {
 .info-value-cell {
   width: auto;
 }
+.info-basic-fields {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
+}
+.info-basic-fields :deep(.el-select) {
+  width: 128px;
+}
+.info-basic-fields :deep(.el-input) {
+  flex: 1 1 150px;
+  width: auto;
+  min-width: 150px;
+}
 .info-readonly {
   color: var(--zh-text-secondary);
   font-size: var(--zh-font-size13);
 }
-.info-value-cell :deep(.el-select) {
+.info-value-cell:not(.info-basic-fields) :deep(.el-select) {
   width: 140px;
 }
-.info-value-cell :deep(.el-input) {
+.info-value-cell:not(.info-basic-fields) :deep(.el-input) {
   width: 100%;
 }
 .info-value-cell :deep(.el-textarea__inner) {
@@ -1015,6 +1801,12 @@ async function restoreSession() {
 }
 .dot-pulse i:nth-child(2) { animation-delay: 0.2s; }
 .dot-pulse i:nth-child(3) { animation-delay: 0.4s; }
+.streaming-stage {
+  max-width: 70%;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
 
 /* ===== 资源卡片 ===== */
 .resource-cards-area {
