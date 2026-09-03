@@ -47,6 +47,17 @@ const handleMenuSelect = (index) => {
   if (target) router.push({ path: target, query: route.query.preview ? { preview: '1' } : {} })
 }
 
+/** 点击"新建对话"：无论当前在哪个页面，都跳回教师端首页的初始（欢迎）视图。 */
+const handleNewChat = () => {
+  // 不在首页时先导航到首页，TeacherHome 以欢迎视图重新挂载即可
+  if (route.path !== '/main') {
+    router.push({ path: '/main', query: route.query.preview ? { preview: '1' } : {} })
+    return
+  }
+  // 已在首页时通知 TeacherHome 关闭聊天视图，回到欢迎页
+  requestNewChat.value = true
+}
+
 /** 切换全局亮暗主题。 */
 const toggleTheme = () => {
   isDark.value = !isDark.value
@@ -177,7 +188,7 @@ watch(latestSessionPush, (session) => {
         </div>
       </header>
 
-      <el-button type="primary" class="new-chat-button" :icon="Plus" @click="requestNewChat = true">
+      <el-button type="primary" class="new-chat-button" :icon="Plus" @click="handleNewChat">
         {{ TEACHER_HOME.actions.newChat }}
       </el-button>
 

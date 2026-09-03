@@ -70,7 +70,7 @@ public class ResourceServiceImpl implements ResourceService {
             throw new RuntimeException("文件名不能为空");
         }
         String objectKey = "uploads/" + userId + "/" + UUID.randomUUID() + "/" + dto.getFile_name();
-        URL signedUrl = ossUtil.generateUploadUrl(objectKey, 60);
+        URL signedUrl = ossUtil.generateUploadUrl(objectKey, dto.getFile_type(),60);
         log.info("createUploadToken success userId={}, objectKey={}", userId, objectKey);
 
         UploadTokenVO vo = new UploadTokenVO();

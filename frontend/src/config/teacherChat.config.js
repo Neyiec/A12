@@ -246,6 +246,26 @@ export const DURATION_OPTIONS = [5, 10, 15, 20, 30, 45]
 /** 班级学情选项 */
 export const CLASS_LEVEL_OPTIONS = ['优秀', '良好', '一般', '较弱']
 
+/** 学段选项 */
+export const STAGE_OPTIONS = ['小学', '初中', '高中']
+
+/** 学科选项 */
+export const SUBJECT_OPTIONS = [
+  '语文', '数学', '英语', '物理', '化学', '生物',
+  '历史', '地理', '道德与法治', '科学',
+]
+
+/** 年级选项 */
+export const GRADE_OPTIONS = [
+  '一年级', '二年级', '三年级', '四年级', '五年级', '六年级',
+  '七年级', '八年级', '九年级', '高一', '高二', '高三',
+]
+
+/** 教材版本选项 */
+export const TEXTBOOK_OPTIONS = [
+  '人教版', '部编版', '北师大版', '苏教版', '外研社版', '湘教版', '校本教材',
+]
+
 /** 补充信息卡片表单默认值 */
 export const INFO_FORM_DEFAULTS = {
   stage: '初中',
