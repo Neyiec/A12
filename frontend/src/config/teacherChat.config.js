@@ -104,11 +104,94 @@ export const RESOURCE_CARD_LABELS = {
 /** 聊天输入区文案 */
 export const CHAT_COMPOSER = {
   placeholder: '输入补充要求或修改建议…',
+  generalPlaceholder: '输入你的问题，或描述想要完成的教学任务…',
   clarificationPlaceholder: '请回复以上问题，以帮助生成更贴合的教学大纲…',
   hint: '智核可能会出错，重要教学内容请核查。',
   attach: '添加资料',
   knowledge: '引用知识库',
   send: '发送',
+}
+
+/** 仅识别明确的教学设计动作，避免“PPT是什么”“教学怎么理解”等普通问题误入备课流程。 */
+export const isPlanningPrompt = (text) => {
+  const value = String(text || '').trim()
+  if (!value) return false
+  const hasQuestionMarker = /(?:是什么|什么是|什么意思|怎么理解|指什么)/.test(value)
+  const hasExplicitAction = /(?:生成|制作|设计|编写|创建|准备|整理|开始|进行|安排|制定|帮我做|我要做|我想做)/.test(value)
+  if (hasQuestionMarker && !hasExplicitAction) return false
+  // 仅把“开始备课/帮我备课”识别为动作；“备课是什么”仍属于普通问答。
+  if (/^(?:备课|开始备课)$/.test(value)) return true
+  if (/(?:我要|我想|需要|帮我|请|开始|进行|准备|安排|制定|生成|设计|做).{0,10}备课/.test(value)) return true
+  if (/备课.{0,8}(?:方案|计划|教案|课件|流程|内容)/.test(value)) return true
+  const targets = '(?:课件|ppt|教案|教学设计|教学大纲|课堂活动|课程设计|问题链|学案|讲义|练习题|试卷|课程)'
+  const creation = new RegExp(`(?:生成|制作|设计|编写|创建|准备|整理|做(?:一份|一个|个)?).{0,20}${targets}`, 'i')
+  const targetQuestion = new RegExp(`${targets}.{0,12}(?:怎么做|如何做|帮我生成|帮我制作|帮我设计|帮我编写)`, 'i')
+  return creation.test(value) || targetQuestion.test(value)
+}
+
+/** 备课征询可选项：与工作台/后端使用的上下文字段保持一致。 */
+export const STAGE_OPTIONS = ['小学', '初中', '高中', '大学']
+export const SUBJECT_OPTIONS = [
+  '语文', '数学', '英语', '物理', '化学', '生物', '历史', '地理',
+  '道德与法治', '政治', '科学', '信息技术', '音乐', '美术', '体育',
+]
+export const GRADE_OPTIONS = [
+  '一年级', '二年级', '三年级', '四年级', '五年级', '六年级',
+  '七年级', '八年级', '九年级', '高一', '高二', '高三',
+]
+
+/**
+ * 从教师首句中提取已经明确的备课上下文。
+ * 这是前端路由层的轻量解析，不替代后端 Agent；它的作用是避免模型用一段
+ * 自由文本追问时，前端仍停留在普通聊天气泡里。
+ */
+export const extractPlanningContext = (text) => {
+  const value = String(text || '').trim()
+  const context = {
+    stage: '',
+    subject: '',
+    grade: '',
+    textbook: '',
+    courseName: '',
+  }
+  if (!value) return context
+
+  context.subject = SUBJECT_OPTIONS
+    .slice()
+    .sort((left, right) => right.length - left.length)
+    .find((subject) => value.includes(subject)) || ''
+
+  const gradeMatchers = [
+    ['一年级', /(?:小学)?一(?:年级|年)/],
+    ['二年级', /(?:小学)?二(?:年级|年)/],
+    ['三年级', /(?:小学)?三(?:年级|年)/],
+    ['四年级', /(?:小学)?四(?:年级|年)/],
+    ['五年级', /(?:小学)?五(?:年级|年)/],
+    ['六年级', /(?:小学)?六(?:年级|年)/],
+    ['七年级', /(?:七年级|初一)/],
+    ['八年级', /(?:八年级|初二)/],
+    ['九年级', /(?:九年级|初三)/],
+    ['高一', /(?:高一|高中一年级)/],
+    ['高二', /(?:高二|高中二年级)/],
+    ['高三', /(?:高三|高中三年级)/],
+  ]
+  context.grade = gradeMatchers.find(([, matcher]) => matcher.test(value))?.[0] || ''
+
+  if (/(?:小学|小一|小二|小三|小四|小五|小六)/.test(value) || /^[一二三四五六]年级/.test(context.grade)) {
+    context.stage = '小学'
+  } else if (/(?:初中|初一|初二|初三|七年级|八年级|九年级)/.test(value)) {
+    context.stage = '初中'
+  } else if (/(?:高中|高一|高二|高三)/.test(value)) {
+    context.stage = '高中'
+  } else if (/大学|大一|大二|大三|大四/.test(value)) {
+    context.stage = '大学'
+  }
+
+  const quotedTitle = value.match(/《([^》]{2,40})》/)
+  const labeledTitle = value.match(/(?:课题|主题|课程名称)\s*(?:是|为|：|:)?\s*[“"「]?([^，。！？；;\n”"」]{2,40})/)
+  context.courseName = String(quotedTitle?.[1] || labeledTitle?.[1] || '').trim()
+
+  return context
 }
 
 /** 澄清问题相关文案 */
@@ -162,21 +245,6 @@ export const DURATION_OPTIONS = [5, 10, 15, 20, 30, 45]
 
 /** 班级学情选项 */
 export const CLASS_LEVEL_OPTIONS = ['优秀', '良好', '一般', '较弱']
-
-/** 学段选项 */
-export const STAGE_OPTIONS = ['小学', '初中', '高中']
-
-/** 学科选项 */
-export const SUBJECT_OPTIONS = [
-  '语文', '数学', '英语', '物理', '化学', '生物',
-  '历史', '地理', '道德与法治', '科学',
-]
-
-/** 年级选项 */
-export const GRADE_OPTIONS = [
-  '一年级', '二年级', '三年级', '四年级', '五年级', '六年级',
-  '七年级', '八年级', '九年级', '高一', '高二', '高三',
-]
 
 /** 教材版本选项 */
 export const TEXTBOOK_OPTIONS = [

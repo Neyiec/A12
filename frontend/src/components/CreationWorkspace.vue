@@ -1,17 +1,19 @@
 <script setup>
-import { computed, onBeforeUnmount, onMounted, reactive, ref, watch } from 'vue'
+import { computed, nextTick, onBeforeUnmount, onMounted, reactive, ref, watch } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { ElMessage } from 'element-plus'
 import { FullScreen, Plus, Promotion } from '@element-plus/icons-vue'
-import { addProjectPermission, batchSaveProjectPages, createProject, createProjectPage, deleteProjectPage, generateInteractiveModule, generatePresentation, getAiPlan, getProject, getProjectPage, getProjectVersionDiff, listProjectPages, listProjectVersions, modifyPresentationSlide, patchProject, restoreProjectVersion, reviseProjectWithAi, saveProjectVersion, sendAiSessionMessage, saveProjectPage, validateProjectComponent } from '../apis/teacher'
+import { addProjectPermission, batchSaveProjectPages, createProject, createProjectPage, deleteProjectPage, generateInteractiveModule, generatePresentation, getAiPlan, getProject, getProjectPage, getProjectVersionDiff, listProjectPages, listProjectVersions, modifyPresentationSlide, patchProject, restoreProjectVersion, reviseProjectWithAi, saveProjectVersion, sendAiSessionMessage, saveProjectPage, streamGeneralChat, validateProjectComponent } from '../apis/teacher'
 import IntentClarificationDialog from './IntentClarificationDialog.vue'
 import CreationWorkspaceToolbar from './CreationWorkspaceToolbar.vue'
 import WorkspacePropertiesPanel from './WorkspacePropertiesPanel.vue'
-import { readPresentationDraft, savePresentationDraft } from '../utils/presentationDraft.js'
+import { useUserStore } from '../storage/user.js'
+import { readOutlineDraft, readPresentationDraft, savePresentationDraft } from '../utils/presentationDraft.js'
 import { createPresentationFixture } from '../mock/data/presentationFixture.js'
 
 const router = useRouter()
 const route = useRoute()
+const userStore = useUserStore()
 const prompt = ref('')
 const selectedSlide = ref(0)
 const activeTool = ref('')
@@ -59,6 +61,10 @@ const runProgress = ref(0)
 const runStage = ref('')
 const generationError = ref('')
 const revisionSubmitting = ref(false)
+const discussionSubmitting = ref(false)
+const intentSubmitting = ref(false)
+const revisionStage = ref('')
+const assistantConversationRef = ref(null)
 const presentationId = ref('')
 const presentationMetadata = ref(null)
 const htmlFrameObservers = new Set()
@@ -144,9 +150,12 @@ const cloneElementData = (element) => ({
 })
 const createMockElements = () => elementPresets.map((element) => cloneElementData(element))
 const messages = reactive([
-  { role: 'assistant', text: '我已根据教学目标整理出一份 6 页课件。你可以直接描述想调整的内容，或在右侧细化当前页面。' },
-  { role: 'user', text: '让情境导入更贴近校园生活。' },
-  { role: 'assistant', text: '已将导入场景调整为校园旗杆测量任务，并保留小组讨论环节。' },
+  {
+    role: 'assistant',
+    text: '课件已进入创作工作台。你可以先讨论教学思路，也可以直接描述要修改的内容，我会自动判断并应用。',
+    includeInContext: false,
+    kind: 'welcome',
+  },
 ])
 const slides = reactive([
   { title: '勾股定理', eyebrow: '八年级数学 · 第 1 课时', description: '从实际测量出发，发现直角三角形三边之间恒定而优雅的关系。', layout: '重点陈述', theme: 'blue' },
@@ -234,11 +243,25 @@ const normalizePresentationSlides = (data = {}) => {
     }))
     .filter((slide) => slide.html.trim())
 }
+const scrollAssistantConversation = async () => {
+  await nextTick()
+  const element = assistantConversationRef.value
+  if (element) element.scrollTop = element.scrollHeight
+}
+const clearGenerationFailureMessages = () => {
+  for (let index = messages.length - 1; index >= 0; index -= 1) {
+    const message = messages[index]
+    const isLegacyGenerationError = String(message?.text || '') === '无法连接 HTML PPT 生成服务，请确认 Python 服务已启动。'
+    if (message?.kind === 'generation-error' || isLegacyGenerationError) messages.splice(index, 1)
+  }
+  generationError.value = ''
+}
 const applyGeneratedPresentation = (rawResponse, { persist = true, notify = true } = {}) => {
   const data = getPresentationPayload(rawResponse)
   const generatedSlides = normalizePresentationSlides(data)
   if (!generatedSlides.length) throw new Error('HTML PPT 生成服务未返回页面')
 
+  clearGenerationFailureMessages()
   slides.splice(0, slides.length, ...generatedSlides)
   selectedSlide.value = 0
   selectedElementId.value = null
@@ -265,16 +288,18 @@ const applyGeneratedPresentation = (rawResponse, { persist = true, notify = true
   }
 
   if (notify) {
-    messages.push({ role: 'assistant', text: `已生成 ${generatedSlides.length} 页 HTML PPT，可在工作台中预览。` })
+    messages.push({ role: 'assistant', text: `已生成 ${generatedSlides.length} 页 HTML PPT，可在工作台中预览。`, includeInContext: false, kind: 'generation-success' })
     WorkspaceMessage.success(`已生成 ${generatedSlides.length} 页 HTML PPT`)
   }
+  void scrollAssistantConversation()
 
   return data
 }
 const loadPresentationFixture = () => {
   const data = applyGeneratedPresentation(createPresentationFixture(), { persist: true, notify: false })
-  messages.push({ role: 'assistant', text: `已载入 ${data.slide_count} 页固定 PPT 测试样例，不会调用大模型。` })
+  messages.push({ role: 'assistant', text: `已载入 ${data.slide_count} 页固定 PPT 测试样例，不会调用大模型。`, includeInContext: false, kind: 'generation-success' })
   WorkspaceMessage.info('已载入固定 PPT 测试样例，不会消耗 API')
+  void scrollAssistantConversation()
   return data
 }
 const saveCurrentPresentationDraft = () => {
@@ -2361,6 +2386,217 @@ const generationErrorMessage = (error) => {
   return String(error?.message || 'HTML PPT 生成失败，请稍后重试。')
 }
 
+/**
+ * 工作台只保留一条对话时间线，输入内容由前端先做轻量意图识别：
+ * 疑问、分析和建议进入讨论；明确的页面操作进入修改。
+ * 不确定时默认讨论，避免一句普通聊天意外改动课件。
+ */
+const inferAssistantMode = (text = '') => {
+  const value = String(text).trim().replace(/\s+/g, '')
+  if (!value) return 'discussion'
+
+  const discussionPrefix = /^(你好|嗨|您好|请问|为什么|为何|怎么回事|怎么看|你觉得|你认为|分析一下|讨论一下|聊聊|建议一下|帮我想想|解释一下|介绍一下|是什么|如何理解)/i
+  if (discussionPrefix.test(value)) return 'discussion'
+
+  // 工作台语境下的短命令也视为执行当前页操作，避免用户必须重复描述目标。
+  const explicitRevisionCommand = /^(请)?(执行|应用|开始|继续|执行修改|应用修改|开始修改|继续修改|修改|修改当前页|页面修改|改一下|调整一下)$/
+  if (explicitRevisionCommand.test(value)) return 'revision'
+
+  const revisionAction = /(修改|改一下|调整|替换|换成|改成|改为|删除|移除|添加|增加|插入|移动|拖到|缩放|放大|缩小|旋转|复制|重做|撤销|恢复|改变|设置|隐藏|显示|去掉|删掉|清空|重排|排版|对齐|换图|换色|优化|润色|精简|丰富|补充|重写|太大|太小|看不清|不清晰|居中|靠左|靠右|上移|下移)/
+  const revisionTarget = /(当前页|本页|这一页|第\d+页|页面|幻灯片|PPT|标题|文案|图片|图表|元素|组件|画布|布局|颜色|字体|字号|透明度|位置|右侧|左侧|上方|下方|背景|边框|间距|内容|列表|文字|导入|情境|案例|知识点|卡片|页眉|页脚|模块)/i
+  const imperative = /^(请|帮我|把|将|给我|麻烦|直接|能不能把|可以把)/
+  const naturalRevision = /^(让|使).{0,24}(更|更加|变得|优化|精简|丰富|清晰|简洁|生活化|有启发性)/
+
+  if (revisionAction.test(value) && revisionTarget.test(value)) return 'revision'
+  if ((revisionAction.test(value) || naturalRevision.test(value))
+    && (imperative.test(value) || /(这个|这里|它|那张|这一处|页)/.test(value))) return 'revision'
+  return 'discussion'
+}
+const inferredAssistantMode = computed(() => inferAssistantMode(prompt.value))
+const isAssistantSubmitting = computed(() => intentSubmitting.value || discussionSubmitting.value || revisionSubmitting.value)
+const assistantPlaceholder = computed(() => '例如：讨论一下怎样让导入更贴近学生，或把当前页标题改得更简洁')
+const assistantIntentHint = computed(() => {
+  if (intentSubmitting.value) return 'AI 正在判断这条消息的意图…'
+  if (revisionSubmitting.value) return '正在执行页面修改，请稍候…'
+  if (discussionSubmitting.value) return '正在思考讨论内容，请稍候…'
+  if (!prompt.value.trim()) return 'AI 会根据你的表达自动判断：讨论或修改当前页'
+  return inferredAssistantMode.value === 'revision'
+    ? '检测到页面操作，发送时由 AI 结合上下文确认'
+    : '发送时由 AI 结合上下文判断是否修改页面'
+})
+const assistantStatusText = computed(() => {
+  if (intentSubmitting.value) return 'AI 正在判断意图…'
+  if (discussionSubmitting.value) return 'AI 正在思考…'
+  if (revisionSubmitting.value) return revisionStage.value || 'AI 正在执行页面修改…'
+  return 'AI 自动判断 · Enter 发送 · Shift + Enter 换行'
+})
+const workspaceDiscussionHistory = () => messages
+  .filter((message) => message?.includeInContext !== false
+    && (message?.role === 'user' || message?.role === 'assistant')
+    && String(message?.text || '').trim())
+  .map((message) => ({ role: message.role, content: String(message.text).trim() }))
+  .slice(-12)
+const workspaceConversationTranscript = () => workspaceDiscussionHistory()
+  .slice(-8)
+  .map((message) => `${message.role === 'user' ? '教师' : 'AI'}：${message.content}`)
+  .join('\n')
+const parseAssistantIntent = (rawText) => {
+  const text = String(rawText || '').trim().replace(/^```(?:json)?\s*/i, '').replace(/\s*```$/, '')
+  const candidates = [text]
+  const objectStart = text.indexOf('{')
+  const objectEnd = text.lastIndexOf('}')
+  if (objectStart >= 0 && objectEnd > objectStart) candidates.push(text.slice(objectStart, objectEnd + 1))
+  for (const candidate of candidates) {
+    try {
+      const data = JSON.parse(candidate)
+      const intent = String(data?.intent || data?.mode || data?.type || '').trim().toLowerCase()
+      if (['revision', 'modify', 'edit', 'update', '修改', '编辑', '改动', '执行'].includes(intent)) return 'revision'
+      if (['discussion', 'chat', 'conversation', 'question', '讨论', '对话', '咨询'].includes(intent)) return 'discussion'
+    } catch {
+      // 模型可能在 JSON 外包裹少量说明，继续尝试下一个候选片段。
+    }
+  }
+  return ''
+}
+const shouldAskModelForIntent = (text = '') => {
+  const value = String(text).trim().replace(/\s+/g, '')
+  if (!value) return false
+  // 明确的寒暄、提问和讨论前缀不需要额外调用一次模型。
+  if (/^(你好|嗨|您好|请问|为什么|为何|怎么回事|怎么看|你觉得|你认为|分析一下|讨论一下|聊聊|建议一下|帮我想想|解释一下|介绍一下|是什么|如何理解)/i.test(value)) return false
+  // “执行”这类短命令依赖前文，需要交给模型结合对话上下文判断。
+  if (/^(请)?(执行|应用|开始|继续|执行修改|应用修改|开始修改|继续修改|修改|修改当前页|页面修改|改一下|调整一下)$/.test(value)) return true
+  // 其余未被明确识别为页面操作的自然语言，交给模型判定。
+  return inferAssistantMode(value) === 'discussion'
+}
+const requestAssistantIntent = async (text) => {
+  const response = await streamGeneralChat({
+    user_id: String(userStore.userInfo?.user_id || '10001'),
+    mode: 'workbench-intent',
+    messages: [
+      ...workspaceDiscussionHistory(),
+      { role: 'user', content: `当前工作台页面：${String(current.value?.title || '').trim() || '未命名页面'}` },
+      { role: 'user', content: text },
+    ],
+  })
+  if (!response.ok) throw new Error(`意图识别请求失败（HTTP ${response.status}）`)
+  const assistantMessage = { role: 'assistant', text: '' }
+  const rawIntent = await readWorkspaceDiscussionStream(response, assistantMessage)
+  return parseAssistantIntent(rawIntent)
+}
+const resolveAssistantMode = async (text) => {
+  const fallback = inferAssistantMode(text)
+  if (!shouldAskModelForIntent(text)) return fallback
+  try {
+    return (await requestAssistantIntent(text)) || fallback
+  } catch {
+    // 意图服务不可用时沿用前端规则，保证讨论和修改仍可继续。
+    return fallback
+  }
+}
+const buildRevisionInstruction = (instruction) => {
+  const transcript = workspaceConversationTranscript()
+  if (!transcript) return instruction
+  return [
+    '请继续执行创作工作台上一轮对话中已经讨论并确认的页面修改方案。',
+    '最近对话记录：',
+    transcript,
+    `当前执行指令：${instruction}`,
+    '如果当前执行指令是“执行”“应用”或“继续”，请根据对话中已经明确的具体方案直接修改当前页面，不要只回复说明。',
+  ].join('\n\n')
+}
+const workspaceDiscussionContext = () => {
+  const slide = current.value
+  if (!slide) return ''
+  const title = String(slide.title || '').trim()
+  const notes = String(slide.notes || '').trim()
+  return [
+    '当前位于创作工作台的讨论模式。以下内容仅作为回答上下文，不要直接修改页面，也不要输出 HTML。',
+    title ? `当前页面：${title}` : '',
+    notes ? `当前页面备注：${notes.slice(0, 600)}` : '',
+  ].filter(Boolean).join('\n')
+}
+const readWorkspaceDiscussionStream = async (response, assistantMessage) => {
+  const reader = response.body?.getReader()
+  if (!reader) throw new Error('模型没有返回可读取的数据流')
+  const decoder = new TextDecoder()
+  let buffer = ''
+  let content = ''
+  const consumeLine = (line) => {
+    if (!line.startsWith('data:')) return
+    const data = line.slice(5).trim()
+    if (!data || data === '[DONE]') return
+    try {
+      const payload = JSON.parse(data)
+      const delta = payload?.choices?.[0]?.delta?.content ?? payload?.choices?.[0]?.message?.content
+      if (typeof delta === 'string' && delta) {
+        content += delta
+        assistantMessage.text = content
+        void scrollAssistantConversation()
+      }
+    } catch {
+      // 不完整的 SSE 行会在下一次读取时拼接后再解析。
+    }
+  }
+
+  while (true) {
+    const { done, value } = await reader.read()
+    buffer += decoder.decode(value || new Uint8Array(), { stream: !done })
+    const lines = buffer.split(/\r?\n/)
+    buffer = lines.pop() || ''
+    lines.forEach(consumeLine)
+    if (done) break
+  }
+  if (buffer.trim()) consumeLine(buffer)
+  if (!content.trim()) throw new Error('模型未返回有效内容')
+  assistantMessage.text = content
+  return content
+}
+const submitDiscussion = async () => {
+  const text = prompt.value.trim()
+  if (!text || isAssistantSubmitting.value) return
+  const history = workspaceDiscussionHistory()
+  const context = workspaceDiscussionContext()
+  messages.push({ role: 'user', text, kind: 'discussion-request' })
+  prompt.value = ''
+  const assistantMessage = {
+    role: 'assistant',
+    text: '',
+    kind: 'discussion-reply',
+  }
+  messages.push(assistantMessage)
+  discussionSubmitting.value = true
+  void scrollAssistantConversation()
+  try {
+    const response = await streamGeneralChat({
+      user_id: String(userStore.userInfo?.user_id || '10001'),
+      messages: [
+        ...history,
+        ...(context ? [{ role: 'user', content: context }] : []),
+        { role: 'user', content: text },
+      ],
+    })
+    if (!response.ok) {
+      let message = ''
+      try {
+        const payload = await response.json()
+        message = payload?.message || ''
+      } catch {
+        // 保留 HTTP 状态作为错误信息。
+      }
+      throw new Error(message || `模型请求失败（HTTP ${response.status}）`)
+    }
+    await readWorkspaceDiscussionStream(response, assistantMessage)
+  } catch (error) {
+    assistantMessage.kind = 'discussion-error'
+    assistantMessage.includeInContext = false
+    assistantMessage.text = `讨论暂时无法继续：${error?.message || '连接失败，请检查模型配置。'}`
+    WorkspaceMessage.error(error?.message || '大模型连接失败，请检查配置')
+  } finally {
+    discussionSubmitting.value = false
+    void scrollAssistantConversation()
+  }
+}
+
 const startRun = async () => {
   if (projectId.value || runStatus.value === 'running') return
   if (presentationFixtureMode.value) {
@@ -2390,7 +2626,8 @@ const startRun = async () => {
   if (cachedDraft?.slides?.length && (!generationKey || cachedDraft.request_key === generationKey)) {
     try {
       applyGeneratedPresentation(cachedDraft, { persist: false, notify: false })
-      messages.push({ role: 'assistant', text: `已载入 ${cachedDraft.slides.length} 页 HTML PPT 草稿。` })
+      messages.push({ role: 'assistant', text: `已载入 ${cachedDraft.slides.length} 页 HTML PPT 草稿。`, includeInContext: false, kind: 'generation-success' })
+      void scrollAssistantConversation()
       return
     } catch {
       // Ignore an invalid session draft and generate a fresh presentation below.
@@ -2402,7 +2639,12 @@ const startRun = async () => {
   runStage.value = '正在读取已确认的大纲'
 
   try {
-    const planData = unwrapResponse(await getAiPlan(sessionId.value)) || {}
+    // 本地开发时 Java 会话仍为 mock，真实 Python 大纲会保存在本地快照中；
+    // 优先读取该快照，避免进入工作台后又退回固定/空的大纲。
+    const localOutlineDraft = readOutlineDraft(sessionId.value)
+    const planData = localOutlineDraft?.plan_json
+      ? localOutlineDraft
+      : (unwrapResponse(await getAiPlan(sessionId.value)) || {})
     const outline = normalizeOutlinePayload(planData)
     if (!Object.keys(outline).length) throw new Error('未找到已确认的大纲，请返回对话重新确认')
 
@@ -2430,25 +2672,32 @@ const startRun = async () => {
     runProgress.value = 0
     runStage.value = 'HTML PPT 生成失败'
     generationError.value = generationErrorMessage(error)
-    messages.push({ role: 'assistant', text: generationError.value })
+    messages.push({ role: 'assistant', text: generationError.value, includeInContext: false, kind: 'generation-error' })
     WorkspaceMessage.error(generationError.value)
+    void scrollAssistantConversation()
   }
 }
 const retryPresentationGeneration = () => { void startRun() }
 const submitRevision = async () => {
   const instruction = prompt.value.trim(); if (!instruction) return
   if (revisionSubmitting.value) return
+  const conversationTranscript = workspaceConversationTranscript()
+  const revisionInstruction = buildRevisionInstruction(instruction)
   messages.push({ role: 'user', text: instruction }); prompt.value = ''
   revisionSubmitting.value = true
+  revisionStage.value = '正在理解修改指令…'
   try {
     let applied = false
     if (current.value?.html) {
       const selectedElement = htmlSelectedElement.value
+      revisionStage.value = selectedElement
+        ? '正在分析选中元素并生成页面修改…'
+        : '正在分析当前页并生成页面修改…'
       const response = unwrapResponse(await modifyPresentationSlide({
         ...(presentationId.value ? { presentation_id: presentationId.value } : {}),
         slide_no: selectedSlide.value + 1,
         current_html: current.value.html,
-        instruction,
+        instruction: revisionInstruction,
         outline_context: {
           deck_title: String(project.value?.project_name || route.query.templateTitle || current.value.title || 'A12 教学课件'),
           current_slide_title: String(current.value.title || ''),
@@ -2459,28 +2708,57 @@ const submitRevision = async () => {
             type: selectedElement.type,
             content: selectedElement.content,
           } : null,
+          conversation_context: conversationTranscript || null,
         },
         theme: String(routeQueryValue(route.query.pptTheme) || presentationMetadata.value?.theme || current.value.theme || '').trim() || undefined,
         keep_style: true,
       }))
       if (showClarificationForResponse(response, projectId.value ? 'project' : 'session')) return
+      revisionStage.value = '正在应用 AI 返回的页面…'
       applied = applyGeneratedPage(response)
       if (!applied) throw new Error('AI 修改接口未返回有效的 HTML 页面')
-      messages.push({ role: 'assistant', text: String(response?.change_summary || '已根据修改要求更新当前页面，页面元素仍可继续选中和编辑。') })
+      messages.push({
+        role: 'assistant',
+        text: String(response?.change_summary || '已根据修改要求更新当前页面，页面元素仍可继续选中和编辑。'),
+        includeInContext: false,
+        kind: 'revision-result',
+      })
       WorkspaceMessage.success('页面内容已更新')
       return
     }
     if (projectId.value) {
-      const response = unwrapResponse(await reviseProjectWithAi(projectId.value, { target_type: 'slide', target_id: String(current.value.componentId || selectedSlide.value + 1), instruction, context: JSON.stringify(current.value) }))
+      revisionStage.value = '正在提交项目页面修改…'
+      const response = unwrapResponse(await reviseProjectWithAi(projectId.value, {
+        target_type: 'slide',
+        target_id: String(current.value.componentId || selectedSlide.value + 1),
+        instruction: revisionInstruction,
+        context: JSON.stringify({ page: current.value, conversation_context: conversationTranscript || null }),
+      }))
+      revisionStage.value = '正在应用 AI 返回的页面…'
       applied = applyGeneratedPage(response)
       if (showClarificationForResponse(response, 'project')) return
     }
     else if (sessionId.value) {
-      const response = unwrapResponse(await sendAiSessionMessage(sessionId.value, { message: instruction, messages: JSON.stringify([{ role: 'user', content: instruction }]) }))
+      revisionStage.value = '正在处理页面修改请求…'
+      const response = unwrapResponse(await sendAiSessionMessage(sessionId.value, {
+        message: revisionInstruction,
+        messages: JSON.stringify([{ role: 'user', content: revisionInstruction }]),
+      }))
       if (showClarificationForResponse(response, 'session')) return
     }
-    messages.push({ role: 'assistant', text: applied ? '已根据修改要求更新当前页面，页面元素仍可继续选中和编辑。' : '已收到修改要求，正在结合当前页面内容进行调整。' }); WorkspaceMessage.success(applied ? '页面内容已更新' : '修改要求已提交')
-  } catch (error) { messages.push({ role: 'assistant', text: '修改请求暂未提交成功，请稍后重试。' }); WorkspaceMessage.error(error?.message || '修改请求失败') } finally { revisionSubmitting.value = false }
+    messages.push({
+      role: 'assistant',
+      text: applied ? '已根据修改要求更新当前页面，页面元素仍可继续选中和编辑。' : '已收到修改要求，正在结合当前页面内容进行调整。',
+      includeInContext: false,
+      kind: 'revision-result',
+    }); WorkspaceMessage.success(applied ? '页面内容已更新' : '修改要求已提交')
+  } catch (error) {
+    messages.push({ role: 'assistant', text: '修改请求暂未提交成功，请稍后重试。', includeInContext: false, kind: 'revision-error' })
+    WorkspaceMessage.error(error?.message || '修改请求失败')
+  } finally {
+    revisionSubmitting.value = false
+    revisionStage.value = ''
+  }
 }
 const submitClarification = async (selection) => {
   if ((!sessionId.value && !projectId.value) || clarificationSubmitting.value || !selection?.answer) return
@@ -2681,7 +2959,25 @@ const removeSlide = async () => {
   slides.splice(selectedSlide.value, 1)
   selectedSlide.value = Math.max(0, selectedSlide.value - 1)
 }
-const sendRevision = () => submitRevision()
+const sendAssistantMessage = async () => {
+  const text = prompt.value.trim()
+  if (!text || isAssistantSubmitting.value) return
+  intentSubmitting.value = true
+  let mode = 'discussion'
+  try {
+    mode = await resolveAssistantMode(text)
+  } finally {
+    intentSubmitting.value = false
+  }
+  if (mode === 'revision') return submitRevision()
+  return submitDiscussion()
+}
+/** 工作台 AI 输入快捷键：Enter 发送，Shift+Enter 换行，兼容中文输入法候选确认。 */
+const handleAssistantKeydown = (event) => {
+  if (event.isComposing || event.keyCode === 229 || event.shiftKey) return
+  event.preventDefault()
+  sendAssistantMessage()
+}
 const selectSlide = (index) => { selectedSlide.value = index; selectedElementId.value = null; activePanel.value = 'content'; loadProjectPageDetail(index) }
 </script>
 
@@ -2703,9 +2999,22 @@ const selectSlide = (index) => { selectedSlide.value = index; selectedElementId.
     <div class="workspace-grid">
       <aside class="assistant-panel" aria-label="AI 教学助手">
         <header><div class="assistant-mark">智</div><div><strong>AI 教学助手</strong><span>正在编辑第 {{ selectedSlide + 1 }} 页</span></div></header>
+        <div class="assistant-intent-status" :class="inferredAssistantMode" role="status" aria-live="polite">
+          <span class="assistant-intent-dot" aria-hidden="true"></span>
+          <span>{{ assistantIntentHint }}</span>
+        </div>
+        <p class="assistant-mode-hint">明确的页面操作会执行修改；疑问、分析和建议只进行讨论。</p>
         <div class="assistant-actions"><el-button type="primary" plain @click="openInteractiveDialog">生成互动模块</el-button></div>
-        <section class="conversation"><article v-for="(message, index) in messages" :key="index" :class="['message', message.role]"><span v-if="message.role === 'assistant'">智</span><p>{{ message.text }}</p></article></section>
-        <footer class="composer"><el-input v-model="prompt" type="textarea" :rows="3" resize="none" :disabled="revisionSubmitting" placeholder="例如：把提问改得更有启发性" @keydown.ctrl.enter="sendRevision" /><div><span>{{ revisionSubmitting ? 'AI 正在修改当前页…' : 'Ctrl + Enter 发送' }}</span><el-button type="primary" circle :icon="Promotion" :loading="revisionSubmitting" :disabled="revisionSubmitting || !prompt.trim()" aria-label="发送修改" @click="sendRevision" /></div></footer>
+        <section ref="assistantConversationRef" class="conversation"><article v-for="(message, index) in messages" :key="index" :class="['message', message.role]"><span v-if="message.role === 'assistant'">智</span><p>{{ message.text }}</p></article></section>
+        <div v-if="revisionSubmitting" class="assistant-execution" role="status" aria-live="polite">
+          <span class="assistant-execution-spinner" aria-hidden="true"><i></i></span>
+          <div>
+            <strong>AI 正在执行页面修改</strong>
+            <span class="assistant-execution-detail">{{ revisionStage || '正在分析当前页面…' }}</span>
+          </div>
+          <span class="assistant-execution-dots" aria-hidden="true"><i></i><i></i><i></i></span>
+        </div>
+        <footer class="composer"><el-input v-model="prompt" type="textarea" :rows="3" resize="none" :disabled="isAssistantSubmitting" :placeholder="assistantPlaceholder" @keydown.enter="handleAssistantKeydown" /><div><span>{{ assistantStatusText }}</span><el-button type="primary" circle :icon="Promotion" :loading="isAssistantSubmitting" :disabled="isAssistantSubmitting || !prompt.trim()" :aria-label="inferredAssistantMode === 'revision' ? '发送页面修改' : '发送讨论'" @click="sendAssistantMessage" /></div></footer>
       </aside>
 
       <section class="editor-stage">
@@ -2717,6 +3026,16 @@ const selectSlide = (index) => { selectedSlide.value = index; selectedElementId.
           <el-button text :icon="Plus" @click="addSlide">添加页面</el-button>
         </aside>
         <main class="canvas-area" @click="handleCanvasAreaClick">
+          <div v-if="revisionSubmitting" class="revision-overlay" role="status" aria-live="polite" @click.stop>
+            <div class="revision-overlay-card">
+              <span class="revision-orbit" aria-hidden="true"><i></i><i></i><i></i></span>
+              <div>
+                <strong>AI 正在修改当前页</strong>
+                <span>{{ revisionStage || '正在分析页面内容…' }}</span>
+              </div>
+              <div class="revision-progress" aria-hidden="true"><i></i></div>
+            </div>
+          </div>
           <div class="canvas-meta">
             <span>第 {{ selectedSlide + 1 }} 页，共 {{ slides.length }} 页</span>
             <span v-if="current.html" class="canvas-placement-status"><b>拖动元素 · 双击文字编辑</b><small>选中后可缩放、旋转、复制或删除</small></span>
@@ -3502,6 +3821,13 @@ const selectSlide = (index) => { selectedSlide.value = index; selectedElementId.
   margin: 0;
 }
 
+.assistant-mode-hint {
+  margin: 6px 12px 0;
+  color: var(--zh-text-caption);
+  font-size: 10px;
+  line-height: 1.5;
+}
+
 .widget-action-button {
   border: 0;
   cursor: pointer;
@@ -3846,5 +4172,231 @@ const selectSlide = (index) => { selectedSlide.value = index; selectedElementId.
 
 .canvas-controls .canvas-zoom-field small {
   font-size: 11px;
+}
+
+.assistant-intent-status {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  margin: 10px 12px 0;
+  padding: 8px 10px;
+  border: 1px solid var(--zh-line-border);
+  border-radius: 8px;
+  color: var(--zh-text-caption);
+  background: var(--zh-background-light);
+  font-size: 10px;
+  line-height: 1.45;
+}
+
+.assistant-intent-status.revision {
+  border-color: var(--zh-line-theme);
+  color: var(--zh-text-theme);
+  background: var(--zh-background-weaken);
+}
+
+.assistant-intent-dot {
+  width: 6px;
+  height: 6px;
+  flex: none;
+  border-radius: 50%;
+  background: #9aa4b2;
+}
+
+.assistant-intent-status.revision .assistant-intent-dot {
+  background: var(--zh-line-theme);
+}
+
+.assistant-execution {
+  display: flex;
+  align-items: center;
+  gap: 9px;
+  margin: 0 12px 10px;
+  padding: 9px 10px;
+  border: 1px solid color-mix(in srgb, var(--zh-line-theme) 40%, var(--zh-line-border));
+  border-radius: 9px;
+  color: var(--zh-text-secondary);
+  background: var(--zh-background-weaken);
+}
+
+.assistant-execution-spinner {
+  position: relative;
+  width: 24px;
+  height: 24px;
+  flex: none;
+  border: 2px solid var(--zh-line-border);
+  border-top-color: var(--zh-line-theme);
+  border-radius: 50%;
+  animation: a12-spin .9s linear infinite;
+}
+
+.assistant-execution-spinner i {
+  position: absolute;
+  inset: 5px;
+  border: 2px solid transparent;
+  border-left-color: var(--zh-line-theme);
+  border-radius: 50%;
+  animation: a12-spin .6s linear reverse infinite;
+}
+
+.assistant-execution > div {
+  display: grid;
+  min-width: 0;
+  gap: 2px;
+}
+
+.assistant-execution strong {
+  color: var(--zh-text-primary);
+  font-size: 11px;
+}
+
+.assistant-execution-detail {
+  overflow: hidden;
+  color: var(--zh-text-caption);
+  font-size: 9px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.assistant-execution-dots {
+  display: flex;
+  gap: 3px;
+  margin-left: auto;
+}
+
+.assistant-execution-dots i {
+  width: 4px;
+  height: 4px;
+  border-radius: 50%;
+  background: var(--zh-line-theme);
+  animation: a12-dot 1s ease-in-out infinite;
+}
+
+.assistant-execution-dots i:nth-child(2) {
+  animation-delay: .15s;
+}
+
+.assistant-execution-dots i:nth-child(3) {
+  animation-delay: .3s;
+}
+
+.revision-overlay {
+  position: absolute;
+  z-index: 20;
+  inset: 0;
+  display: grid;
+  place-items: center;
+  padding: 24px;
+  background: rgb(238 240 244 / 52%);
+  backdrop-filter: blur(2px);
+  pointer-events: auto;
+}
+
+.revision-overlay-card {
+  display: grid;
+  grid-template-columns: auto 1fr;
+  align-items: center;
+  gap: 10px 12px;
+  width: min(310px, 100%);
+  padding: 14px 16px;
+  border: 1px solid color-mix(in srgb, var(--zh-line-theme) 40%, var(--zh-line-border));
+  border-radius: 12px;
+  background: rgb(255 255 255 / 92%);
+  box-shadow: 0 14px 34px rgb(16 45 84 / 14%);
+}
+
+.revision-orbit {
+  position: relative;
+  display: grid;
+  place-items: center;
+  width: 34px;
+  height: 34px;
+  border: 2px solid var(--zh-line-border);
+  border-top-color: var(--zh-line-theme);
+  border-radius: 50%;
+  animation: a12-spin 1s linear infinite;
+}
+
+.revision-orbit i {
+  position: absolute;
+  width: 5px;
+  height: 5px;
+  border-radius: 50%;
+  background: var(--zh-line-theme);
+  animation: a12-orbit 1.4s linear infinite;
+}
+
+.revision-orbit i:nth-child(2) {
+  animation-delay: .2s;
+}
+
+.revision-orbit i:nth-child(3) {
+  animation-delay: .4s;
+}
+
+.revision-overlay-card > div:not(.revision-progress) {
+  display: grid;
+  min-width: 0;
+  gap: 3px;
+}
+
+.revision-overlay-card strong {
+  color: var(--zh-text-primary);
+  font-size: 12px;
+}
+
+.revision-overlay-card > div:not(.revision-progress) > span {
+  overflow: hidden;
+  color: var(--zh-text-caption);
+  font-size: 10px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.revision-progress {
+  grid-column: 1 / -1;
+  height: 3px;
+  overflow: hidden;
+  border-radius: 99px;
+  background: var(--zh-line-border);
+}
+
+.revision-progress i {
+  display: block;
+  width: 38%;
+  height: 100%;
+  border-radius: inherit;
+  background: var(--zh-line-theme);
+  animation: a12-progress 1.2s ease-in-out infinite;
+}
+
+@keyframes a12-spin {
+  to { transform: rotate(360deg); }
+}
+
+@keyframes a12-dot {
+  0%, 80%, 100% { transform: scale(.65); opacity: .4; }
+  40% { transform: scale(1); opacity: 1; }
+}
+
+@keyframes a12-orbit {
+  from { transform: rotate(0deg) translateX(11px) rotate(0deg); }
+  to { transform: rotate(360deg) translateX(11px) rotate(-360deg); }
+}
+
+@keyframes a12-progress {
+  0% { transform: translateX(-140%); }
+  50% { transform: translateX(120%); }
+  100% { transform: translateX(280%); }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .assistant-execution-spinner,
+  .assistant-execution-spinner i,
+  .assistant-execution-dots i,
+  .revision-orbit,
+  .revision-orbit i,
+  .revision-progress i {
+    animation: none;
+  }
 }
 </style>

@@ -17,7 +17,7 @@ import {
   Promotion,
 } from '@element-plus/icons-vue'
 import { TEACHER_HOME } from '../config/teacherHome.config.js'
-import { requestNewChat, openChatSession } from '../config/teacherChat.config.js'
+import { INFO_FORM_DEFAULTS, isPlanningPrompt, requestNewChat, openChatSession } from '../config/teacherChat.config.js'
 import ChatView from './ChatView.vue'
 import { archiveProject, copyProject, createAiSession, createProject, deleteProject, listProjects, listResources, restoreProject, transcribeAudio, uploadResource } from '../apis/teacher'
 
@@ -62,6 +62,10 @@ const viewMode = ref('welcome') // 'welcome' | 'chat'
 const chatSessionId = ref(null)
 const chatPrompt = ref('')
 const chatResourceIds = ref([])
+/** 普通对话切换到备课流时，保留切换前的消息用于页面续接和首次模型上下文。 */
+const chatContinuationHistory = ref([])
+/** 欢迎页输入的会话类型：普通对话不进入备课补充信息流程。 */
+const chatMode = ref('planning') // 'planning' | 'general'
 /** 是否以"恢复历史"方式打开会话（由侧栏历史对话触发，ChatView 据此拉取消息回显） */
 const chatResume = ref(false)
 const isDevelopment = import.meta.env.DEV
@@ -213,37 +217,99 @@ const handleVoiceRecordingStop = async () => {
 }
 
 /**
- * 从欢迎页直接发送提示词，创建 AI 会话并切换到聊天视图。
- * 替换原有的 "打开会话对话框 → 创建会话 → 跳转工作台" 流程。
+ * 创建备课会话并进入 ChatView。
+ * 备课上下文由 ChatView 的结构化征询卡补齐后才提交 API-13；这里只创建会话，
+ * 不因为 Java 接口的必填字段而偷偷替教师做出学科/年级判断；若从普通对话切换，
+ * 同时把切换前的历史交给 ChatView 做回显和首次请求上下文注入。
  */
-const sendPrompt = async () => {
-  if (!canSend.value) return
-  const text = prompt.value.trim()
+const startPlanningSession = async (text, resourceIds = [], history = null) => {
+  const previousMode = chatMode.value
+  const normalizedText = String(text || '').trim()
+  const normalizedResourceIds = Array.isArray(resourceIds) ? [...resourceIds] : []
+  const normalizedPreviousHistory = Array.isArray(history)
+    ? history
+      .filter((item) => item && (item.role === 'user' || item.role === 'assistant') && String(item.content || '').trim())
+      .map((item) => ({ role: item.role, content: String(item.content).trim() }))
+      .slice(-16)
+    : []
+  // 兼容调用方把本次切换请求也放进 history 的旧写法，避免页面和模型上下文重复一条。
+  const lastHistoryItem = normalizedPreviousHistory[normalizedPreviousHistory.length - 1]
+  if (lastHistoryItem?.role === 'user' && lastHistoryItem.content === normalizedText) {
+    normalizedPreviousHistory.pop()
+  }
+  const normalizedHistory = [...normalizedPreviousHistory, { role: 'user', content: normalizedText }]
 
   try {
-    // 自动生成会话标题（取前40字）
     const result = await createAiSession({
-      title: text.slice(0, 40),
-      subject: '',
-      grade: '',
+      title: normalizedText.slice(0, 40),
+      // Java 会话接口要求 subject/grade 非空；ChatView 会在征询后用真实值覆盖上下文。
+      subject: INFO_FORM_DEFAULTS.subject,
+      grade: INFO_FORM_DEFAULTS.grade,
       status: 'active',
-      messages: JSON.stringify([{ role: 'user', content: text }]),
-      uploaded_refs: JSON.stringify(selectedResourceIds.value),
+      messages: JSON.stringify(normalizedHistory),
+      uploaded_refs: JSON.stringify(normalizedResourceIds),
     })
     const task = result?.data || result
     const sessionId = task?.conversation_id || task?.id
     if (!sessionId) throw new Error(result?.message || '创建备课会话失败')
 
-    // 保存会话参数，切换到聊天视图
     chatSessionId.value = sessionId
-    chatPrompt.value = text
-    chatResourceIds.value = [...selectedResourceIds.value]
+    chatPrompt.value = normalizedText
+    chatResourceIds.value = normalizedResourceIds
+    chatContinuationHistory.value = normalizedPreviousHistory
+    chatMode.value = 'planning'
     chatResume.value = false
     viewMode.value = 'chat'
-    ElMessage.success('备课会话已创建，正在生成教学大纲')
+    ElMessage.success('已进入备课流程，请先确认课程信息')
   } catch (error) {
+    // 普通对话中途切换失败时，保留原聊天模式，避免输入区被锁死。
+    chatMode.value = previousMode
     ElMessage.error(error?.message || '创建会话失败，请登录后重试')
   }
+}
+
+/**
+ * 从欢迎页发送提示词：明确的教学设计需求进入备课流程，其他内容进入普通对话。
+ * 普通对话使用本地会话 ID，不创建后端“备课会话”。
+ */
+const sendPrompt = async () => {
+  if (!canSend.value) return
+  const text = prompt.value.trim()
+
+  if (!isPlanningPrompt(text)) {
+    chatMode.value = 'general'
+    chatSessionId.value = `local-chat-${Date.now()}`
+    chatPrompt.value = text
+    chatResourceIds.value = [...selectedResourceIds.value]
+    chatContinuationHistory.value = []
+    chatResume.value = false
+    viewMode.value = 'chat'
+    prompt.value = ''
+    activeSuggestionId.value = null
+    return
+  }
+
+  prompt.value = ''
+  activeSuggestionId.value = null
+  await startPlanningSession(text, [...selectedResourceIds.value], [])
+}
+
+/** 欢迎页快捷键：Enter 发送，Shift+Enter 保留换行；中文输入法确认候选词时不抢占 Enter。 */
+const handlePromptKeydown = (event) => {
+  if (event.isComposing || event.keyCode === 229 || event.shiftKey) return
+  event.preventDefault()
+  void sendPrompt()
+}
+
+/** 普通对话中途识别到明确备课请求时，切换为带征询卡片的备课流程。 */
+const handlePlanningRequest = async (payload) => {
+  const text = typeof payload === 'string' ? payload : payload?.prompt
+  const history = typeof payload === 'object' ? payload?.history : null
+  const resourceIds = typeof payload === 'object' && Array.isArray(payload?.resourceIds)
+    ? payload.resourceIds
+    : chatResourceIds.value
+  if (!String(text || '').trim()) return
+  await startPlanningSession(text, resourceIds, history)
 }
 
 /** 关闭聊天视图，返回欢迎页 */
@@ -252,6 +318,8 @@ const closeChatView = () => {
   chatSessionId.value = null
   chatPrompt.value = ''
   chatResourceIds.value = []
+  chatContinuationHistory.value = []
+  chatMode.value = 'planning'
   chatResume.value = false
   prompt.value = ''
   loadProjects()
@@ -274,9 +342,11 @@ watch(requestNewChat, (val) => {
  */
 watch(openChatSession, (target) => {
   if (!target?.id) return
+  chatMode.value = 'planning'
   chatSessionId.value = target.id
   chatPrompt.value = target.title || ''
   chatResourceIds.value = []
+  chatContinuationHistory.value = []
   chatResume.value = true
   viewMode.value = 'chat'
   openChatSession.value = null
@@ -455,7 +525,7 @@ onMounted(loadProjects)
         :autosize="{ minRows: 3, maxRows: 7 }"
         resize="none"
         :placeholder="TEACHER_HOME.composer.placeholder"
-        @keydown.ctrl.enter="sendPrompt"
+        @keydown.enter="handlePromptKeydown"
       />
       <div class="composer-toolbar">
         <div class="composer-tools">
@@ -475,20 +545,24 @@ onMounted(loadProjects)
       </div>
     </section>
 
-    <p class="composer-hint motion-stage motion-stage-4">{{ TEACHER_HOME.composer.hint }}</p>
+    <p class="composer-hint motion-stage motion-stage-4">{{ TEACHER_HOME.composer.hint }} · Enter 发送 · Shift + Enter 换行</p>
     <el-button v-if="isDevelopment" text class="fixture-entry" @click="openPresentationFixture">打开固定 PPT 样例（不调用 AI）</el-button>
     </template>
 
     <!-- 聊天视图 -->
-    <ChatView
-      v-if="viewMode === 'chat'"
-      :key="chatSessionId"
+        <!-- 普通对话转备课时保留同一个组件和消息列表；打开历史会话时才重新挂载。 -->
+        <ChatView
+          v-if="viewMode === 'chat'"
+      :key="chatResume ? `resume-${chatSessionId}` : 'active-chat'"
       :session-id="chatSessionId"
       :initial-prompt="chatPrompt"
       :resource-ids="chatResourceIds"
+      :continuation-history="chatContinuationHistory"
+      :mode="chatMode"
       :resume="chatResume"
       @back="closeChatView"
       @open-workspace="openWorkspaceFromChat"
+      @planning-request="handlePlanningRequest"
     />
 
     <!-- 资料上传 / 知识库 / 语音对话框（欢迎视图和聊天视图共用）-->
