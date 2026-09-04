@@ -17,7 +17,8 @@ export function apiRequest(options) {
     params: options.params,
     data: options.data,
     headers: options.headers,
-    responseType: options.responseType
+    responseType: options.responseType,
+    timeout: options.timeout
   })
 }
 

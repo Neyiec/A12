@@ -5,7 +5,7 @@
   - Emits: @back (返回欢迎页), @open-workspace (跳转工作台), @session-created (Python会话ID)
   - 输入: 接收来自 TeacherHome 的会话初始参数
   - 输出: 聊天界面完整交互，流程：用户输入 → 补充信息卡片 → API-13 发消息生成大纲 → API-14 拉取并展示 → 确认/修改(API-15 确认) → 资源生成卡片 → 跳转工作台
-  - 流程说明: 大纲生成走 Java 网关，非流式。若 API-13 返回 last_question，转入澄清阶段等待教师补充回复后继续。修改要求通过再次发送 API-13 消息实现重生成。
+  - 流程说明: 大纲生成走 Java 网关流式（API-11S SSE）。final 事件到达后直接渲染大纲，question 转入澄清阶段等待教师补充回复后继续。修改要求通过再次发送流式消息实现重生成。
 -->
 <script setup>
 import { nextTick, onMounted, reactive, ref } from 'vue'
@@ -13,7 +13,7 @@ import { ElMessage } from 'element-plus'
 import { Document, Promotion } from '@element-plus/icons-vue'
 import MarkdownRender from 'markstream-vue'
 import { useUserStore } from '../storage/user.js'
-import { confirmAiPlan, getAiPlan, getAiSession, sendAiSessionMessage } from '../apis/teacher.js'
+import { confirmAiPlan, getAiPlan, getAiSession, streamSendAiSessionMessage } from '../apis/teacher.js'
 import {
   CHAT_COMPOSER, CLASS_LEVEL_OPTIONS, CLARIFICATION_LABELS,
   STAGE_OPTIONS, SUBJECT_OPTIONS, GRADE_OPTIONS, TEXTBOOK_OPTIONS,
@@ -54,6 +54,8 @@ const resumeLoading = ref(false)
 /** 每条消息: { id, role: 'user'|'assistant'|'system', type: 'text'|'outline'|'info_form'|'clarification', content, data? } */
 const messages = reactive([])
 let messageSeq = 0
+/** 实时流式预览的临时消息 id（final 到达后被正式大纲替换） */
+let liveMsgId = null
 const messageListRef = ref(null)
 
 // ========== 教学设计方案数据 ==========
@@ -151,45 +153,179 @@ function buildContextMessage(extra = '') {
 }
 
 /**
- * 调用 API-13 发送消息，驱动 Java 转发 Python 生成大纲。
- * 返回解析后的 ConversationVO；若后端需要澄清，则转入 clarifying 阶段等待教师回复。
+ * 解析 SSE 响应体，按事件边界逐步调用 onEvent(event, data)，直至流结束。
+ * @param {Response} res - streamSendAiSessionMessage 返回的 fetch Response
+ * @param {(event: string, data: Object) => void} onEvent - 事件回调
+ */
+async function consumeSseStream(res, onEvent) {
+  if (!res.ok) {
+    let msg = SYSTEM_MESSAGES.connectionError
+    try { const err = await res.json(); msg = err?.message || err?.error || msg } catch { /* 忽略 */ }
+    throw new Error(msg)
+  }
+  const reader = res.body?.getReader?.()
+  if (!reader) throw new Error('当前浏览器不支持流式响应')
+  const decoder = new TextDecoder('utf-8')
+  let pending = ''
+  let currentEvent = ''
+  let currentData = ''
+  const dispatchEvent = async () => {
+    if (currentEvent || currentData) {
+      if (currentData) {
+        let parsed = {}
+        try { parsed = JSON.parse(currentData) } catch { parsed = { message: currentData } }
+        await onEvent(currentEvent || 'message', parsed)
+      }
+      currentEvent = ''
+      currentData = ''
+    }
+  }
+  for (;;) {
+    const { value, done } = await reader.read()
+    if (done) break
+    pending += decoder.decode(value, { stream: true })
+    let idx
+    while ((idx = pending.indexOf('\n')) !== -1) {
+      const line = pending.slice(0, idx).replace(/\r$/, '')
+      pending = pending.slice(idx + 1)
+      if (line === '') {
+        await dispatchEvent()
+      } else if (line.startsWith('event:')) {
+        currentEvent = line.slice(6).trim()
+      } else if (line.startsWith('data:')) {
+        currentData += (currentData ? '\n' : '') + line.slice(5).trim()
+      }
+    }
+  }
+  await dispatchEvent()
+}
+
+/**
+ * 将流式 final 事件中的大纲数据渲染到消息区（等价于 loadPlan 的渲染结果）。
+ * @param {Object} data - final 事件 data（含 outline/slides/title/outline_id 等）
+ */
+function renderStreamedOutline(data) {
+  const planJson =
+    data && data.outline && typeof data.outline === 'object' ? data.outline : data
+  if (!planJson || typeof planJson !== 'object') {
+    ElMessage.info('大纲已生成，但数据格式异常，请稍后重试或重新拉取。')
+    phase.value = 'info'
+    return
+  }
+  const slides = Array.isArray(planJson.slides) ? planJson.slides : []
+  const title = data?.title || planJson.title || '教学设计方案'
+  planTask.value = {
+    ...(planTask.value || {}),
+    plan_json: planJson,
+    python_outline_id: data?.outline_id || planJson.outline_id,
+  }
+  planVersion.value = Number(planJson.version) || 1
+  outlineData.value = {
+    markdown: planJsonToMarkdown(planJson),
+    title,
+    slideCount: slides.length || Number(planJson.slide_count) || 0,
+    planJson,
+    outlineId: data?.outline_id || planJson.outline_id,
+  }
+  phase.value = 'outline_ready'
+  addMessage('assistant', 'markdown', outlineData.value.markdown, { data: outlineData.value })
+  addMessage('assistant', 'outline_actions', '', { outlineId: outlineData.value.outlineId })
+}
+
+/**
+ * 实时渲染逐条到达的 outline_delta 页（临时预览消息，final 到达后被正式大纲替换）。
+ * @param {Object} slide - 单页大纲增量
+ */
+function renderLiveOutline(slide) {
+  if (!slide || !slide.title) return
+  if (liveMsgId == null) {
+    liveMsgId = ++messageSeq
+    messages.push({ id: liveMsgId, role: 'assistant', type: 'markdown', content: '', data: { slides: [], isLive: true } })
+  }
+  const msg = messages.find((m) => m.id === liveMsgId)
+  if (!msg) return
+  const slides = msg.data?.slides || []
+  if (!slides.some((s) => s.slide_no === slide.slide_no)) slides.push(slide)
+  msg.data = { ...msg.data, slides }
+  msg.content = planJsonToMarkdown({ title: '正在生成大纲…', slides })
+  scrollToBottom()
+}
+
+/** 移除实时预览消息（final/question/error/done 到达时调用）。 */
+function finalizeLiveOutline() {
+  if (liveMsgId == null) return
+  const i = messages.findIndex((m) => m.id === liveMsgId)
+  if (i >= 0) messages.splice(i, 1)
+  liveMsgId = null
+}
+
+/**
+ * 调用 API-11S 流式发送消息，Java 转发 Python 边生成边回传事件。
+ * 由 final 事件渲染最终大纲；question 进入澄清阶段；error/done(failed) 提示错误。
  * @param {string} message - 本轮自然语言输入
  */
 async function sendMessageToBackend(message) {
   phase.value = 'generating_outline'
   isRequesterLoading.value = true
+  const payload = {
+    message,
+    resource_ids: JSON.stringify(props.resourceIds || []),
+    enable_rag: props.resourceIds.length > 0,
+    enable_web: false,
+    known_context: JSON.stringify({
+      title: infoForm.courseName.trim(),
+      subject: infoForm.subject,
+      grade: infoForm.grade,
+    }),
+  }
+  let finished = false
   try {
-    const res = await sendAiSessionMessage(props.sessionId, {
-      message,
-      resource_ids: JSON.stringify(props.resourceIds || []),
-      enable_rag: props.resourceIds.length > 0,
-      enable_web: false,
-      known_context: JSON.stringify({
-        title: infoForm.courseName.trim(),
-        subject: infoForm.subject,
-        grade: infoForm.grade,
-      }),
+    const res = await streamSendAiSessionMessage(props.sessionId, payload)
+    await consumeSseStream(res, (event, data) => {
+      if (event === 'outline_delta') {
+        // 逐页实时回传，边生成边渲染到预览消息
+        renderLiveOutline(data.slide)
+        return
+      }
+      if (event === 'question') {
+        finished = true
+        finalizeLiveOutline()
+        const question = data.question || data.message || ''
+        if (!question) return
+        lastClarification.value = question
+        phase.value = 'clarifying'
+        addMessage('assistant', 'clarification', question)
+        return
+      }
+      if (event === 'final') {
+        finished = true
+        finalizeLiveOutline()
+        renderStreamedOutline(data)
+        return
+      }
+      if (event === 'error') {
+        finished = true
+        finalizeLiveOutline()
+        ElMessage.error(data.message || SYSTEM_MESSAGES.connectionError)
+        phase.value = 'info'
+        return
+      }
+      if (event === 'done') {
+        finished = true
+        finalizeLiveOutline()
+        if (data.status === 'failed') {
+          ElMessage.error(data.message || SYSTEM_MESSAGES.connectionError)
+          phase.value = 'info'
+        }
+      }
     })
-    if (!isOk(res)) {
-      ElMessage.error(res?.message || SYSTEM_MESSAGES.connectionError)
+    if (!finished) {
+      finalizeLiveOutline()
+      ElMessage.error(SYSTEM_MESSAGES.connectionError)
       phase.value = 'info'
-      return
     }
-    const data = res.data
-    // 归一化澄清问题：真实后端 last_question 为字符串，mock 可能为对象
-    const question = (typeof data?.last_question === 'string' && data.last_question.trim())
-      ? data.last_question
-      : (typeof data?.last_question === 'object' && data.last_question?.text) || ''
-    if (question) {
-      // 需要澄清：记录问题并等待教师回复
-      lastClarification.value = question
-      phase.value = 'clarifying'
-      addMessage('assistant', 'clarification', question)
-      return
-    }
-    // 无需澄清：拉取最新大纲
-    await loadPlan()
   } catch {
+    finalizeLiveOutline()
     ElMessage.error(SYSTEM_MESSAGES.connectionError)
     phase.value = 'info'
   } finally {
