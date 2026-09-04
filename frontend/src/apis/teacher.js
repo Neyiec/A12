@@ -96,7 +96,32 @@ export const listAiSessions = () => get('/api/v1/ai/sessions')
 export const getAiSession = (id) => get(`/api/v1/ai/sessions/${id}`)
 export const updateAiSession = (id, data) => apiRequest({ url: `/api/v1/ai/sessions/${id}`, method: 'patch', data })
 export const deleteAiSession = (id) => del(`/api/v1/ai/sessions/${id}`)
-export const sendAiSessionMessage = (id, data) => post(`/api/v1/ai/sessions/${id}/messages`, data)
+// 大纲生成同步阻塞、耗时较长（后端 request-timeout-seconds 已放宽到 600s），
+// 单独使用长超时，避免被默认 10s 超时取消导致"已取消"或后端完成前被掐断。
+export const sendAiSessionMessage = (id, data) =>
+  apiRequest({ url: `/api/v1/ai/sessions/${id}/messages`, method: 'post', data, timeout: 620000 })
+
+/**
+ * 流式发送 AI 会话消息（SSE）
+ * 走 Java 网关 /api/v1/ai/sessions/{id}/messages/stream，
+ * 边生成边回传 session/outline_delta/question/final/error/done 事件。
+ * 浏览器原生 EventSource 仅支持 GET，因此用原生 fetch 返回 Response，由调用方读取 ReadableStream 解析 SSE。
+ * @returns {Promise<Response>}
+ */
+export function streamSendAiSessionMessage(id, data) {
+  const userStore = useUserStore()
+  return fetch(
+    `${import.meta.env.VITE_API_BASE_URL || ''}/api/v1/ai/sessions/${id}/messages/stream`,
+    {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        Authorization: `Bearer ${userStore.token}`,
+      },
+      body: JSON.stringify(data),
+    }
+  )
+}
 export const getAiPlan = (id) => get(`/api/v1/ai/sessions/${id}/plan`)
 export const confirmAiPlan = (id, data) => post(`/api/v1/ai/sessions/${id}/plan-confirmations`, data)
 export const createAiRun = (id) => post(`/api/v1/ai/sessions/${id}/runs`)

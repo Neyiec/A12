@@ -4,7 +4,7 @@ from openai import AsyncOpenAI
 
 from ..config import get_settings
 
-
+"""语音转文字服务"""
 async def transcribe_audio(path: Path, language: str | None = None) -> dict:
     settings = get_settings()
     if not settings.openai_api_key:
