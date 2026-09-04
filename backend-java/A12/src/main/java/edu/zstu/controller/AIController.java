@@ -100,21 +100,6 @@ public class AIController {
         } catch (RuntimeException e) { return Result.error(400, e.getMessage()); }
     }
 
-    /**
-     * API-13S 流式发送会话消息（SSE）
-     *
-     * <p>与 sendMessage 等价但以 text/event-stream 返回：边生成边回传
-     * session/outline_delta/question/final/error 等事件，流结束前后端会一次性落库。</p>
-     *
-     * @param id  会话ID（路径参数）
-     * @param dto 消息请求参数 {@link ConversationDTO}
-     * @return SSE 事件流
-     */
-    @PostMapping(value = "/sessions/{id}/messages/stream", produces = MediaType.TEXT_EVENT_STREAM_VALUE)
-    public SseEmitter sendMessageStream(@PathVariable String id, @RequestBody ConversationDTO dto) {
-        return aiService.sendMessageStream(id, dto);
-    }
-
     @PostMapping(value = "/sessions/{id}/audio-messages", consumes = MediaType.MULTIPART_FORM_DATA_VALUE)
     public Result<ConversationVO> sendAudioMessage(@PathVariable String id,
                                                    @RequestParam("file") MultipartFile file,

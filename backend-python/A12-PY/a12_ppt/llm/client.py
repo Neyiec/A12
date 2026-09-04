@@ -1,5 +1,3 @@
-from typing import AsyncIterator
-
 from langchain_core.messages import BaseMessage, HumanMessage, SystemMessage
 
 from ..config import get_settings
@@ -7,11 +5,9 @@ from .model_factory import create_chat_model_from_settings
 
 
 class LLMClient:
-    """大模型服务类"""
     def __init__(self) -> None:
         self.settings = get_settings()
 
-    """判断是否存在API_KEY"""
     @property
     def available(self) -> bool:
         return bool(self.settings.openai_api_key)
@@ -32,18 +28,3 @@ class LLMClient:
         if isinstance(content, str):
             return content
         return "".join(str(part) for part in content)
-
-    async def complete_stream(self, system_prompt: str, user_prompt: str, temperature: float = 0.45) -> AsyncIterator[str]:
-        """流式补全：逐 token 产出文本片段。模型不可用时直接结束（不产出任何片段）。"""
-        if not self.available:
-            return
-        model = create_chat_model_from_settings(self.settings, temperature=temperature)
-        messages = [SystemMessage(content=system_prompt), HumanMessage(content=user_prompt)]
-        async for chunk in model.astream(messages):
-            content = chunk.content
-            if isinstance(content, str):
-                text = content
-            else:
-                text = "".join(str(part) for part in content) if content else ""
-            if text:
-                yield text

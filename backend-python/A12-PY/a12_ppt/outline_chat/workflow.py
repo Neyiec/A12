@@ -1,9 +1,9 @@
+import asyncio
 import json
 import re
 from typing import Any, AsyncIterator, Literal
 
 from langchain_core.messages import AIMessage, BaseMessage, HumanMessage
-from langgraph.config import get_stream_writer
 from langgraph.graph import END, START, MessagesState, StateGraph
 
 from ..llm import LLMClient
@@ -17,7 +17,6 @@ from .session_store import outline_session_store
 
 
 class OutlineChatState(MessagesState, total=False):
-    """生成课件大纲的所有状态记录(审计日志)"""
     user_id: str
     session_id: str
     request: OutlineChatStreamRequest
@@ -85,13 +84,7 @@ class OutlineChatWorkflow:
         yield {"event": "session", "data": {"user_id": user_id, "session_id": session_id}}
 
         final_state = dict(state)
-        # updates:节点返回值; custom:节点内 get_stream_writer 实时产出的事件(如逐页 outline_delta)
-        async for mode, chunk in self.graph.astream(state, stream_mode=["updates", "custom"]):
-            if mode == "custom":
-                if isinstance(chunk, dict) and chunk.get("event"):
-                    yield chunk
-                continue
-
+        async for chunk in self.graph.astream(state, stream_mode="updates"):
             node_name, node_update = next(iter(chunk.items()))
             self._merge_stream_update(final_state, node_update or {})
 
@@ -163,6 +156,10 @@ class OutlineChatWorkflow:
             yield {"event": "error", "data": {"stage": "workflow", "message": "Outline workflow ended without a response", "user_id": user_id, "session_id": session_id}}
             yield {"event": "done", "data": {"status": "failed", "user_id": user_id, "session_id": session_id}}
             return
+
+        for slide in response.get("slides", []):
+            yield {"event": "outline_delta", "data": {"user_id": user_id, "session_id": session_id, "slide": slide}}
+            await asyncio.sleep(0)
 
         yield {"event": "final", "data": {"user_id": user_id, "session_id": session_id, **response}}
         yield {"event": "done", "data": {"status": "completed", "user_id": user_id, "session_id": session_id}}
@@ -370,27 +367,9 @@ Requirements:
         return {"final_prompt": prompt}
 
     async def _generate_outline_node(self, state: OutlineChatState) -> dict[str, Any]:
-        writer = get_stream_writer()
         try:
             req = self._outline_request_from_state(state)
-            response: dict[str, Any] = {}
-            # 模型边产出边回传 outline_delta，用户可实时看到大纲页逐条生成
-            async for item in self.generator.stream_outline(req):
-                if item.get("type") == "slide":
-                    writer({
-                        "event": "outline_delta",
-                        "data": {
-                            "user_id": state["user_id"],
-                            "session_id": state["session_id"],
-                            "slide": item.get("slide"),
-                            "index": item.get("index"),
-                            "preview": True,
-                        },
-                    })
-                elif item.get("type") == "final":
-                    response = item.get("response") or {}
-            if not response.get("slides"):
-                return {"error": "Unable to generate outline"}
+            response = await self.generator.generate_outline(req)
             self._attach_tool_outputs(response, state)
             return {"outline": response.get("outline", {}), "response": response}
         except Exception as exc:

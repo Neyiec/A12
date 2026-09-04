@@ -8,7 +8,6 @@ from ..presentation.json_utils import extract_json
 
 
 class LessonPlanGenerator:
-    """教案生成器"""
     def __init__(self) -> None:
         self.llm = LLMClient()
 

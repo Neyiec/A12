@@ -1,5 +1,3 @@
-"""配置文件"""
-
 import os
 from dataclasses import dataclass
 from functools import lru_cache
@@ -40,12 +38,6 @@ class Settings:
 
 @lru_cache
 def get_settings() -> Settings:
-    """获取配置文件
-
-
-        Return:
-        Settings 一个配置信息领域类
-    """
     _load_dotenv()
     enable_quality_pipeline = os.getenv("ENABLE_QUALITY_PIPELINE", "true").lower() == "true"
     quality_preset = os.getenv("QUALITY_PRESET", "fast").lower()
