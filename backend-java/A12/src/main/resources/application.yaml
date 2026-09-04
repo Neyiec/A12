@@ -57,9 +57,9 @@ mybatis:
 
 a12:
   python:
-    base-url: http://127.0.0.1:8001
-    connect-timeout-seconds: 5
-    request-timeout-seconds: 180
+    base-url: ${A12_PYTHON_BASE_URL:http://127.0.0.1:8001}
+    connect-timeout-seconds: ${A12_PYTHON_CONNECT_TIMEOUT_SECONDS:5}
+    request-timeout-seconds: ${A12_PYTHON_REQUEST_TIMEOUT_SECONDS:180}
   export:
     local-dir: data/exports
     public-prefix: /exports
