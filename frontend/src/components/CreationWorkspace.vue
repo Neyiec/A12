@@ -1,22 +1,33 @@
 <script setup>
-import { computed, onBeforeUnmount, onMounted, reactive, ref, watch } from 'vue'
+import { computed, nextTick, onBeforeUnmount, onMounted, reactive, ref, watch } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { ElMessage } from 'element-plus'
-import { FullScreen, Plus, Promotion, VideoPlay } from '@element-plus/icons-vue'
-import { addProjectPermission, batchSaveProjectPages, createAiRun, createProject, createProjectPage, deleteProjectPage, generateInteractiveModule, getAiRun, getProject, getProjectPage, getProjectVersionDiff, listProjectPages, listProjectVersions, patchProject, restoreProjectVersion, reviseProjectWithAi, saveProjectVersion, sendAiSessionMessage, saveProjectPage, validateProjectComponent } from '../apis/teacher'
+import { FullScreen, Plus, Promotion } from '@element-plus/icons-vue'
+import { addProjectPermission, batchSaveProjectPages, createProject, createProjectPage, deleteProjectPage, generateInteractiveModule, generatePresentation, getAiPlan, getProject, getProjectPage, getProjectVersionDiff, listProjectPages, listProjectVersions, modifyPresentationSlide, patchProject, restoreProjectVersion, reviseProjectWithAi, saveProjectVersion, sendAiSessionMessage, saveProjectPage, streamGeneralChat, validateProjectComponent } from '../apis/teacher'
 import IntentClarificationDialog from './IntentClarificationDialog.vue'
 import CreationWorkspaceToolbar from './CreationWorkspaceToolbar.vue'
 import WorkspacePropertiesPanel from './WorkspacePropertiesPanel.vue'
+import { useUserStore } from '../storage/user.js'
+import { readOutlineDraft, readPresentationDraft, savePresentationDraft } from '../utils/presentationDraft.js'
+import { createPresentationFixture } from '../mock/data/presentationFixture.js'
 
 const router = useRouter()
 const route = useRoute()
+const userStore = useUserStore()
 const prompt = ref('')
 const selectedSlide = ref(0)
 const activeTool = ref('')
 const selectedElementId = ref(null)
 const draggingElementId = ref(null)
-const activePanel = ref('style')
+const activePanel = ref('content')
+const canvasZoom = ref(86)
+const canvasZoomInput = ref('86')
+const CANVAS_ZOOM_MIN = 50
+const CANVAS_ZOOM_MAX = 200
+const CANVAS_ZOOM_STEP = 10
 const previewVisible = ref(false)
+const previewSlideIndex = ref(0)
+const previewDeckRef = ref(null)
 const interactiveDialogVisible = ref(false)
 const interactivePreviewVisible = ref(false)
 const interactiveGenerating = ref(false)
@@ -48,6 +59,21 @@ const clarificationOrigin = ref('session')
 const runStatus = ref('idle')
 const runProgress = ref(0)
 const runStage = ref('')
+const generationError = ref('')
+const revisionSubmitting = ref(false)
+const discussionSubmitting = ref(false)
+const intentSubmitting = ref(false)
+const revisionStage = ref('')
+const assistantConversationRef = ref(null)
+const presentationId = ref('')
+const presentationMetadata = ref(null)
+const htmlFrameObservers = new Set()
+const htmlCanvasSource = ref('')
+const htmlCanvasSourceSlide = ref(null)
+const htmlElements = ref([])
+const htmlSelectedElementId = ref(null)
+const htmlSelectedElement = ref(null)
+const htmlSelectionRestoreKey = ref('')
 const versionDialogVisible = ref(false)
 const permissionDialogVisible = ref(false)
 const versionLoading = ref(false)
@@ -61,8 +87,6 @@ const savingPage = ref(false)
 const workspaceClientVersion = `workspace-${Date.now()}`
 const loadedPageDetailIds = new Set()
 const componentValidationCache = new Map()
-let eventSource = null
-let runPollTimer = null
 let autosaveTimer = null
 let workspaceMessageInstance = null
 const showWorkspaceMessage = (type, message) => {
@@ -126,9 +150,12 @@ const cloneElementData = (element) => ({
 })
 const createMockElements = () => elementPresets.map((element) => cloneElementData(element))
 const messages = reactive([
-  { role: 'assistant', text: '我已根据教学目标整理出一份 6 页课件。你可以直接描述想调整的内容，或在右侧细化当前页面。' },
-  { role: 'user', text: '让情境导入更贴近校园生活。' },
-  { role: 'assistant', text: '已将导入场景调整为校园旗杆测量任务，并保留小组讨论环节。' },
+  {
+    role: 'assistant',
+    text: '课件已进入创作工作台。你可以先讨论教学思路，也可以直接描述要修改的内容，我会自动判断并应用。',
+    includeInContext: false,
+    kind: 'welcome',
+  },
 ])
 const slides = reactive([
   { title: '勾股定理', eyebrow: '八年级数学 · 第 1 课时', description: '从实际测量出发，发现直角三角形三边之间恒定而优雅的关系。', layout: '重点陈述', theme: 'blue' },
@@ -139,7 +166,32 @@ const slides = reactive([
 ])
 slides.forEach((slide) => { slide.elements = createMockElements() })
 const current = computed(() => slides[selectedSlide.value])
-const theme = computed(() => themes.find((item) => item.id === current.value.theme) || themes[0])
+const syncHtmlCanvasSource = (slide = current.value) => {
+  htmlCanvasSourceSlide.value = slide || null
+  htmlCanvasSource.value = slide?.html ? String(slide.html) : ''
+}
+const htmlCanvasFrameSource = computed(() => {
+  if (!current.value?.html) return ''
+  return htmlCanvasSourceSlide.value === current.value
+    ? htmlCanvasSource.value
+    : String(current.value.html)
+})
+const setCanvasZoom = (value) => {
+  const rawValue = String(value ?? '').trim()
+  const numericValue = Number(rawValue)
+  if (!rawValue || !Number.isFinite(numericValue)) {
+    canvasZoomInput.value = String(canvasZoom.value)
+    return
+  }
+  canvasZoom.value = Math.round(Math.min(CANVAS_ZOOM_MAX, Math.max(CANVAS_ZOOM_MIN, numericValue)))
+  canvasZoomInput.value = String(canvasZoom.value)
+}
+const adjustCanvasZoom = (delta) => setCanvasZoom(canvasZoom.value + delta)
+const resetCanvasZoom = () => setCanvasZoom(86)
+const commitCanvasZoomInput = () => setCanvasZoom(canvasZoomInput.value)
+watch(current, (slide) => syncHtmlCanvasSource(slide), { immediate: true })
+const themeForSlide = (slide) => themes.find((item) => item.id === slide?.theme) || themes[0]
+const theme = computed(() => themeForSlide(current.value))
 const unwrapResponse = (response) => {
   if (response && typeof response === 'object' && Object.prototype.hasOwnProperty.call(response, 'code')) {
     const code = Number(response.code)
@@ -154,9 +206,1092 @@ const unwrapResponse = (response) => {
 }
 const sessionId = computed(() => route.query.sessionId)
 const projectId = computed(() => route.query.projectId)
+const presentationFixtureMode = computed(() => import.meta.env.DEV && (
+  String(route.query.pptFixture || '') === '1' || import.meta.env.VITE_PPT_FIXTURE_MODE === 'true'
+))
 const project = ref(null)
 const defaultSlide = (index = 1) => ({ title: `新建页面 ${index}`, eyebrow: '教学内容', description: '在右侧完善页面文案与布局，或通过 AI 对话继续创作。', layout: '图文并置', theme: 'blue', elements: createMockElements() })
 const parseJson = (value, fallback = {}) => { try { return typeof value === 'string' ? JSON.parse(value) : (value || fallback) } catch { return fallback } }
+const normalizeOutlinePayload = (planData = {}) => {
+  const parsedPlan = parseJson(planData.plan_json ?? planData.outline ?? planData, {})
+  const outline = parsedPlan?.outline
+  if (outline && typeof outline === 'object' && !Array.isArray(outline)) return outline
+  return parsedPlan && typeof parsedPlan === 'object' && !Array.isArray(parsedPlan) ? parsedPlan : {}
+}
+const getPresentationPayload = (rawResponse) => {
+  const response = unwrapResponse(rawResponse)
+  const candidate = response?.presentation || response?.result || response
+  return candidate && typeof candidate === 'object' && !Array.isArray(candidate) ? candidate : {}
+}
+const normalizePresentationSlides = (data = {}) => {
+  const rawSlides = Array.isArray(data.slides) ? data.slides : []
+  return rawSlides
+    .map((slide, index) => ({
+      ...slide,
+      title: String(slide?.title || `第 ${index + 1} 页`),
+      eyebrow: `${String(Number(slide?.slide_no) || index + 1).padStart(2, '0')} / HTML PPT`,
+      description: String(slide?.description || ''),
+      footer: String(slide?.footer || ''),
+      layout: slide?.layout || '重点陈述',
+      theme: slide?.theme || 'blue',
+      html: String(slide?.html || ''),
+      notes: String(slide?.notes || ''),
+      slideNo: Number(slide?.slide_no) || index + 1,
+      interactiveAssets: slide?.interactive_assets || slide?.metadata?.interactive_assets || [],
+      metadata: slide?.metadata || {},
+      elements: Array.isArray(slide?.elements) ? slide.elements : []
+    }))
+    .filter((slide) => slide.html.trim())
+}
+const scrollAssistantConversation = async () => {
+  await nextTick()
+  const element = assistantConversationRef.value
+  if (element) element.scrollTop = element.scrollHeight
+}
+const clearGenerationFailureMessages = () => {
+  for (let index = messages.length - 1; index >= 0; index -= 1) {
+    const message = messages[index]
+    const isLegacyGenerationError = String(message?.text || '') === '无法连接 HTML PPT 生成服务，请确认 Python 服务已启动。'
+    if (message?.kind === 'generation-error' || isLegacyGenerationError) messages.splice(index, 1)
+  }
+  generationError.value = ''
+}
+const applyGeneratedPresentation = (rawResponse, { persist = true, notify = true } = {}) => {
+  const data = getPresentationPayload(rawResponse)
+  const generatedSlides = normalizePresentationSlides(data)
+  if (!generatedSlides.length) throw new Error('HTML PPT 生成服务未返回页面')
+
+  clearGenerationFailureMessages()
+  slides.splice(0, slides.length, ...generatedSlides)
+  selectedSlide.value = 0
+  selectedElementId.value = null
+  activePanel.value = 'content'
+  htmlSelectionRestoreKey.value = ''
+  htmlElements.value = []
+  htmlSelectedElementId.value = null
+  htmlSelectedElement.value = null
+  presentationId.value = String(data.presentation_id || '')
+  presentationMetadata.value = data.metadata && typeof data.metadata === 'object' ? data.metadata : null
+  runStatus.value = 'completed'
+  runProgress.value = 100
+  runStage.value = 'HTML PPT 已生成'
+
+  if (persist && sessionId.value) {
+    savePresentationDraft(sessionId.value, {
+      presentation_id: presentationId.value,
+      title: data.title || generatedSlides[0].title,
+      slide_count: generatedSlides.length,
+      request_key: String(routeQueryValue(route.query.pptGeneration) || '') || null,
+      slides: generatedSlides,
+      metadata: presentationMetadata.value
+    })
+  }
+
+  if (notify) {
+    messages.push({ role: 'assistant', text: `已生成 ${generatedSlides.length} 页 HTML PPT，可在工作台中预览。`, includeInContext: false, kind: 'generation-success' })
+    WorkspaceMessage.success(`已生成 ${generatedSlides.length} 页 HTML PPT`)
+  }
+  void scrollAssistantConversation()
+
+  return data
+}
+const loadPresentationFixture = () => {
+  const data = applyGeneratedPresentation(createPresentationFixture(), { persist: true, notify: false })
+  messages.push({ role: 'assistant', text: `已载入 ${data.slide_count} 页固定 PPT 测试样例，不会调用大模型。`, includeInContext: false, kind: 'generation-success' })
+  WorkspaceMessage.info('已载入固定 PPT 测试样例，不会消耗 API')
+  void scrollAssistantConversation()
+  return data
+}
+const saveCurrentPresentationDraft = () => {
+  if (!sessionId.value || projectId.value) return
+  const existing = readPresentationDraft(sessionId.value) || {}
+  savePresentationDraft(sessionId.value, {
+    ...existing,
+    presentation_id: presentationId.value || existing.presentation_id || '',
+    title: existing.title || slides[0]?.title || 'A12 教学课件',
+    slide_count: slides.length,
+    request_key: String(routeQueryValue(route.query.pptGeneration) || '') || existing.request_key || null,
+    slides,
+    metadata: presentationMetadata.value || existing.metadata || null,
+  })
+}
+const htmlDragTargetSelector = '[data-ppt-element],h1,h2,h3,h4,h5,h6,p,li,img,svg,table,header,main,section,article,aside,footer,figure,div[class],.card,.item,.box,.panel'
+const htmlTextTargetSelector = 'h1,h2,h3,h4,h5,h6,p,li,span,strong,em,small,td,th,blockquote'
+const htmlSlideHistories = new WeakMap()
+const previewFrameObservers = new Set()
+const parseCssTranslate = (value) => {
+  const numbers = String(value || '').match(/-?\d*\.?\d+/g)?.map(Number) || []
+  return { x: Number.isFinite(numbers[0]) ? numbers[0] : 0, y: Number.isFinite(numbers[1]) ? numbers[1] : 0 }
+}
+const parseCssRotation = (value) => {
+  const rotation = Number(String(value || '').match(/-?\d*\.?\d+/)?.[0])
+  return Number.isFinite(rotation) ? rotation : 0
+}
+const serializeHtmlSlide = (document) => {
+  const root = document.documentElement.cloneNode(true)
+  root.querySelector('#a12-html-drag-style')?.remove()
+  root.querySelector('.a12-html-editor-overlay')?.remove()
+  root.querySelectorAll('[data-a12-drag-selected]').forEach((element) => element.removeAttribute('data-a12-drag-selected'))
+  root.querySelectorAll('[data-a12-html-editing]').forEach((element) => {
+    element.removeAttribute('data-a12-html-editing')
+    element.removeAttribute('contenteditable')
+    element.removeAttribute('spellcheck')
+  })
+  return `<!DOCTYPE html>\n${root.outerHTML}`
+}
+const htmlHistoryForSlide = (slide) => {
+  if (!htmlSlideHistories.has(slide)) htmlSlideHistories.set(slide, { undo: [], redo: [] })
+  return htmlSlideHistories.get(slide)
+}
+const applyHtmlSlideChange = (slide, nextHtml, { record = true } = {}) => {
+  if (!slide || !nextHtml || nextHtml === slide.html) return false
+  const history = htmlHistoryForSlide(slide)
+  if (record) {
+    history.undo.push(slide.html)
+    if (history.undo.length > 30) history.undo.shift()
+    history.redo.length = 0
+  }
+  slide.html = nextHtml
+  saveCurrentPresentationDraft()
+  return true
+}
+const undoHtmlSlideChange = (slide) => {
+  const history = htmlHistoryForSlide(slide)
+  const previous = history.undo.pop()
+  if (!previous) return false
+  history.redo.push(slide.html)
+  applyHtmlSlideChange(slide, previous, { record: false })
+  return true
+}
+const redoHtmlSlideChange = (slide) => {
+  const history = htmlHistoryForSlide(slide)
+  const next = history.redo.pop()
+  if (!next) return false
+  history.undo.push(slide.html)
+  applyHtmlSlideChange(slide, next, { record: false })
+  return true
+}
+const HTML_CANVAS_WIDTH = 1280
+const HTML_CANVAS_HEIGHT = 720
+const htmlTextTags = new Set(['h1', 'h2', 'h3', 'h4', 'h5', 'h6', 'p', 'li', 'span', 'strong', 'em', 'small', 'td', 'th', 'blockquote'])
+const htmlTypeAliases = { textbox: 'text', paragraph: 'text', rich_text: 'text', text_box: 'text', picture: 'image', photo: 'image', rectangle: 'shape', rect: 'shape', graph: 'chart' }
+const htmlColorToHex = (value, fallback) => {
+  const raw = String(value || '').trim()
+  if (!raw || raw === 'transparent') return fallback
+  if (/^#[\da-f]{3,8}$/i.test(raw)) return raw
+  const match = raw.match(/^rgba?\(\s*([\d.]+)[,\s]+([\d.]+)[,\s]+([\d.]+)(?:[,\s/]+([\d.]+))?\s*\)$/i)
+  if (!match) return fallback
+  const alpha = match[4] === undefined ? 1 : Number(match[4])
+  if (Number.isFinite(alpha) && alpha <= 0) return fallback
+  return `#${[match[1], match[2], match[3]].map((item) => Number(item).toString(16).padStart(2, '0')).join('')}`
+}
+const htmlNoopCleanup = () => {}
+const attachHtmlDragEditor = (iframe) => {
+  if (!iframe.classList.contains('editable-html-frame')) return htmlNoopCleanup
+  const document = iframe.contentDocument
+  const frameWindow = iframe.contentWindow
+  const slide = current.value
+  if (!document?.body || !frameWindow || !slide) return htmlNoopCleanup
+
+  const editorStyle = document.createElement('style')
+  editorStyle.id = 'a12-html-drag-style'
+  editorStyle.textContent = `
+    [data-a12-drag-selected] {
+      outline: 3px solid #2563eb !important;
+      outline-offset: 4px !important;
+      cursor: move !important;
+      transition: none !important;
+      animation-play-state: paused !important;
+      touch-action: none !important;
+      user-select: none !important;
+      will-change: translate, width, height, rotate;
+    }
+    [data-a12-drag-selected] * {
+      cursor: move !important;
+      transition: none !important;
+      animation-play-state: paused !important;
+      user-select: none !important;
+    }
+    [data-a12-html-editing], [data-a12-html-editing] * {
+      cursor: text !important;
+      user-select: text !important;
+    }
+    .a12-html-editor-overlay {
+      position: fixed !important;
+      z-index: 2147483646 !important;
+      display: none;
+      box-sizing: border-box !important;
+      border: 1px solid rgb(37 99 235 / 75%) !important;
+      pointer-events: none !important;
+    }
+    .a12-html-editor-overlay.is-visible { display: block; }
+    .a12-html-editor-toolbar {
+      position: absolute !important;
+      right: -1px !important;
+      bottom: calc(100% + 9px) !important;
+      display: flex !important;
+      gap: 4px !important;
+      padding: 4px !important;
+      border-radius: 7px !important;
+      background: #1d4ed8 !important;
+      box-shadow: 0 5px 16px rgb(15 23 42 / 24%) !important;
+      pointer-events: auto !important;
+      white-space: nowrap !important;
+      transform: scale(var(--a12-editor-toolbar-scale, 1)) !important;
+      transform-origin: bottom right !important;
+    }
+    .a12-html-editor-toolbar button {
+      all: initial !important;
+      min-width: 42px !important;
+      padding: 6px 10px !important;
+      border-radius: 4px !important;
+      color: #fff !important;
+      background: transparent !important;
+      font: 600 13px/1.2 "Microsoft YaHei", sans-serif !important;
+      cursor: pointer !important;
+      user-select: none !important;
+    }
+    .a12-html-editor-toolbar button:hover { background: rgb(255 255 255 / 18%) !important; }
+    .a12-html-resize-handle, .a12-html-rotate-handle {
+      position: absolute !important;
+      box-sizing: border-box !important;
+      width: 14px !important;
+      height: 14px !important;
+      border: 2px solid #fff !important;
+      border-radius: 50% !important;
+      background: #2563eb !important;
+      box-shadow: 0 1px 5px rgb(15 23 42 / 35%) !important;
+      pointer-events: auto !important;
+      touch-action: none !important;
+    }
+    .a12-html-resize-handle { right: -8px !important; bottom: -8px !important; cursor: nwse-resize !important; }
+    .a12-html-rotate-handle { top: -29px !important; left: calc(50% - 7px) !important; cursor: grab !important; }
+    .a12-html-rotate-line {
+      position: absolute !important;
+      top: -17px !important;
+      left: 50% !important;
+      width: 1px !important;
+      height: 17px !important;
+      background: #2563eb !important;
+    }
+  `
+  document.head?.appendChild(editorStyle)
+
+  const overlay = document.createElement('div')
+  overlay.className = 'a12-html-editor-overlay'
+  overlay.innerHTML = `
+    <div class="a12-html-editor-toolbar">
+      <button type="button" data-action="undo" title="撤销 Ctrl+Z">撤销</button>
+      <button type="button" data-action="redo" title="重做 Ctrl+Y">重做</button>
+      <button type="button" data-action="copy">复制</button>
+      <button type="button" data-action="delete">删除</button>
+    </div>
+    <span class="a12-html-rotate-line"></span>
+    <span class="a12-html-rotate-handle" title="旋转"></span>
+    <span class="a12-html-resize-handle" title="调整大小"></span>
+  `
+  document.body.appendChild(overlay)
+  const resizeHandle = overlay.querySelector('.a12-html-resize-handle')
+  const rotateHandle = overlay.querySelector('.a12-html-rotate-handle')
+  const panelElementById = new Map()
+  const elementPanelId = new WeakMap()
+  const elementPanelKey = new WeakMap()
+
+  const defaultChartData = [
+    { label: '一', value: 68 },
+    { label: '二', value: 82 },
+    { label: '三', value: 55 },
+  ]
+  const normalizeChartData = (value) => {
+    const source = Array.isArray(value) && value.length ? value : defaultChartData
+    return source.slice(0, 8).map((item, index) => ({
+      label: String(item?.label || `数据${index + 1}`).trim().slice(0, 10),
+      value: Math.max(0, Math.min(100, Number(item?.value) || 0)),
+    }))
+  }
+  const getChartData = (element) => normalizeChartData(parseJson(element?.getAttribute('data-a12-chart-data'), []))
+  const markChartPart = (element) => {
+    element.setAttribute('data-a12-chart-part', '')
+    return element
+  }
+  const setChartPartStyle = (element, styles) => {
+    Object.entries(styles).forEach(([key, value]) => { element.style[key] = value })
+    return markChartPart(element)
+  }
+  const renderHtmlChart = (element, data = getChartData(element), title = null) => {
+    if (!element) return
+    const currentTitle = element.querySelector('[data-a12-chart-title]')?.textContent
+      || element.getAttribute('data-a12-chart-title')
+      || element.textContent
+      || '数据图表'
+    const chartTitle = String(title ?? currentTitle).trim().slice(0, 40) || '数据图表'
+    const normalizedData = normalizeChartData(data)
+    const color = element.style.getPropertyValue('--a12-chart-color').trim() || '#2563eb'
+
+    element.classList.add('a12-html-chart')
+    element.setAttribute('data-ppt-type', 'chart')
+    element.setAttribute('data-a12-chart', 'true')
+    element.setAttribute('data-a12-chart-title', chartTitle)
+    element.setAttribute('data-a12-chart-data', JSON.stringify(normalizedData))
+    element.style.display = 'flex'
+    element.style.flexDirection = 'column'
+    element.style.gap = '8px'
+    element.style.padding = element.style.padding || '12px'
+    element.style.boxSizing = 'border-box'
+    element.style.overflow = 'hidden'
+    element.style.backgroundColor = element.style.backgroundColor || '#eff6ff'
+    element.style.border = element.style.border || '1px solid #bfdbfe'
+    element.style.borderRadius = element.style.borderRadius || '14px'
+    element.style.setProperty('--a12-chart-color', color)
+
+    element.innerHTML = ''
+    const header = setChartPartStyle(document.createElement('div'), {
+      display: 'flex',
+      alignItems: 'center',
+      justifyContent: 'space-between',
+      gap: '8px',
+      minHeight: '18px',
+    })
+    const titleNode = setChartPartStyle(document.createElement('strong'), {
+      overflow: 'hidden',
+      color: 'var(--a12-chart-color)',
+      fontSize: '11px',
+      textOverflow: 'ellipsis',
+      whiteSpace: 'nowrap',
+    })
+    titleNode.setAttribute('data-a12-chart-title', '')
+    titleNode.textContent = chartTitle
+    const tagNode = setChartPartStyle(document.createElement('small'), {
+      flex: 'none',
+      color: 'var(--a12-chart-color)',
+      fontSize: '8px',
+      fontWeight: '700',
+      letterSpacing: '.08em',
+    })
+    tagNode.textContent = 'DATA'
+    header.append(titleNode, tagNode)
+
+    const plot = setChartPartStyle(document.createElement('div'), {
+      display: 'flex',
+      flex: '1 1 auto',
+      alignItems: 'flex-end',
+      justifyContent: 'space-around',
+      gap: '8px',
+      minHeight: '60px',
+      padding: '8px 6px 0',
+      borderBottom: '1px solid rgb(96 116 145 / 22%)',
+    })
+    plot.setAttribute('data-a12-chart-plot', '')
+    normalizedData.forEach((item) => {
+      const bar = setChartPartStyle(document.createElement('div'), {
+        display: 'flex',
+        flex: '1 1 0',
+        alignItems: 'center',
+        justifyContent: 'flex-end',
+        gap: '4px',
+        minWidth: '0',
+        height: '100%',
+        flexDirection: 'column',
+      })
+      const fill = setChartPartStyle(document.createElement('span'), {
+        display: 'block',
+        flex: '0 0 auto',
+        width: '22px',
+        maxWidth: '70%',
+        minHeight: '8%',
+        height: `${Math.max(8, item.value)}%`,
+        borderRadius: '5px 5px 2px 2px',
+        background: 'var(--a12-chart-color)',
+      })
+      fill.setAttribute('data-a12-chart-bar', '')
+      const label = setChartPartStyle(document.createElement('small'), {
+        overflow: 'hidden',
+        maxWidth: '100%',
+        color: '#607491',
+        fontSize: '8px',
+        textOverflow: 'ellipsis',
+        whiteSpace: 'nowrap',
+      })
+      label.textContent = item.label
+      bar.append(fill, label)
+      plot.append(bar)
+    })
+    element.append(header, plot)
+  }
+
+  let selected = null
+  let interaction = null
+  let editing = null
+
+  const isCurrentSlide = () => current.value === slide
+  const elementKey = (element, index = 0) => {
+    const explicit = element.getAttribute('data-ppt-element') || element.id
+    return explicit ? `explicit:${explicit}` : `index:${index}:${element.tagName.toLowerCase()}`
+  }
+  const elementType = (element) => {
+    const explicit = String(element.getAttribute('data-ppt-type') || element.getAttribute('data-element-type') || '').trim().toLowerCase().replace(/[\s-]+/g, '_')
+    const inferred = htmlTypeAliases[explicit] || explicit
+    if (element.hasAttribute('data-a12-chart') || element.classList.contains('a12-html-chart')) return 'chart'
+    if (['text', 'formula', 'image', 'shape', 'chart', 'table', 'audio', 'video', 'h5', 'subject'].includes(inferred)) return inferred
+    const tag = element.tagName.toLowerCase()
+    if (tag === 'img' || tag === 'picture') return 'image'
+    if (tag === 'table') return 'table'
+    if (tag === 'svg' || tag === 'canvas') return 'shape'
+    if (htmlTextTags.has(tag)) return 'text'
+    return 'shape'
+  }
+  const isCandidate = (element) => {
+    if (!element || element === document.body || element.classList?.contains('slide') || ['HTML', 'HEAD', 'SCRIPT', 'STYLE', 'META', 'LINK', 'TITLE'].includes(element.tagName)) return false
+    if (element.hasAttribute?.('data-a12-chart-part')) return false
+    if (element.closest?.('.a12-html-editor-overlay')) return false
+    const rect = element.getBoundingClientRect()
+    return rect.width > 6 && rect.height > 6
+  }
+  const collectCandidates = () => [...document.querySelectorAll(htmlDragTargetSelector)].filter(isCandidate)
+  const panelText = (element, type) => {
+    if (type === 'image') return String(element.getAttribute('alt') || '').trim().slice(0, 160)
+    if (type === 'h5') return String(element.getAttribute('data-name') || element.getAttribute('title') || '互动模块').trim().slice(0, 160)
+    if (type === 'chart') return String(element.querySelector('[data-a12-chart-title]')?.textContent || element.getAttribute('data-a12-chart-title') || element.textContent || '数据图表').replace(/\s+/g, ' ').trim().slice(0, 160)
+    return String(element.innerText || element.textContent || '').replace(/\s+/g, ' ').trim().slice(0, 160)
+  }
+  const panelName = (element, type, index) => {
+    const explicit = element.getAttribute('data-name') || element.getAttribute('aria-label') || element.getAttribute('title')
+    const text = panelText(element, type)
+    return String(explicit || text || `${element.tagName.toUpperCase()} 元素 ${index + 1}`).slice(0, 24)
+  }
+  const panelElement = (element, index, id, key) => {
+    const computed = frameWindow.getComputedStyle(element)
+    const rect = element.getBoundingClientRect()
+    const type = elementType(element)
+    const fontSize = Number.parseFloat(computed.fontSize) || 16
+    const lineHeight = computed.lineHeight === 'normal' ? 1.5 : (Number.parseFloat(computed.lineHeight) || fontSize) / fontSize
+    const width = Math.max(1, HTML_CANVAS_WIDTH)
+    const height = Math.max(1, HTML_CANVAS_HEIGHT)
+    const x = ((rect.left + frameWindow.scrollX) / width) * 100
+    const y = ((rect.top + frameWindow.scrollY) / height) * 100
+    return {
+      id,
+      type,
+      name: panelName(element, type, index),
+      content: panelText(element, type),
+      src: type === 'image' ? String(element.currentSrc || element.getAttribute('src') || '') : undefined,
+      alt: type === 'image' ? String(element.getAttribute('alt') || '') : undefined,
+      htmlTag: element.tagName.toLowerCase(),
+      htmlKey: key,
+      position: {
+        x: Number(Math.max(0, x).toFixed(2)),
+        y: Number(Math.max(0, y).toFixed(2)),
+        width: Number(Math.max(1, (rect.width / width) * 100).toFixed(2)),
+        height: Number(Math.max(1, (rect.height / height) * 100).toFixed(2)),
+        rotation: Number(parseCssRotation(computed.rotate).toFixed(2)),
+        zIndex: Number.parseInt(computed.zIndex, 10) || 0,
+      },
+      style: {
+        color: htmlColorToHex(computed.color, '#102d54'),
+        fontSize: Math.round(fontSize),
+        fontWeight: Number(computed.fontWeight) || 400,
+        textAlign: computed.textAlign || 'left',
+        lineHeight: Number(lineHeight.toFixed(2)),
+        fillColor: htmlColorToHex(computed.backgroundColor, '#eff6ff'),
+        backgroundColor: htmlColorToHex(computed.backgroundColor, '#eff6ff'),
+        borderColor: htmlColorToHex(computed.borderColor, '#bfdbfe'),
+        borderWidth: Number.parseFloat(computed.borderWidth) || 0,
+        borderRadius: Number.parseFloat(computed.borderRadius) || 0,
+        opacity: Math.round((Number.parseFloat(computed.opacity) || 1) * 100),
+        objectFit: computed.objectFit || 'cover',
+        showCaption: true,
+      },
+      data: type === 'chart' ? getChartData(element) : undefined,
+    }
+  }
+  const updateGlobalSelection = () => {
+    if (!isCurrentSlide()) return
+    if (!selected?.isConnected) {
+      htmlSelectedElementId.value = null
+      htmlSelectedElement.value = null
+      return
+    }
+    const id = elementPanelId.get(selected)
+    const index = htmlElements.value.findIndex((item) => item.id === id)
+    if (!id || index < 0) return
+    htmlSelectedElementId.value = id
+    htmlSelectedElement.value = panelElement(selected, index, id, elementPanelKey.get(selected) || '')
+  }
+  const refreshElements = () => {
+    const candidates = collectCandidates()
+    panelElementById.clear()
+    const usedIds = new Set()
+    const nextElements = candidates.map((element, index) => {
+      const type = elementType(element)
+      if (type === 'chart' && !element.querySelector('[data-a12-chart-title]')) renderHtmlChart(element)
+      const preferredId = element.getAttribute('data-ppt-element') || element.id || `html-${index + 1}`
+      let id = preferredId
+      let suffix = 2
+      while (usedIds.has(id)) id = `${preferredId}-${suffix++}`
+      usedIds.add(id)
+      const key = elementKey(element, index)
+      elementPanelId.set(element, id)
+      elementPanelKey.set(element, key)
+      panelElementById.set(id, element)
+      return panelElement(element, index, id, key)
+    })
+    htmlElements.value = nextElements
+    const restoreKey = htmlSelectionRestoreKey.value
+    const restored = restoreKey ? candidates.find((element, index) => elementKey(element, index) === restoreKey) : null
+    if (restored) select(restored)
+    else updateGlobalSelection()
+  }
+  const updateOverlay = () => {
+    if (!selected?.isConnected) {
+      overlay.classList.remove('is-visible')
+      updateGlobalSelection()
+      return
+    }
+    const rect = selected.getBoundingClientRect()
+    overlay.style.left = `${rect.left}px`
+    overlay.style.top = `${rect.top}px`
+    overlay.style.width = `${rect.width}px`
+    overlay.style.height = `${rect.height}px`
+    overlay.classList.add('is-visible')
+    updateGlobalSelection()
+  }
+  const clearSelection = ({ preserveRestoreKey = false } = {}) => {
+    selected?.removeAttribute('data-a12-drag-selected')
+    selected = null
+    overlay.classList.remove('is-visible')
+    if (!preserveRestoreKey) htmlSelectionRestoreKey.value = ''
+    if (isCurrentSlide()) {
+      htmlSelectedElementId.value = null
+      htmlSelectedElement.value = null
+    }
+  }
+  const select = (element) => {
+    if (!element || !isCandidate(element)) return
+    if (selected !== element) {
+      selected?.removeAttribute('data-a12-drag-selected')
+      selected = element
+      selected.setAttribute('data-a12-drag-selected', '')
+    }
+    htmlSelectionRestoreKey.value = elementPanelKey.get(element) || ''
+    updateOverlay()
+  }
+  const resolveTarget = (target) => {
+    if (!(target instanceof frameWindow.Element)) return null
+    const chartPart = target.closest?.('[data-a12-chart-part]')
+    if (chartPart) {
+      const chart = chartPart.closest?.('[data-a12-chart]')
+      if (chart) return chart
+    }
+    const svg = target.closest('svg')
+    const direct = svg || target.closest(htmlDragTargetSelector)
+    if (direct && direct !== document.body && !direct.classList.contains('slide')) return direct
+
+    let candidate = target
+    while (candidate && candidate !== document.body) {
+      if (candidate.classList?.contains('slide')) return null
+      const rect = candidate.getBoundingClientRect()
+      const coversCanvas = rect.width >= frameWindow.innerWidth * 0.92 && rect.height >= frameWindow.innerHeight * 0.92
+      if (!coversCanvas && rect.width > 8 && rect.height > 8) return candidate
+      candidate = candidate.parentElement
+    }
+    return null
+  }
+  const commitDocument = () => {
+    if (selected?.isConnected) htmlSelectionRestoreKey.value = elementPanelKey.get(selected) || ''
+    const changed = applyHtmlSlideChange(slide, serializeHtmlSlide(document))
+    if (!changed) updateGlobalSelection()
+    return changed
+  }
+  const applyInteractionFrame = (activeInteraction) => {
+    activeInteraction.animationFrame = 0
+    if (activeInteraction.type === 'move') activeInteraction.element.style.translate = `${activeInteraction.nextX}px ${activeInteraction.nextY}px`
+    if (activeInteraction.type === 'resize') {
+      activeInteraction.element.style.boxSizing = 'border-box'
+      activeInteraction.element.style.maxWidth = 'none'
+      activeInteraction.element.style.maxHeight = 'none'
+      activeInteraction.element.style.width = `${activeInteraction.nextWidth}px`
+      activeInteraction.element.style.height = `${activeInteraction.nextHeight}px`
+      activeInteraction.element.style.flex = 'none'
+    }
+    if (activeInteraction.type === 'rotate') activeInteraction.element.style.rotate = `${activeInteraction.nextRotation}deg`
+    updateOverlay()
+  }
+  const scheduleInteractionFrame = () => {
+    if (!interaction || interaction.animationFrame) return
+    const activeInteraction = interaction
+    interaction.animationFrame = frameWindow.requestAnimationFrame(() => applyInteractionFrame(activeInteraction))
+  }
+  const finishInteraction = () => {
+    if (!interaction) return
+    const completed = interaction
+    interaction = null
+    if (completed.animationFrame) frameWindow.cancelAnimationFrame(completed.animationFrame)
+    applyInteractionFrame(completed)
+    if (completed.element.hasPointerCapture?.(completed.pointerId)) completed.element.releasePointerCapture(completed.pointerId)
+    if (!completed.moved || !isCurrentSlide()) return
+    commitDocument()
+  }
+  const handlePointerMove = (event) => {
+    if (!interaction || event.pointerId !== interaction.pointerId) return
+    const deltaX = event.clientX - interaction.startX
+    const deltaY = event.clientY - interaction.startY
+    interaction.moved ||= Math.hypot(deltaX, deltaY) >= 2
+    if (!interaction.moved) return
+    if (interaction.type === 'move') {
+      interaction.nextX = Number((interaction.originX + deltaX).toFixed(2))
+      interaction.nextY = Number((interaction.originY + deltaY).toFixed(2))
+    }
+    if (interaction.type === 'resize') {
+      interaction.nextWidth = Number(Math.max(20, interaction.originWidth + deltaX).toFixed(2))
+      interaction.nextHeight = Number(Math.max(20, interaction.originHeight + deltaY).toFixed(2))
+    }
+    if (interaction.type === 'rotate') {
+      const angle = Math.atan2(event.clientY - interaction.centerY, event.clientX - interaction.centerX) * 180 / Math.PI
+      interaction.nextRotation = Number((interaction.originRotation + angle - interaction.startAngle).toFixed(2))
+    }
+    scheduleInteractionFrame()
+    event.preventDefault()
+  }
+  const handlePointerDown = (event) => {
+    if (event.button !== 0) return
+    if (event.target.closest?.('.a12-html-editor-overlay') || event.target.closest?.('[data-a12-html-editing]')) return
+    const element = resolveTarget(event.target)
+    if (!element) {
+      clearSelection()
+      return
+    }
+    select(element)
+    const origin = parseCssTranslate(frameWindow.getComputedStyle(element).translate)
+    interaction = {
+      type: 'move',
+      element,
+      pointerId: event.pointerId,
+      startX: event.clientX,
+      startY: event.clientY,
+      originX: origin.x,
+      originY: origin.y,
+      nextX: origin.x,
+      nextY: origin.y,
+      animationFrame: 0,
+      moved: false,
+    }
+    element.setPointerCapture?.(event.pointerId)
+    event.preventDefault()
+  }
+  const beginHandleInteraction = (type, event) => {
+    if (!selected || event.button !== 0) return
+    const rect = selected.getBoundingClientRect()
+    const computed = frameWindow.getComputedStyle(selected)
+    const startAngle = Math.atan2(event.clientY - (rect.top + rect.height / 2), event.clientX - (rect.left + rect.width / 2)) * 180 / Math.PI
+    interaction = {
+      type,
+      element: selected,
+      pointerId: event.pointerId,
+      startX: event.clientX,
+      startY: event.clientY,
+      originWidth: rect.width,
+      originHeight: rect.height,
+      nextWidth: rect.width,
+      nextHeight: rect.height,
+      centerX: rect.left + rect.width / 2,
+      centerY: rect.top + rect.height / 2,
+      startAngle,
+      originRotation: parseCssRotation(computed.rotate),
+      nextRotation: parseCssRotation(computed.rotate),
+      animationFrame: 0,
+      moved: false,
+    }
+    event.currentTarget.setPointerCapture?.(event.pointerId)
+    event.preventDefault()
+    event.stopPropagation()
+  }
+  const finishTextEditing = (commit = true) => {
+    if (!editing) return
+    const { element, originalHtml } = editing
+    editing = null
+    element.removeAttribute('contenteditable')
+    element.removeAttribute('spellcheck')
+    element.removeAttribute('data-a12-html-editing')
+    if (!commit) element.innerHTML = originalHtml
+    if (commit && element.innerHTML !== originalHtml) commitDocument()
+    else updateOverlay()
+  }
+  const handleDoubleClick = (event) => {
+    const element = event.target.closest?.(htmlTextTargetSelector)
+    if (!element || element.closest('.a12-html-editor-overlay')) return
+    select(element)
+    editing = { element, originalHtml: element.innerHTML }
+    element.setAttribute('contenteditable', 'true')
+    element.setAttribute('spellcheck', 'false')
+    element.setAttribute('data-a12-html-editing', '')
+    element.focus()
+    const selection = frameWindow.getSelection()
+    selection?.selectAllChildren(element)
+    selection?.collapseToEnd()
+    event.preventDefault()
+    event.stopPropagation()
+  }
+  const deleteSelected = () => {
+    if (!selected) return
+    selected.remove()
+    clearSelection()
+    refreshElements()
+    commitDocument()
+  }
+  const copySelected = () => {
+    if (!selected) return
+    const clone = selected.cloneNode(true)
+    clone.removeAttribute('data-a12-drag-selected')
+    clone.removeAttribute('data-a12-html-editing')
+    clone.removeAttribute('contenteditable')
+    clone.removeAttribute('spellcheck')
+    clone.removeAttribute('id')
+    clone.setAttribute('data-ppt-element', `copy-${Date.now()}`)
+    const origin = parseCssTranslate(frameWindow.getComputedStyle(selected).translate)
+    clone.style.translate = `${origin.x + 18}px ${origin.y + 18}px`
+    selected.after(clone)
+    refreshElements()
+    select(clone)
+    commitDocument()
+  }
+  const runHistoryAction = (action) => {
+    if (selected?.isConnected) htmlSelectionRestoreKey.value = elementPanelKey.get(selected) || ''
+    const changed = action(slide)
+    if (changed) syncHtmlCanvasSource(slide)
+    return changed
+  }
+  const handleToolbarClick = (event) => {
+    const action = event.target.closest('button')?.dataset.action
+    if (!action) return
+    if (action === 'delete') deleteSelected()
+    if (action === 'copy') copySelected()
+    if (action === 'undo') runHistoryAction(undoHtmlSlideChange)
+    if (action === 'redo') runHistoryAction(redoHtmlSlideChange)
+    event.preventDefault()
+    event.stopPropagation()
+  }
+  const handleKeydown = (event) => {
+    const modifier = event.ctrlKey || event.metaKey
+    if (!editing && modifier && event.key.toLowerCase() === 'z') {
+      event.preventDefault()
+      runHistoryAction((targetSlide) => event.shiftKey ? redoHtmlSlideChange(targetSlide) : undoHtmlSlideChange(targetSlide))
+      return
+    }
+    if (!editing && modifier && event.key.toLowerCase() === 'y') {
+      event.preventDefault()
+      runHistoryAction(redoHtmlSlideChange)
+      return
+    }
+    if (editing && event.key === 'Escape') {
+      event.preventDefault()
+      finishTextEditing(false)
+      return
+    }
+    if (editing && modifier && event.key === 'Enter') {
+      event.preventDefault()
+      finishTextEditing(true)
+      return
+    }
+    if (!editing && selected && ['Delete', 'Backspace'].includes(event.key)) {
+      event.preventDefault()
+      deleteSelected()
+    }
+  }
+  const handleDocumentBlur = (event) => {
+    if (editing?.element === event.target) finishTextEditing(true)
+  }
+  const findElement = (id) => panelElementById.get(String(id)) || null
+  const setSvgStyle = (element, property, value) => {
+    const svg = element.tagName.toLowerCase() === 'svg' ? element : element.closest?.('svg')
+    if (!svg) return false
+    const targets = element.tagName.toLowerCase() === 'svg' ? [element, ...svg.querySelectorAll('*')] : [element]
+    targets.forEach((target) => { target.style[property] = value })
+    return true
+  }
+  const updateStyle = (key, value) => {
+    if (!selected?.isConnected) return false
+    const numeric = Number(value)
+    if (key === 'fontSize') selected.style.fontSize = `${Math.max(10, Math.min(96, Number.isFinite(numeric) ? numeric : 16))}px`
+    else if (key === 'fontWeight') selected.style.fontWeight = String(Number.isFinite(numeric) ? numeric : 400)
+    else if (key === 'lineHeight') selected.style.lineHeight = String(Number.isFinite(numeric) ? numeric : 1.5)
+    else if (key === 'opacity') selected.style.opacity = String(Math.max(0, Math.min(100, Number.isFinite(numeric) ? numeric : 100)) / 100)
+    else if (key === 'color') {
+      selected.style.color = String(value || '#102d54')
+      if (elementType(selected) === 'chart') selected.style.setProperty('--a12-chart-color', String(value || '#2563eb'))
+    }
+    else if (key === 'textAlign') selected.style.textAlign = String(value || 'left')
+    else if (key === 'fillColor') {
+      if (!setSvgStyle(selected, 'fill', String(value || '#eff6ff'))) selected.style.backgroundColor = String(value || '#eff6ff')
+    } else if (key === 'backgroundColor') selected.style.backgroundColor = String(value || '#eff6ff')
+    else if (key === 'borderColor') {
+      selected.style.borderColor = String(value || '#bfdbfe')
+      setSvgStyle(selected, 'stroke', String(value || '#bfdbfe'))
+    } else if (key === 'borderWidth') {
+      selected.style.borderWidth = `${Math.max(0, Math.min(12, Number.isFinite(numeric) ? numeric : 0))}px`
+      setSvgStyle(selected, 'strokeWidth', String(Math.max(0, Number.isFinite(numeric) ? numeric : 0)))
+    } else if (key === 'borderRadius') selected.style.borderRadius = `${Math.max(0, Math.min(80, Number.isFinite(numeric) ? numeric : 0))}px`
+    else if (key === 'objectFit') selected.style.objectFit = String(value || 'cover')
+    else if (key === 'tintColor') selected.style.setProperty('--a12-tint-color', String(value || '#2563eb'))
+    else return false
+    updateOverlay()
+    commitDocument()
+    return true
+  }
+  const updatePosition = (key, value) => {
+    if (!selected?.isConnected) return false
+    const numeric = Number(value)
+    if (!Number.isFinite(numeric)) return false
+    const rect = selected.getBoundingClientRect()
+    const computed = frameWindow.getComputedStyle(selected)
+    const translate = parseCssTranslate(computed.translate)
+    if (key === 'x') selected.style.translate = `${translate.x + (numeric / 100) * HTML_CANVAS_WIDTH - (rect.left + frameWindow.scrollX)}px ${translate.y}px`
+    else if (key === 'y') selected.style.translate = `${translate.x}px ${translate.y + (numeric / 100) * HTML_CANVAS_HEIGHT - (rect.top + frameWindow.scrollY)}px`
+    else if (key === 'width') { selected.style.boxSizing = 'border-box'; selected.style.width = `${Math.max(20, (Math.min(100, numeric) / 100) * HTML_CANVAS_WIDTH)}px` }
+    else if (key === 'height') { selected.style.boxSizing = 'border-box'; selected.style.height = `${Math.max(20, (Math.min(100, numeric) / 100) * HTML_CANVAS_HEIGHT)}px` }
+    else if (key === 'rotation') selected.style.rotate = `${Math.max(-180, Math.min(180, numeric))}deg`
+    else if (key === 'zIndex') selected.style.zIndex = String(Math.round(Math.max(0, Math.min(99, numeric))))
+    else return false
+    updateOverlay()
+    commitDocument()
+    return true
+  }
+  const updateContent = (value) => {
+    if (!selected?.isConnected) return false
+    const content = String(value ?? '')
+    if (elementType(selected) === 'image') selected.setAttribute('alt', content)
+    else if (elementType(selected) === 'chart') {
+      const titleNode = selected.querySelector('[data-a12-chart-title]')
+      if (titleNode) {
+        selected.setAttribute('data-a12-chart-title', content)
+        titleNode.textContent = content || '数据图表'
+      } else renderHtmlChart(selected, getChartData(selected), content)
+    }
+    else selected.textContent = content
+    updateOverlay()
+    commitDocument()
+    return true
+  }
+  const updateField = (key, value) => {
+    if (!selected?.isConnected || !['src', 'alt'].includes(key)) return false
+    if (key === 'src' && elementType(selected) === 'image') selected.setAttribute('src', String(value || ''))
+    if (key === 'alt' && elementType(selected) === 'image') selected.setAttribute('alt', String(value || '').slice(0, 80))
+    updateOverlay()
+    commitDocument()
+    return true
+  }
+  const updateData = (value) => {
+    if (!selected?.isConnected || elementType(selected) !== 'chart' || !Array.isArray(value)) return false
+    renderHtmlChart(selected, value)
+    updateOverlay()
+    commitDocument()
+    return true
+  }
+  const updatePageField = (key, value) => {
+    if (!isCurrentSlide() || !['title', 'description'].includes(key)) return false
+    const selector = key === 'title' ? 'h1,h2,h3' : 'p'
+    const target = document.querySelector(selector)
+    if (!target) return false
+    target.textContent = String(value ?? '')
+    if (selected === target) updateOverlay()
+    commitDocument()
+    return true
+  }
+  const insertElement = (type, options = {}) => {
+    if (!isCurrentSlide()) return false
+    const index = htmlElements.value.length
+    const node = type === 'image' ? document.createElement('img') : document.createElement('div')
+    const id = `a12-${type}-${Date.now()}`
+    node.setAttribute('data-ppt-element', id)
+    node.setAttribute('data-ppt-type', type)
+    node.style.position = 'absolute'
+    node.style.boxSizing = 'border-box'
+    node.style.left = type === 'chart' ? `${62 + (index % 2) * 4}%` : `${10 + (index % 5) * 5}%`
+    node.style.top = type === 'chart' ? `${10 + (index % 3) * 6}%` : `${12 + (index % 4) * 7}%`
+    node.style.width = type === 'text' ? '28%' : type === 'image' ? '24%' : type === 'chart' ? '28%' : '30%'
+    node.style.height = type === 'text' ? '12%' : type === 'image' ? '24%' : type === 'chart' ? '28%' : '16%'
+    node.style.zIndex = '8'
+    node.style.borderRadius = type === 'shape' && options.shapeKind === 'circle' ? '50%' : '12px'
+    if (type === 'text') {
+      node.textContent = '新增文本，可在右侧编辑'
+      node.style.padding = '12px'
+      node.style.color = '#102d54'
+      node.style.fontSize = '20px'
+      node.style.fontWeight = '500'
+      node.style.backgroundColor = 'rgb(255 255 255 / 82%)'
+    } else if (type === 'image') {
+      const svg = '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 640 360"><rect width="640" height="360" rx="28" fill="#dbeafe"/><circle cx="170" cy="150" r="60" fill="#93c5fd"/><path d="M92 280c44-88 95-98 150-40 34-31 75-35 119 40" fill="none" stroke="#2563eb" stroke-width="18" stroke-linecap="round"/><text x="360" y="214" fill="#173d78" font-size="26" font-family="Arial" font-weight="700">新增图片</text></svg>'
+      node.setAttribute('src', `data:image/svg+xml;charset=UTF-8,${encodeURIComponent(svg)}`)
+      node.setAttribute('alt', '新增图片')
+      node.style.objectFit = 'cover'
+      node.style.border = '1px solid #bfdbfe'
+    } else if (type === 'shape') {
+      node.setAttribute('aria-label', `${options.shapeKind || 'rectangle'} 形状`)
+      node.style.backgroundColor = '#dbeafe'
+      node.style.border = '2px solid #2563eb'
+      if (options.shapeKind === 'diamond') node.style.transform = 'rotate(45deg)'
+    } else if (type === 'chart') {
+      node.textContent = '新增图表 · 可在右侧修改标题与数据'
+      node.style.padding = '16px'
+      node.style.color = '#173d78'
+      node.style.backgroundColor = '#eff6ff'
+      node.style.border = '1px solid #bfdbfe'
+      node.setAttribute('data-a12-chart-data', JSON.stringify([{ label: '一', value: 68 }, { label: '二', value: 82 }, { label: '三', value: 55 }]))
+      renderHtmlChart(node, undefined, '新增图表')
+    }
+    document.body.appendChild(node)
+    refreshElements()
+    select(node)
+    commitDocument()
+    return true
+  }
+  const insertInteractive = (module) => {
+    if (!isCurrentSlide() || !module?.html) return false
+    const index = htmlElements.value.length
+    const node = document.createElement('iframe')
+    node.setAttribute('data-ppt-element', `a12-h5-${module.module_id || module.moduleId || Date.now()}`)
+    node.setAttribute('data-ppt-type', 'h5')
+    node.setAttribute('data-name', module.title || '互动模块')
+    node.setAttribute('sandbox', 'allow-scripts')
+    node.setAttribute('title', module.title || '互动模块')
+    node.srcdoc = String(module.html)
+    node.style.position = 'absolute'
+    node.style.boxSizing = 'border-box'
+    node.style.left = `${8 + (index % 3) * 7}%`
+    node.style.top = `${36 + (index % 2) * 8}%`
+    node.style.width = '42%'
+    node.style.height = '42%'
+    node.style.zIndex = '12'
+    node.style.border = '1px solid #fed7aa'
+    node.style.borderRadius = '12px'
+    document.body.appendChild(node)
+    refreshElements()
+    select(node)
+    commitDocument()
+    return true
+  }
+
+  document.addEventListener('pointerdown', handlePointerDown)
+  document.addEventListener('pointermove', handlePointerMove)
+  document.addEventListener('pointerup', finishInteraction)
+  document.addEventListener('pointercancel', finishInteraction)
+  document.addEventListener('dblclick', handleDoubleClick)
+  document.addEventListener('keydown', handleKeydown)
+  document.addEventListener('blur', handleDocumentBlur, true)
+  resizeHandle.addEventListener('pointerdown', (event) => beginHandleInteraction('resize', event))
+  rotateHandle.addEventListener('pointerdown', (event) => beginHandleInteraction('rotate', event))
+  overlay.querySelector('.a12-html-editor-toolbar').addEventListener('click', handleToolbarClick)
+  refreshElements()
+
+  const controller = {
+    selectById: (id) => { const element = findElement(id); if (element) select(element) },
+    clearSelection,
+    updateStyle,
+    updatePosition,
+    updateContent,
+    updateField,
+    updateData,
+    updatePageField,
+    insertElement,
+    insertInteractive,
+    copySelected: (id) => { const element = findElement(id); if (element) { select(element); copySelected() } },
+    deleteSelected: (id) => { const element = findElement(id); if (element) { select(element); deleteSelected() } },
+  }
+  const cleanup = () => {
+    document.removeEventListener('pointerdown', handlePointerDown)
+    document.removeEventListener('pointermove', handlePointerMove)
+    document.removeEventListener('pointerup', finishInteraction)
+    document.removeEventListener('pointercancel', finishInteraction)
+    document.removeEventListener('dblclick', handleDoubleClick)
+    document.removeEventListener('keydown', handleKeydown)
+    document.removeEventListener('blur', handleDocumentBlur, true)
+    if (interaction?.animationFrame) frameWindow.cancelAnimationFrame(interaction.animationFrame)
+    selected?.removeAttribute('data-a12-drag-selected')
+    overlay.remove()
+    editorStyle.remove()
+    if (isCurrentSlide()) {
+      htmlElements.value = []
+      htmlSelectedElementId.value = null
+      htmlSelectedElement.value = null
+    }
+  }
+  cleanup.controller = controller
+  return cleanup
+}
+const fitHtmlFrame = (event) => {
+  const iframe = event?.currentTarget
+  const container = iframe?.parentElement
+  if (!iframe || !container) return
+
+  const previous = [...htmlFrameObservers].find((item) => item.iframe === iframe)
+  previous?.observer?.disconnect()
+  previous?.cleanup?.()
+  if (previous) htmlFrameObservers.delete(previous)
+
+  const resize = () => {
+    const width = container.clientWidth
+    const height = container.clientHeight
+    if (!width || !height) return
+    const scale = Math.min(width / 1280, height / 720)
+    iframe.style.transform = `scale(${scale})`
+    const overlay = iframe.contentDocument?.querySelector('.a12-html-editor-overlay')
+    overlay?.style.setProperty('--a12-editor-toolbar-scale', String(scale ? 1 / scale : 1))
+  }
+
+  resize()
+  const cleanup = attachHtmlDragEditor(iframe)
+  resize()
+  if (typeof ResizeObserver === 'undefined') {
+    htmlFrameObservers.add({ iframe, observer: null, cleanup, controller: cleanup.controller || null, slide: current.value })
+    return
+  }
+  const observer = new ResizeObserver(resize)
+  observer.observe(container)
+  htmlFrameObservers.add({ iframe, observer, cleanup, controller: cleanup.controller || null, slide: current.value })
+}
+const clearPreviewFrameObservers = () => {
+  previewFrameObservers.forEach(({ observer }) => observer?.disconnect())
+  previewFrameObservers.clear()
+}
+const fitPreviewHtmlFrame = (event) => {
+  const iframe = event?.currentTarget
+  const container = iframe?.parentElement
+  if (!iframe || !container) return
+
+  const previous = [...previewFrameObservers].find((item) => item.iframe === iframe)
+  previous?.observer?.disconnect()
+  if (previous) previewFrameObservers.delete(previous)
+
+  const resize = () => {
+    const width = container.clientWidth
+    const height = container.clientHeight
+    if (!width || !height) return
+    iframe.style.transform = `scale(${Math.min(width / 1280, height / 720)})`
+  }
+
+  resize()
+  if (typeof ResizeObserver === 'undefined') {
+    previewFrameObservers.add({ iframe, observer: null })
+    return
+  }
+  const observer = new ResizeObserver(resize)
+  observer.observe(container)
+  previewFrameObservers.add({ iframe, observer })
+}
+const openPreview = () => {
+  previewSlideIndex.value = selectedSlide.value
+  previewVisible.value = true
+}
+const closePreview = () => {
+  previewVisible.value = false
+  clearPreviewFrameObservers()
+}
+const scrollPreviewTo = (index) => {
+  const nextIndex = Math.min(Math.max(0, Number(index) || 0), Math.max(0, slides.length - 1))
+  previewSlideIndex.value = nextIndex
+  window.setTimeout(() => {
+    previewDeckRef.value?.querySelector(`[data-preview-index="${nextIndex}"]`)?.scrollIntoView({ behavior: 'smooth', block: 'start' })
+  }, 0)
+}
 const normalizeElementType = (element) => {
   const raw = String(element?.type ?? element?.kind ?? element?.element_type ?? element?.component_type ?? 'text').trim().toLowerCase().replace(/[\s-]+/g, '_')
   const aliases = {
@@ -279,9 +1414,10 @@ const elementClass = (elementOrId) => {
   }
 }
 const previewElementClass = (element) => ({ [`canvas-element-${element?.type || 'unknown'}`]: true })
-const elementStyleFromElement = (element) => {
+const elementStyleFromElement = (element, slide = current.value) => {
   const style = element?.style || {}
   const position = element?.position || {}
+  const slideTheme = themeForSlide(slide)
   const result = {
     position: 'absolute',
     left: `${Number(position.x ?? 0)}%`,
@@ -307,29 +1443,29 @@ const elementStyleFromElement = (element) => {
     result.overflow = 'hidden'
     result.whiteSpace = 'pre-wrap'
   }
-  if (element?.type === 'formula') result['--element-color'] = style.color || theme.value.color
+  if (element?.type === 'formula') result['--element-color'] = style.color || slideTheme.color
   if (element?.type === 'shape') {
-    result['--element-color'] = style.fillColor || theme.value.color
-    result['--element-border-color'] = style.borderColor || style.fillColor || theme.value.color
+    result['--element-color'] = style.fillColor || slideTheme.color
+    result['--element-border-color'] = style.borderColor || style.fillColor || slideTheme.color
     result['--element-border-width'] = style.borderWidth !== undefined ? `${style.borderWidth}px` : undefined
     result['--element-border-radius'] = style.borderRadius !== undefined ? `${style.borderRadius}px` : undefined
   }
   if (element?.type === 'image') {
-    result['--element-color'] = style.tintColor || theme.value.color
+    result['--element-color'] = style.tintColor || slideTheme.color
     result['--element-border-color'] = style.borderColor || '#bfdbfe'
     result['--element-border-width'] = style.borderWidth !== undefined ? `${style.borderWidth}px` : '1px'
     result['--element-border-radius'] = style.borderRadius !== undefined ? `${style.borderRadius}px` : '14px'
     result['--element-object-fit'] = style.objectFit || 'cover'
   }
   if (element?.type === 'chart') {
-    result['--chart-color'] = style.color || theme.value.color
+    result['--chart-color'] = style.color || slideTheme.color
     result['--chart-background'] = style.backgroundColor || '#eff6ff'
     result['--chart-border-color'] = style.borderColor || '#bfdbfe'
     result['--chart-border-width'] = style.borderWidth !== undefined ? `${style.borderWidth}px` : '1px'
     result['--chart-border-radius'] = style.borderRadius !== undefined ? `${style.borderRadius}px` : '14px'
   }
   if (['audio', 'video', 'table', 'h5', 'subject'].includes(element?.type)) {
-    result['--widget-color'] = style.color || theme.value.color
+    result['--widget-color'] = style.color || slideTheme.color
     result['--widget-background'] = style.backgroundColor || '#eff6ff'
     result['--widget-border-color'] = style.borderColor || '#bfdbfe'
     result['--widget-border-width'] = style.borderWidth !== undefined ? `${style.borderWidth}px` : '1px'
@@ -338,17 +1474,24 @@ const elementStyleFromElement = (element) => {
   return result
 }
 const elementStyle = (id) => elementStyleFromElement(elementById(id))
-const elementContent = (element) => {
+const elementContentForSlide = (element, slide = current.value) => {
   if (!element) return ''
-  if (element.target === 'title') return current.value?.title || element.content || ''
-  if (element.target === 'description') return current.value?.description || element.content || ''
-  if (element.target === 'footer') return current.value?.footer || element.content || '在观察、猜想与验证中理解核心概念，并用它解决简单的实际问题。'
+  if (element.target === 'title') return slide?.title || element.content || ''
+  if (element.target === 'description') return slide?.description || element.content || ''
+  if (element.target === 'footer') return slide?.footer || element.content || '在观察、猜想与验证中理解核心概念，并用它解决简单的实际问题。'
   return extractElementContent(element)
 }
+const elementContent = (element) => elementContentForSlide(element, current.value)
+const previewElementStyle = (element, slide) => elementStyleFromElement(element, slide)
+const previewElementContent = (element, slide) => elementContentForSlide(element, slide)
 const selectedElementPanel = computed(() => {
   const element = selectedElement.value
   return element ? { ...element, content: elementContent(element), position: { ...(element.position || {}) }, style: { ...(element.style || {}) } } : null
 })
+const activeHtmlController = () => [...htmlFrameObservers].find((item) => item.slide === current.value && item.controller)?.controller || null
+const workspaceElements = computed(() => current.value?.html ? htmlElements.value : current.value?.elements || [])
+const workspaceSelectedElement = computed(() => current.value?.html ? htmlSelectedElement.value : selectedElementPanel.value)
+const workspaceSelectedElementId = computed(() => current.value?.html ? htmlSelectedElementId.value : selectedElementId.value)
 const clampNumber = (value, min, max) => Math.min(max, Math.max(min, value))
 const dragState = ref(null)
 const placementMode = ref(null)
@@ -544,13 +1687,34 @@ const selectElement = (id, event) => {
   selectedElementId.value = id
   activePanel.value = 'style'
 }
-const selectElementFromPanel = (id) => selectElement(id)
-const clearElementSelection = () => { selectedElementId.value = null }
+const selectElementFromPanel = (id) => {
+  if (current.value?.html) {
+    activeHtmlController()?.selectById(id)
+    activePanel.value = 'style'
+    return
+  }
+  selectElement(id)
+}
+const clearElementSelection = () => {
+  if (current.value?.html) activeHtmlController()?.clearSelection()
+  selectedElementId.value = null
+  htmlSelectedElementId.value = null
+  htmlSelectedElement.value = null
+  activePanel.value = 'content'
+}
 const updateElementStyle = ({ key, value }) => {
+  if (current.value?.html) {
+    activeHtmlController()?.updateStyle(key, value)
+    return
+  }
   if (!selectedElement.value) return
   selectedElement.value.style = { ...selectedElement.value.style, [key]: value }
 }
 const updateElementPosition = ({ key, value }) => {
+  if (current.value?.html) {
+    activeHtmlController()?.updatePosition(key, value)
+    return
+  }
   if (!selectedElement.value) return
   const numericValue = Number(value)
   const position = { ...selectedElement.value.position, [key]: Number.isFinite(numericValue) ? numericValue : 0 }
@@ -567,6 +1731,10 @@ const updateElementPosition = ({ key, value }) => {
   }
 }
 const updateElementContent = (value) => {
+  if (current.value?.html) {
+    activeHtmlController()?.updateContent(value)
+    return
+  }
   if (!selectedElement.value) return
   const content = String(value ?? '')
   selectedElement.value.content = content
@@ -575,11 +1743,19 @@ const updateElementContent = (value) => {
   if (selectedElement.value.target === 'footer') current.value.footer = content
 }
 const updateElementField = ({ key, value }) => {
+  if (current.value?.html) {
+    activeHtmlController()?.updateField(key, value)
+    return
+  }
   if (!selectedElement.value || !['src', 'alt'].includes(key)) return
   if (key === 'src') selectedElement.value.src = String(value || '') || createMockImageSrc(selectedElement.value.content || '课堂图片')
   if (key === 'alt') selectedElement.value.alt = String(value || '').slice(0, 80)
 }
 const updateElementData = (value) => {
+  if (current.value?.html) {
+    activeHtmlController()?.updateData(value)
+    return
+  }
   if (!selectedElement.value || selectedElement.value.type !== 'chart' || !Array.isArray(value)) return
   selectedElement.value.data = value.slice(0, 8).map((item, index) => ({
     label: String(item?.label || `数据${index + 1}`).slice(0, 10),
@@ -591,7 +1767,11 @@ const handleImageError = (element) => {
   element.src = createMockImageSrc(elementContent(element) || '图片加载失败')
   WorkspaceMessage.warning('图片加载失败，已恢复示例图')
 }
-const updateSlideField = ({ key, value }) => { if (current.value) current.value[key] = value }
+const updateSlideField = ({ key, value }) => {
+  if (!current.value) return
+  current.value[key] = value
+  if (current.value.html && ['title', 'description'].includes(key)) activeHtmlController()?.updatePageField(key, value)
+}
 const elementTypeLabels = { text: '文本', formula: '公式', image: '图片', shape: '形状', chart: '图表', audio: '音频', video: '视频', table: '表格', h5: 'H5组件', subject: '学科工具' }
 const shapeDefaults = {
   rectangle: { shapeKind: 'rectangle', label: '矩形', borderRadius: 0 },
@@ -641,7 +1821,15 @@ const insertElement = (type, options = {}, positionOverride = {}, preparedElemen
   activePanel.value = 'style'
   WorkspaceMessage.success(`${elementTypeLabels[type] || '元素'}已添加`)
 }
-const handleToolSelect = (tool) => beginElementPlacement(tool)
+const handleToolSelect = (tool) => {
+  if (current.value?.html) {
+    const inserted = activeHtmlController()?.insertElement(tool?.id || tool, tool || {})
+    activeTool.value = ''
+    if (!inserted) WorkspaceMessage.warning('HTML 页面正在加载，请稍后再试')
+    return
+  }
+  beginElementPlacement(tool)
+}
 const interactiveAssetFromModule = (module) => ({
   module_id: module?.module_id || module?.moduleId,
   title: module?.title || module?.name || module?.content || '互动模块',
@@ -766,6 +1954,15 @@ const insertGeneratedInteractiveModule = (target = 'current') => {
     selectedElementId.value = element.id
     WorkspaceMessage.success('互动模块已作为独立页面插入，正在自动保存')
   } else {
+    if (current.value?.html) {
+      const inserted = activeHtmlController()?.insertInteractive?.(module)
+      if (!inserted) return WorkspaceMessage.warning('HTML 页面正在加载，请稍后再试')
+      appendInteractiveAsset(current.value, module)
+      interactivePreviewVisible.value = false
+      interactiveModule.value = null
+      WorkspaceMessage.success('互动模块已插入当前 HTML 页面，正在自动保存')
+      return
+    }
     current.value.elements.push(element)
     appendInteractiveAsset(current.value, module)
     selectedElementId.value = element.id
@@ -776,6 +1973,12 @@ const insertGeneratedInteractiveModule = (target = 'current') => {
   interactiveModule.value = null
 }
 const removeElement = (id = selectedElementId.value) => {
+  if (current.value?.html) {
+    const targetId = id || htmlSelectedElementId.value
+    if (!targetId) return
+    activeHtmlController()?.deleteSelected?.(targetId)
+    return
+  }
   if (!current.value || !id) return
   const index = current.value.elements.findIndex((element) => element.id === id)
   if (index < 0) return
@@ -787,6 +1990,12 @@ const removeElement = (id = selectedElementId.value) => {
   WorkspaceMessage.success(`${removed?.name || '元素'}已删除`)
 }
 const copyElement = (id = selectedElementId.value) => {
+  if (current.value?.html) {
+    const targetId = id || htmlSelectedElementId.value
+    if (!targetId) return
+    activeHtmlController()?.copySelected?.(targetId)
+    return
+  }
   const source = elementById(id)
   if (!source || !current.value) return
   const copy = cloneElementData(source)
@@ -935,6 +2144,8 @@ const getGeneratedPagePayload = (rawResponse) => {
   const parsedContent = parseJson(candidate.page_content ?? candidate.content ?? candidate.data, {})
   const content = parsedContent && typeof parsedContent === 'object' && !Array.isArray(parsedContent) ? parsedContent : {}
   const hasPageSignal = candidate.page_content !== undefined
+    || candidate.html !== undefined
+    || content.html !== undefined
     || candidate.elements !== undefined
     || candidate.components !== undefined
     || candidate.page_title !== undefined
@@ -946,6 +2157,25 @@ const applyGeneratedPage = (rawResponse) => {
   const payload = getGeneratedPagePayload(rawResponse)
   if (!payload || !current.value) return false
   const { candidate, content } = payload
+  const html = content.html ?? candidate.html ?? content.page_html ?? candidate.page_html
+  if (current.value.html) {
+    if (typeof html !== 'string' || !html.trim()) return false
+    const nextSlide = {
+      ...current.value,
+      ...content,
+      ...(candidate.title ? { title: candidate.title } : {}),
+      ...(candidate.description ? { description: candidate.description } : {}),
+      html: html.trim(),
+      elements: [],
+    }
+    slides.splice(selectedSlide.value, 1, nextSlide)
+    htmlSelectionRestoreKey.value = ''
+    htmlElements.value = []
+    htmlSelectedElementId.value = null
+    htmlSelectedElement.value = null
+    saveCurrentPresentationDraft()
+    return true
+  }
   const elementPayload = content.elements ?? content.components ?? candidate.elements ?? candidate.components ?? current.value.elements
   const nextContent = {
     ...current.value,
@@ -1148,73 +2378,387 @@ const bootstrapTestCaseProject = async () => {
   }
 }
 
-const normalizeRunStatus = (status) => {
-  const value = String(status || '').toLowerCase()
-  if (['pending', 'queued', 'running', 'executing', 'processing', 'generating'].includes(value)) return 'running'
-  if (['completed', 'complete', 'success', 'succeeded', 'done'].includes(value)) return 'completed'
-  if (['failed', 'failure', 'error'].includes(value)) return 'failed'
-  return value || 'idle'
+const generationErrorMessage = (error) => {
+  const backendMessage = error?.response?.data?.message || error?.response?.data?.error
+  if (backendMessage) return String(backendMessage)
+  if (error?.code === 'ECONNABORTED' || error?.code === 'ETIMEDOUT') return 'HTML PPT 生成超时，请稍后点击“重新生成”。'
+  if (error?.request && !error?.response) return '无法连接 HTML PPT 生成服务，请确认 Python 服务已启动。'
+  return String(error?.message || 'HTML PPT 生成失败，请稍后重试。')
 }
-const runStageLabel = (stage) => ({
-  prepare: '正在准备生成任务',
-  generating: '正在生成 PPT 页面',
-  generating_slides: '正在生成 PPT 页面',
-  finalizing: '正在优化排版',
-  presentation_generate: '正在生成课件',
-  waiting_for_python_api: '等待课件生成服务响应',
-}[String(stage || '')] || stage || '')
-const applyRunPayload = (payload = {}, eventName = '') => {
-  const status = payload.status || (eventName === 'complete' ? 'completed' : eventName === 'error' ? 'failed' : '')
-  if (status) runStatus.value = normalizeRunStatus(status)
-  const progress = payload.progress ?? payload.percent ?? payload.percentage
-  if (progress !== undefined && progress !== null && Number.isFinite(Number(progress))) runProgress.value = Math.max(0, Math.min(100, Number(progress)))
-  const stage = payload.stage || payload.current_stage || payload.status_message || payload.message
-  if (stage) runStage.value = runStageLabel(stage)
-  if (payload.preview?.slides && Array.isArray(payload.preview.slides)) slides.splice(0, slides.length, ...payload.preview.slides)
-  if (['completed', 'failed'].includes(runStatus.value)) {
-    eventSource?.close()
-    clearInterval(runPollTimer)
-  }
+
+/**
+ * 工作台只保留一条对话时间线，输入内容由前端先做轻量意图识别：
+ * 疑问、分析和建议进入讨论；明确的页面操作进入修改。
+ * 不确定时默认讨论，避免一句普通聊天意外改动课件。
+ */
+const inferAssistantMode = (text = '') => {
+  const value = String(text).trim().replace(/\s+/g, '')
+  if (!value) return 'discussion'
+
+  const discussionPrefix = /^(你好|嗨|您好|请问|为什么|为何|怎么回事|怎么看|你觉得|你认为|分析一下|讨论一下|聊聊|建议一下|帮我想想|解释一下|介绍一下|是什么|如何理解)/i
+  if (discussionPrefix.test(value)) return 'discussion'
+
+  // 工作台语境下的短命令也视为执行当前页操作，避免用户必须重复描述目标。
+  const explicitRevisionCommand = /^(请)?(执行|应用|开始|继续|执行修改|应用修改|开始修改|继续修改|修改|修改当前页|页面修改|改一下|调整一下)$/
+  if (explicitRevisionCommand.test(value)) return 'revision'
+
+  const revisionAction = /(修改|改一下|调整|替换|换成|改成|改为|删除|移除|添加|增加|插入|移动|拖到|缩放|放大|缩小|旋转|复制|重做|撤销|恢复|改变|设置|隐藏|显示|去掉|删掉|清空|重排|排版|对齐|换图|换色|优化|润色|精简|丰富|补充|重写|太大|太小|看不清|不清晰|居中|靠左|靠右|上移|下移)/
+  const revisionTarget = /(当前页|本页|这一页|第\d+页|页面|幻灯片|PPT|标题|文案|图片|图表|元素|组件|画布|布局|颜色|字体|字号|透明度|位置|右侧|左侧|上方|下方|背景|边框|间距|内容|列表|文字|导入|情境|案例|知识点|卡片|页眉|页脚|模块)/i
+  const imperative = /^(请|帮我|把|将|给我|麻烦|直接|能不能把|可以把)/
+  const naturalRevision = /^(让|使).{0,24}(更|更加|变得|优化|精简|丰富|清晰|简洁|生活化|有启发性)/
+
+  if (revisionAction.test(value) && revisionTarget.test(value)) return 'revision'
+  if ((revisionAction.test(value) || naturalRevision.test(value))
+    && (imperative.test(value) || /(这个|这里|它|那张|这一处|页)/.test(value))) return 'revision'
+  return 'discussion'
 }
-const connectRunEvents = (runId) => {
-  eventSource?.close(); eventSource = new EventSource(`/api/v1/ai/runs/${runId}/events`)
-  const handleEvent = (eventName, event) => {
-    try { applyRunPayload(JSON.parse(event.data || '{}'), eventName) }
-    catch { if (event.data) runStage.value = event.data }
-  }
-  eventSource.onmessage = (event) => handleEvent('message', event)
-  ;['status', 'stage', 'progress', 'complete', 'error'].forEach((eventName) => eventSource.addEventListener(eventName, (event) => handleEvent(eventName, event)))
-  eventSource.onerror = () => eventSource?.close()
-  clearInterval(runPollTimer)
-  runPollTimer = setInterval(async () => {
+const inferredAssistantMode = computed(() => inferAssistantMode(prompt.value))
+const isAssistantSubmitting = computed(() => intentSubmitting.value || discussionSubmitting.value || revisionSubmitting.value)
+const assistantPlaceholder = computed(() => '例如：讨论一下怎样让导入更贴近学生，或把当前页标题改得更简洁')
+const assistantIntentHint = computed(() => {
+  if (intentSubmitting.value) return 'AI 正在判断这条消息的意图…'
+  if (revisionSubmitting.value) return '正在执行页面修改，请稍候…'
+  if (discussionSubmitting.value) return '正在思考讨论内容，请稍候…'
+  if (!prompt.value.trim()) return 'AI 会根据你的表达自动判断：讨论或修改当前页'
+  return inferredAssistantMode.value === 'revision'
+    ? '检测到页面操作，发送时由 AI 结合上下文确认'
+    : '发送时由 AI 结合上下文判断是否修改页面'
+})
+const assistantStatusText = computed(() => {
+  if (intentSubmitting.value) return 'AI 正在判断意图…'
+  if (discussionSubmitting.value) return 'AI 正在思考…'
+  if (revisionSubmitting.value) return revisionStage.value || 'AI 正在执行页面修改…'
+  return 'AI 自动判断 · Enter 发送 · Shift + Enter 换行'
+})
+const workspaceDiscussionHistory = () => messages
+  .filter((message) => message?.includeInContext !== false
+    && (message?.role === 'user' || message?.role === 'assistant')
+    && String(message?.text || '').trim())
+  .map((message) => ({ role: message.role, content: String(message.text).trim() }))
+  .slice(-12)
+const workspaceConversationTranscript = () => workspaceDiscussionHistory()
+  .slice(-8)
+  .map((message) => `${message.role === 'user' ? '教师' : 'AI'}：${message.content}`)
+  .join('\n')
+const parseAssistantIntent = (rawText) => {
+  const text = String(rawText || '').trim().replace(/^```(?:json)?\s*/i, '').replace(/\s*```$/, '')
+  const candidates = [text]
+  const objectStart = text.indexOf('{')
+  const objectEnd = text.lastIndexOf('}')
+  if (objectStart >= 0 && objectEnd > objectStart) candidates.push(text.slice(objectStart, objectEnd + 1))
+  for (const candidate of candidates) {
     try {
-      const latest = unwrapResponse(await getAiRun(runId))
-      applyRunPayload(latest || {})
-      if (['completed', 'failed'].includes(runStatus.value)) clearInterval(runPollTimer)
-    } catch { /* SSE remains the primary status channel */ }
-  }, 3000)
+      const data = JSON.parse(candidate)
+      const intent = String(data?.intent || data?.mode || data?.type || '').trim().toLowerCase()
+      if (['revision', 'modify', 'edit', 'update', '修改', '编辑', '改动', '执行'].includes(intent)) return 'revision'
+      if (['discussion', 'chat', 'conversation', 'question', '讨论', '对话', '咨询'].includes(intent)) return 'discussion'
+    } catch {
+      // 模型可能在 JSON 外包裹少量说明，继续尝试下一个候选片段。
+    }
+  }
+  return ''
 }
+const shouldAskModelForIntent = (text = '') => {
+  const value = String(text).trim().replace(/\s+/g, '')
+  if (!value) return false
+  // 明确的寒暄、提问和讨论前缀不需要额外调用一次模型。
+  if (/^(你好|嗨|您好|请问|为什么|为何|怎么回事|怎么看|你觉得|你认为|分析一下|讨论一下|聊聊|建议一下|帮我想想|解释一下|介绍一下|是什么|如何理解)/i.test(value)) return false
+  // “执行”这类短命令依赖前文，需要交给模型结合对话上下文判断。
+  if (/^(请)?(执行|应用|开始|继续|执行修改|应用修改|开始修改|继续修改|修改|修改当前页|页面修改|改一下|调整一下)$/.test(value)) return true
+  // 其余未被明确识别为页面操作的自然语言，交给模型判定。
+  return inferAssistantMode(value) === 'discussion'
+}
+const requestAssistantIntent = async (text) => {
+  const response = await streamGeneralChat({
+    user_id: String(userStore.userInfo?.user_id || '10001'),
+    mode: 'workbench-intent',
+    messages: [
+      ...workspaceDiscussionHistory(),
+      { role: 'user', content: `当前工作台页面：${String(current.value?.title || '').trim() || '未命名页面'}` },
+      { role: 'user', content: text },
+    ],
+  })
+  if (!response.ok) throw new Error(`意图识别请求失败（HTTP ${response.status}）`)
+  const assistantMessage = { role: 'assistant', text: '' }
+  const rawIntent = await readWorkspaceDiscussionStream(response, assistantMessage)
+  return parseAssistantIntent(rawIntent)
+}
+const resolveAssistantMode = async (text) => {
+  const fallback = inferAssistantMode(text)
+  if (!shouldAskModelForIntent(text)) return fallback
+  try {
+    return (await requestAssistantIntent(text)) || fallback
+  } catch {
+    // 意图服务不可用时沿用前端规则，保证讨论和修改仍可继续。
+    return fallback
+  }
+}
+const buildRevisionInstruction = (instruction) => {
+  const transcript = workspaceConversationTranscript()
+  if (!transcript) return instruction
+  return [
+    '请继续执行创作工作台上一轮对话中已经讨论并确认的页面修改方案。',
+    '最近对话记录：',
+    transcript,
+    `当前执行指令：${instruction}`,
+    '如果当前执行指令是“执行”“应用”或“继续”，请根据对话中已经明确的具体方案直接修改当前页面，不要只回复说明。',
+  ].join('\n\n')
+}
+const workspaceDiscussionContext = () => {
+  const slide = current.value
+  if (!slide) return ''
+  const title = String(slide.title || '').trim()
+  const notes = String(slide.notes || '').trim()
+  return [
+    '当前位于创作工作台的讨论模式。以下内容仅作为回答上下文，不要直接修改页面，也不要输出 HTML。',
+    title ? `当前页面：${title}` : '',
+    notes ? `当前页面备注：${notes.slice(0, 600)}` : '',
+  ].filter(Boolean).join('\n')
+}
+const readWorkspaceDiscussionStream = async (response, assistantMessage) => {
+  const reader = response.body?.getReader()
+  if (!reader) throw new Error('模型没有返回可读取的数据流')
+  const decoder = new TextDecoder()
+  let buffer = ''
+  let content = ''
+  const consumeLine = (line) => {
+    if (!line.startsWith('data:')) return
+    const data = line.slice(5).trim()
+    if (!data || data === '[DONE]') return
+    try {
+      const payload = JSON.parse(data)
+      const delta = payload?.choices?.[0]?.delta?.content ?? payload?.choices?.[0]?.message?.content
+      if (typeof delta === 'string' && delta) {
+        content += delta
+        assistantMessage.text = content
+        void scrollAssistantConversation()
+      }
+    } catch {
+      // 不完整的 SSE 行会在下一次读取时拼接后再解析。
+    }
+  }
+
+  while (true) {
+    const { done, value } = await reader.read()
+    buffer += decoder.decode(value || new Uint8Array(), { stream: !done })
+    const lines = buffer.split(/\r?\n/)
+    buffer = lines.pop() || ''
+    lines.forEach(consumeLine)
+    if (done) break
+  }
+  if (buffer.trim()) consumeLine(buffer)
+  if (!content.trim()) throw new Error('模型未返回有效内容')
+  assistantMessage.text = content
+  return content
+}
+const submitDiscussion = async () => {
+  const text = prompt.value.trim()
+  if (!text || isAssistantSubmitting.value) return
+  const history = workspaceDiscussionHistory()
+  const context = workspaceDiscussionContext()
+  messages.push({ role: 'user', text, kind: 'discussion-request' })
+  prompt.value = ''
+  const assistantMessage = {
+    role: 'assistant',
+    text: '',
+    kind: 'discussion-reply',
+  }
+  messages.push(assistantMessage)
+  discussionSubmitting.value = true
+  void scrollAssistantConversation()
+  try {
+    const response = await streamGeneralChat({
+      user_id: String(userStore.userInfo?.user_id || '10001'),
+      messages: [
+        ...history,
+        ...(context ? [{ role: 'user', content: context }] : []),
+        { role: 'user', content: text },
+      ],
+    })
+    if (!response.ok) {
+      let message = ''
+      try {
+        const payload = await response.json()
+        message = payload?.message || ''
+      } catch {
+        // 保留 HTTP 状态作为错误信息。
+      }
+      throw new Error(message || `模型请求失败（HTTP ${response.status}）`)
+    }
+    await readWorkspaceDiscussionStream(response, assistantMessage)
+  } catch (error) {
+    assistantMessage.kind = 'discussion-error'
+    assistantMessage.includeInContext = false
+    assistantMessage.text = `讨论暂时无法继续：${error?.message || '连接失败，请检查模型配置。'}`
+    WorkspaceMessage.error(error?.message || '大模型连接失败，请检查配置')
+  } finally {
+    discussionSubmitting.value = false
+    void scrollAssistantConversation()
+  }
+}
+
 const startRun = async () => {
-  if (!sessionId.value) return
-  try { const run = unwrapResponse(await createAiRun(sessionId.value)); const runId = run?.id || run?.run_id; if (!runId) throw new Error('未获取到生成任务'); runStatus.value = 'running'; runProgress.value = 0; runStage.value = '正在创建生成任务'; WorkspaceMessage.success('大纲已确认，课件正在生成'); connectRunEvents(runId); const latest = unwrapResponse(await getAiRun(runId)); applyRunPayload(latest || {}) }
-  catch (error) { runStatus.value = 'failed'; WorkspaceMessage.error(error?.message || '生成任务创建失败') }
+  if (projectId.value || runStatus.value === 'running') return
+  if (presentationFixtureMode.value) {
+    try {
+      loadPresentationFixture()
+    } catch (error) {
+      runStatus.value = 'failed'
+      runProgress.value = 0
+      runStage.value = '测试样例加载失败'
+      generationError.value = error?.message || '固定 PPT 测试样例加载失败'
+      WorkspaceMessage.error(generationError.value)
+    }
+    return
+  }
+  if (!sessionId.value) {
+    if (!route.query.pptGeneration) return
+    runStatus.value = 'failed'
+    runStage.value = 'HTML PPT 生成失败'
+    generationError.value = '当前页面缺少备课会话，无法读取已确认的大纲。'
+    return
+  }
+
+  generationError.value = ''
+
+  const generationKey = String(routeQueryValue(route.query.pptGeneration) || '')
+  const cachedDraft = readPresentationDraft(sessionId.value)
+  if (cachedDraft?.slides?.length && (!generationKey || cachedDraft.request_key === generationKey)) {
+    try {
+      applyGeneratedPresentation(cachedDraft, { persist: false, notify: false })
+      messages.push({ role: 'assistant', text: `已载入 ${cachedDraft.slides.length} 页 HTML PPT 草稿。`, includeInContext: false, kind: 'generation-success' })
+      void scrollAssistantConversation()
+      return
+    } catch {
+      // Ignore an invalid session draft and generate a fresh presentation below.
+    }
+  }
+
+  runStatus.value = 'running'
+  runProgress.value = 6
+  runStage.value = '正在读取已确认的大纲'
+
+  try {
+    // 本地开发时 Java 会话仍为 mock，真实 Python 大纲会保存在本地快照中；
+    // 优先读取该快照，避免进入工作台后又退回固定/空的大纲。
+    const localOutlineDraft = readOutlineDraft(sessionId.value)
+    const planData = localOutlineDraft?.plan_json
+      ? localOutlineDraft
+      : (unwrapResponse(await getAiPlan(sessionId.value)) || {})
+    const outline = normalizeOutlinePayload(planData)
+    if (!Object.keys(outline).length) throw new Error('未找到已确认的大纲，请返回对话重新确认')
+
+    runProgress.value = 20
+    runStage.value = '正在调用 HTML PPT 生成服务'
+    const numericSessionId = Number(sessionId.value)
+    const selectedTheme = String(routeQueryValue(route.query.pptTheme) || '').trim()
+    const outlineId = planData.python_outline_id || outline.outline_id
+    const payload = {
+      ...(Number.isInteger(numericSessionId) && numericSessionId > 0 ? { session_id: numericSessionId } : {}),
+      ...(outlineId ? { outline_id: String(outlineId) } : {}),
+      title: String(outline.title || planData.title || 'A12 教学课件'),
+      outline,
+      ...(selectedTheme ? { theme: selectedTheme } : {}),
+      aspect_ratio: '16:9',
+      language: 'zh-CN',
+      asset_policy: 'placeholder',
+    }
+    const response = await generatePresentation(payload)
+    runProgress.value = 88
+    runStage.value = '正在装载 HTML 页面'
+    applyGeneratedPresentation(response)
+  } catch (error) {
+    runStatus.value = 'failed'
+    runProgress.value = 0
+    runStage.value = 'HTML PPT 生成失败'
+    generationError.value = generationErrorMessage(error)
+    messages.push({ role: 'assistant', text: generationError.value, includeInContext: false, kind: 'generation-error' })
+    WorkspaceMessage.error(generationError.value)
+    void scrollAssistantConversation()
+  }
 }
+const retryPresentationGeneration = () => { void startRun() }
 const submitRevision = async () => {
   const instruction = prompt.value.trim(); if (!instruction) return
+  if (revisionSubmitting.value) return
+  const conversationTranscript = workspaceConversationTranscript()
+  const revisionInstruction = buildRevisionInstruction(instruction)
   messages.push({ role: 'user', text: instruction }); prompt.value = ''
+  revisionSubmitting.value = true
+  revisionStage.value = '正在理解修改指令…'
   try {
     let applied = false
+    if (current.value?.html) {
+      const selectedElement = htmlSelectedElement.value
+      revisionStage.value = selectedElement
+        ? '正在分析选中元素并生成页面修改…'
+        : '正在分析当前页并生成页面修改…'
+      const response = unwrapResponse(await modifyPresentationSlide({
+        ...(presentationId.value ? { presentation_id: presentationId.value } : {}),
+        slide_no: selectedSlide.value + 1,
+        current_html: current.value.html,
+        instruction: revisionInstruction,
+        outline_context: {
+          deck_title: String(project.value?.project_name || route.query.templateTitle || current.value.title || 'A12 教学课件'),
+          current_slide_title: String(current.value.title || ''),
+          current_slide_no: selectedSlide.value + 1,
+          selected_element: selectedElement ? {
+            id: selectedElement.id,
+            name: selectedElement.name,
+            type: selectedElement.type,
+            content: selectedElement.content,
+          } : null,
+          conversation_context: conversationTranscript || null,
+        },
+        theme: String(routeQueryValue(route.query.pptTheme) || presentationMetadata.value?.theme || current.value.theme || '').trim() || undefined,
+        keep_style: true,
+      }))
+      if (showClarificationForResponse(response, projectId.value ? 'project' : 'session')) return
+      revisionStage.value = '正在应用 AI 返回的页面…'
+      applied = applyGeneratedPage(response)
+      if (!applied) throw new Error('AI 修改接口未返回有效的 HTML 页面')
+      messages.push({
+        role: 'assistant',
+        text: String(response?.change_summary || '已根据修改要求更新当前页面，页面元素仍可继续选中和编辑。'),
+        includeInContext: false,
+        kind: 'revision-result',
+      })
+      WorkspaceMessage.success('页面内容已更新')
+      return
+    }
     if (projectId.value) {
-      const response = unwrapResponse(await reviseProjectWithAi(projectId.value, { target_type: 'slide', target_id: String(current.value.componentId || selectedSlide.value + 1), instruction, context: JSON.stringify(current.value) }))
+      revisionStage.value = '正在提交项目页面修改…'
+      const response = unwrapResponse(await reviseProjectWithAi(projectId.value, {
+        target_type: 'slide',
+        target_id: String(current.value.componentId || selectedSlide.value + 1),
+        instruction: revisionInstruction,
+        context: JSON.stringify({ page: current.value, conversation_context: conversationTranscript || null }),
+      }))
+      revisionStage.value = '正在应用 AI 返回的页面…'
       applied = applyGeneratedPage(response)
       if (showClarificationForResponse(response, 'project')) return
     }
     else if (sessionId.value) {
-      const response = unwrapResponse(await sendAiSessionMessage(sessionId.value, { message: instruction, messages: JSON.stringify([{ role: 'user', content: instruction }]) }))
+      revisionStage.value = '正在处理页面修改请求…'
+      const response = unwrapResponse(await sendAiSessionMessage(sessionId.value, {
+        message: revisionInstruction,
+        messages: JSON.stringify([{ role: 'user', content: revisionInstruction }]),
+      }))
       if (showClarificationForResponse(response, 'session')) return
     }
-    messages.push({ role: 'assistant', text: applied ? '已根据修改要求更新当前页面，页面元素仍可继续选中和编辑。' : '已收到修改要求，正在结合当前页面内容进行调整。' }); WorkspaceMessage.success(applied ? '页面内容已更新' : '修改要求已提交')
-  } catch (error) { messages.push({ role: 'assistant', text: '修改请求暂未提交成功，请稍后重试。' }); WorkspaceMessage.error(error?.message || '修改请求失败') }
+    messages.push({
+      role: 'assistant',
+      text: applied ? '已根据修改要求更新当前页面，页面元素仍可继续选中和编辑。' : '已收到修改要求，正在结合当前页面内容进行调整。',
+      includeInContext: false,
+      kind: 'revision-result',
+    }); WorkspaceMessage.success(applied ? '页面内容已更新' : '修改要求已提交')
+  } catch (error) {
+    messages.push({ role: 'assistant', text: '修改请求暂未提交成功，请稍后重试。', includeInContext: false, kind: 'revision-error' })
+    WorkspaceMessage.error(error?.message || '修改请求失败')
+  } finally {
+    revisionSubmitting.value = false
+    revisionStage.value = ''
+  }
 }
 const submitClarification = async (selection) => {
   if ((!sessionId.value && !projectId.value) || clarificationSubmitting.value || !selection?.answer) return
@@ -1293,9 +2837,10 @@ onMounted(async () => {
   initializeSessionFlow()
   await bootstrapTestCaseProject()
   await loadProject()
+  if (!projectId.value && (sessionId.value || presentationFixtureMode.value)) await startRun()
   window.addEventListener('keydown', handleWorkspaceKeydown)
 })
-onBeforeUnmount(() => { eventSource?.close(); clearInterval(runPollTimer); stopElementDrag(); cancelCanvasPlacement(); workspaceMessageInstance?.close(); window.removeEventListener('keydown', handleWorkspaceKeydown) })
+onBeforeUnmount(() => { htmlFrameObservers.forEach(({ observer, cleanup }) => { observer?.disconnect(); cleanup?.() }); htmlFrameObservers.clear(); clearPreviewFrameObservers(); stopElementDrag(); cancelCanvasPlacement(); workspaceMessageInstance?.close(); window.removeEventListener('keydown', handleWorkspaceKeydown) })
 const currentPagePayload = (slide = current.value, index = selectedSlide.value, overrides = {}) => pagePayloadForSlide(slide, index, {
   autosave: true,
   dirty: false,
@@ -1341,12 +2886,19 @@ const showVersionDiff = async (version) => { try { versionDiff.value = unwrapRes
 const restoreVersion = async (version) => { try { await restoreProjectVersion(projectId.value, version.id || version.version_id); WorkspaceMessage.success('已恢复历史版本'); await loadVersions() } catch (error) { WorkspaceMessage.error(error?.message || '版本恢复失败') } }
 const grantPermission = async () => { const userId = Number(permissionUserId.value); if (!Number.isInteger(userId) || userId <= 0) return WorkspaceMessage.warning('请输入有效用户 ID'); try { await addProjectPermission(projectId.value, { user_id: userId }); permissionUserId.value = ''; permissionDialogVisible.value = false; WorkspaceMessage.success('协作者已添加') } catch (error) { WorkspaceMessage.error(error?.message || '授权失败') } }
 watch(slides, () => { if (!projectId.value || testCaseBootstrapping.value || hydratingProject.value || savingPage.value) return; autosaveState.value = '待保存'; clearTimeout(autosaveTimer); autosaveTimer = setTimeout(persistCurrentSlide, 700) }, { deep: true })
-watch(selectedSlide, () => { selectedElementId.value = null })
+watch(selectedSlide, () => {
+  selectedElementId.value = null
+  htmlSelectionRestoreKey.value = ''
+  htmlElements.value = []
+  htmlSelectedElementId.value = null
+  htmlSelectedElement.value = null
+})
 onBeforeUnmount(() => clearTimeout(autosaveTimer))
 const workspaceFlowQuery = (targetProjectId = projectId.value) => ({
   ...(route.query.preview ? { preview: '1' } : {}),
   ...(route.query.testCase ? { testCase: route.query.testCase } : {}),
   ...(route.query.templateTitle ? { templateTitle: route.query.templateTitle } : {}),
+  ...(route.query.pptTheme ? { pptTheme: route.query.pptTheme } : {}),
   ...(targetProjectId ? { projectId: String(targetProjectId) } : {}),
   // 导出中心消费此标记后会自动完成“快照 → 预检 → 创建任务”。
   autoExport: '1',
@@ -1407,8 +2959,26 @@ const removeSlide = async () => {
   slides.splice(selectedSlide.value, 1)
   selectedSlide.value = Math.max(0, selectedSlide.value - 1)
 }
-const sendRevision = () => submitRevision()
-const selectSlide = (index) => { selectedSlide.value = index; selectedElementId.value = null; loadProjectPageDetail(index) }
+const sendAssistantMessage = async () => {
+  const text = prompt.value.trim()
+  if (!text || isAssistantSubmitting.value) return
+  intentSubmitting.value = true
+  let mode = 'discussion'
+  try {
+    mode = await resolveAssistantMode(text)
+  } finally {
+    intentSubmitting.value = false
+  }
+  if (mode === 'revision') return submitRevision()
+  return submitDiscussion()
+}
+/** 工作台 AI 输入快捷键：Enter 发送，Shift+Enter 换行，兼容中文输入法候选确认。 */
+const handleAssistantKeydown = (event) => {
+  if (event.isComposing || event.keyCode === 229 || event.shiftKey) return
+  event.preventDefault()
+  sendAssistantMessage()
+}
+const selectSlide = (index) => { selectedSlide.value = index; selectedElementId.value = null; activePanel.value = 'content'; loadProjectPageDetail(index) }
 </script>
 
 <template>
@@ -1418,8 +2988,9 @@ const selectSlide = (index) => { selectedSlide.value = index; selectedElementId.
       :title="current.title"
       :autosave-state="autosaveState"
       :project-id="route.query.projectId"
+      :html-mode="Boolean(current.html)"
       @back="goHome"
-      @preview="previewVisible = true"
+      @preview="openPreview"
       @generate-interactive="openInteractiveDialog"
       @export="exportProject"
       @tool-select="handleToolSelect"
@@ -1428,9 +2999,22 @@ const selectSlide = (index) => { selectedSlide.value = index; selectedElementId.
     <div class="workspace-grid">
       <aside class="assistant-panel" aria-label="AI 教学助手">
         <header><div class="assistant-mark">智</div><div><strong>AI 教学助手</strong><span>正在编辑第 {{ selectedSlide + 1 }} 页</span></div></header>
+        <div class="assistant-intent-status" :class="inferredAssistantMode" role="status" aria-live="polite">
+          <span class="assistant-intent-dot" aria-hidden="true"></span>
+          <span>{{ assistantIntentHint }}</span>
+        </div>
+        <p class="assistant-mode-hint">明确的页面操作会执行修改；疑问、分析和建议只进行讨论。</p>
         <div class="assistant-actions"><el-button type="primary" plain @click="openInteractiveDialog">生成互动模块</el-button></div>
-        <section class="conversation"><article v-for="(message, index) in messages" :key="index" :class="['message', message.role]"><span v-if="message.role === 'assistant'">智</span><p>{{ message.text }}</p></article></section>
-        <footer class="composer"><el-input v-model="prompt" type="textarea" :rows="3" resize="none" placeholder="例如：把提问改得更有启发性" @keydown.ctrl.enter="sendRevision" /><div><span>Ctrl + Enter 发送</span><el-button type="primary" circle :icon="Promotion" :disabled="!prompt.trim()" aria-label="发送修改" @click="sendRevision" /></div></footer>
+        <section ref="assistantConversationRef" class="conversation"><article v-for="(message, index) in messages" :key="index" :class="['message', message.role]"><span v-if="message.role === 'assistant'">智</span><p>{{ message.text }}</p></article></section>
+        <div v-if="revisionSubmitting" class="assistant-execution" role="status" aria-live="polite">
+          <span class="assistant-execution-spinner" aria-hidden="true"><i></i></span>
+          <div>
+            <strong>AI 正在执行页面修改</strong>
+            <span class="assistant-execution-detail">{{ revisionStage || '正在分析当前页面…' }}</span>
+          </div>
+          <span class="assistant-execution-dots" aria-hidden="true"><i></i><i></i><i></i></span>
+        </div>
+        <footer class="composer"><el-input v-model="prompt" type="textarea" :rows="3" resize="none" :disabled="isAssistantSubmitting" :placeholder="assistantPlaceholder" @keydown.enter="handleAssistantKeydown" /><div><span>{{ assistantStatusText }}</span><el-button type="primary" circle :icon="Promotion" :loading="isAssistantSubmitting" :disabled="isAssistantSubmitting || !prompt.trim()" :aria-label="inferredAssistantMode === 'revision' ? '发送页面修改' : '发送讨论'" @click="sendAssistantMessage" /></div></footer>
       </aside>
 
       <section class="editor-stage">
@@ -1442,12 +3026,26 @@ const selectSlide = (index) => { selectedSlide.value = index; selectedElementId.
           <el-button text :icon="Plus" @click="addSlide">添加页面</el-button>
         </aside>
         <main class="canvas-area" @click="handleCanvasAreaClick">
+          <div v-if="revisionSubmitting" class="revision-overlay" role="status" aria-live="polite" @click.stop>
+            <div class="revision-overlay-card">
+              <span class="revision-orbit" aria-hidden="true"><i></i><i></i><i></i></span>
+              <div>
+                <strong>AI 正在修改当前页</strong>
+                <span>{{ revisionStage || '正在分析页面内容…' }}</span>
+              </div>
+              <div class="revision-progress" aria-hidden="true"><i></i></div>
+            </div>
+          </div>
           <div class="canvas-meta">
             <span>第 {{ selectedSlide + 1 }} 页，共 {{ slides.length }} 页</span>
+            <span v-if="current.html" class="canvas-placement-status"><b>拖动元素 · 双击文字编辑</b><small>选中后可缩放、旋转、复制或删除</small></span>
             <span v-if="placementMode" class="canvas-placement-status"><b>{{ placementInstruction }}</b><small>Esc 取消</small></span>
             <span>16:9 · 自适应窗口</span>
           </div>
-          <article class="slide-canvas" :class="[`layout-${current.layout}`, { 'is-placing': placementMode }]" :style="{ '--accent': theme.color }" @pointerdown="startCanvasPlacement" @pointermove="handleCanvasPlacementMove" @click="handleSlideCanvasClick">
+          <article v-if="current.html" class="slide-canvas html-slide-canvas" :style="{ '--canvas-zoom': canvasZoom / 100 }" :aria-label="`${current.title} HTML PPT`">
+            <iframe class="editable-html-frame" :srcdoc="htmlCanvasFrameSource" sandbox="allow-same-origin" :title="`${current.title} HTML PPT`" @load="fitHtmlFrame"></iframe>
+          </article>
+          <article v-else class="slide-canvas" :class="[`layout-${current.layout}`, { 'is-placing': placementMode }]" :style="{ '--accent': theme.color, '--canvas-zoom': canvasZoom / 100 }" @pointerdown="startCanvasPlacement" @pointermove="handleCanvasPlacementMove" @click="handleSlideCanvasClick">
             <span class="slide-eyebrow">{{ current.eyebrow }}</span>
             <template v-for="element in current.elements" :key="element.id">
               <h1 v-if="element.type === 'text' && element.target === 'title'" :data-element-id="element.id" :class="elementClass(element)" :style="elementStyle(element.id)" @pointerdown="startElementDrag(element.id, $event)" @click.stop="selectElement(element.id, $event)">{{ elementContent(element) }}</h1>
@@ -1536,16 +3134,22 @@ const selectSlide = (index) => { selectedSlide.value = index; selectedElementId.
             </div>
           </article>
           <div class="canvas-controls" @click.stop>
-            <button aria-label="缩小">−</button><span>86%</span><button aria-label="放大">+</button><button aria-label="全屏预览" @click="previewVisible = true"><el-icon><FullScreen /></el-icon></button>
+            <button type="button" aria-label="缩小画布" title="缩小画布" :disabled="canvasZoom <= CANVAS_ZOOM_MIN" @click="adjustCanvasZoom(-CANVAS_ZOOM_STEP)">−</button>
+            <span class="canvas-zoom-field" role="group" aria-label="画布缩放比例">
+              <input v-model="canvasZoomInput" class="canvas-zoom-input" type="number" min="50" max="200" step="1" inputmode="numeric" aria-label="输入画布缩放比例" title="输入 50–200 的缩放比例" @change="commitCanvasZoomInput" @blur="commitCanvasZoomInput" @keyup.enter.prevent="commitCanvasZoomInput" @keydown.esc.prevent="resetCanvasZoom">
+              <small>%</small>
+            </span>
+            <button type="button" aria-label="放大画布" title="放大画布" :disabled="canvasZoom >= CANVAS_ZOOM_MAX" @click="adjustCanvasZoom(CANVAS_ZOOM_STEP)">+</button>
+            <button type="button" aria-label="全屏预览" title="全屏预览" @click="openPreview"><el-icon><FullScreen /></el-icon></button>
           </div>
         </main>
       </section>
 
       <WorkspacePropertiesPanel
         :slide="current"
-        :elements="current.elements"
-        :selected-element="selectedElementPanel"
-        :selected-element-id="selectedElementId"
+        :elements="workspaceElements"
+        :selected-element="workspaceSelectedElement"
+        :selected-element-id="workspaceSelectedElementId"
         :active-panel="activePanel"
         :themes="themes"
         :layouts="layouts"
@@ -1566,26 +3170,40 @@ const selectSlide = (index) => { selectedSlide.value = index; selectedElementId.
       />
     </div>
 
-    <el-dialog v-model="previewVisible" class="preview-dialog" width="min(960px, 92vw)" title="课件预览">
+    <el-dialog v-model="previewVisible" class="preview-dialog" width="min(960px, 92vw)" title="课件预览 · 全部页面" @closed="clearPreviewFrameObservers">
       <div class="preview">
-        <article class="slide-canvas preview-slide" :class="`layout-${current.layout}`" :style="{ '--accent': theme.color }">
-          <span class="slide-eyebrow">{{ current.eyebrow }}</span>
-          <template v-for="element in current.elements" :key="`preview-${element.id}`">
-            <h1 v-if="element.type === 'text' && element.target === 'title'" :class="previewElementClass(element)" :style="elementStyle(element.id)">{{ elementContent(element) }}</h1>
-            <p v-else-if="element.type === 'text' && element.target === 'description'" :class="previewElementClass(element)" :style="elementStyle(element.id)">{{ elementContent(element) }}</p>
-            <footer v-else-if="element.type === 'text' && element.target === 'footer'" :class="previewElementClass(element)" :style="elementStyle(element.id)"><span>{{ current.layout === '重点陈述' ? '本课目标' : '小组任务' }}</span><p>{{ elementContent(element) }}</p></footer>
-            <div v-else-if="element.type === 'text'" class="text-element" :class="previewElementClass(element)" :style="elementStyle(element.id)">{{ elementContent(element) }}</div>
-            <div v-else-if="element.type === 'formula'" class="formula-text-element" :class="previewElementClass(element)" :style="elementStyle(element.id)"><strong>{{ elementContent(element) || 'a² + b² = c²' }}</strong></div>
-            <div v-else-if="element.type === 'shape' && element.shapeKind === 'formula-diagram'" class="formula-diagram-element" :class="previewElementClass(element)" :style="elementStyle(element.id)"><svg class="triangle-svg" viewBox="0 0 100 100" role="img" aria-label="直角三角形示意图"><path class="triangle-outline" d="M 12 88 L 82 88 L 82 12 Z" /><text class="triangle-label" x="47" y="98" text-anchor="middle">a</text><text class="triangle-label" x="90" y="53" text-anchor="middle">b</text><text class="triangle-label" x="38" y="43" text-anchor="middle">c</text></svg></div>
-            <div v-else-if="element.type === 'shape'" class="shape-element" :class="[previewElementClass(element), `shape-${element.shapeKind || 'rectangle'}`]" :style="elementStyle(element.id)"><svg class="shape-svg" viewBox="0 0 100 100" :preserveAspectRatio="element.shapeKind === 'circle' ? 'xMidYMid meet' : 'none'" aria-hidden="true"><rect v-if="['rectangle', 'rounded'].includes(element.shapeKind)" class="shape-fill" x="4" y="4" width="92" height="92" :rx="element.shapeKind === 'rounded' ? Number(element.style?.borderRadius ?? 14) : 0" :ry="element.shapeKind === 'rounded' ? Number(element.style?.borderRadius ?? 14) : 0" /><circle v-else-if="element.shapeKind === 'circle'" class="shape-fill" cx="50" cy="50" r="46" /><polygon v-else-if="element.shapeKind === 'diamond'" class="shape-fill" points="50,4 96,50 50,96 4,50" /><polygon v-else-if="element.shapeKind === 'triangle'" class="shape-fill" points="50,4 96,96 4,96" /><rect v-else class="shape-fill" x="4" y="4" width="92" height="92" /></svg><span v-if="elementContent(element)">{{ elementContent(element) }}</span></div>
-            <div v-else-if="element.type === 'image'" class="image-element" :class="previewElementClass(element)" :style="elementStyle(element.id)"><img :src="element.src || createMockImageSrc()" :alt="element.alt || elementContent(element) || element.name" /><span v-if="element.style?.showCaption !== false">{{ elementContent(element) || '图片 mock' }}</span></div>
-            <div v-else-if="element.type === 'chart'" class="chart-element" :class="previewElementClass(element)" :style="elementStyle(element.id)"><header><strong>{{ elementContent(element) || '数据图表' }}</strong><small>MOCK DATA</small></header><div class="chart-plot"><div v-for="(item, itemIndex) in (element.data || [])" :key="`preview-${element.id}-${itemIndex}`" class="chart-bar"><span class="chart-bar-fill" :style="{ height: `${Math.max(8, Math.min(100, Number(item.value) || 0))}%` }"></span><small>{{ item.label }}</small></div></div></div>
-            <div v-else-if="['audio', 'video', 'h5', 'subject'].includes(element.type)" class="workspace-widget" :class="[`widget-${element.type}`, previewElementClass(element)]" :style="elementStyle(element.id)"><span class="widget-icon">{{ element.type === 'audio' ? '♫' : element.type === 'video' ? '▶' : element.type === 'h5' ? 'H5' : '⌁' }}</span><div><strong>{{ elementContent(element) || element.name }}</strong><small>{{ elementTypeLabels[element.type] }}</small></div><span class="widget-action">{{ element.type === 'audio' ? '播放' : element.type === 'video' ? '预览' : '打开' }}</span></div>
-            <div v-else-if="element.type === 'table'" class="workspace-widget table-widget" :class="previewElementClass(element)" :style="elementStyle(element.id)"><strong>{{ elementContent(element) || '数据表格' }}</strong><div class="mock-table-grid"><span v-for="(cell, cellIndex) in (element.data?.flat() || [])" :key="`preview-${element.id}-${cellIndex}`">{{ cell }}</span></div></div>
-          </template>
-        </article>
+        <div class="preview-toolbar">
+          <span>连续预览 · 共 {{ slides.length }} 页</span>
+          <nav aria-label="预览页面导航">
+            <button v-for="(slide, index) in slides" :key="`preview-nav-${index}`" type="button" :class="{ active: previewSlideIndex === index }" @click="scrollPreviewTo(index)">{{ String(index + 1).padStart(2, '0') }}</button>
+          </nav>
+        </div>
+        <div ref="previewDeckRef" class="preview-deck">
+          <section v-for="(slide, slideIndex) in slides" :key="`preview-page-${slideIndex}-${slide.title}`" class="preview-page" :class="{ 'is-current': previewSlideIndex === slideIndex }" :data-preview-index="slideIndex">
+            <div class="preview-page-heading"><span>第 {{ slideIndex + 1 }} 页</span><strong>{{ slide.title }}</strong></div>
+            <div v-if="slide.html" class="html-preview-shell">
+              <iframe :srcdoc="slide.html" sandbox="allow-scripts" :title="`${slide.title} HTML PPT 预览`" class="preview-html-frame" @load="fitPreviewHtmlFrame"></iframe>
+            </div>
+            <article v-else class="slide-canvas preview-slide" :class="`layout-${slide.layout}`" :style="{ '--accent': themeForSlide(slide).color }">
+              <span class="slide-eyebrow">{{ slide.eyebrow }}</span>
+              <template v-for="element in (slide.elements || [])" :key="`preview-${slideIndex}-${element.id}`">
+                <h1 v-if="element.type === 'text' && element.target === 'title'" :class="previewElementClass(element)" :style="previewElementStyle(element, slide)">{{ previewElementContent(element, slide) }}</h1>
+                <p v-else-if="element.type === 'text' && element.target === 'description'" :class="previewElementClass(element)" :style="previewElementStyle(element, slide)">{{ previewElementContent(element, slide) }}</p>
+                <footer v-else-if="element.type === 'text' && element.target === 'footer'" :class="previewElementClass(element)" :style="previewElementStyle(element, slide)"><span>{{ slide.layout === '重点陈述' ? '本课目标' : '小组任务' }}</span><p>{{ previewElementContent(element, slide) }}</p></footer>
+                <div v-else-if="element.type === 'text'" class="text-element" :class="previewElementClass(element)" :style="previewElementStyle(element, slide)">{{ previewElementContent(element, slide) }}</div>
+                <div v-else-if="element.type === 'formula'" class="formula-text-element" :class="previewElementClass(element)" :style="previewElementStyle(element, slide)"><strong>{{ previewElementContent(element, slide) || 'a² + b² = c²' }}</strong></div>
+                <div v-else-if="element.type === 'shape' && element.shapeKind === 'formula-diagram'" class="formula-diagram-element" :class="previewElementClass(element)" :style="previewElementStyle(element, slide)"><svg class="triangle-svg" viewBox="0 0 100 100" role="img" aria-label="直角三角形示意图"><path class="triangle-outline" d="M 12 88 L 82 88 L 82 12 Z" /><text class="triangle-label" x="47" y="98" text-anchor="middle">a</text><text class="triangle-label" x="90" y="53" text-anchor="middle">b</text><text class="triangle-label" x="38" y="43" text-anchor="middle">c</text></svg></div>
+                <div v-else-if="element.type === 'shape'" class="shape-element" :class="[previewElementClass(element), `shape-${element.shapeKind || 'rectangle'}`]" :style="previewElementStyle(element, slide)"><svg class="shape-svg" viewBox="0 0 100 100" :preserveAspectRatio="element.shapeKind === 'circle' ? 'xMidYMid meet' : 'none'" aria-hidden="true"><rect v-if="['rectangle', 'rounded'].includes(element.shapeKind)" class="shape-fill" x="4" y="4" width="92" height="92" :rx="element.shapeKind === 'rounded' ? Number(element.style?.borderRadius ?? 14) : 0" :ry="element.shapeKind === 'rounded' ? Number(element.style?.borderRadius ?? 14) : 0" /><circle v-else-if="element.shapeKind === 'circle'" class="shape-fill" cx="50" cy="50" r="46" /><polygon v-else-if="element.shapeKind === 'diamond'" class="shape-fill" points="50,4 96,50 50,96 4,50" /><polygon v-else-if="element.shapeKind === 'triangle'" class="shape-fill" points="50,4 96,96 4,96" /><rect v-else class="shape-fill" x="4" y="4" width="92" height="92" /></svg><span v-if="previewElementContent(element, slide)">{{ previewElementContent(element, slide) }}</span></div>
+                <div v-else-if="element.type === 'image'" class="image-element" :class="previewElementClass(element)" :style="previewElementStyle(element, slide)"><img :src="element.src || createMockImageSrc()" :alt="element.alt || previewElementContent(element, slide) || element.name" /><span v-if="element.style?.showCaption !== false">{{ previewElementContent(element, slide) || '图片 mock' }}</span></div>
+                <div v-else-if="element.type === 'chart'" class="chart-element" :class="previewElementClass(element)" :style="previewElementStyle(element, slide)"><header><strong>{{ previewElementContent(element, slide) || '数据图表' }}</strong><small>DATA</small></header><div class="chart-plot"><div v-for="(item, itemIndex) in (element.data || [])" :key="`preview-${slideIndex}-${element.id}-${itemIndex}`" class="chart-bar"><span class="chart-bar-fill" :style="{ height: `${Math.max(8, Math.min(100, Number(item.value) || 0))}%` }"></span><small>{{ item.label }}</small></div></div></div>
+                <div v-else-if="['audio', 'video', 'h5', 'subject'].includes(element.type)" class="workspace-widget" :class="[`widget-${element.type}`, previewElementClass(element)]" :style="previewElementStyle(element, slide)"><span class="widget-icon">{{ element.type === 'audio' ? '♫' : element.type === 'video' ? '▶' : element.type === 'h5' ? 'H5' : '⌁' }}</span><div><strong>{{ previewElementContent(element, slide) || element.name }}</strong><small>{{ elementTypeLabels[element.type] }}</small></div><span class="widget-action">{{ element.type === 'audio' ? '播放' : element.type === 'video' ? '预览' : '打开' }}</span></div>
+                <div v-else-if="element.type === 'table'" class="workspace-widget table-widget" :class="previewElementClass(element)" :style="previewElementStyle(element, slide)"><strong>{{ previewElementContent(element, slide) || '数据表格' }}</strong><div class="mock-table-grid"><span v-for="(cell, cellIndex) in (element.data?.flat() || [])" :key="`preview-${slideIndex}-${element.id}-${cellIndex}`">{{ cell }}</span></div></div>
+              </template>
+            </article>
+          </section>
+        </div>
       </div>
-      <template #footer><el-button @click="previewVisible = false">继续编辑</el-button><el-button type="primary" :icon="VideoPlay" @click="previewVisible = false">播放预览</el-button></template>
+      <template #footer><el-button @click="closePreview">继续编辑</el-button></template>
     </el-dialog>
     <el-dialog v-model="interactiveDialogVisible" title="生成互动模块" width="min(720px, 92vw)" destroy-on-close>
       <p class="dialog-hint">调用互动模块生成服务，生成后可以先预览，再插入当前页面或作为独立页面保存。</p>
@@ -1647,7 +3265,27 @@ const selectSlide = (index) => { selectedSlide.value = index; selectedElementId.
     </el-dialog>
   </div>
     <IntentClarificationDialog v-model="clarificationDialogVisible" :question="clarificationQuestion" :loading="clarificationSubmitting" @submit="submitClarification" />
-    <div v-if="runStatus === 'running'" class="run-progress"><span>{{ runStage || 'AI 正在生成课件' }}</span><el-progress :percentage="runProgress" :show-text="false" :stroke-width="4" /></div>
+    <div v-if="runStatus === 'running'" class="generation-overlay" role="status" aria-live="polite">
+      <div class="generation-state-card">
+        <span class="generation-spinner" aria-hidden="true"></span>
+        <small class="generation-kicker">AI HTML PPT</small>
+        <h2>正在生成课件</h2>
+        <p>{{ runStage || '正在准备页面内容…' }}</p>
+        <span class="generation-hint">真实模型生成通常需要 1–7 分钟，请保持此页面打开。</span>
+        <el-progress :percentage="runProgress" :show-text="false" :stroke-width="5" />
+      </div>
+    </div>
+    <div v-else-if="runStatus === 'failed'" class="generation-overlay generation-overlay-error" role="alert">
+      <div class="generation-state-card">
+        <small class="generation-kicker">AI HTML PPT</small>
+        <h2>课件生成失败</h2>
+        <p>{{ generationError || '暂时无法生成 HTML PPT。' }}</p>
+        <div class="generation-actions">
+          <el-button type="primary" @click="retryPresentationGeneration">重新生成</el-button>
+          <el-button @click="goHome">返回教学助手</el-button>
+        </div>
+      </div>
+    </div>
     <div v-if="projectId" class="project-utilities"><span>{{ autosaveState }}</span><el-button text size="small" @click="createVersion">保存版本</el-button><el-button text size="small" @click="loadVersions">版本历史</el-button><el-button text size="small" @click="permissionDialogVisible = true">协作授权</el-button></div>
     <el-dialog v-model="versionDialogVisible" title="项目版本历史" width="min(680px, 92vw)"><div v-loading="versionLoading" class="version-list"><article v-for="version in versions" :key="version.id || version.version_id"><div><strong>版本 {{ version.version_number || version.id }}</strong><p>{{ version.description || '未填写说明' }}</p></div><div><el-button text size="small" @click="showVersionDiff(version)">查看差异</el-button><el-button text size="small" type="primary" @click="restoreVersion(version)">恢复此版本</el-button></div></article><p v-if="versionDiff" class="version-diff">{{ versionDiff.summary || JSON.stringify(versionDiff.differences || versionDiff) }}</p><el-empty v-if="!versionLoading && !versions.length" description="暂无历史版本" /></div><template #footer><el-button @click="versionDialogVisible = false">关闭</el-button></template></el-dialog>
     <el-dialog v-model="permissionDialogVisible" title="添加协作者" width="420px"><p class="dialog-hint">协作者将获得项目编辑权限。</p><el-input v-model="permissionUserId" inputmode="numeric" placeholder="输入用户 ID" /><template #footer><el-button @click="permissionDialogVisible = false">取消</el-button><el-button type="primary" @click="grantPermission">确认授权</el-button></template></el-dialog>
@@ -2034,6 +3672,7 @@ const selectSlide = (index) => { selectedSlide.value = index; selectedElementId.
   white-space: nowrap;
 }
 
+.html-slide-canvas{padding:0;background:#fff}.html-slide-canvas iframe{position:absolute;top:0;left:0;display:block;width:1280px;height:720px;border:0;background:#fff;transform-origin:top left}.html-preview-shell{position:relative;width:min(780px,100%);aspect-ratio:16/9;overflow:hidden;background:#fff;box-shadow:0 18px 45px rgb(40 57 82 / 18%)}.preview-html-frame{position:absolute;top:0;left:0;display:block;width:1280px;height:720px;border:0;background:#fff;transform-origin:top left}
 .workspace-widget {
   display: flex;
   align-items: center;
@@ -2182,6 +3821,13 @@ const selectSlide = (index) => { selectedSlide.value = index; selectedElementId.
   margin: 0;
 }
 
+.assistant-mode-hint {
+  margin: 6px 12px 0;
+  color: var(--zh-text-caption);
+  font-size: 10px;
+  line-height: 1.5;
+}
+
 .widget-action-button {
   border: 0;
   cursor: pointer;
@@ -2287,5 +3933,470 @@ const selectSlide = (index) => { selectedSlide.value = index; selectedElementId.
     height: 58vh;
   }
 
+}
+.generation-overlay {
+  position: fixed;
+  z-index: 90;
+  inset: 60px 0 0;
+  display: grid;
+  place-items: center;
+  padding: 24px;
+  background: rgb(238 240 244 / 78%);
+  backdrop-filter: blur(2px);
+}
+
+.generation-state-card {
+  display: grid;
+  justify-items: center;
+  width: min(440px, 100%);
+  padding: 30px 32px;
+  border: 1px solid var(--zh-line-theme20);
+  border-radius: 18px;
+  color: var(--zh-text-secondary);
+  background: var(--zh-background-pop);
+  box-shadow: 0 24px 70px rgb(40 57 82 / 18%);
+  text-align: center;
+}
+
+.generation-kicker {
+  color: var(--zh-text-theme);
+  font: 700 10px var(--zh-font-number);
+  letter-spacing: .14em;
+  text-transform: uppercase;
+}
+
+.generation-state-card h2 {
+  margin: 10px 0 8px;
+  color: var(--zh-text-primary);
+  font-size: 22px;
+}
+
+.generation-state-card p {
+  max-width: 360px;
+  margin: 0;
+  color: var(--zh-text-secondary);
+  font-size: 13px;
+  line-height: 1.6;
+}
+
+.generation-hint {
+  margin: 12px 0 18px;
+  color: var(--zh-text-caption);
+  font-size: 11px;
+  line-height: 1.6;
+}
+
+.generation-state-card :deep(.el-progress) {
+  width: 100%;
+}
+
+.generation-spinner {
+  width: 30px;
+  height: 30px;
+  margin-bottom: 13px;
+  border: 3px solid var(--zh-line-theme20);
+  border-top-color: var(--zh-text-theme);
+  border-radius: 50%;
+  animation: generation-spin 900ms linear infinite;
+}
+
+.generation-actions {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: center;
+  gap: 8px;
+  margin-top: 18px;
+}
+
+.generation-overlay-error .generation-state-card {
+  border-color: rgb(239 95 93 / 28%);
+}
+
+@keyframes generation-spin {
+  to { transform: rotate(360deg); }
+}
+
+.preview {
+  display: block;
+  max-height: min(72vh, 760px);
+  overflow: auto;
+  padding: 16px;
+  background: #eef0f4;
+}
+
+.preview-toolbar {
+  position: sticky;
+  top: 0;
+  z-index: 3;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  width: min(780px, 100%);
+  margin: 0 auto 16px;
+  padding: 9px 12px;
+  border: 1px solid var(--zh-line-border);
+  border-radius: var(--zh-radius8);
+  background: rgb(255 255 255 / 92%);
+  box-shadow: 0 8px 22px rgb(40 57 82 / 10%);
+  backdrop-filter: blur(8px);
+}
+
+.preview-toolbar > span {
+  color: var(--zh-text-secondary);
+  font-size: 11px;
+  white-space: nowrap;
+}
+
+.preview-toolbar nav {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: flex-end;
+  gap: 4px;
+}
+
+.preview-toolbar button {
+  min-width: 28px;
+  padding: 4px 6px;
+  border: 1px solid transparent;
+  border-radius: 5px;
+  color: var(--zh-text-caption);
+  background: transparent;
+  font: 10px var(--zh-font-number);
+  cursor: pointer;
+}
+
+.preview-toolbar button:hover,
+.preview-toolbar button.active {
+  border-color: var(--zh-line-theme);
+  color: var(--zh-text-theme);
+  background: var(--zh-background-weaken);
+}
+
+.preview-deck {
+  display: grid;
+  gap: 24px;
+  width: 100%;
+  min-width: 0;
+}
+
+.preview-page {
+  display: grid;
+  gap: 7px;
+  width: 100%;
+  min-width: 0;
+  scroll-margin-top: 70px;
+}
+
+.preview-page-heading {
+  display: flex;
+  align-items: baseline;
+  gap: 8px;
+  width: min(780px, 100%);
+  margin: 0 auto;
+  color: var(--zh-text-caption);
+  font-size: 10px;
+}
+
+.preview-page-heading strong {
+  overflow: hidden;
+  color: var(--zh-text-secondary);
+  font-size: 11px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.preview-page.is-current .preview-page-heading span {
+  color: var(--zh-text-theme);
+  font-weight: 700;
+}
+
+.preview-page .html-preview-shell,
+.preview-page .preview-slide {
+  margin: 0 auto;
+}
+
+@media (max-width: 640px) {
+  .preview-toolbar {
+    align-items: flex-start;
+    flex-direction: column;
+  }
+
+  .preview-toolbar nav {
+    justify-content: flex-start;
+  }
+}
+
+.canvas-area .slide-canvas {
+  transform: scale(var(--canvas-zoom, 1));
+  transform-origin: center center;
+}
+
+.canvas-controls button:disabled {
+  cursor: not-allowed;
+  opacity: .4;
+}
+
+.canvas-controls .canvas-zoom-field {
+  display: inline-flex;
+  align-items: center;
+  gap: 2px;
+  padding: 3px 5px;
+  color: var(--zh-text-secondary);
+  font-size: 11px;
+}
+
+.canvas-controls .canvas-zoom-input {
+  box-sizing: border-box;
+  width: 44px;
+  height: 24px;
+  padding: 0 3px;
+  border: 1px solid var(--zh-line-border);
+  border-radius: 5px;
+  outline: none;
+  color: var(--zh-text-secondary);
+  background: var(--zh-background-light);
+  font: inherit;
+  text-align: center;
+}
+
+.canvas-controls .canvas-zoom-input:focus {
+  border-color: var(--zh-line-theme);
+  box-shadow: 0 0 0 2px var(--zh-line-theme20);
+}
+
+.canvas-controls .canvas-zoom-input::-webkit-inner-spin-button,
+.canvas-controls .canvas-zoom-input::-webkit-outer-spin-button {
+  margin: 0;
+}
+
+.canvas-controls .canvas-zoom-field small {
+  font-size: 11px;
+}
+
+.assistant-intent-status {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  margin: 10px 12px 0;
+  padding: 8px 10px;
+  border: 1px solid var(--zh-line-border);
+  border-radius: 8px;
+  color: var(--zh-text-caption);
+  background: var(--zh-background-light);
+  font-size: 10px;
+  line-height: 1.45;
+}
+
+.assistant-intent-status.revision {
+  border-color: var(--zh-line-theme);
+  color: var(--zh-text-theme);
+  background: var(--zh-background-weaken);
+}
+
+.assistant-intent-dot {
+  width: 6px;
+  height: 6px;
+  flex: none;
+  border-radius: 50%;
+  background: #9aa4b2;
+}
+
+.assistant-intent-status.revision .assistant-intent-dot {
+  background: var(--zh-line-theme);
+}
+
+.assistant-execution {
+  display: flex;
+  align-items: center;
+  gap: 9px;
+  margin: 0 12px 10px;
+  padding: 9px 10px;
+  border: 1px solid color-mix(in srgb, var(--zh-line-theme) 40%, var(--zh-line-border));
+  border-radius: 9px;
+  color: var(--zh-text-secondary);
+  background: var(--zh-background-weaken);
+}
+
+.assistant-execution-spinner {
+  position: relative;
+  width: 24px;
+  height: 24px;
+  flex: none;
+  border: 2px solid var(--zh-line-border);
+  border-top-color: var(--zh-line-theme);
+  border-radius: 50%;
+  animation: a12-spin .9s linear infinite;
+}
+
+.assistant-execution-spinner i {
+  position: absolute;
+  inset: 5px;
+  border: 2px solid transparent;
+  border-left-color: var(--zh-line-theme);
+  border-radius: 50%;
+  animation: a12-spin .6s linear reverse infinite;
+}
+
+.assistant-execution > div {
+  display: grid;
+  min-width: 0;
+  gap: 2px;
+}
+
+.assistant-execution strong {
+  color: var(--zh-text-primary);
+  font-size: 11px;
+}
+
+.assistant-execution-detail {
+  overflow: hidden;
+  color: var(--zh-text-caption);
+  font-size: 9px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.assistant-execution-dots {
+  display: flex;
+  gap: 3px;
+  margin-left: auto;
+}
+
+.assistant-execution-dots i {
+  width: 4px;
+  height: 4px;
+  border-radius: 50%;
+  background: var(--zh-line-theme);
+  animation: a12-dot 1s ease-in-out infinite;
+}
+
+.assistant-execution-dots i:nth-child(2) {
+  animation-delay: .15s;
+}
+
+.assistant-execution-dots i:nth-child(3) {
+  animation-delay: .3s;
+}
+
+.revision-overlay {
+  position: absolute;
+  z-index: 20;
+  inset: 0;
+  display: grid;
+  place-items: center;
+  padding: 24px;
+  background: rgb(238 240 244 / 52%);
+  backdrop-filter: blur(2px);
+  pointer-events: auto;
+}
+
+.revision-overlay-card {
+  display: grid;
+  grid-template-columns: auto 1fr;
+  align-items: center;
+  gap: 10px 12px;
+  width: min(310px, 100%);
+  padding: 14px 16px;
+  border: 1px solid color-mix(in srgb, var(--zh-line-theme) 40%, var(--zh-line-border));
+  border-radius: 12px;
+  background: rgb(255 255 255 / 92%);
+  box-shadow: 0 14px 34px rgb(16 45 84 / 14%);
+}
+
+.revision-orbit {
+  position: relative;
+  display: grid;
+  place-items: center;
+  width: 34px;
+  height: 34px;
+  border: 2px solid var(--zh-line-border);
+  border-top-color: var(--zh-line-theme);
+  border-radius: 50%;
+  animation: a12-spin 1s linear infinite;
+}
+
+.revision-orbit i {
+  position: absolute;
+  width: 5px;
+  height: 5px;
+  border-radius: 50%;
+  background: var(--zh-line-theme);
+  animation: a12-orbit 1.4s linear infinite;
+}
+
+.revision-orbit i:nth-child(2) {
+  animation-delay: .2s;
+}
+
+.revision-orbit i:nth-child(3) {
+  animation-delay: .4s;
+}
+
+.revision-overlay-card > div:not(.revision-progress) {
+  display: grid;
+  min-width: 0;
+  gap: 3px;
+}
+
+.revision-overlay-card strong {
+  color: var(--zh-text-primary);
+  font-size: 12px;
+}
+
+.revision-overlay-card > div:not(.revision-progress) > span {
+  overflow: hidden;
+  color: var(--zh-text-caption);
+  font-size: 10px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.revision-progress {
+  grid-column: 1 / -1;
+  height: 3px;
+  overflow: hidden;
+  border-radius: 99px;
+  background: var(--zh-line-border);
+}
+
+.revision-progress i {
+  display: block;
+  width: 38%;
+  height: 100%;
+  border-radius: inherit;
+  background: var(--zh-line-theme);
+  animation: a12-progress 1.2s ease-in-out infinite;
+}
+
+@keyframes a12-spin {
+  to { transform: rotate(360deg); }
+}
+
+@keyframes a12-dot {
+  0%, 80%, 100% { transform: scale(.65); opacity: .4; }
+  40% { transform: scale(1); opacity: 1; }
+}
+
+@keyframes a12-orbit {
+  from { transform: rotate(0deg) translateX(11px) rotate(0deg); }
+  to { transform: rotate(360deg) translateX(11px) rotate(-360deg); }
+}
+
+@keyframes a12-progress {
+  0% { transform: translateX(-140%); }
+  50% { transform: translateX(120%); }
+  100% { transform: translateX(280%); }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .assistant-execution-spinner,
+  .assistant-execution-spinner i,
+  .assistant-execution-dots i,
+  .revision-orbit,
+  .revision-orbit i,
+  .revision-progress i {
+    animation: none;
+  }
 }
 </style>

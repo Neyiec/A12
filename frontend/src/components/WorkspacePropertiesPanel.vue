@@ -67,7 +67,7 @@ const chartImportError = ref('')
 const elementEditorSections = [
   { id: 'content', label: '内容' },
   { id: 'style', label: '样式' },
-  { id: 'position', label: '排列' },
+  { id: 'position', label: '布局' },
 ]
 const updateStyle = (key, value) => emit('update-element-style', { key, value })
 const updatePosition = (key, value) => emit('update-element-position', { key, value })
@@ -441,16 +441,19 @@ const typeInitials = {
 
     <template v-else>
       <div class="tabs">
+        <button :class="{ active: activePanel === 'content' }" @click="setActivePanel('content')">内容</button>
         <button :class="{ active: activePanel === 'style' }" @click="setActivePanel('style')">样式</button>
         <button :class="{ active: activePanel === 'layout' }" @click="setActivePanel('layout')">布局</button>
-        <button :class="{ active: activePanel === 'animation' }" @click="setActivePanel('animation')">动画</button>
       </div>
 
-      <section v-if="activePanel === 'style'">
+      <section v-if="activePanel === 'content'">
         <label>页面标题</label>
         <el-input :model-value="slide.title" maxlength="20" show-word-limit @update:model-value="updateSlideField('title', $event)" />
         <label>引导文案</label>
         <el-input :model-value="slide.description" type="textarea" :rows="4" maxlength="70" show-word-limit @update:model-value="updateSlideField('description', $event)" />
+      </section>
+
+      <section v-else-if="activePanel === 'style'">
         <label>主题色</label>
         <div class="theme-picker"><button v-for="item in themes" :key="item.id" :class="{ selected: slide.theme === item.id }" :style="{ background: item.color }" :title="item.name" @click="updateSlideField('theme', item.id)"></button></div>
       </section>
@@ -458,14 +461,6 @@ const typeInitials = {
       <section v-else-if="activePanel === 'layout'">
         <label>页面布局</label>
         <div class="layout-picker"><button v-for="item in layouts" :key="item" :class="{ active: slide.layout === item }" @click="updateSlideField('layout', item)"><i></i><i></i><span>{{ item }}</span></button></div>
-      </section>
-
-      <section v-else>
-        <label>页面进入动画</label>
-        <el-select model-value="fade"><el-option label="淡入出现" value="fade" /><el-option label="向上浮现" value="rise" /><el-option label="无动画" value="none" /></el-select>
-        <label>讲解节奏</label>
-        <el-slider :model-value="60" :show-tooltip="false" />
-        <p class="hint">建议保留简洁动画，避免影响学生对知识点的注意力。</p>
       </section>
 
       <section class="page-actions">

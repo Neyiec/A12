@@ -150,6 +150,22 @@ export function streamOutlineChat(body) {
   )
 }
 
+/**
+ * 普通主对话直连本地开发代理，由代理使用已配置的 DeepSeek/OpenAI-compatible API。
+ * 浏览器端不读取或保存大模型 API Key。
+ */
+export function streamGeneralChat(body) {
+  const userStore = useUserStore()
+  return fetch('/api/dev/llm/chat', {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/json',
+      ...(userStore.token ? { Authorization: `Bearer ${userStore.token}` } : {}),
+    },
+    body: JSON.stringify(body),
+  })
+}
+
 // 教师端项目管理
 export const createProject = (data) => post('/api/v1/projects', data)
 export const listProjects = (params) => get('/api/v1/projects', params)
@@ -192,6 +208,46 @@ export const transcribeAudio = (formData) => apiRequest({ url: '/api/v1/python/a
  * @returns {Promise} 后端返回 { module_id, html, usage_suggestions, metadata, ... }
  */
 export const generateInteractiveModule = (data) => post('/api/v1/python/interactive-modules/generate', data)
+
+/**
+ * 获取 Python PPT 生成模板列表。
+ * `theme` 是后续调用 PPT 生成接口时应传入的模板值。
+ */
+export const listPptTemplates = () => get('/api/v1/python/templates')
+
+// Python 端单次模型请求为 120 秒，兼容客户端可能自动重试 2 次；前端留出完整响应时间。
+const PYTHON_PPT_REQUEST_TIMEOUT = 420000
+
+export const generatePresentation = (data) => apiRequest({
+  url: '/api/v1/python/presentations/generate',
+  method: 'post',
+  data,
+  timeout: PYTHON_PPT_REQUEST_TIMEOUT
+})
+
+/**
+ * 根据自然语言修改当前 HTML PPT 页面。
+ * @param {Object} data - API-139 SlideModifyRequest
+ * @returns {Promise} 后端返回 { presentation_id, slide_no, html, change_summary, ... }
+ */
+export const modifyPresentationSlide = (data) => apiRequest({
+  url: '/api/v1/python/presentations/slides/modify',
+  method: 'post',
+  data,
+  timeout: PYTHON_PPT_REQUEST_TIMEOUT
+})
+
+/**
+ * 根据自然语言修改整套 HTML PPT。
+ * @param {Object} data - API-139A PresentationModifyRequest
+ * @returns {Promise} 后端返回修改后的 slides
+ */
+export const modifyPresentation = (data) => apiRequest({
+  url: '/api/v1/python/presentations/modify',
+  method: 'post',
+  data,
+  timeout: PYTHON_PPT_REQUEST_TIMEOUT
+})
 
 /**
  * 保存教师个人偏好设置

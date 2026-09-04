@@ -17,7 +17,7 @@ import {
   Promotion,
 } from '@element-plus/icons-vue'
 import { TEACHER_HOME } from '../config/teacherHome.config.js'
-import { requestNewChat, openChatSession } from '../config/teacherChat.config.js'
+import { INFO_FORM_DEFAULTS, isPlanningPrompt, requestNewChat, openChatSession } from '../config/teacherChat.config.js'
 import ChatView from './ChatView.vue'
 import { archiveProject, copyProject, createAiSession, createProject, deleteProject, listProjects, listResources, restoreProject, transcribeAudio, uploadResource } from '../apis/teacher'
 
@@ -62,8 +62,13 @@ const viewMode = ref('welcome') // 'welcome' | 'chat'
 const chatSessionId = ref(null)
 const chatPrompt = ref('')
 const chatResourceIds = ref([])
+/** 普通对话切换到备课流时，保留切换前的消息用于页面续接和首次模型上下文。 */
+const chatContinuationHistory = ref([])
+/** 欢迎页输入的会话类型：普通对话不进入备课补充信息流程。 */
+const chatMode = ref('planning') // 'planning' | 'general'
 /** 是否以"恢复历史"方式打开会话（由侧栏历史对话触发，ChatView 据此拉取消息回显） */
 const chatResume = ref(false)
+const isDevelopment = import.meta.env.DEV
 
 const filteredAvailableResources = computed(() => {
   const query = resourceSearch.value.trim().toLowerCase()
@@ -80,6 +85,14 @@ const voiceStatusText = computed(() => {
 const openProject = (project) => router.push({
   path: '/main/workspace',
   query: { ...(route.query.preview ? { preview: '1' } : {}), projectId: project.id },
+})
+const openPresentationFixture = () => router.push({
+  path: '/main/workspace',
+  query: {
+    ...(route.query.preview ? { preview: '1' } : {}),
+    pptFixture: '1',
+    templateTitle: '光合作用 · 固定测试样例',
+  },
 })
 
 const loadProjects = async () => {
@@ -204,37 +217,99 @@ const handleVoiceRecordingStop = async () => {
 }
 
 /**
- * 从欢迎页直接发送提示词，创建 AI 会话并切换到聊天视图。
- * 替换原有的 "打开会话对话框 → 创建会话 → 跳转工作台" 流程。
+ * 创建备课会话并进入 ChatView。
+ * 备课上下文由 ChatView 的结构化征询卡补齐后才提交 API-13；这里只创建会话，
+ * 不因为 Java 接口的必填字段而偷偷替教师做出学科/年级判断；若从普通对话切换，
+ * 同时把切换前的历史交给 ChatView 做回显和首次请求上下文注入。
  */
-const sendPrompt = async () => {
-  if (!canSend.value) return
-  const text = prompt.value.trim()
+const startPlanningSession = async (text, resourceIds = [], history = null) => {
+  const previousMode = chatMode.value
+  const normalizedText = String(text || '').trim()
+  const normalizedResourceIds = Array.isArray(resourceIds) ? [...resourceIds] : []
+  const normalizedPreviousHistory = Array.isArray(history)
+    ? history
+      .filter((item) => item && (item.role === 'user' || item.role === 'assistant') && String(item.content || '').trim())
+      .map((item) => ({ role: item.role, content: String(item.content).trim() }))
+      .slice(-16)
+    : []
+  // 兼容调用方把本次切换请求也放进 history 的旧写法，避免页面和模型上下文重复一条。
+  const lastHistoryItem = normalizedPreviousHistory[normalizedPreviousHistory.length - 1]
+  if (lastHistoryItem?.role === 'user' && lastHistoryItem.content === normalizedText) {
+    normalizedPreviousHistory.pop()
+  }
+  const normalizedHistory = [...normalizedPreviousHistory, { role: 'user', content: normalizedText }]
 
   try {
-    // 自动生成会话标题（取前40字）
     const result = await createAiSession({
-      title: text.slice(0, 40),
-      subject: '',
-      grade: '',
+      title: normalizedText.slice(0, 40),
+      // Java 会话接口要求 subject/grade 非空；ChatView 会在征询后用真实值覆盖上下文。
+      subject: INFO_FORM_DEFAULTS.subject,
+      grade: INFO_FORM_DEFAULTS.grade,
       status: 'active',
-      messages: JSON.stringify([{ role: 'user', content: text }]),
-      uploaded_refs: JSON.stringify(selectedResourceIds.value),
+      messages: JSON.stringify(normalizedHistory),
+      uploaded_refs: JSON.stringify(normalizedResourceIds),
     })
     const task = result?.data || result
     const sessionId = task?.conversation_id || task?.id
     if (!sessionId) throw new Error(result?.message || '创建备课会话失败')
 
-    // 保存会话参数，切换到聊天视图
     chatSessionId.value = sessionId
-    chatPrompt.value = text
-    chatResourceIds.value = [...selectedResourceIds.value]
+    chatPrompt.value = normalizedText
+    chatResourceIds.value = normalizedResourceIds
+    chatContinuationHistory.value = normalizedPreviousHistory
+    chatMode.value = 'planning'
     chatResume.value = false
     viewMode.value = 'chat'
-    ElMessage.success('备课会话已创建，正在生成教学大纲')
+    ElMessage.success('已进入备课流程，请先确认课程信息')
   } catch (error) {
+    // 普通对话中途切换失败时，保留原聊天模式，避免输入区被锁死。
+    chatMode.value = previousMode
     ElMessage.error(error?.message || '创建会话失败，请登录后重试')
   }
+}
+
+/**
+ * 从欢迎页发送提示词：明确的教学设计需求进入备课流程，其他内容进入普通对话。
+ * 普通对话使用本地会话 ID，不创建后端“备课会话”。
+ */
+const sendPrompt = async () => {
+  if (!canSend.value) return
+  const text = prompt.value.trim()
+
+  if (!isPlanningPrompt(text)) {
+    chatMode.value = 'general'
+    chatSessionId.value = `local-chat-${Date.now()}`
+    chatPrompt.value = text
+    chatResourceIds.value = [...selectedResourceIds.value]
+    chatContinuationHistory.value = []
+    chatResume.value = false
+    viewMode.value = 'chat'
+    prompt.value = ''
+    activeSuggestionId.value = null
+    return
+  }
+
+  prompt.value = ''
+  activeSuggestionId.value = null
+  await startPlanningSession(text, [...selectedResourceIds.value], [])
+}
+
+/** 欢迎页快捷键：Enter 发送，Shift+Enter 保留换行；中文输入法确认候选词时不抢占 Enter。 */
+const handlePromptKeydown = (event) => {
+  if (event.isComposing || event.keyCode === 229 || event.shiftKey) return
+  event.preventDefault()
+  void sendPrompt()
+}
+
+/** 普通对话中途识别到明确备课请求时，切换为带征询卡片的备课流程。 */
+const handlePlanningRequest = async (payload) => {
+  const text = typeof payload === 'string' ? payload : payload?.prompt
+  const history = typeof payload === 'object' ? payload?.history : null
+  const resourceIds = typeof payload === 'object' && Array.isArray(payload?.resourceIds)
+    ? payload.resourceIds
+    : chatResourceIds.value
+  if (!String(text || '').trim()) return
+  await startPlanningSession(text, resourceIds, history)
 }
 
 /** 关闭聊天视图，返回欢迎页 */
@@ -243,6 +318,8 @@ const closeChatView = () => {
   chatSessionId.value = null
   chatPrompt.value = ''
   chatResourceIds.value = []
+  chatContinuationHistory.value = []
+  chatMode.value = 'planning'
   chatResume.value = false
   prompt.value = ''
   loadProjects()
@@ -265,22 +342,29 @@ watch(requestNewChat, (val) => {
  */
 watch(openChatSession, (target) => {
   if (!target?.id) return
+  chatMode.value = 'planning'
   chatSessionId.value = target.id
   chatPrompt.value = target.title || ''
   chatResourceIds.value = []
+  chatContinuationHistory.value = []
   chatResume.value = true
   viewMode.value = 'chat'
   openChatSession.value = null
 }, { immediate: true })
 
-/** 从聊天视图跳转到创作工作台 */
-const openWorkspaceFromChat = (projectId) => {
+/** 从聊天视图跳转到创作工作台，并携带生成前已选定的 PPT 模板 */
+const openWorkspaceFromChat = (payload) => {
+  const projectId = payload && typeof payload === 'object' ? payload.projectId : payload
+  const pptTheme = payload && typeof payload === 'object' ? payload.pptTheme : ''
+  const generationKey = payload && typeof payload === 'object' ? payload.generationKey : ''
   router.push({
     path: '/main/workspace',
     query: {
       ...(route.query.preview ? { preview: '1' } : {}),
       sessionId: chatSessionId.value,
       ...(projectId ? { projectId } : {}),
+      ...(pptTheme ? { pptTheme } : {}),
+      ...(generationKey ? { pptGeneration: generationKey } : {}),
     },
   })
 }
@@ -441,7 +525,7 @@ onMounted(loadProjects)
         :autosize="{ minRows: 3, maxRows: 7 }"
         resize="none"
         :placeholder="TEACHER_HOME.composer.placeholder"
-        @keydown.ctrl.enter="sendPrompt"
+        @keydown.enter="handlePromptKeydown"
       />
       <div class="composer-toolbar">
         <div class="composer-tools">
@@ -461,19 +545,24 @@ onMounted(loadProjects)
       </div>
     </section>
 
-    <p class="composer-hint motion-stage motion-stage-4">{{ TEACHER_HOME.composer.hint }}</p>
+    <p class="composer-hint motion-stage motion-stage-4">{{ TEACHER_HOME.composer.hint }} · Enter 发送 · Shift + Enter 换行</p>
+    <el-button v-if="isDevelopment" text class="fixture-entry" @click="openPresentationFixture">打开固定 PPT 样例（不调用 AI）</el-button>
     </template>
 
     <!-- 聊天视图 -->
-    <ChatView
-      v-if="viewMode === 'chat'"
-      :key="chatSessionId"
+        <!-- 普通对话转备课时保留同一个组件和消息列表；打开历史会话时才重新挂载。 -->
+        <ChatView
+          v-if="viewMode === 'chat'"
+      :key="chatResume ? `resume-${chatSessionId}` : 'active-chat'"
       :session-id="chatSessionId"
       :initial-prompt="chatPrompt"
       :resource-ids="chatResourceIds"
+      :continuation-history="chatContinuationHistory"
+      :mode="chatMode"
       :resume="chatResume"
       @back="closeChatView"
       @open-workspace="openWorkspaceFromChat"
+      @planning-request="handlePlanningRequest"
     />
 
     <!-- 资料上传 / 知识库 / 语音对话框（欢迎视图和聊天视图共用）-->
@@ -593,6 +682,7 @@ h1 { margin: 0; font-size: clamp(36px, 4vw, 48px); line-height: 1.15; letter-spa
 .composer-tools :deep(.el-button) { color: var(--zh-text-secondary); }
 .composer-toolbar :deep(.el-button.is-ready) { animation: pulse 200ms cubic-bezier(0.4, 0, 0.2, 1); }
 .composer-hint { margin: 10px 0 0; color: var(--zh-text-caption); font-size: 11px; text-align: center; }
+.fixture-entry { display: block; margin: 7px auto 0; color: var(--zh-text-theme); font-size: 11px; }
 .session-fields { display:grid; grid-template-columns: 1.5fr 1fr 1fr; gap:12px; }.session-fields :deep(.el-form-item){margin-bottom:0}.prompt-preview{width:100%;padding:10px 12px;border-radius:var(--zh-radius8);color:var(--zh-text-secondary);background:var(--zh-background-light);line-height:1.65;white-space:pre-wrap}.resource-picker{display:grid;gap:8px;max-height:160px;overflow:auto;padding:10px 12px;border:1px solid var(--zh-line-border);border-radius:var(--zh-radius8);background:var(--zh-background-light)}.empty-resources{color:var(--zh-text-caption);font-size:12px}
 .resource-file-input{display:none}.resource-picker-dialog{max-height:280px;margin-top:12px}.upload-dropzone{width:100%;min-height:180px;display:grid;place-items:center;align-content:center;gap:9px;padding:24px;border:1px dashed var(--zh-line-theme50);border-radius:var(--zh-radius12);color:var(--zh-text-theme);background:var(--zh-background-weaken);cursor:pointer;transition:border-color 200ms cubic-bezier(.4,0,.2,1),background-color 200ms cubic-bezier(.4,0,.2,1),transform 200ms cubic-bezier(.4,0,.2,1),box-shadow 200ms cubic-bezier(.4,0,.2,1)}.upload-dropzone:hover,.upload-dropzone:focus-visible{border-color:var(--zh-line-theme);background:var(--zh-background-option-on);transform:translateY(-1px)}.upload-dropzone.is-dragging{border-color:var(--zh-line-theme);background:var(--zh-background-option-on);box-shadow:0 0 0 4px var(--zh-line-theme20);transform:scale(1.01)}.upload-dropzone:disabled{cursor:wait;opacity:.65}.upload-dropzone .el-icon{font-size:28px}.upload-dropzone strong{color:var(--zh-text-primary);font-size:16px}.upload-dropzone span{color:var(--zh-text-caption);font-size:12px}.uploaded-resource-list{display:grid;gap:6px;margin-top:14px;padding:12px;border-radius:var(--zh-radius8);background:var(--zh-background-light)}.uploaded-resource-list>span{color:var(--zh-text-caption);font-size:12px}.uploaded-resource-list p{margin:0;color:var(--zh-text-secondary);font-size:13px}.knowledge-picker-header{display:grid;grid-template-columns:minmax(0,1fr) 240px;align-items:center;gap:16px}.knowledge-picker-header p{margin:0;color:var(--zh-text-secondary);font-size:13px;line-height:1.6}.selected-resource-count{display:inline-block;margin-right:16px;color:var(--zh-text-caption);font-size:12px}
 .voice-panel{display:grid;justify-items:center;padding:8px 8px 0;text-align:center}.voice-orb{width:78px;height:78px;display:grid;place-items:center;padding:0;margin:4px 0 18px;border:1px solid var(--zh-line-theme20);border-radius:50%;color:var(--zh-text-theme);background:var(--zh-background-weaken);box-shadow:0 0 0 10px var(--zh-background-weaken);font-family:inherit;cursor:pointer;transition:border-color 200ms cubic-bezier(.4,0,.2,1),background-color 200ms cubic-bezier(.4,0,.2,1),box-shadow 200ms cubic-bezier(.4,0,.2,1),transform 200ms cubic-bezier(.4,0,.2,1)}.voice-orb:hover,.voice-orb:focus-visible{border-color:var(--zh-line-theme);box-shadow:0 0 0 10px var(--zh-line-theme20);transform:translateY(-1px)}.voice-orb:active{transform:scale(.96)}.voice-orb:disabled{cursor:wait;opacity:.75}.voice-orb.is-recording{border-color:var(--zh-red);color:var(--zh-red);background:var(--zh-danger-background);box-shadow:0 0 0 10px var(--zh-danger-background)}.voice-orb .el-icon{font-size:30px}.voice-panel>strong{font-size:18px}.voice-panel>p{max-width:350px;margin:8px 0 20px;color:var(--zh-text-secondary);font-size:13px;line-height:1.65}.voice-wave{height:42px;display:flex;align-items:center;gap:5px}.voice-wave i{width:3px;height:10px;border-radius:999px;background:var(--zh-line-theme50)}.voice-wave i:nth-child(2),.voice-wave i:nth-child(8){height:16px}.voice-wave i:nth-child(3),.voice-wave i:nth-child(7){height:24px}.voice-wave i:nth-child(4),.voice-wave i:nth-child(6){height:32px}.voice-wave i:nth-child(5){height:40px}.voice-status{width:100%;display:grid;grid-template-columns:auto 1fr auto;align-items:center;gap:8px;margin-top:16px;padding:12px 14px;border-radius:var(--zh-radius8);color:var(--zh-text-secondary);background:var(--zh-background-light);font-size:12px;text-align:left}.voice-status-dot{width:7px;height:7px;border-radius:50%;background:var(--zh-text-disabled)}

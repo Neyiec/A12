@@ -6,9 +6,14 @@
  * - 输出: 拦截 /api/v1/python/* 请求并返回模拟响应
  */
 
-import { http, HttpResponse } from 'msw'
+import { http, HttpResponse, passthrough } from 'msw'
 import { success, error, generateId, now } from '../data/common'
 import { mockMaterials } from '../data/resources'
+
+const useRealPptApi = import.meta.env.VITE_USE_REAL_PPT_API === 'true'
+const useRealAiApi = import.meta.env.VITE_USE_REAL_AI_API === 'true'
+const useRealOutlineApi = import.meta.env.VITE_USE_REAL_OUTLINE_API === 'true'
+const useRealPptOperations = useRealPptApi || useRealAiApi
 
 /** 模板列表 */
 const mockTemplates = [
@@ -68,9 +73,17 @@ function ensureMockIndexResources() {
   mockMaterials.forEach((material) => mockIndexResources.set(`personal:${material.id}`, toMockIndexResource(material)))
 }
 
-/** 生成模拟 PPT HTML */
-function mockSlideHtml(slideNo: number, title: string): string {
-  return `<!DOCTYPE html><html lang="zh-CN"><head><meta charset="UTF-8"><style>body{font-family:"Microsoft YaHei",sans-serif;margin:0;padding:60px;width:1280px;height:720px;box-sizing:border-box;display:flex;flex-direction:column;justify-content:center;align-items:center;background:linear-gradient(135deg,#667eea 0%,#764ba2 100%);color:#fff} h1{font-size:48px;margin-bottom:20px} p{font-size:24px;opacity:.9}</style></head><body><h1>${title}</h1><p>第 ${slideNo} 页 - 模拟生成内容</p></body></html>`
+/** 生成模拟 PPT HTML；Mock 模式同样体现用户选择的模板，便于离线联调。 */
+function mockSlideHtml(slideNo: number, title: string, theme = '素白风'): string {
+  const palettes: Record<string, { background: string; color: string; accent: string }> = {
+    素白风: { background: '#f8fafc', color: '#172033', accent: '#2563eb' },
+    科技风: { background: 'linear-gradient(135deg,#071426 0%,#102e52 100%)', color: '#e6f7ff', accent: '#22d3ee' },
+    中国风: { background: 'linear-gradient(135deg,#f4ead7 0%,#e7d4b5 100%)', color: '#3f2d20', accent: '#a33a32' },
+    清新风: { background: 'linear-gradient(135deg,#effcf6 0%,#dff4eb 100%)', color: '#173e32', accent: '#20a875' },
+    商务: { background: 'linear-gradient(135deg,#edf3fb 0%,#dbe7f5 100%)', color: '#152d4f', accent: '#315f9a' },
+  }
+  const palette = palettes[theme] || palettes['素白风']
+  return `<!DOCTYPE html><html lang="zh-CN"><head><meta charset="UTF-8"><style>body{font-family:"Microsoft YaHei",sans-serif;margin:0;padding:60px;width:1280px;height:720px;box-sizing:border-box;display:flex;flex-direction:column;justify-content:center;align-items:center;background:${palette.background};color:${palette.color}} h1{font-size:48px;margin-bottom:20px;border-bottom:5px solid ${palette.accent};padding-bottom:16px} p{font-size:24px;opacity:.82}.theme{position:absolute;right:54px;bottom:36px;color:${palette.accent};font-size:16px;font-weight:700}</style></head><body><h1>${title}</h1><p>第 ${slideNo} 页 - 模拟生成内容</p><span class="theme">${theme}</span></body></html>`
 }
 
 export const pythonPptHandlers = [
@@ -102,6 +115,9 @@ export const pythonPptHandlers = [
 
   // ========== API-134 获取模板列表 ==========
   http.get('/api/v1/python/templates', async () => {
+    if (useRealPptApi) {
+      return passthrough()
+    }
     return HttpResponse.json(success({
       total: mockTemplates.length,
       default_theme: '素白风',
@@ -282,6 +298,12 @@ export const pythonPptHandlers = [
 
   // ========== API-137A 对话式 SSE 大纲生成 ==========
   http.post('/api/v1/python/outlines/chat/stream', async ({ request }) => {
+    // 大纲可独立切换到真实 Python 流；不要复用 VITE_USE_REAL_AI_API，
+    // 后者同时控制认证/会话 mock，打开后会让 mock 登录 token 无法访问 Java。
+    if (useRealOutlineApi || useRealAiApi) {
+      return passthrough()
+    }
+
     const body = (await request.json()) as Record<string, unknown>
     const sessionId = (body.session_id as string) || generateId('outline_chat')
     const userMessage = body.message as string || ''
@@ -597,25 +619,30 @@ ${stage}学生已具备一定的自主学习能力和合作探究意识。经过
 
   // ========== API-138 生成整套 PPT ==========
   http.post('/api/v1/python/presentations/generate', async ({ request }) => {
+    if (useRealPptApi) {
+      return passthrough()
+    }
+
     const body = (await request.json()) as Record<string, unknown>
     const outline = (body.outline as Record<string, unknown>) || {}
     const slidesData = (outline.slides as Array<Record<string, unknown>>) || []
     const slideCount = slidesData.length || 8
     const title = (body.title as string) || '未命名PPT'
+    const theme = String(body.theme || '素白风')
 
     const presentationId = generateId('ppt')
     const slides = slidesData.map((s, i) => ({
       slide_no: s.slide_no || i + 1,
       title: s.title || `第${i + 1}页`,
-      html: mockSlideHtml((s.slide_no as number) || i + 1, (s.title as string) || `第${i + 1}页`),
+      html: mockSlideHtml((s.slide_no as number) || i + 1, (s.title as string) || `第${i + 1}页`, theme),
       notes: (s.teaching_intent as string) || '',
-      metadata: {},
+      metadata: { theme },
     }))
 
     // 补足页数
     while (slides.length < slideCount) {
       const i = slides.length
-      slides.push({ slide_no: i + 1, title: `第${i + 1}页`, html: mockSlideHtml(i + 1, `第${i + 1}页`), notes: '', metadata: {} })
+      slides.push({ slide_no: i + 1, title: `第${i + 1}页`, html: mockSlideHtml(i + 1, `第${i + 1}页`, theme), notes: '', metadata: { theme } })
     }
 
     const presentation = {
@@ -624,6 +651,7 @@ ${stage}学生已具备一定的自主学习能力和合作探究意识。经过
       slide_count: slides.length,
       slides,
       html: slides.map((s) => s.html).join('\n'),
+      metadata: { theme },
     }
     presentations.set(presentationId, presentation)
 
@@ -632,6 +660,10 @@ ${stage}学生已具备一定的自主学习能力和合作探究意识。经过
 
   // ========== API-139 修改单页 PPT ==========
   http.post('/api/v1/python/presentations/slides/modify', async ({ request }) => {
+    if (useRealPptOperations) {
+      return passthrough()
+    }
+
     const body = (await request.json()) as Record<string, unknown>
     const slideNo = body.slide_no as number
     return HttpResponse.json(success({
@@ -645,6 +677,10 @@ ${stage}学生已具备一定的自主学习能力和合作探究意识。经过
 
   // ========== API-139A 整套课件修改 ==========
   http.post('/api/v1/python/presentations/modify', async ({ request }) => {
+    if (useRealPptOperations) {
+      return passthrough()
+    }
+
     const body = (await request.json()) as Record<string, unknown>
     const slidesInput = (body.slides as Array<Record<string, unknown>>) || []
 

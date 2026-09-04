@@ -9,6 +9,8 @@ import { useUserStore } from '../storage/user.js'
 export async function ensureDevelopmentPreviewSession(force = false) {
   const isPreviewOrAutoExport = window.location.hash.includes('preview=1') || window.location.hash.includes('autoExport=1')
   if (!import.meta.env.DEV || (!force && !isPreviewOrAutoExport)) return null
+  // 真实 AI 联调必须保留 Java 签发的 JWT，不能用 mock 登录覆盖它。
+  if (import.meta.env.VITE_USE_REAL_AI_API === 'true') return null
 
   const result = await login({ username: 'teacher_zhang', password: '123456' })
   const loginVO = result?.data
