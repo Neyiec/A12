@@ -6,6 +6,7 @@ import edu.zstu.dto.TaskCreateDTO;
 import edu.zstu.vo.ConversationVO;
 import edu.zstu.vo.TaskVO;
 import org.springframework.web.multipart.MultipartFile;
+import org.springframework.web.servlet.mvc.method.annotation.SseEmitter;
 import java.util.List;
 
 /**
@@ -19,6 +20,7 @@ public interface AIService {
     ConversationVO updateSession(String id, ConversationDTO dto);
     void deleteSession(String id);
     ConversationVO sendMessage(String id, ConversationDTO dto);
+    SseEmitter sendMessageStream(String id, ConversationDTO dto);
     ConversationVO sendAudioMessage(String id, MultipartFile file, String language, ConversationDTO dto);
     TaskVO getPlan(String id);
     void confirmPlan(String id, PlanConfirmationDTO dto);
