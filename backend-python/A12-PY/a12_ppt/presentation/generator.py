@@ -4,7 +4,7 @@ import html
 import json
 import re
 import uuid
-from typing import Any, AsyncIterator
+from typing import Any
 
 from ..config import get_settings
 from .html_utils import auto_close_basic_tags, clean_html_response, validate_html
@@ -32,52 +32,9 @@ class PPTGenerator:
         slide_count = req.slide_count or 8
         req = await self._with_reference_and_rag_context(req)
         outline = await self._generate_outline_with_model(req, slide_count) if self.llm.available else self._fallback_outline(req, slide_count)
-        return self._decorate_outline(outline, req)
-
-    async def stream_outline(self, req: OutlineGenerateRequest) -> AsyncIterator[dict[str, Any]]:
-        """流式生成大纲：模型边产出边抽取完整 slide 对象并产出 outline_delta，最终产出 final。
-
-        - 产出 `{"type": "slide", "slide": {...}, "index": n}`：一页大纲增量（预览用，尚未经规范化）。
-        - 产出 `{"type": "final", "response": {...}}`：规范化后的完整结果（与 generate_outline 返回一致）。
-        """
-        slide_count = req.slide_count or 8
-        req = await self._with_reference_and_rag_context(req)
-        if not self.llm.available:
-            outline = self._fallback_outline(req, slide_count)
-            yield {"type": "final", "response": self._decorate_outline(outline, req)}
-            return
-
-        buffer = ""
-        array_start = -1
-        scan_pos = 0
-        emitted = 0
-        async for token in self.llm.complete_stream("你是资深教学设计专家，只输出可解析 JSON。", self._outline_prompt(req, slide_count), 0.25):
-            buffer += token
-            if array_start < 0:
-                probe = buffer.find('"slides"')
-                if probe != -1:
-                    bracket = buffer.find('[', probe)
-                    if bracket != -1:
-                        array_start = bracket + 1
-            if array_start >= 0:
-                slides, scan_pos = self._extract_completed_slides(buffer, array_start, scan_pos)
-                for slide in slides:
-                    emitted += 1
-                    yield {"type": "slide", "slide": slide, "index": emitted}
-
-        # 流结束后用完整文本做规范化与结构化后处理
-        try:
-            data = json.loads(self._extract_json(buffer))
-            if isinstance(data, dict) and data.get("slides"):
-                outline = self._normalize_outline(data, req.title)
-            else:
-                outline = self._fallback_outline(req, slide_count)
-        except Exception:
-            outline = self._fallback_outline(req, slide_count)
-        yield {"type": "final", "response": self._decorate_outline(outline, req)}
-
-    def _decorate_outline(self, outline: dict[str, Any], req: OutlineGenerateRequest) -> dict[str, Any]:
-        slide_count = req.slide_count or 8
+        outline = self._ensure_interactive_assets(outline, req, slide_count)
+        outline = self._ensure_teaching_design_chain(outline, req)
+        outline = self._ensure_outline_quality(outline, req, slide_count)
         outline["subject"] = req.subject
         outline["grade"] = req.grade
         outline["requirements"] = req.requirements
@@ -88,7 +45,7 @@ class PPTGenerator:
             "regenerate_instruction": req.regenerate_instruction,
             "interactive_policy": req.interactive_policy,
         }
-        return self._outline_response(self._ensure_outline_quality(self._ensure_teaching_design_chain(self._ensure_interactive_assets(outline, req, slide_count), req), req, slide_count))
+        return self._outline_response(outline)
 
     async def update_outline(self, req: OutlineUpdateRequest) -> dict[str, Any]:
         outline = dict(req.outline or {})
@@ -689,18 +646,7 @@ JSON 格式:
         return last_html if last_html and validate_html(last_html)["valid"] else ""
 
     async def _generate_outline_with_model(self, req: OutlineGenerateRequest, slide_count: int) -> dict[str, Any]:
-        prompt = self._outline_prompt(req, slide_count)
-        try:
-            raw = await self.llm.complete("你是资深教学设计专家，只输出可解析 JSON。", prompt, 0.25)
-            data = json.loads(self._extract_json(raw))
-            if isinstance(data, dict) and data.get("slides"):
-                return self._normalize_outline(data, req.title)
-        except Exception:
-            pass
-        return self._fallback_outline(req, slide_count)
-
-    def _outline_prompt(self, req: OutlineGenerateRequest, slide_count: int) -> str:
-        return f"""
+        prompt = f"""
 Generate a teaching PPT outline. Return strict JSON only, no Markdown.
 
 Required top-level fields:
@@ -741,75 +687,14 @@ Interactive policy: {json.dumps(req.interactive_policy or {}, ensure_ascii=False
 Reference material and RAG context:
 {(req.reference_text or "")[:12000]}
 """.strip()
-
-    def _skip_string(self, text: str, i: int) -> int:
-        """跳过位于 i 处（引号字符）之后的字符串字面量，返回字符串结束后的下一个下标。"""
-        n = len(text)
-        i += 1
-        while i < n:
-            if text[i] == "\\":
-                i += 2
-                continue
-            if text[i] == '"':
-                return i + 1
-            i += 1
-        return n
-
-    def _object_end(self, text: str, start: int) -> int | None:
-        """从 start（指向 '{'）开始找配对闭合的 '}'，返回其后的下标；对象未闭合返回 None。"""
-        n = len(text)
-        depth = 0
-        i = start
-        while i < n:
-            ch = text[i]
-            if ch == '"':
-                i = self._skip_string(text, i)
-                continue
-            if ch == "{":
-                depth += 1
-            elif ch == "}":
-                depth -= 1
-                if depth == 0:
-                    return i + 1
-            i += 1
-        return None
-
-    def _extract_completed_slides(self, text: str, array_start: int, scan_from: int) -> tuple[list[dict[str, Any]], int]:
-        """在 slides 数组区域内增量扫描，提取已完整闭合的 slide 对象。
-
-        返回 (slides, new_scan_pos)：new_scan_pos 供下次从该位置继续扫描，避免重复解析。
-        遇未闭合对象/结束数组则停止（保留新位置，等待更多 token 或进入结束阶段）。
-        """
-        results: list[dict[str, Any]] = []
-        i = max(array_start, scan_from)
-        n = len(text)
-        while i < n:
-            ch = text[i]
-            if ch == '"':
-                i = self._skip_string(text, i)
-                continue
-            if ch == "{":
-                end = self._object_end(text, i)
-                if end is None:
-                    break
-                raw = text[i:end]
-                i = end
-                try:
-                    obj = json.loads(raw)
-                except Exception:
-                    break
-                if isinstance(obj, dict):
-                    results.append(obj)
-                continue
-            if ch == "}":
-                # 到达某处多余的闭合（通常数组已结束但外层未闭合），无需处理
-                i += 1
-                continue
-            if ch == "]":
-                i += 1
-                continue
-            i += 1
-        return results, i
+        try:
+            raw = await self.llm.complete("你是资深教学设计专家，只输出可解析 JSON。", prompt, 0.25)
+            data = json.loads(self._extract_json(raw))
+            if isinstance(data, dict) and data.get("slides"):
+                return self._normalize_outline(data, req.title)
+        except Exception:
+            pass
+        return self._fallback_outline(req, slide_count)
 
     async def _with_reference_and_rag_context(self, req: OutlineGenerateRequest) -> OutlineGenerateRequest:
         context_parts = []

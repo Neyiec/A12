@@ -32,7 +32,8 @@ class ResourceIndexStore:
     def _connect(self):
         import psycopg
 
-        return psycopg.connect(self.settings.postgres_dsn, connect_timeout = 60)
+        return psycopg.connect(self.settings.postgres_dsn)
+
     def _ensure_postgres(self) -> None:
         try:
             with self._connect() as conn:

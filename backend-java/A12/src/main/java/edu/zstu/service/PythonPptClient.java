@@ -40,10 +40,6 @@ public class PythonPptClient {
         this.requestTimeoutSeconds = requestTimeoutSeconds;
         this.httpClient = HttpClient.newBuilder()
                 .connectTimeout(Duration.ofSeconds(connectTimeoutSeconds))
-                // 强制 HTTP/1.1：JDK 默认 HTTP/2 会在新连接上发送 h2c Upgrade 前缀，
-                // uvicorn 无法处理该升级，会以 400 "Invalid HTTP request received." 拒绝请求正文，
-                // 导致 Python 服务偶发调用失败（正文被当作空）。
-                .version(HttpClient.Version.HTTP_1_1)
                 .build();
     }
 
@@ -133,92 +129,6 @@ public class PythonPptClient {
             log.warn("streamOutlineChatToEmitter failed", e);
             emitter.completeWithError(e);
         }
-    }
-
-    /**
-     * 流式调用 Python 大纲对话：边读取边把每个 Python 事件原样透传给 SseEmitter，
-     * 同时累计解析为 {@link OutlineChatResult}，供调用方在流结束后一次性落库。
-     *
-     * <p>事件与 Python 一致：session / question / outline_delta / memory / reflection / final / error。
-     * 各事件 data 保持 Python 原始 JSON 结构。</p>
-     *
-     * @return 累计解析完成的结果（status 为 completed / need_clarification / failed）
-     */
-    public OutlineChatResult streamOutlineChatStreamed(Map<String, Object> payload, SseEmitter emitter) {
-        OutlineChatResult result = new OutlineChatResult();
-        try {
-            log.info("streamOutlineChatStreamed enableRag={}, enableWeb={}",
-                    payload.get("enable_rag"), payload.get("enable_web"));
-            HttpResponse<Stream<String>> response = postJsonLinesResponse("/api/v1/python/outlines/chat/stream", payload);
-            String event = "message";
-            StringBuilder dataBuf = new StringBuilder();
-            try (Stream<String> lines = response.body()) {
-                for (java.util.Iterator<String> iterator = lines.iterator(); iterator.hasNext(); ) {
-                    String line = iterator.next();
-                    if (line.isEmpty()) {
-                        if (dataBuf.length() > 0) {
-                            handleStreamEvent(event, dataBuf.toString(), result, emitter);
-                            dataBuf.setLength(0);
-                        }
-                        event = "message";
-                    } else if (line.startsWith("event:")) {
-                        event = line.substring("event:".length()).trim();
-                    } else if (line.startsWith("data:")) {
-                        if (dataBuf.length() > 0) {
-                            dataBuf.append('\n');
-                        }
-                        dataBuf.append(line.substring("data:".length()).trim());
-                    }
-                }
-            }
-            if (dataBuf.length() > 0) {
-                handleStreamEvent(event, dataBuf.toString(), result, emitter);
-            }
-            log.info("streamOutlineChatStreamed done status={}, outlineId={}", result.status, result.outlineId);
-            return result;
-        } catch (Exception e) {
-            log.warn("streamOutlineChatStreamed failed: {}", e.getMessage());
-            if (e instanceof RuntimeException runtimeException) {
-                throw runtimeException;
-            }
-            throw new RuntimeException("调用Python大纲服务失败: " + e.getMessage(), e);
-        }
-    }
-
-    private void handleStreamEvent(String event, String rawData, OutlineChatResult result, SseEmitter emitter) throws Exception {
-        if (rawData == null || rawData.isBlank()) {
-            return;
-        }
-        Map<String, Object> parsed = objectMapper.readValue(rawData, new TypeReference<>() {});
-        if ("session".equals(event)) {
-            result.pythonSessionId = stringValue(parsed.get("session_id"));
-        } else if ("question".equals(event)) {
-            result.status = "need_clarification";
-            result.pythonSessionId = stringValue(parsed.get("session_id"));
-            result.question = stringValue(parsed.get("question"));
-            result.intent = parsed.get("intent");
-        } else if ("outline_delta".equals(event)) {
-            Object slide = parsed.get("slide");
-            if (slide != null) {
-                result.outlineDeltas.add(slide);
-            }
-        } else if ("memory".equals(event)) {
-            result.memory = parsed;
-        } else if ("reflection".equals(event)) {
-            result.reflection = parsed;
-        } else if ("final".equals(event)) {
-            result.status = "completed";
-            result.pythonSessionId = stringValue(parsed.get("session_id"));
-            result.outlineId = stringValue(parsed.get("outline_id"));
-            result.title = stringValue(parsed.get("title"));
-            result.finalData = parsed;
-            result.outline = parsed.get("outline");
-            result.slides = parsed.get("slides");
-        } else if ("error".equals(event)) {
-            result.status = "failed";
-            result.errorMessage = stringValue(parsed.get("message"));
-        }
-        sendSseEvent(emitter, event, new StringBuilder(objectMapper.writeValueAsString(parsed)));
     }
 
     public Map<String, Object> listOutlineChatSessions(String userId, Integer limit) {
