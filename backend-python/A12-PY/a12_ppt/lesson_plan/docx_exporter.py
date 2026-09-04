@@ -27,6 +27,7 @@ def export_lesson_plan_to_docx(title: str, lesson_plan: dict[str, Any], filename
     _add_list_section(document, _zh("\u4e09\u3001\u6559\u5b66\u96be\u70b9"), lesson_plan.get("difficult_points"))
     _add_list_section(document, _zh("\u56db\u3001\u6559\u5b66\u65b9\u6cd5"), lesson_plan.get("teaching_methods"))
     _add_list_section(document, _zh("\u4e94\u3001\u6559\u5b66\u8d44\u6e90"), lesson_plan.get("teaching_resources"))
+    _add_boppps_table(document, lesson_plan.get("boppps") or {})
     _add_process_table(document, lesson_plan.get("lesson_process") or [])
     _add_list_section(document, _zh("\u4e03\u3001\u8bfe\u5802\u6d3b\u52a8\u8bbe\u8ba1"), lesson_plan.get("classroom_activities"))
     _add_text_section(document, _zh("\u516b\u3001\u677f\u4e66\u8bbe\u8ba1"), lesson_plan.get("blackboard_design"))
@@ -107,6 +108,26 @@ def _add_list_section(document: Document, heading: str, value: Any) -> None:
 def _add_text_section(document: Document, heading: str, value: Any) -> None:
     document.add_heading(heading, level=1)
     document.add_paragraph(str(value or _zh("\u65e0")))
+
+
+def _add_boppps_table(document: Document, boppps: dict[str, Any]) -> None:
+    document.add_heading("BOPPPS Teaching Model", level=1)
+    table = document.add_table(rows=1, cols=2)
+    table.style = "Table Grid"
+    table.rows[0].cells[0].text = "Stage"
+    table.rows[0].cells[1].text = "Design"
+    stages = [
+        ("Bridge-in", "bridge_in"),
+        ("Objective", "objective"),
+        ("Pre-assessment", "pre_assessment"),
+        ("Participatory Learning", "participatory_learning"),
+        ("Post-assessment", "post_assessment"),
+        ("Summary", "summary"),
+    ]
+    for label, key in stages:
+        row = table.add_row().cells
+        row[0].text = label
+        row[1].text = "\n".join(str(item) for item in _as_list(boppps.get(key))) or _zh("\u65e0")
 
 
 def _add_process_table(document: Document, process: list[dict[str, Any]]) -> None:

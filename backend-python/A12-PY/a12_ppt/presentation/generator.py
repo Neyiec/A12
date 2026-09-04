@@ -137,6 +137,7 @@ slides 每项字段：slide_no, title, slide_type, content_points(list), teachin
                         "aspect_ratio": req.aspect_ratio,
                         "quality_pipeline": self.llm.available and self.settings.enable_quality_pipeline,
                         "quality_preset": self.settings.quality_preset,
+                        "ppt_html_model": self.settings.ppt_html_model,
                         "interactive_assets": slide.get("interactive_assets", []),
                     },
                 }
@@ -157,6 +158,7 @@ slides 每项字段：slide_no, title, slide_type, content_points(list), teachin
                 "quality_preset": self.settings.quality_preset,
                 "max_slide_concurrency": self.settings.max_slide_concurrency,
                 "max_html_retries": self.settings.max_html_retries,
+                "ppt_html_model": self.settings.ppt_html_model,
                 "interactive_assets": interactive_assets,
             },
         }
@@ -622,17 +624,17 @@ JSON 格式:
                 total=total,
                 all_slides=all_slides,
             )
-            slide_markup = await self._complete_html_with_retry(prompt, self._html_system_prompt(), slide, slide_no, total)
+            slide_markup = await self._complete_html_with_retry(prompt, self._html_system_prompt(), slide, slide_no, total, model=self.settings.ppt_html_model)
             if slide_markup:
                 return slide_markup
         return self._fallback_slide_html(title, slide, slide_no, total, theme)
 
-    async def _complete_html_with_retry(self, prompt: str, system_prompt: str, slide: dict[str, Any], slide_no: int, total: int) -> str:
+    async def _complete_html_with_retry(self, prompt: str, system_prompt: str, slide: dict[str, Any], slide_no: int, total: int, model: str | None = None) -> str:
         current_prompt = prompt
         last_html = ""
         for attempt in range(max(1, self.settings.max_html_retries)):
             try:
-                raw = await self.llm.complete(system_prompt, current_prompt, 0.5 if attempt == 0 else 0.25)
+                raw = await self.llm.complete(system_prompt, current_prompt, 0.5 if attempt == 0 else 0.25, model=model)
             except Exception:
                 continue
             slide_markup = auto_close_basic_tags(clean_html_response(raw))
@@ -666,9 +668,11 @@ teaching_design_chain is for frontend display and must not replace slides. It mu
 - activity_design: list[str]
 - assessment_design: list[str]
 - homework: list[str]
+- teaching_model: string, use "BOPPPS" when requested or when suitable
+- boppps: object with bridge_in, objective, pre_assessment, participatory_learning, post_assessment, summary; each value is list[str]
 
 slides must contain about {slide_count} pages and include cover, agenda, content pages, activity or practice page, and summary page.
-Each slide must contain: slide_no, title, slide_type, content_points(list), teaching_intent, visual_suggestion, interactive_asset_ids(list), external_resource_notes.
+Each slide must contain: slide_no, title, slide_type, boppps_stage, content_points(list), teaching_intent, visual_suggestion, interactive_asset_ids(list), external_resource_notes.
 interactive_assets items must contain: asset_id, title, type(animation|game|simulation), target_slide_no, preferred_format(html5|gif|mp4), integration(ppt_video|static_link), description.
 If diagram context is provided, add diagram_assets items with asset_id, title, type, format, mermaid, usage.
 
@@ -680,6 +684,7 @@ Expected slide count: {slide_count}
 Teaching goals: {req.teaching_goals or ""}
 Knowledge points: {", ".join(req.knowledge_points)}
 Extra requirements: {req.requirements or ""}
+Teaching model: {"BOPPPS" if "BOPPPS" in str(req.requirements or "").upper() else "auto, prefer BOPPPS when requested"}
 Web enabled: {req.enable_web}
 RAG enabled: {req.enable_rag}
 Regenerate instruction: {req.regenerate_instruction or ""}
@@ -787,6 +792,7 @@ Reference material and RAG context:
             slides.append({
                 "slide_no": idx + 1,
                 "slide_type": "cover" if idx == 0 else ("summary" if idx == slide_count - 1 else "content"),
+                "boppps_stage": self._normalize_boppps_stage(None, "cover" if idx == 0 else ("summary" if idx == slide_count - 1 else "content"), idx + 1, slide_count),
                 "title": req.title if idx == 0 else base,
                 "content_points": [f"明确{base}的核心概念", "结合案例建立理解", "通过提问或活动完成课堂迁移"],
                 "teaching_intent": "帮助学生建立清晰认知并完成课堂迁移。",
@@ -846,6 +852,42 @@ Reference material and RAG context:
         outline = self._ensure_teaching_design_chain(outline, req)
         return self._ensure_outline_quality(outline, req, req.slide_count or 8)
 
+    def _boppps_template(self, req: OutlineGenerateRequest, outline: dict[str, Any]) -> dict[str, list[str]]:
+        points = req.knowledge_points or self._slide_titles(outline) or [req.title]
+        return {
+            "bridge_in": [f"Use a real classroom situation or question to introduce {req.title}.", "Connect the topic with learners' prior experience."],
+            "objective": self._split_points(req.teaching_goals or "") or [f"Clarify what learners should know and be able to do after learning {req.title}."],
+            "pre_assessment": ["Use 1-2 quick questions to diagnose prior knowledge and misconceptions."],
+            "participatory_learning": [f"Organize explanation, examples, discussion, or group tasks around {point}." for point in points[:4]],
+            "post_assessment": ["Use short practice, exit ticket, or oral questioning to check learning outcomes."],
+            "summary": [f"Summarize the key logic of {req.title}.", "Assign transfer practice or reflection homework."],
+        }
+
+    def _normalize_boppps_stage(self, value: Any, slide_type: str, index: int, total: int) -> str:
+        raw = str(value or "").strip().lower().replace("-", "_").replace(" ", "_")
+        aliases = {
+            "bridge": "bridge_in", "bridge_in": "bridge_in", "??": "bridge_in",
+            "objective": "objective", "objectives": "objective", "??": "objective",
+            "pre_assessment": "pre_assessment", "preassessment": "pre_assessment", "??": "pre_assessment",
+            "participatory_learning": "participatory_learning", "participatory": "participatory_learning", "learning": "participatory_learning", "?????": "participatory_learning",
+            "post_assessment": "post_assessment", "postassessment": "post_assessment", "??": "post_assessment",
+            "summary": "summary", "??": "summary",
+        }
+        if raw in aliases:
+            return aliases[raw]
+        st = slide_type.lower()
+        if st == "cover":
+            return "bridge_in"
+        if st in {"agenda", "toc", "directory"}:
+            return "objective"
+        if st == "summary" or index == total:
+            return "summary"
+        if index <= 3:
+            return "pre_assessment" if index == 3 else "objective"
+        if index == total - 1:
+            return "post_assessment"
+        return "participatory_learning"
+
     def _ensure_teaching_design_chain(self, outline: dict[str, Any], req: OutlineGenerateRequest) -> dict[str, Any]:
         chain = outline.get("teaching_design_chain")
         if not isinstance(chain, dict):
@@ -860,6 +902,8 @@ Reference material and RAG context:
             "activity_design": self._as_list(chain.get("activity_design")) or fallback["activity_design"],
             "assessment_design": self._as_list(chain.get("assessment_design")) or fallback["assessment_design"],
             "homework": self._as_list(chain.get("homework")) or fallback["homework"],
+            "teaching_model": str(chain.get("teaching_model") or fallback.get("teaching_model") or "BOPPPS"),
+            "boppps": chain.get("boppps") if isinstance(chain.get("boppps"), dict) else fallback["boppps"],
         }
         outline["teaching_design_chain"] = normalized
         return outline
@@ -895,6 +939,8 @@ Reference material and RAG context:
                 f"Review the core concepts of {req.title}.",
                 "Complete one application or reflection task based on the lesson.",
             ],
+            "teaching_model": "BOPPPS",
+            "boppps": self._boppps_template(req, outline),
         }
 
     def _ensure_outline_quality(self, outline: dict[str, Any], req: OutlineGenerateRequest, slide_count: int) -> dict[str, Any]:
@@ -934,6 +980,7 @@ Reference material and RAG context:
             item = dict(slide)
             item["slide_no"] = index
             item["slide_type"] = str(item.get("slide_type") or ("cover" if index == 1 else ("summary" if index == len(slides) else "content")))
+            item["boppps_stage"] = self._normalize_boppps_stage(item.get("boppps_stage"), item["slide_type"], index, slide_count)
             item["title"] = str(item.get("title") or f"Slide {index}")
             item["content_points"] = self._as_list(item.get("content_points") or item.get("points")) or [item["title"]]
             item["teaching_intent"] = str(item.get("teaching_intent") or self._default_teaching_intent(item, index))

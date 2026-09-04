@@ -22,9 +22,9 @@ def create_chat_model(
     )
 
 
-def create_chat_model_from_settings(settings: Settings, temperature: float = 0.45) -> ChatOpenAI:
+def create_chat_model_from_settings(settings: Settings, temperature: float = 0.45, model: str | None = None) -> ChatOpenAI:
     return create_chat_model(
-        model=settings.openai_model,
+        model=model or settings.openai_model,
         api_key=settings.openai_api_key,
         base_url=settings.openai_base_url,
         timeout_seconds=settings.request_timeout_seconds,

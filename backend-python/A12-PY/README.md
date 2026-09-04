@@ -24,9 +24,10 @@ EMBEDDING_BASE_URL=不填则复用 OPENAI_BASE_URL
 EMBEDDING_MODEL=text-embedding-3-small
 EMBEDDING_DIMENSIONS=
 REQUEST_TIMEOUT_SECONDS=90
-MAX_SLIDE_CONCURRENCY=8
+MAX_SLIDE_CONCURRENCY=12
 MAX_HTML_RETRIES=1
 ENABLE_QUALITY_PIPELINE=true
+ENABLE_AUTONOMOUS_TOOLS=true
 QUALITY_PRESET=fast
 ```
 
@@ -118,3 +119,40 @@ Current package layout:
 - `a12_ppt/outline_chat/`: LangGraph-based ChatGPT-style outline conversation workflow, session storage, PostgreSQL long memory, and teacher-style profile memory.
 - `a12_ppt/tools/`: tool-call adapters used by the workflow, such as RAG search and web search.
 - Root compatibility modules such as `a12_ppt/generator.py`, `a12_ppt/resource_store.py`, and `a12_ppt/llm_client.py` only re-export the new package implementations. New code should import from the structured packages.
+
+
+## 国内默认模型配置
+
+为了在国内网络非 VPN 环境下直接运行，Python 服务默认使用阿里云百炼 DashScope 的 OpenAI 兼容接口：
+
+```env
+DASHSCOPE_API_KEY=
+DASHSCOPE_BASE_URL=https://dashscope.aliyuncs.com/compatible-mode/v1
+OPENAI_MODEL=qwen-plus
+PPT_HTML_MODEL=qwen-turbo
+EMBEDDING_MODEL=text-embedding-v4
+ASR_MODEL=qwen3-asr-flash
+```
+
+环境变量优先级：
+
+1. 模块专用配置优先，例如 `ASR_API_KEY`、`ASR_BASE_URL`、`EMBEDDING_API_KEY`、`EMBEDDING_BASE_URL`
+2. 其次复用 `OPENAI_API_KEY`、`OPENAI_BASE_URL`
+3. 最后复用 `DASHSCOPE_API_KEY`、`DASHSCOPE_BASE_URL` 和代码内置百炼默认值
+
+最简配置只需要设置 `DASHSCOPE_API_KEY`，Chat、RAG embedding 和 ASR 都会默认复用它。
+
+
+## PPT ??????
+
+?????? 16 ? PPT ??????????????????????????????????
+
+```env
+PPT_HTML_MODEL=qwen-turbo
+MAX_SLIDE_CONCURRENCY=12
+MAX_HTML_RETRIES=1
+QUALITY_PRESET=fast
+REQUEST_TIMEOUT_SECONDS=240
+```
+
+`PPT_HTML_MODEL` ????? HTML ????????????? `OPENAI_MODEL`?????????? `MAX_SLIDE_CONCURRENCY` ? 12 ?? 8?

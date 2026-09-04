@@ -10,10 +10,10 @@ from ..llm import LLMClient
 from ..models import IntentRecognizeRequest, OutlineChatStreamRequest, OutlineGenerateRequest
 from ..presentation import PPTGenerator
 from ..presentation.json_utils import extract_json
-from ..tools import diagram_tool, rag_search, should_call_diagram_tool, web_search
 from .message_utils import message_text, messages_to_dicts, normalize_messages
 from .postgres_store import postgres_memory_store
 from .session_store import outline_session_store
+from .tool_node import OutlineToolNode
 
 
 class OutlineChatState(MessagesState, total=False):
@@ -38,13 +38,14 @@ class OutlineChatWorkflow:
     def __init__(self, generator: PPTGenerator | None = None) -> None:
         self.generator = generator or PPTGenerator()
         self.llm = LLMClient()
+        self.tool_node = OutlineToolNode()
         self.graph = self._build_graph()
 
     def _build_graph(self):
         graph = StateGraph(OutlineChatState)
         graph.add_node("load_profile", self._load_profile_node)
         graph.add_node("parse_input", self._parse_input_node)
-        graph.add_node("tools", self._tools_node)
+        graph.add_node("tools", self.tool_node)
         graph.add_node("build_prompt", self._build_prompt_node)
         graph.add_node("generate_outline", self._generate_outline_node)
         graph.add_node("reflect", self._reflection_node)
@@ -212,6 +213,9 @@ class OutlineChatWorkflow:
         intent["resource_ids"] = request.resource_ids
         if user_id:
             intent["user_id"] = user_id
+            teacher_profile = postgres_memory_store.get_teacher_profile(user_id)
+            if teacher_profile:
+                intent["teacher_profile"] = teacher_profile
 
         interactive_policy = self._interactive_policy(intent, request.message)
         if interactive_policy.get("needs_interactive_assets"):
@@ -219,6 +223,7 @@ class OutlineChatWorkflow:
 
         missing_fields = self._missing_required_fields(intent)
         clarification_question = self._clarification_question(intent)
+        memory_result = await self._maybe_store_teacher_style(user_id, session_id, request.message, intent) if user_id and session_id else {"stored": False, "reason": "No user_id/session_id for long-term memory."}
         result = {
             "intent": intent,
             "need_clarification": bool(missing_fields),
@@ -227,6 +232,9 @@ class OutlineChatWorkflow:
             "confidence": self._intent_confidence(intent, model_used, missing_fields),
             "input_type": request.input_type,
             "model_used": model_used,
+            "memory_result": memory_result,
+            "memory_applied": bool(intent.get("teacher_profile")),
+            "applied_teacher_style": intent.get("teacher_profile"),
         }
         if user_id and session_id:
             result["user_id"] = user_id
@@ -298,44 +306,6 @@ class OutlineChatWorkflow:
             updates["messages"] = [*new_messages, AIMessage(content=question)]
         return updates
 
-    async def _tools_node(self, state: OutlineChatState) -> dict[str, Any]:
-        intent = state["intent"]
-        query = self._build_rag_query(state)
-        tool_context: dict[str, Any] = {}
-        tool_trace: list[dict[str, Any]] = []
-        if intent.get("enable_rag"):
-            result = await rag_search(list(intent.get("resource_ids") or []), query)
-            tool_context["rag"] = result
-            tool_trace.append({
-                "tool": "rag_search",
-                "status": "success" if result.get("context") or result.get("matches") else "empty",
-                "query": result.get("query"),
-                "enriched_query": result.get("enriched_query"),
-                "match_count": len(result.get("matches") or []),
-                "search_scope": result.get("search_scope"),
-            })
-        if intent.get("enable_web"):
-            result = await web_search(query, max_results=5)
-            tool_context["web"] = result
-            tool_trace.append({
-                "tool": "web_search",
-                "status": "error" if result.get("error") else ("success" if result.get("results") else "empty"),
-                "query": result.get("query"),
-                "result_count": len(result.get("results") or []),
-                "error": result.get("error"),
-            })
-        if should_call_diagram_tool(intent, query):
-            result = await diagram_tool(intent, query)
-            tool_context["diagram"] = result
-            tool_trace.append({
-                "tool": "diagram_tool",
-                "status": "success",
-                "diagram_type": result.get("diagram_type"),
-                "format": result.get("format"),
-                "node_count": len(result.get("nodes") or []),
-            })
-        return {"tool_context": tool_context, "tool_trace": tool_trace}
-
     async def _build_prompt_node(self, state: OutlineChatState) -> dict[str, Any]:
         intent = state["intent"]
         tool_context = state.get("tool_context", {})
@@ -371,6 +341,7 @@ Requirements:
             req = self._outline_request_from_state(state)
             response = await self.generator.generate_outline(req)
             self._attach_tool_outputs(response, state)
+            self._attach_memory_outputs(response, state)
             return {"outline": response.get("outline", {}), "response": response}
         except Exception as exc:
             return {"error": str(exc)}
@@ -387,6 +358,7 @@ Requirements:
                 req = self._outline_request_from_state(state, regenerate_instruction=fix_instruction)
                 retry_response = await self.generator.generate_outline(req)
                 self._attach_tool_outputs(retry_response, state)
+                self._attach_memory_outputs(retry_response, state)
                 retry_reflection = self._build_generation_reflection(retry_response, state)
                 reflection["retry_count"] = 1
                 reflection["fixes"].append(fix_instruction)
@@ -408,26 +380,27 @@ Requirements:
 
     async def _memory_node(self, state: OutlineChatState) -> dict[str, Any]:
         user_text = "\n".join(message_text(message) for message in state.get("messages", []) if isinstance(message, HumanMessage))[-6000:]
-        evaluation = await self._evaluate_teacher_style(user_text, state.get("intent", {}))
+        return {"memory_result": await self._maybe_store_teacher_style(state["user_id"], state["session_id"], user_text, state.get("intent", {}))}
+
+    async def _maybe_store_teacher_style(self, user_id: str, session_id: str, user_text: str, intent: dict[str, Any]) -> dict[str, Any]:
+        evaluation = await self._evaluate_teacher_style(user_text, intent)
         if not evaluation.get("should_store"):
-            return {"memory_result": {"stored": False, "reason": evaluation.get("reason", "No stable teacher-style preference found")}}
+            return {"stored": False, "reason": evaluation.get("reason", "No stable teacher-style preference found")}
 
         postgres_memory_store.save_teacher_style_memory(
-            state["user_id"],
-            state["session_id"],
+            user_id,
+            session_id,
             user_text,
             evaluation.get("style") or {},
             float(evaluation.get("score") or 0.7),
             str(evaluation.get("reason") or "User input contains reusable teacher-style preference"),
         )
         return {
-            "memory_result": {
-                "stored": True,
-                "score": evaluation.get("score", 0.7),
-                "reason": evaluation.get("reason"),
-                "style": evaluation.get("style"),
-                "postgres_available": postgres_memory_store.available,
-            }
+            "stored": True,
+            "score": evaluation.get("score", 0.7),
+            "reason": evaluation.get("reason"),
+            "style": evaluation.get("style"),
+            "postgres_available": postgres_memory_store.available,
         }
 
     def _outline_request_from_state(self, state: OutlineChatState, regenerate_instruction: str | None = None) -> OutlineGenerateRequest:
@@ -483,6 +456,14 @@ Requirements:
         response["tool_trace"] = state.get("tool_trace", [])
         if isinstance(response.get("outline"), dict):
             response["outline"]["tool_trace"] = state.get("tool_trace", [])
+
+    def _attach_memory_outputs(self, response: dict[str, Any], state: OutlineChatState) -> None:
+        profile = state.get("teacher_profile")
+        response["memory_applied"] = bool(profile)
+        response["applied_teacher_style"] = profile
+        if isinstance(response.get("outline"), dict):
+            response["outline"]["memory_applied"] = bool(profile)
+            response["outline"]["applied_teacher_style"] = profile
 
     def _build_generation_reflection(self, response: dict[str, Any], state: OutlineChatState) -> dict[str, Any]:
         report = response.get("quality_report") or (response.get("outline") or {}).get("quality_report") or {}
@@ -540,7 +521,10 @@ Conversation:
 Allowed fields:
 title, subject, grade, duration_minutes, teaching_goals, knowledge_points,
 requirements, slide_count, language, needs_animation, needs_game,
-interactive_requirements, preferred_interactive_formats.
+interactive_requirements, preferred_interactive_formats, teaching_model.
+
+If the user asks for BOPPPS, BOPPPS model, or a six-step teaching model,
+set teaching_model to "BOPPPS".
 
 Do not invent uncertain fields.
 """.strip()
@@ -573,6 +557,8 @@ Do not invent uncertain fields.
         if text:
             intent["requirements"] = text
         lowered = text.lower()
+        if "boppps" in lowered or "bopps" in lowered or "??" in text or "????" in text:
+            intent["teaching_model"] = "BOPPPS"
         if any(keyword in lowered for keyword in ["animation", "animate", "html5", "gif", "mp4", "video"]) or any(keyword in text for keyword in ["动画", "动效", "演示动画", "视频"]):
             intent["needs_animation"] = True
         if any(keyword in lowered for keyword in ["game", "quiz", "mini game"]) or any(keyword in text for keyword in ["小游戏", "小 游戏", "互动游戏", "闯关", "配对", "答题游戏", "游戏化"]):
@@ -613,24 +599,6 @@ Do not invent uncertain fields.
         if isinstance(merged.get("knowledge_points"), str):
             merged["knowledge_points"] = [item.strip() for item in re.split(r"[，,、\n]", merged["knowledge_points"]) if item.strip()]
         return merged
-
-    def _build_rag_query(self, state: OutlineChatState) -> str:
-        intent = state.get("intent", {})
-        latest_user_text = ""
-        for message in reversed(state.get("messages", [])):
-            if isinstance(message, HumanMessage):
-                latest_user_text = message_text(message)
-                break
-        parts = [
-            latest_user_text,
-            str(intent.get("title") or ""),
-            str(intent.get("subject") or ""),
-            str(intent.get("grade") or ""),
-            str(intent.get("teaching_goals") or ""),
-            " ".join(str(item) for item in intent.get("knowledge_points") or []),
-            str(intent.get("requirements") or ""),
-        ]
-        return "\n".join(part for part in parts if part).strip()
 
     def _interactive_policy(self, intent: dict[str, Any], latest_message: str) -> dict[str, Any]:
         text = " ".join(
@@ -734,32 +702,39 @@ Return strict JSON:
             except Exception:
                 pass
 
-        keywords = {
-            "互动": "偏好课堂互动",
-            "提问": "偏好问题驱动",
-            "启发": "偏好启发式教学",
-            "探究": "偏好探究式学习",
-            "小组": "偏好小组合作",
-            "案例": "偏好案例教学",
-            "项目式": "偏好项目式学习",
-            "分层": "偏好分层教学",
-            "幽默": "偏好轻松幽默表达",
-            "严谨": "偏好严谨清晰表达",
-        }
-        hits = [label for key, label in keywords.items() if key in user_text]
+        keyword_rules = [
+            ("??", "??????", "interaction"),
+            ("??", "??????", "interaction"),
+            ("??", "???????", "method"),
+            ("??", "???????", "method"),
+            ("??", "??????", "interaction"),
+            ("??", "??????", "method"),
+            ("???", "???????", "method"),
+            ("??", "??????", "method"),
+            ("??", "????????", "language"),
+            ("??", "????????", "language"),
+            ("??", "????????", "assessment"),
+            ("??", "???????", "assessment"),
+        ]
+        hits = [(label, category) for keyword, label, category in keyword_rules if keyword in user_text]
         if not hits:
             return {"should_store": False, "score": 0.0, "reason": "Input is mainly a one-off generation request."}
+
+        labels = [label for label, _ in hits]
+        interaction = [label for label, category in hits if category == "interaction"]
+        language = [label for label, category in hits if category == "language"]
+        assessment = [label for label, category in hits if category == "assessment"]
         return {
             "should_store": True,
             "score": min(0.95, 0.55 + len(hits) * 0.1),
             "reason": "User input contains reusable teaching-style preferences.",
             "style": {
-                "summary": "；".join(hits),
-                "teaching_methods": hits,
-                "interaction_preference": "；".join(item for item in hits if "互动" in item or "提问" in item or "小组" in item),
-                "language_style": "幽默" if "偏好轻松幽默表达" in hits else ("严谨" if "偏好严谨清晰表达" in hits else ""),
-                "assessment_preference": "",
-                "evidence": hits,
+                "summary": "?".join(labels),
+                "teaching_methods": labels,
+                "interaction_preference": "?".join(interaction),
+                "language_style": "?".join(language),
+                "assessment_preference": "?".join(assessment),
+                "evidence": labels,
             },
         }
 

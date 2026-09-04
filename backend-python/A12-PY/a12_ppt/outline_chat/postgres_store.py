@@ -97,27 +97,29 @@ class PostgresOutlineMemoryStore:
             """,
             (user_id, session_id, source_message, json.dumps(extracted_style, ensure_ascii=False), score, reason),
         )
+        existing = self.get_teacher_profile(user_id) or {}
+        merged_profile = self._merge_teacher_profile(existing.get("profile") or {}, extracted_style)
+        merged_summary = self._merge_style_summary(existing.get("style_summary"), extracted_style.get("summary") or reason)
+        existing_evidence_count = int(existing.get("evidence_count") or 0)
+        existing_confidence = float(existing.get("confidence") or 0)
+        merged_confidence = round(max(existing_confidence, score, min(0.98, (existing_confidence * existing_evidence_count + score) / (existing_evidence_count + 1))), 4)
         self._execute(
             """
             INSERT INTO a12_teacher_style_profile
               (user_id, style_summary, profile, evidence_count, confidence)
             VALUES (%s, %s, %s::jsonb, 1, %s)
             ON CONFLICT (user_id) DO UPDATE SET
-              style_summary = CASE
-                WHEN a12_teacher_style_profile.style_summary IS NULL OR a12_teacher_style_profile.style_summary = ''
-                THEN EXCLUDED.style_summary
-                ELSE a12_teacher_style_profile.style_summary || E'\n' || EXCLUDED.style_summary
-              END,
-              profile = a12_teacher_style_profile.profile || EXCLUDED.profile,
+              style_summary = EXCLUDED.style_summary,
+              profile = EXCLUDED.profile,
               evidence_count = a12_teacher_style_profile.evidence_count + 1,
-              confidence = GREATEST(a12_teacher_style_profile.confidence, EXCLUDED.confidence),
+              confidence = EXCLUDED.confidence,
               updated_at = NOW()
             """,
             (
                 user_id,
-                str(extracted_style.get("summary") or reason),
-                json.dumps(extracted_style, ensure_ascii=False),
-                score,
+                merged_summary,
+                json.dumps(merged_profile, ensure_ascii=False),
+                merged_confidence,
             ),
         )
 
@@ -269,6 +271,36 @@ class PostgresOutlineMemoryStore:
                 conn.commit()
         except Exception:
             self.available = False
+
+    def _merge_teacher_profile(self, existing: dict[str, Any], incoming: dict[str, Any]) -> dict[str, Any]:
+        merged = dict(existing or {})
+        for key, value in (incoming or {}).items():
+            if value in (None, "", [], {}):
+                continue
+            old = merged.get(key)
+            if isinstance(old, list) or isinstance(value, list):
+                merged[key] = self._dedupe_list([*(old or [] if isinstance(old, list) else [old] if old else []), *(value if isinstance(value, list) else [value])])
+            elif isinstance(old, dict) and isinstance(value, dict):
+                nested = dict(old)
+                nested.update({k: v for k, v in value.items() if v not in (None, "", [], {})})
+                merged[key] = nested
+            else:
+                merged[key] = value
+        return merged
+
+    def _merge_style_summary(self, existing: str | None, incoming: str | None) -> str:
+        parts = self._dedupe_list([part.strip() for part in [*(existing or "").splitlines(), incoming or ""] if part and part.strip()])
+        return "\n".join(parts[-12:])
+
+    def _dedupe_list(self, values: list[Any]) -> list[Any]:
+        result: list[Any] = []
+        seen: set[str] = set()
+        for value in values:
+            key = json.dumps(value, ensure_ascii=False, sort_keys=True) if isinstance(value, (dict, list)) else str(value)
+            if key not in seen:
+                seen.add(key)
+                result.append(value)
+        return result
 
 
 postgres_memory_store = PostgresOutlineMemoryStore()

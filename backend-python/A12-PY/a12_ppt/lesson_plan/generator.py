@@ -60,6 +60,26 @@ class LessonPlanGenerator:
         except Exception:
             return {}
 
+    def _boppps_from_request(self, request: LessonPlanGenerateRequest, slides: list[dict[str, Any]], goals: list[str], points: list[str]) -> dict[str, list[str]]:
+        chain = (request.outline or {}).get("teaching_design_chain") if isinstance(request.outline, dict) else {}
+        if isinstance(chain, dict) and isinstance(chain.get("boppps"), dict):
+            return {key: self._as_list(chain["boppps"].get(key)) for key in ["bridge_in", "objective", "pre_assessment", "participatory_learning", "post_assessment", "summary"]}
+        return {
+            "bridge_in": [f"Introduce {request.title} with a problem situation or life example."],
+            "objective": goals or [f"Clarify learning objectives for {request.title}."],
+            "pre_assessment": ["Use quick questions to check prior knowledge."],
+            "participatory_learning": points[:5] or ["Guide learners through explanation, discussion, and practice."],
+            "post_assessment": ["Use classroom practice or exit ticket to verify learning."],
+            "summary": [f"Summarize key ideas of {request.title} and assign transfer homework."],
+        }
+
+    def _as_list(self, value: Any) -> list[str]:
+        if value is None:
+            return []
+        if isinstance(value, list):
+            return [str(item).strip() for item in value if str(item).strip()]
+        return [str(value).strip()] if str(value).strip() else []
+
     def _fallback_plan(self, request: LessonPlanGenerateRequest) -> dict[str, Any]:
         slides = request.slides or list((request.outline or {}).get("slides") or [])
         goals = [request.teaching_goals] if request.teaching_goals else []
@@ -110,6 +130,9 @@ class LessonPlanGenerator:
         plan.setdefault("subject", request.subject or "")
         plan.setdefault("grade", request.grade or "")
         plan.setdefault("duration_minutes", request.duration_minutes or 45)
+        plan.setdefault("teaching_model", "BOPPPS")
+        if not isinstance(plan.get("boppps"), dict):
+            plan["boppps"] = self._boppps_from_request(request, request.slides or list((request.outline or {}).get("slides") or []), self._as_list(plan.get("teaching_goals")), self._as_list(plan.get("key_points")))
         plan.setdefault("lesson_process", [])
         return {
             "lesson_plan_id": f"lesson_plan_{uuid.uuid4().hex[:12]}",
