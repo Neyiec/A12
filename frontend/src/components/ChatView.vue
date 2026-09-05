@@ -13,6 +13,7 @@ import { ElMessage } from 'element-plus'
 import { Brush, Document, Promotion } from '@element-plus/icons-vue'
 import MarkdownRender from 'markstream-vue'
 import { useUserStore } from '../storage/user.js'
+import { readOutlineDraft, saveOutlineDraft } from '../utils/presentationDraft.js'
 import { confirmAiPlan, getAiPlan, getAiSession, streamSendAiSessionMessage } from '../apis/teacher.js'
 import {
   CHAT_COMPOSER, CLASS_LEVEL_OPTIONS, CLARIFICATION_LABELS,
