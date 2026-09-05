@@ -14,7 +14,7 @@ import { Brush, Document, Promotion } from '@element-plus/icons-vue'
 import MarkdownRender from 'markstream-vue'
 import { useUserStore } from '../storage/user.js'
 import { readOutlineDraft, saveOutlineDraft } from '../utils/presentationDraft.js'
-import { confirmAiPlan, getAiPlan, getAiSession, streamSendAiSessionMessage } from '../apis/teacher.js'
+import { confirmAiPlan, getAiPlan, getAiSession, listPptTemplates, streamSendAiSessionMessage } from '../apis/teacher.js'
 import {
   CHAT_COMPOSER, CLASS_LEVEL_OPTIONS, CLARIFICATION_LABELS,
   extractPlanningContext, GRADE_OPTIONS, CHAT_RESUME, DESIGN_ACTION_BAR, GEN_RESOURCE_DEFAULTS, INFO_FORM_DEFAULTS,

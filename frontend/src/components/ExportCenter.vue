@@ -10,6 +10,7 @@ import { useRoute, useRouter } from 'vue-router'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import { CircleCheck, CircleClose, DocumentChecked, Download, Files, FolderOpened, Refresh, Search, Timer, View, Warning } from '@element-plus/icons-vue'
 import { EXPORT_PAGE } from '../config/teacherPages.config.js'
+import { useUserStore } from '../storage/user.js'
 import { cancelExportTask, createExportPreviewUrl, createExportTask, downloadExportArtifact, getExportArtifact, getExportQualityReport, getExportTask, getProject, listExportTasks, listProjects, listProjectVersions, precheckProjectExport, retryExportTask, saveProjectVersion } from '../apis/teacher'
 
 const route = useRoute()
@@ -431,13 +432,44 @@ const triggerDownload = (url, filename) => {
   return true
 }
 
+// 优先用服务端 Content-Disposition 中的真实文件名（后缀与文件实际一致），
+// 避免 export_type 为 package 但实际产出 .pptx 时被误存成 .zip。
+const extractDownloadFilename = (disposition, fallback) => {
+  if (!disposition) return fallback
+  const starMatch = /filename\*=UTF-8''([^;]+)/i.exec(disposition)
+  if (starMatch?.[1]) {
+    try {
+      const decoded = decodeURIComponent(starMatch[1].trim())
+      if (decoded) return decoded
+    } catch { /* 解码失败则继续尝试普通 filename */ }
+  }
+  const plainMatch = /filename="?([^";]+)"?/i.exec(disposition)
+  if (plainMatch?.[1]?.trim()) return plainMatch[1].trim()
+  return fallback
+}
+
 const download = async (row) => {
   if (!row?.id) return ElMessage.info('当前任务暂不支持下载')
   if (!canDownload(row)) return ElMessage.info('成果正在生成，请稍候再下载')
+  const fallbackFilename = `${safeFilename(row.project)}-${safeFilename(row.version)}.${exportExtension(row.export_type)}`
   try {
     const result = unwrap(await downloadExportArtifact(row.id))
     const url = result?.download_url
-    if (!triggerDownload(url, `${safeFilename(row.project)}-${safeFilename(row.version)}.${exportExtension(row.export_type)}`)) return ElMessage.warning('服务端暂未返回下载链接')
+    if (!url) return ElMessage.warning('服务端暂未返回下载链接')
+    // 文件接口走 JWT 鉴权，需要带 Authorization 头拉取为 Blob 后再触发下载。
+    const userStore = useUserStore()
+    const response = await fetch(url, { headers: { Authorization: `Bearer ${userStore.token}` } })
+    if (!response.ok) {
+      let message = `下载失败（HTTP ${response.status}）`
+      try { const body = await response.json(); if (body?.message) message = body.message } catch { /* 非 JSON 响应则使用默认提示 */ }
+      throw new Error(message)
+    }
+    const filename = extractDownloadFilename(response.headers.get('Content-Disposition'), fallbackFilename)
+    const blob = await response.blob()
+    const objectUrl = URL.createObjectURL(blob)
+    const started = triggerDownload(objectUrl, filename)
+    window.setTimeout(() => URL.revokeObjectURL(objectUrl), 1500)
+    if (!started) return ElMessage.warning('下载未启动，请重试')
     if (autoExportFlowVisible.value && String(row.id) === String(flow.value.taskId)) {
       flow.value.downloaded = true
       flow.value.step = 5

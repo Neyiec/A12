@@ -1,8 +1,10 @@
+import asyncio
 import base64
 import json
 import mimetypes
 import re
 import shutil
+import sys
 import tempfile
 import uuid
 import zipfile
@@ -22,7 +24,7 @@ async def export_html_slides_to_pptx(
 ) -> Path:
     static_assets = _collect_static_assets(slides) if package_static_assets else []
     if fidelity == "high_fidelity":
-        rendered = await _export_high_fidelity(title, slides, filename)
+        rendered = await _export_high_fidelity_safe(title, slides, filename)
         if rendered:
             return _package_if_needed(title, rendered, static_assets, filename)
     output = _export_editable_text(title, slides, filename)
@@ -31,6 +33,33 @@ async def export_html_slides_to_pptx(
 
 def export_html_slides_to_pptx_sync(title: str, slides: list[dict[str, Any]], filename: str | None = None) -> Path:
     return _export_editable_text(title, slides, filename)
+
+
+async def _export_high_fidelity_safe(title: str, slides: list[dict[str, Any]], filename: str | None = None):
+    # uvicorn reload/workers>1 在 Windows 下主循环是 SelectorEventLoop，不支持子进程，
+    # Playwright 无法启动 driver 会静默降级为纯文本；此时放到独立线程 + ProactorEventLoop 渲染。
+    if _loop_supports_subprocess():
+        return await _export_high_fidelity(title, slides, filename)
+    return await asyncio.to_thread(_run_high_fidelity_isolated, title, slides, filename)
+
+
+def _loop_supports_subprocess() -> bool:
+    try:
+        loop = asyncio.get_running_loop()
+    except RuntimeError:
+        return True
+    return not isinstance(loop, asyncio.SelectorEventLoop)
+
+
+def _run_high_fidelity_isolated(title: str, slides: list[dict[str, Any]], filename: str | None = None):
+    loop = asyncio.ProactorEventLoop() if sys.platform == "win32" else asyncio.new_event_loop()
+    try:
+        return loop.run_until_complete(_export_high_fidelity(title, slides, filename))
+    finally:
+        try:
+            loop.run_until_complete(loop.shutdown_asyncgens())
+        finally:
+            loop.close()
 
 
 def _export_editable_text(title: str, slides: list[dict[str, Any]], filename: str | None = None) -> Path:
@@ -102,6 +131,11 @@ async def _export_high_fidelity(title: str, slides: list[dict[str, Any]], filena
             path.unlink(missing_ok=True)
 
 
+def _temp_png() -> Path:
+    with tempfile.NamedTemporaryFile(delete=False, suffix=".png") as temp:
+        return Path(temp.name)
+
+
 async def _render_slides_to_images(slides: list[dict[str, Any]]) -> list[Path]:
     from playwright.async_api import async_playwright
 
@@ -114,11 +148,26 @@ async def _render_slides_to_images(slides: list[dict[str, Any]]) -> list[Path]:
             if not markup.strip():
                 slide_title, bullets = extract_slide_text("", slide_data, index)
                 markup = _fallback_render_html(slide_title, bullets, index, len(slides))
-            await page.set_content(markup, wait_until="networkidle")
-            await page.evaluate("document.body.style.margin='0'; document.documentElement.style.margin='0';")
-            with tempfile.NamedTemporaryFile(delete=False, suffix=".png") as temp:
-                image_path = Path(temp.name)
-            await page.screenshot(path=str(image_path), full_page=False, type="png")
+            try:
+                # 用 "load" 而非 "networkidle"：真实页面一旦引用外部资源，networkidle 每页最多卡 30s，
+                # 超时会静默把整批导出降级成纯文本。本项目 HTML 均为自包含（data URI），"load" 足够。
+                await page.set_content(markup, wait_until="load", timeout=60000)
+                await page.evaluate("document.body.style.margin='0'; document.documentElement.style.margin='0';")
+                image_path = _temp_png()
+                await page.screenshot(path=str(image_path), full_page=False, type="png")
+            except Exception:
+                # 单页渲染失败：用兜底 HTML 重试一次；仍失败则跳过该页，不让整批导出退化为纯文本。
+                try:
+                    slide_title, bullets = extract_slide_text("", slide_data, index)
+                    await page.set_content(
+                        _fallback_render_html(slide_title, bullets, index, len(slides)),
+                        wait_until="load",
+                        timeout=60000,
+                    )
+                    image_path = _temp_png()
+                    await page.screenshot(path=str(image_path), full_page=False, type="png")
+                except Exception:
+                    continue
             paths.append(image_path)
         await browser.close()
     return paths

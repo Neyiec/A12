@@ -23,6 +23,7 @@ import org.springframework.beans.factory.annotation.Value;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
+import java.io.IOException;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.time.LocalDateTime;
@@ -213,9 +214,39 @@ public class ExportServiceImpl implements ExportService {
         if (!"available".equals(task.getFile_status())) {
             throw new RuntimeException("Export file is not available");
         }
-        String url = task.getDownload_url() == null ? task.getFile_url() : task.getDownload_url();
+        // 返回带鉴权、可真正流式下载文件的接口地址（API-56A）。
+        // 原先的 /exports 静态路径没有任何资源映射，浏览器下载到的只是 SPA 页面，导致成果文件损坏。
         businessLogService.record("download", "export", "download_url", "export_task", task.getId());
-        return Map.of("download_url", url, "expires_at", LocalDateTime.now().plusMinutes(30));
+        return Map.of(
+                "download_url", "/api/v1/export-artifacts/" + task.getId() + "/file",
+                "expires_at", task.getUrl_expire_at()
+        );
+    }
+
+    @Override
+    public ExportFileResult getExportFile(String id) {
+        Exp_Task task = requireOwnedTask(id);
+        if (!"available".equals(task.getFile_status())) {
+            throw new RuntimeException("导出文件不可用");
+        }
+        LocalDateTime expireAt = task.getUrl_expire_at();
+        if (expireAt != null && LocalDateTime.now().isAfter(expireAt)) {
+            throw new RuntimeException("下载链接已过期，请重新生成");
+        }
+        String name = task.getFile_name();
+        if (name == null || name.isBlank()) {
+            throw new RuntimeException("导出文件信息缺失");
+        }
+        Path file = exportDir.resolve(name).normalize();
+        if (!file.startsWith(exportDir) || !Files.isRegularFile(file)) {
+            throw new RuntimeException("导出文件不存在，可能已被清理");
+        }
+        try {
+            // 内容类型仅按实际文件名后缀判定，避免 export_type 为 package 时把实际是 .pptx 的成果误报成 .zip。
+            return new ExportFileResult(name, contentTypeFor(name), Files.readAllBytes(file));
+        } catch (IOException e) {
+            throw new RuntimeException("读取导出文件失败: " + e.getMessage(), e);
+        }
     }
 
     private ExportedFile generateFile(Ws_Project project, Exp_Task task, Map<String, Object> config) throws Exception {
@@ -434,6 +465,14 @@ public class ExportServiceImpl implements ExportService {
         if ("application/zip".equals(contentType)) return "zip";
         if ("word".equals(exportType) || "docx".equals(exportType)) return "docx";
         return "pptx";
+    }
+
+    private String contentTypeFor(String filename) {
+        String lower = filename == null ? "" : filename.toLowerCase();
+        if (lower.endsWith(".zip")) return "application/zip";
+        if (lower.endsWith(".pptx")) return "application/vnd.openxmlformats-officedocument.presentationml.presentation";
+        if (lower.endsWith(".docx")) return "application/vnd.openxmlformats-officedocument.wordprocessingml.document";
+        return "application/octet-stream";
     }
 
     private String defaultFilename(Ws_Project project, Exp_Task task, String extension) {
