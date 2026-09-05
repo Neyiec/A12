@@ -1,7 +1,11 @@
 import asyncio
 import json
+import time
 from dataclasses import dataclass
 from typing import Any
+
+from jsonschema import ValidationError, validate
+from langchain_core.messages import HumanMessage, SystemMessage
 
 from ..config import get_settings
 from ..llm import LLMClient
@@ -15,16 +19,11 @@ class ToolPlan:
     args: dict[str, Any]
     source: str
     reason: str = ""
+    tool_call_id: str | None = None
 
 
 class OutlineToolNode:
-    """Unified outline tool node.
-
-    It combines three sources:
-    1. Deterministic rules for stable business behavior.
-    2. LLM autonomous planning for optional extra tools.
-    3. Optional MCP server tools configured by environment variables.
-    """
+    """LangGraph tool node combining deterministic rules and native LLM tool calls."""
 
     def __init__(self, llm: LLMClient | None = None, mcp_client: MCPClient | None = None) -> None:
         self.llm = llm or LLMClient()
@@ -35,36 +34,32 @@ class OutlineToolNode:
         intent = dict(state.get("intent") or {})
         query = self._build_query(state)
         mcp_specs = await self.mcp_client.list_tools() if self.mcp_client.enabled else []
+        discovery_trace = self.mcp_client.drain_discovery_logs() if self.mcp_client.enabled else []
 
-        plans = self._rule_plans(intent, query)
-        plans.extend(await self._autonomous_plans(intent, query, state, mcp_specs))
-        plans = self._dedupe_and_filter(plans, intent, mcp_specs)
+        rule_plans = self._rule_plans(intent, query)
+        autonomous_plans = await self._autonomous_plans(
+            intent,
+            query,
+            state,
+            mcp_specs,
+            excluded_names={plan.name for plan in rule_plans},
+        )
+        plans = self._dedupe_and_filter([*rule_plans, *autonomous_plans], intent, mcp_specs)
 
         if not plans:
-            return {"tool_context": {}, "tool_trace": []}
+            return {"tool_context": {}, "tool_trace": discovery_trace}
 
+        mcp_by_name = {spec.qualified_name: spec for spec in mcp_specs}
         results = await asyncio.gather(
-            *(self._execute_plan(plan) for plan in plans),
-            return_exceptions=True,
+            *(self._execute_timed(plan, mcp_by_name) for plan in plans),
+            return_exceptions=False,
         )
 
         tool_context: dict[str, Any] = {}
-        tool_trace: list[dict[str, Any]] = []
-        for plan, result in zip(plans, results):
-            if isinstance(result, Exception):
-                payload: dict[str, Any] = {"error": str(result)}
-            else:
-                payload = result if isinstance(result, dict) else {"result": result}
-            context_key = self._context_key(plan.name)
-            if context_key in tool_context:
-                existing = tool_context[context_key]
-                if isinstance(existing, list):
-                    existing.append(payload)
-                else:
-                    tool_context[context_key] = [existing, payload]
-            else:
-                tool_context[context_key] = payload
-            tool_trace.append(self._trace(plan, payload))
+        tool_trace: list[dict[str, Any]] = list(discovery_trace)
+        for plan, (payload, latency_ms) in zip(plans, results):
+            self._store_context(tool_context, plan, payload)
+            tool_trace.append(self._trace(plan, payload, latency_ms))
 
         return {"tool_context": tool_context, "tool_trace": tool_trace}
 
@@ -99,62 +94,89 @@ class OutlineToolNode:
         query: str,
         state: dict[str, Any],
         mcp_specs: list[MCPToolSpec],
+        excluded_names: set[str],
     ) -> list[ToolPlan]:
         if not self.settings.enable_autonomous_tools or not self.llm.available:
             return []
 
-        tool_specs = self._available_tool_specs(intent, mcp_specs)
-        if not tool_specs:
+        tools = self._available_tool_specs(intent, mcp_specs, excluded_names)
+        if not tools:
             return []
 
-        prompt = f"""
-You are planning tools for a teaching-outline generation workflow.
-Return strict JSON array only. Each item:
-{{"tool": "...", "args": {{}}, "reason": "..."}}
-
-Rules:
-- Only choose tools from available_tools.
-- Do not call rag_search if enable_rag is false.
-- Do not call web_search if enable_web is false.
-- Prefer 0-3 tools. Use MCP tools only when they clearly add value.
-- Do not invent arguments outside the tool schema.
-
-Intent:
-{json.dumps(intent, ensure_ascii=False, default=str)}
-
-Query:
-{query}
-
-Available tools:
-{json.dumps(tool_specs, ensure_ascii=False, default=str)}
-
-Existing messages:
-{json.dumps([str(m.content) for m in state.get("messages", [])[-6:]], ensure_ascii=False)}
-""".strip()
+        planner_context = {
+            "intent": intent,
+            "query": query,
+            "recent_messages": [str(message.content) for message in state.get("messages", [])[-6:]],
+            "already_planned_by_rules": sorted(excluded_names),
+        }
+        messages = [
+            SystemMessage(content=(
+                "Select optional tools for a teaching-outline workflow. Use only the bound tools. "
+                "Do not repeat tools already planned by deterministic rules. Select at most three "
+                "tools, and select MCP tools only when their result clearly improves the lesson."
+            )),
+            HumanMessage(content=json.dumps(planner_context, ensure_ascii=False, default=str)),
+        ]
         try:
-            raw = await self.llm.complete("Return strict JSON only.", prompt, temperature=0.1)
-            parsed = json.loads(self._extract_json_value(raw))
+            response = await self.llm.invoke_tools(messages, tools, temperature=0.1)
         except Exception:
-            return []
-        if not isinstance(parsed, list):
             return []
 
         plans: list[ToolPlan] = []
-        for item in parsed:
-            if not isinstance(item, dict):
-                continue
-            name = str(item.get("tool") or item.get("name") or "").strip()
-            args = item.get("args") if isinstance(item.get("args"), dict) else {}
+        for tool_call in response.tool_calls or []:
+            name = str(tool_call.get("name") or "").strip()
+            args = tool_call.get("args") if isinstance(tool_call.get("args"), dict) else {}
             if name == "rag_search":
-                args = {"resource_ids": list(intent.get("resource_ids") or []), "query": str(args.get("query") or query)}
+                args = {
+                    "resource_ids": list(intent.get("resource_ids") or []),
+                    "query": str(args.get("query") or query),
+                    "limit": int(args.get("limit") or 12000),
+                }
             elif name == "web_search":
-                args = {"query": str(args.get("query") or query), "max_results": int(args.get("max_results") or 5)}
+                args = {
+                    "query": str(args.get("query") or query),
+                    "max_results": int(args.get("max_results") or 5),
+                }
             elif name == "diagram_tool":
-                args = {"intent": intent, "query": str(args.get("query") or query)}
-            plans.append(ToolPlan(name, args, "llm", str(item.get("reason") or "")))
+                args = {
+                    "intent": intent,
+                    "query": str(args.get("query") or query),
+                    "max_nodes": int(args.get("max_nodes") or 6),
+                }
+            plans.append(ToolPlan(
+                name=name,
+                args=args,
+                source="llm_native",
+                reason="Selected by the model through native tool calling.",
+                tool_call_id=str(tool_call.get("id") or "") or None,
+            ))
         return plans
 
-    async def _execute_plan(self, plan: ToolPlan) -> dict[str, Any]:
+    async def _execute_timed(
+        self,
+        plan: ToolPlan,
+        mcp_by_name: dict[str, MCPToolSpec],
+    ) -> tuple[dict[str, Any], float]:
+        started = time.perf_counter()
+        validation_error = self._validate_plan(plan, mcp_by_name)
+        if validation_error:
+            payload = {"error": validation_error, "error_type": "schema_validation"}
+            return payload, round((time.perf_counter() - started) * 1000, 2)
+
+        timeout = max(0.1, self.settings.tool_call_timeout_seconds)
+        try:
+            payload = await asyncio.wait_for(self._execute_plan(plan, mcp_by_name), timeout=timeout)
+        except asyncio.TimeoutError:
+            payload = {"error": f"Tool timed out after {timeout:g}s", "error_type": "timeout"}
+        except Exception as exc:
+            payload = {"error": str(exc), "error_type": "execution"}
+        return payload, round((time.perf_counter() - started) * 1000, 2)
+
+    async def _execute_plan(
+        self,
+        plan: ToolPlan,
+        mcp_by_name: dict[str, MCPToolSpec],
+    ) -> dict[str, Any]:
         if plan.name == "rag_search":
             return await rag_search(
                 list(plan.args.get("resource_ids") or []),
@@ -173,35 +195,56 @@ Existing messages:
                 int(plan.args.get("max_nodes") or 6),
             )
         if plan.name.startswith("mcp__"):
-            return await self.mcp_client.call_tool(plan.name, dict(plan.args or {}))
-        return {"error": f"Unknown tool: {plan.name}"}
+            return await self.mcp_client.call_tool(
+                plan.name,
+                dict(plan.args or {}),
+                mcp_by_name.get(plan.name),
+            )
+        return {"error": f"Unknown tool: {plan.name}", "error_type": "tool_not_found"}
 
-    def _available_tool_specs(self, intent: dict[str, Any], mcp_specs: list[MCPToolSpec]) -> list[dict[str, Any]]:
-        specs: list[dict[str, Any]] = []
+    def _available_tool_specs(
+        self,
+        intent: dict[str, Any],
+        mcp_specs: list[MCPToolSpec],
+        excluded_names: set[str],
+    ) -> list[dict[str, Any]]:
+        schemas = self._built_in_schemas()
+        descriptions = {
+            "rag_search": "Search the local/global teaching knowledge base.",
+            "web_search": "Search web pages for supplementary teaching materials.",
+            "diagram_tool": "Generate a Mermaid flowchart, timeline, concept map, or comparison diagram.",
+        }
+        allowed_builtins = {"diagram_tool"}
         if intent.get("enable_rag"):
-            specs.append({
-                "name": "rag_search",
-                "description": "Search local/global teaching knowledge base. Uploaded references enrich query but are not the retrieval scope.",
-                "args": {"query": "string", "resource_ids": "list[string]"},
-            })
+            allowed_builtins.add("rag_search")
         if intent.get("enable_web"):
-            specs.append({
-                "name": "web_search",
-                "description": "Search web pages for fresh supplementary teaching materials.",
-                "args": {"query": "string", "max_results": "integer"},
-            })
-        specs.append({
-            "name": "diagram_tool",
-            "description": "Generate Mermaid diagram assets for flowcharts, timelines, concept maps, or comparison diagrams.",
-            "args": {"query": "string"},
-        })
+            allowed_builtins.add("web_search")
+
+        tools = [
+            self._openai_tool(name, descriptions[name], schemas[name])
+            for name in allowed_builtins
+            if name not in excluded_names
+        ]
         for spec in mcp_specs:
-            specs.append({
-                "name": spec.qualified_name,
-                "description": spec.description,
-                "input_schema": spec.input_schema,
-            })
-        return specs
+            if spec.qualified_name in excluded_names:
+                continue
+            schema = spec.input_schema or {"type": "object", "properties": {}}
+            tools.append(self._openai_tool(
+                spec.qualified_name,
+                spec.description or f"Tool {spec.name} from MCP server {spec.server}.",
+                schema,
+            ))
+        return tools
+
+    def _openai_tool(self, name: str, description: str, parameters: dict[str, Any]) -> dict[str, Any]:
+        return {
+            "type": "function",
+            "function": {
+                "name": name,
+                "description": description[:1024],
+                "parameters": parameters,
+            },
+        }
 
     def _dedupe_and_filter(
         self,
@@ -218,23 +261,82 @@ Existing messages:
         allowed.update(mcp_names)
 
         deduped: list[ToolPlan] = []
-        seen: set[str] = set()
+        seen_names: set[str] = set()
         for plan in plans:
-            if plan.name not in allowed:
+            if plan.name not in allowed or plan.name in seen_names:
                 continue
-            key = json.dumps({"name": plan.name, "args": plan.args}, ensure_ascii=False, sort_keys=True, default=str)
-            if key in seen:
-                continue
-            seen.add(key)
+            seen_names.add(plan.name)
             deduped.append(plan)
         return deduped[:6]
 
-    def _trace(self, plan: ToolPlan, result: dict[str, Any]) -> dict[str, Any]:
+    def _validate_plan(self, plan: ToolPlan, mcp_by_name: dict[str, MCPToolSpec]) -> str | None:
+        if plan.name.startswith("mcp__"):
+            spec = mcp_by_name.get(plan.name)
+            if spec is None:
+                return f"MCP tool is not discovered: {plan.name}"
+            schema = spec.input_schema
+        else:
+            schema = self._built_in_schemas().get(plan.name)
+        if not schema:
+            return None
+        try:
+            validate(instance=plan.args, schema=schema)
+            return None
+        except ValidationError as exc:
+            location = ".".join(str(item) for item in exc.absolute_path)
+            prefix = f" at {location}" if location else ""
+            return f"Tool arguments do not match schema{prefix}: {exc.message}"
+        except Exception as exc:
+            return f"Invalid tool schema: {exc}"
+
+    def _built_in_schemas(self) -> dict[str, dict[str, Any]]:
+        return {
+            "rag_search": {
+                "type": "object",
+                "properties": {
+                    "resource_ids": {"type": "array", "items": {"type": "string"}},
+                    "query": {"type": "string", "minLength": 1},
+                    "limit": {"type": "integer", "minimum": 100, "maximum": 50000},
+                },
+                "required": ["query"],
+                "additionalProperties": False,
+            },
+            "web_search": {
+                "type": "object",
+                "properties": {
+                    "query": {"type": "string", "minLength": 1},
+                    "max_results": {"type": "integer", "minimum": 1, "maximum": 10},
+                },
+                "required": ["query"],
+                "additionalProperties": False,
+            },
+            "diagram_tool": {
+                "type": "object",
+                "properties": {
+                    "intent": {"type": "object"},
+                    "query": {"type": "string", "minLength": 1},
+                    "max_nodes": {"type": "integer", "minimum": 2, "maximum": 12},
+                },
+                "required": ["query"],
+                "additionalProperties": False,
+            },
+        }
+
+    def _store_context(self, tool_context: dict[str, Any], plan: ToolPlan, payload: dict[str, Any]) -> None:
+        if plan.name.startswith("mcp__"):
+            tool_context.setdefault("mcp", {})[plan.name] = payload
+            return
+        tool_context[self._context_key(plan.name)] = payload
+
+    def _trace(self, plan: ToolPlan, result: dict[str, Any], latency_ms: float) -> dict[str, Any]:
         trace = {
             "tool": plan.name,
+            "tool_call_id": plan.tool_call_id,
             "source": plan.source,
             "reason": plan.reason,
             "status": "error" if result.get("error") else "success",
+            "latency_ms": latency_ms,
+            "error_type": result.get("error_type"),
         }
         if plan.name == "rag_search":
             trace.update({
@@ -242,35 +344,36 @@ Existing messages:
                 "enriched_query": result.get("enriched_query"),
                 "match_count": len(result.get("matches") or []),
                 "search_scope": result.get("search_scope"),
-                "status": "success" if result.get("context") or result.get("matches") else "empty",
+                "status": "error" if result.get("error") else (
+                    "success" if result.get("context") or result.get("matches") else "empty"
+                ),
             })
         elif plan.name == "web_search":
             trace.update({
                 "query": result.get("query"),
                 "result_count": len(result.get("results") or []),
                 "error": result.get("error"),
-                "status": "error" if result.get("error") else ("success" if result.get("results") else "empty"),
+                "status": "error" if result.get("error") else (
+                    "success" if result.get("results") else "empty"
+                ),
             })
         elif plan.name == "diagram_tool":
             trace.update({
                 "diagram_type": result.get("diagram_type"),
                 "format": result.get("format"),
                 "node_count": len(result.get("nodes") or []),
+                "error": result.get("error"),
             })
         elif plan.name.startswith("mcp__"):
             trace.update({"mcp": True, "error": result.get("error")})
         return trace
 
     def _context_key(self, tool_name: str) -> str:
-        if tool_name == "rag_search":
-            return "rag"
-        if tool_name == "web_search":
-            return "web"
-        if tool_name == "diagram_tool":
-            return "diagram"
-        if tool_name.startswith("mcp__"):
-            return "mcp"
-        return tool_name
+        return {
+            "rag_search": "rag",
+            "web_search": "web",
+            "diagram_tool": "diagram",
+        }.get(tool_name, tool_name)
 
     def _build_query(self, state: dict[str, Any]) -> str:
         intent = state.get("intent") or {}
@@ -287,23 +390,3 @@ Existing messages:
             if content:
                 parts.append(str(content))
         return "\n".join(part for part in parts if part).strip()
-
-    def _extract_json_value(self, raw: str) -> str:
-        text = (raw or "").strip()
-        if "```" in text:
-            parts = text.split("```")
-            for part in parts:
-                candidate = part.strip()
-                if candidate.startswith("json"):
-                    candidate = candidate[4:].strip()
-                if candidate.startswith("[") or candidate.startswith("{"):
-                    return candidate
-        array_start = text.find("[")
-        array_end = text.rfind("]")
-        if array_start >= 0 and array_end > array_start:
-            return text[array_start:array_end + 1]
-        object_start = text.find("{")
-        object_end = text.rfind("}")
-        if object_start >= 0 and object_end > object_start:
-            return text[object_start:object_end + 1]
-        return text
