@@ -10,10 +10,10 @@ from ..llm import LLMClient
 from ..models import IntentRecognizeRequest, OutlineChatStreamRequest, OutlineGenerateRequest
 from ..presentation import PPTGenerator
 from ..presentation.json_utils import extract_json
-from ..tools import diagram_tool, rag_search, should_call_diagram_tool, web_search
 from .message_utils import message_text, messages_to_dicts, normalize_messages
 from .postgres_store import postgres_memory_store
 from .session_store import outline_session_store
+from .tool_node import OutlineToolNode
 
 
 class OutlineChatState(MessagesState, total=False):
@@ -39,13 +39,14 @@ class OutlineChatWorkflow:
     def __init__(self, generator: PPTGenerator | None = None) -> None:
         self.generator = generator or PPTGenerator()
         self.llm = LLMClient()
+        self.tool_node = OutlineToolNode(self.llm)
         self.graph = self._build_graph()
 
     def _build_graph(self):
         graph = StateGraph(OutlineChatState)
         graph.add_node("load_profile", self._load_profile_node)
         graph.add_node("parse_input", self._parse_input_node)
-        graph.add_node("tools", self._tools_node)
+        graph.add_node("tools", self.tool_node)
         graph.add_node("build_prompt", self._build_prompt_node)
         graph.add_node("generate_outline", self._generate_outline_node)
         graph.add_node("reflect", self._reflection_node)
@@ -300,44 +301,6 @@ class OutlineChatWorkflow:
             updates["clarification_question"] = question
             updates["messages"] = [*new_messages, AIMessage(content=question)]
         return updates
-
-    async def _tools_node(self, state: OutlineChatState) -> dict[str, Any]:
-        intent = state["intent"]
-        query = self._build_rag_query(state)
-        tool_context: dict[str, Any] = {}
-        tool_trace: list[dict[str, Any]] = []
-        if intent.get("enable_rag"):
-            result = await rag_search(list(intent.get("resource_ids") or []), query)
-            tool_context["rag"] = result
-            tool_trace.append({
-                "tool": "rag_search",
-                "status": "success" if result.get("context") or result.get("matches") else "empty",
-                "query": result.get("query"),
-                "enriched_query": result.get("enriched_query"),
-                "match_count": len(result.get("matches") or []),
-                "search_scope": result.get("search_scope"),
-            })
-        if intent.get("enable_web"):
-            result = await web_search(query, max_results=5)
-            tool_context["web"] = result
-            tool_trace.append({
-                "tool": "web_search",
-                "status": "error" if result.get("error") else ("success" if result.get("results") else "empty"),
-                "query": result.get("query"),
-                "result_count": len(result.get("results") or []),
-                "error": result.get("error"),
-            })
-        if should_call_diagram_tool(intent, query):
-            result = await diagram_tool(intent, query)
-            tool_context["diagram"] = result
-            tool_trace.append({
-                "tool": "diagram_tool",
-                "status": "success",
-                "diagram_type": result.get("diagram_type"),
-                "format": result.get("format"),
-                "node_count": len(result.get("nodes") or []),
-            })
-        return {"tool_context": tool_context, "tool_trace": tool_trace}
 
     async def _build_prompt_node(self, state: OutlineChatState) -> dict[str, Any]:
         intent = state["intent"]
