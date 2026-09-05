@@ -1569,6 +1569,12 @@ Python requirements were pinned for the outline workflow stack: `langchain-core>
 **路径参数**: `id` — 成果文件ID
 **响应 VO**: `Result<{download_url: String, expires_at: LocalDateTime}>`
 
+## API-56B POST /export-artifacts/{id}/file
+
+**功能**: 生成成果文件的短时下载链接
+**路径参数**: `id` — 成果文件ID
+**响应 VO**: `成果文件字节流`
+
 ---
 
 # 七、社区模块
