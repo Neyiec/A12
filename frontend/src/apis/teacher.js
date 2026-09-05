@@ -207,7 +207,12 @@ export const transcribeAudio = (formData) => apiRequest({ url: '/api/v1/python/a
  * @param {Object} data - API-144 InteractiveModuleGenerateRequest
  * @returns {Promise} 后端返回 { module_id, html, usage_suggestions, metadata, ... }
  */
-export const generateInteractiveModule = (data) => post('/api/v1/python/interactive-modules/generate', data)
+export const generateInteractiveModule = (data) => apiRequest({
+  url: '/api/v1/python/interactive-modules/generate',
+  method: 'post',
+  data,
+  timeout: PYTHON_PPT_REQUEST_TIMEOUT
+})
 
 /**
  * 获取 Python PPT 生成模板列表。

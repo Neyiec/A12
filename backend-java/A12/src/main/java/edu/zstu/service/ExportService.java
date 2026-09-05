@@ -23,5 +23,10 @@ public interface ExportService {
     ExportTaskVO getArtifact(String id);
     Map<String, Object> createPreviewUrl(String id);
     Map<String, Object> createDownloadUrl(String id);
+    ExportFileResult getExportFile(String id);
+
+    /** 成果文件流式下载结果 */
+    record ExportFileResult(String filename, String contentType, byte[] bytes) {
+    }
 }
 

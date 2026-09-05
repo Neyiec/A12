@@ -7,7 +7,14 @@ import edu.zstu.service.ExportService;
 import edu.zstu.utils.Result;
 import edu.zstu.vo.ExportTaskVO;
 import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.http.ContentDisposition;
+import org.springframework.http.HttpHeaders;
+import org.springframework.http.HttpStatus;
+import org.springframework.http.MediaType;
+import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.annotation.*;
+
+import java.nio.charset.StandardCharsets;
 
 /**
  * 成果导出中心 Controller
@@ -172,5 +179,38 @@ public class ExportController {
         try {
             return Result.success(exportService.createDownloadUrl(id));
         } catch (RuntimeException e) { return Result.error(400, e.getMessage()); }
+    }
+
+    /**
+     * API-52A 下载成果文件（流式）
+     *
+     * <p>校验任务归属、文件可用性与过期时间后，从本地导出目录读取成果文件，
+     * 以正确的 Content-Type 和附件文件名流式返回，替代原先无人服务的 /exports 静态路径。</p>
+     *
+     * @param id 成果文件ID（路径参数）
+     * @return 成果文件字节流
+     */
+    @GetMapping("/export-artifacts/{id}/file")
+    public ResponseEntity<byte[]> downloadExportFile(@PathVariable String id) {
+        try {
+            ExportService.ExportFileResult file = exportService.getExportFile(id);
+            return ResponseEntity.ok()
+                    .contentType(MediaType.parseMediaType(file.contentType()))
+                    .header(HttpHeaders.CONTENT_DISPOSITION, ContentDisposition.attachment()
+                            .filename(file.filename(), StandardCharsets.UTF_8)
+                            .build().toString())
+                    .contentLength(file.bytes().length)
+                    .body(file.bytes());
+        } catch (RuntimeException e) {
+            String message = "{\"code\":400,\"message\":\"" + escapeJson(e.getMessage()) + "\",\"data\":null}";
+            return ResponseEntity.status(HttpStatus.BAD_REQUEST)
+                    .contentType(MediaType.APPLICATION_JSON)
+                    .body(message.getBytes(StandardCharsets.UTF_8));
+        }
+    }
+
+    private String escapeJson(String value) {
+        if (value == null) return "";
+        return value.replace("\\", "\\\\").replace("\"", "\\\"");
     }
 }

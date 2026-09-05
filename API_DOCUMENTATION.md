@@ -460,6 +460,48 @@ Python requirements were pinned for the outline workflow stack: `langchain-core>
 
 ---
 
+## API-13S POST /api/v1/ai/sessions/{id}/messages/stream
+
+**功能**: 与 API-13 等价但以 `text/event-stream`（SSE）流式发送会话消息。Java 后台线程把 Python `/api/v1/python/outlines/chat/stream` 的事件原样逐条透传给前端（边生成边回传），不等待整轮生成完成；流结束后 Java 会把本轮用户消息和生成结果一次性落库。适合需要实时展示大纲生成进度的聊天场景。
+
+**响应类型**: `text/event-stream`
+
+**路径参数**: `id` — 会话ID（Java 会话）; 会话必须归属当前登录用户，否则返回错误并关闭流。
+
+**请求体 (JSON)** — 与 API-13 完全一致
+| 字段 | 类型 | 必填 | 说明 |
+|---|---|---|---|
+| `message` | String | 推荐 | 用户本轮自然语言输入 |
+| `messages` | String(JSON/String) | 否 | 兼容旧字段；当 `message` 为空时作为本轮输入 |
+| `resource_ids` | String(JSON) | 否 | 上传参考资料ID列表，例如 `["res_xxx"]`；用于提取格式、语气、案例、内容，并参与构造 RAG 检索 query，不作为向量库检索范围 |
+| `enable_rag` | Boolean | 否 | 是否启用本地知识库 RAG；不传沿用会话默认 |
+| `enable_web` | Boolean | 否 | 是否启用 Python 联网搜索；不传沿用会话默认 |
+| `slide_count` | int | 否 | 期望页数 |
+| `known_context` | String(JSON) | 否 | 已知上下文，例如 `{"title":"光合作用","subject":"生物","grade":"七年级"}` |
+| `title` | String | 否 | 更新会话标题（流结束后随消息一起落库） |
+| `status` | String | 否 | 更新会话状态 |
+| `context_summary` | String | 否 | 前端或 Java 侧摘要 |
+
+**SSE 事件** — Python 事件原样透传，data 保持 Python 原始 JSON 结构；Java 在流结束后追加 `done` 事件：
+| event | data 说明 |
+|---|---|
+| `session` | 返回 `user_id` 和 `session_id`（Python 会话ID），Java 会写入 `python_session_id` |
+| `question` | 信息不足时返回澄清问题，含 `session_id`、`question`、`intent`；前端展示给用户并等待下一轮回复 |
+| `outline_delta` | 单页大纲增量，data 形如 `{"slide": {...}}` 单页大纲对象；前端可逐页追加显示 |
+| `memory` | 长期记忆数据对象 |
+| `reflection` | 大纲生成后的质量反思、问题列表、修正记录、工具调用轨迹 |
+| `final` | 完整大纲结果，含 `outline_id`、`outline`、`slides`、`title` 等；前端可直接据此渲染最终大纲 |
+| `error` | Python 节点异常，data 含 `message` |
+| `done` | **Java 追加**，本轮完成标志：`{"status": "completed"\|"need_clarification"\|"failed", "message": ""}`；随后关闭连接 |
+
+**结束语义**: 流正常结束时 Java 先统一调用与 API-13 共享的落库逻辑（写入 `ai_conversation.messages`、更新 `last_question`、保存 `plan_json` 到大纲任务、记录审计日志），再发送 `done` 事件并关闭连接。若后台处理/透传过程发生异常，Java 只发送一个 `error` 事件（data 含 `message`）后立即关闭连接，不发送 `done`。`SseEmitter` 超时约 620 秒，与后端调用 Python 的 600 秒超时对齐；生成耗时较长时需相应调大前端请求/读取超时，避免中途断开。
+
+**后端接口**: `AIController#sendMessageStream` → `AIService#sendMessageStream`（后台线程 `runOutlineStream`）→ `PythonPptClient#streamOutlineChatStreamed`。原始 JSON 接口 API-13 仍保留，供 `CreationWorkspace.vue` 使用。
+
+> Spring Boot 的 HTTP 响应被上层网关/代理缓存或切分时，SSE 可能被缓冲；如前端迟迟收不到事件，需确认代理未关闭响应流缓冲（`X-Accel-Buffering: no` 等）。本接口需 JWT 认证。
+
+---
+
 ## API-13A POST /api/v1/ai/sessions/{id}/audio-messages
 
 **功能**: 语音输入对话编排接口。前端上传教师语音到 Java，Java 先调用 Python `/api/v1/python/audio/asr` 转写文本，再把转写文本作为本轮 `message` 复用 API-13 的对话生成逻辑。前端不需要自己串联 Python ASR 和大纲对话接口。
@@ -1120,9 +1162,9 @@ Python requirements were pinned for the outline workflow stack: `langchain-core>
 # 五、个人资源库
 
 ## API-36 POST /api/v1/resources/upload-tokens
- 
+
  **功能**: 获取 OSS 签名上传 URL。后端生成唯一 objectKey 并返回签名 PUT URL，前端拿到 URL 后直传阿里云 OSS
- 
+
  **请求体 (JSON)**
  | 字段 | 类型 | 必填 | 说明 |
  |---|---|---|---|
@@ -1130,23 +1172,23 @@ Python requirements were pinned for the outline workflow stack: `langchain-core>
  | `file_type` | String | 否 | 文件类型: `word`/`pdf`/`ppt`/`txt`/`image`/`audio`/`video`（不传则根据扩展名自动检测） |
  | `description` | String | 否 | 文件描述 |
  | `replace_target_id` | Integer | 否 | 要替换的资源ID（替换时后端会清理旧文件并软删除旧记录） |
- 
+
  **后端 DTO**: `UploadTokenDTO { file_name, file_type, description, replace_target_id }`
- 
+
  **响应 VO**: `Result<UploadTokenVO>`
- 
+
  | UploadTokenVO 字段 | 类型 | 说明 |
  |---|---|---|
  | `object_key` | String | OSS 对象键 |
  | `upload_url` | String | 签名 PUT URL（有效期60分钟） |
  | `expires_at` | LocalDateTime | URL 过期时间 |
- 
- ---
- 
+
+---
+
 ## API-37 POST /api/v1/resources/uploaded-files
- 
+
  **功能**: 前端直传 OSS 成功后通知后端确认。后端验证文件已存在于 OSS，创建个人资源记录并存入 MySQL。个人资源默认 `allow_ai=0`，不会立刻进入 Python 向量/索引库；用户后续开启“允许 AI 使用”后，Java 会通知 Python 解析 URL 并保存索引。
- 
+
  **请求体 (JSON)**
  | 字段 | 类型 | 必填 | 说明 |
  |---|---|---|---|
@@ -1156,13 +1198,13 @@ Python requirements were pinned for the outline workflow stack: `langchain-core>
  | `file_type` | String | 否 | 文件类型，不传则根据扩展名自动检测 |
  | `description` | String | 否 | 文件描述 |
  | `replace_target_id` | Integer | 否 | 要替换的资源ID |
- 
+
  **后端 DTO**: `ResourceUploadConfirmDTO { object_key, file_name, file_size, file_type, description, replace_target_id }`
- 
+
  **响应 VO**: `Result<MaterialVO>` — 资源元数据，包含 `ai_index_status / ai_indexed_at / ai_index_error`
- 
- ---
- 
+
+---
+
 ## API-38 GET /api/v1/resources
 
 **Function**: Query current user's resources by keyword, file type, tag, category, access type, AI permission, AI index status and time range.
