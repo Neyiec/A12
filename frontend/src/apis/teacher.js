@@ -102,6 +102,19 @@ export const sendAiSessionMessage = (id, data) =>
   apiRequest({ url: `/api/v1/ai/sessions/${id}/messages`, method: 'post', data, timeout: 620000 })
 
 /**
+ * 发送语音消息到正式 AI 会话接口。
+ * 语音先由网关完成转写，再沿用同一条会话上下文执行意图分流。
+ */
+export const sendAiSessionAudioMessage = (id, formData, options = {}) =>
+  apiRequest({
+    url: `/api/v1/ai/sessions/${id}/audio-messages`,
+    method: 'post',
+    data: formData,
+    timeout: options.timeout || 620000,
+    signal: options.signal,
+  })
+
+/**
  * 流式发送 AI 会话消息（SSE）
  * 走 Java 网关 /api/v1/ai/sessions/{id}/messages/stream，
  * 边生成边回传 session/outline_delta/question/final/error/done 事件。
@@ -126,6 +139,34 @@ export const getAiPlan = (id) => get(`/api/v1/ai/sessions/${id}/plan`)
 export const confirmAiPlan = (id, data) => post(`/api/v1/ai/sessions/${id}/plan-confirmations`, data)
 export const createAiRun = (id) => post(`/api/v1/ai/sessions/${id}/runs`)
 export const getAiRun = (runId) => get(`/api/v1/ai/runs/${runId}`)
+/**
+ * 正式业务意图识别接口（API-13B）。
+ * 工作台的“讨论 / 页面修改 / 生成 / 导出 / 打开项目”分流必须先经过 Java
+ * 业务网关，不能把开发环境的 /api/dev/llm/chat 当作意图接口。
+ */
+export const recognizeIntent = (data, options = {}) => apiRequest({
+  url: '/api/v1/ai/intent/recognize',
+  method: 'post',
+  data,
+  timeout: options.timeout || 45000,
+  signal: options.signal,
+})
+/**
+ * 读取执行任务事件流。使用 fetch 而非 EventSource，便于携带登录令牌和断线续传游标。
+ */
+export function streamAiRunEvents(runId, lastEventId, options = {}) {
+  const userStore = useUserStore()
+  const params = new URLSearchParams()
+  if (lastEventId) params.set('lastEventId', String(lastEventId))
+  const query = params.size ? `?${params.toString()}` : ''
+  return fetch(`${import.meta.env.VITE_API_BASE_URL || ''}/api/v1/ai/runs/${runId}/events${query}`, {
+    headers: {
+      Accept: 'text/event-stream',
+      ...(userStore.token ? { Authorization: `Bearer ${userStore.token}` } : {}),
+    },
+    signal: options.signal,
+  })
+}
 export const reviseProjectWithAi = (id, data) => post(`/api/v1/projects/${id}/ai-revisions`, data)
 
 /**
@@ -154,7 +195,7 @@ export function streamOutlineChat(body) {
  * 普通主对话直连本地开发代理，由代理使用已配置的 DeepSeek/OpenAI-compatible API。
  * 浏览器端不读取或保存大模型 API Key。
  */
-export function streamGeneralChat(body) {
+export function streamGeneralChat(body, options = {}) {
   const userStore = useUserStore()
   return fetch('/api/dev/llm/chat', {
     method: 'POST',
@@ -163,6 +204,7 @@ export function streamGeneralChat(body) {
       ...(userStore.token ? { Authorization: `Bearer ${userStore.token}` } : {}),
     },
     body: JSON.stringify(body),
+    signal: options.signal,
   })
 }
 
@@ -204,6 +246,7 @@ export const transcribeAudio = (formData) => apiRequest({ url: '/api/v1/python/a
 
 /**
  * 生成可独立运行或嵌入课件页面的互动模块。
+ * 真实模型需要输出完整 HTML，不能沿用全局 10 秒请求上限。
  * @param {Object} data - API-144 InteractiveModuleGenerateRequest
  * @returns {Promise} 后端返回 { module_id, html, usage_suggestions, metadata, ... }
  */
@@ -211,7 +254,7 @@ export const generateInteractiveModule = (data) => apiRequest({
   url: '/api/v1/python/interactive-modules/generate',
   method: 'post',
   data,
-  timeout: PYTHON_PPT_REQUEST_TIMEOUT
+  timeout: 600000,
 })
 
 /**
@@ -228,6 +271,23 @@ export const generatePresentation = (data) => apiRequest({
   method: 'post',
   data,
   timeout: PYTHON_PPT_REQUEST_TIMEOUT
+})
+
+/** 生成可在线编辑的结构化教案（API-142）。 */
+export const generateLessonPlan = (data) => apiRequest({
+  url: '/api/v1/python/lesson-plans/generate',
+  method: 'post',
+  data,
+  timeout: PYTHON_PPT_REQUEST_TIMEOUT,
+})
+
+/** 导出当前教案为 DOCX（API-143）。 */
+export const exportLessonPlanDocx = (data) => apiRequest({
+  url: '/api/v1/python/lesson-plans/export/docx',
+  method: 'post',
+  data,
+  responseType: 'blob',
+  timeout: PYTHON_PPT_REQUEST_TIMEOUT,
 })
 
 /**
@@ -252,6 +312,14 @@ export const modifyPresentation = (data) => apiRequest({
   method: 'post',
   data,
   timeout: PYTHON_PPT_REQUEST_TIMEOUT
+})
+
+/** 校验模型返回的单页 HTML 是否可安全加载到工作台 iframe。 */
+export const validatePresentationHtml = (data) => apiRequest({
+  url: '/api/v1/python/presentations/html/validate',
+  method: 'post',
+  data,
+  timeout: 60000,
 })
 
 /**

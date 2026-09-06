@@ -275,6 +275,8 @@ export const projectHandlers = [
     if (body.project_type) project.project_type = body.project_type as 'ppt' | 'word' | 'h5' | 'mixed'
     if (body.status) project.status = body.status as string
     if (body.permissions) project.permissions = body.permissions as string
+    if (body.edit_history !== undefined) project.edit_history = body.edit_history as string
+    if (body.snapshots !== undefined) project.snapshots = body.snapshots as string
     project.current_version += 1
     project.updated_at = now()
 
@@ -398,8 +400,24 @@ export const projectHandlers = [
   // ========== API-30 修改组件 ==========
   http.patch('/api/v1/projects/:id/components/:componentId', async ({ request, params }) => {
     const body = (await request.json()) as Record<string, unknown>
-    const pageId = parseInt(params.componentId as string, 10)
-    const page = mockPages.find((p) => p.id === pageId)
+    const projectId = parseInt(params.id as string, 10)
+    const componentId = String(params.componentId || '')
+    const numericPageId = Number(componentId)
+    let page = Number.isInteger(numericPageId)
+      ? mockPages.find((p) => p.project_id === projectId && p.id === numericPageId)
+      : undefined
+    if (!page) {
+      page = mockPages.find((candidate) => {
+        if (candidate.project_id !== projectId) return false
+        try {
+          const content = JSON.parse(candidate.page_content || '{}') as Record<string, unknown>
+          const elements = content.elements ?? content.components
+          return Array.isArray(elements) && elements.some((element) => String((element as Record<string, unknown>)?.id || (element as Record<string, unknown>)?.component_id || '') === componentId)
+        } catch {
+          return false
+        }
+      })
+    }
     if (!page) return HttpResponse.json(error(404, '页面不存在'), { status: 404 })
 
     if (body.page_order !== undefined) page.page_order = body.page_order as number

@@ -1,6 +1,6 @@
 <script setup>
 import { computed, ref } from 'vue'
-import { ArrowDown, ArrowLeft, Check, CircleCheck, Download, EditPen, Grid, Histogram, MagicStick, Monitor, Picture } from '@element-plus/icons-vue'
+import { Aim, ArrowDown, ArrowLeft, Check, CircleCheck, DataAnalysis, Download, EditPen, FolderOpened, Grid, Headset, Histogram, MagicStick, Picture, SetUp, VideoCamera } from '@element-plus/icons-vue'
 import WorkspaceToolButton from './WorkspaceToolButton.vue'
 
 const props = defineProps({
@@ -11,13 +11,19 @@ const props = defineProps({
   htmlMode: { type: Boolean, default: false },
 })
 
-const emit = defineEmits(['update:modelValue', 'tool-select', 'back', 'preview', 'export', 'generate-interactive'])
+const emit = defineEmits(['update:modelValue', 'tool-select', 'back', 'export', 'generate-interactive', 'lesson-plan', 'project-manage'])
 
 const tools = [
   { id: 'text', label: '文本', icon: EditPen },
   { id: 'image', label: '图片', icon: Picture },
   { id: 'shape', label: '形状', icon: Grid },
   { id: 'chart', label: '图表', icon: Histogram },
+  { id: 'interactive', label: '互动', icon: MagicStick },
+  { id: 'audio', label: '音频', icon: Headset },
+  { id: 'video', label: '视频', icon: VideoCamera },
+  { id: 'table', label: '表格', icon: DataAnalysis },
+  { id: 'h5', label: 'H5', icon: MagicStick },
+  { id: 'subject', label: '学科', icon: Aim || SetUp },
 ]
 const shapeOptions = [
   { shapeKind: 'rectangle', label: '矩形' },
@@ -37,6 +43,10 @@ const activeToolLabel = computed(() => {
 const toolStatus = computed(() => props.htmlMode ? '点击工具直接插入 HTML 元素' : '选择元素后在画布中放置')
 
 const selectTool = (tool) => {
+  if (tool.id === 'interactive') {
+    emit('generate-interactive')
+    return
+  }
   emit('update:modelValue', tool.id)
   emit('tool-select', tool)
 }
@@ -49,9 +59,9 @@ const selectShape = (shapeKind) => {
 }
 
 const goBack = () => emit('back')
-const openPreview = () => emit('preview')
 const exportProject = () => emit('export')
-const openInteractiveGenerator = () => emit('generate-interactive')
+const openLessonPlan = () => emit('lesson-plan')
+const manageProject = () => emit('project-manage')
 </script>
 
 <template>
@@ -109,8 +119,8 @@ const openInteractiveGenerator = () => emit('generate-interactive')
     </div>
 
     <div class="toolbar-actions">
-      <el-button :icon="Monitor" @click="openPreview">预览</el-button>
-      <el-button :icon="MagicStick" @click="openInteractiveGenerator">生成互动</el-button>
+      <el-button :icon="FolderOpened" @click="manageProject">项目</el-button>
+      <el-button :icon="SetUp" @click="openLessonPlan">教案</el-button>
       <el-button type="primary" :icon="Download" @click="exportProject">导出</el-button>
     </div>
   </header>
