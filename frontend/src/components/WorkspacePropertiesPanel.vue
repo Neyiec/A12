@@ -3,28 +3,33 @@ import { computed, ref, watch } from 'vue'
 import { ChatDotRound, Close, CopyDocument, Delete, Plus, RefreshLeft, Upload } from '@element-plus/icons-vue'
 
 const props = defineProps({
-  slide: { type: Object, required: true },
   elements: { type: Array, default: () => [] },
   selectedElement: { type: Object, default: null },
   selectedElementId: { type: [String, Number], default: null },
-  activePanel: { type: String, default: 'style' },
+  pageNumber: { type: Number, default: 1 },
+  page: { type: Object, default: null },
   themes: { type: Array, default: () => [] },
   layouts: { type: Array, default: () => [] },
-  pageNumber: { type: Number, default: 1 },
+  resources: { type: Array, default: () => [] },
+  resourcesLoading: { type: Boolean, default: false },
 })
 
 const emit = defineEmits([
-  'update:activePanel',
   'update-element-style',
   'update-element-position',
   'update-element-content',
   'update-element-field',
   'update-element-data',
-  'update-slide-field',
   'select-element',
   'clear-element',
   'copy-element',
   'delete-element',
+  'update-page-field',
+  'update-page-theme',
+  'update-page-layout',
+  'update-page-background',
+  'clear-page-background',
+  'refresh-resources',
   'copy-slide',
   'remove-slide',
 ])
@@ -45,6 +50,35 @@ const elementTypeLabels = {
 const hasSelectedElement = computed(() => Boolean(props.selectedElement))
 const selectedElementType = computed(() => elementTypeLabels[props.selectedElement?.type] || '页面元素')
 const pageLabel = computed(() => `页面 ${String(props.pageNumber).padStart(2, '0')}`)
+const pageBackground = computed(() => props.page?.background || {})
+const pageBackgroundPreview = computed(() => props.page?.backgroundImage || props.page?.background_image || pageBackground.value.src || '')
+const resourcePickerVisible = ref(false)
+const resourceKeyword = ref('')
+const isImageResource = (resource) => {
+  const type = String(resource?.fileType || resource?.file_type || resource?.mimeType || resource?.mime_type || '').toLowerCase()
+  const name = String(resource?.name || resource?.file_name || '')
+  return type.startsWith('image/') || /\.(?:png|jpe?g|gif|webp|svg|bmp|avif)(?:$|\?)/i.test(name)
+}
+const imageResources = computed(() => props.resources.filter(isImageResource))
+const filteredImageResources = computed(() => {
+  const keyword = resourceKeyword.value.trim().toLowerCase()
+  if (!keyword) return imageResources.value
+  return imageResources.value.filter((resource) => String(resource?.name || '').toLowerCase().includes(keyword))
+})
+const updatePageField = (key, value) => emit('update-page-field', { key, value })
+const updatePageTheme = (themeId) => emit('update-page-theme', themeId)
+const updatePageLayout = (layout) => emit('update-page-layout', layout)
+const openResourcePicker = () => {
+  resourceKeyword.value = ''
+  resourcePickerVisible.value = true
+  if (!props.resources.length) emit('refresh-resources')
+}
+const selectBackgroundResource = (resource) => {
+  emit('update-page-background', { resourceId: resource?.id, resource })
+  resourcePickerVisible.value = false
+}
+const resourceName = (resource) => String(resource?.name || resource?.file_name || `图片素材 ${resource?.id || ''}`).trim()
+const resourcePreview = (resource) => resource?.thumbnail || resource?.previewUrl || resource?.fileUrl || resource?.file_url || resource?.raw?.thumbnail || resource?.raw?.file_url || ''
 const elementList = computed(() => props.elements)
 const styleValue = (key, fallback = '') => props.selectedElement?.style?.[key] ?? fallback
 const positionValue = (key, fallback = 0) => props.selectedElement?.position?.[key] ?? fallback
@@ -57,10 +91,23 @@ const positionLimits = computed(() => {
 })
 const contentValue = computed(() => props.selectedElement?.content || '')
 const currentImageSource = computed(() => props.selectedElement?.type === 'image' ? (props.selectedElement.src || '') : '')
+const currentMediaSource = computed(() => ['audio', 'video'].includes(props.selectedElement?.type)
+  ? (props.selectedElement?.url || props.selectedElement?.src || '')
+  : '')
+const currentH5Html = computed(() => props.selectedElement?.type === 'h5' ? (props.selectedElement?.html || '') : '')
 const chartData = computed(() => Array.isArray(props.selectedElement?.data) ? props.selectedElement.data : [])
+const tableData = computed(() => {
+  if (!Array.isArray(props.selectedElement?.data)) return []
+  return props.selectedElement.data.map((row) => Array.isArray(row) ? row.map((cell) => String(cell ?? '')) : [String(row ?? '')])
+})
+const tableColumnCount = computed(() => Math.max(1, ...tableData.value.map((row) => row.length)))
+const subjectData = computed(() => props.selectedElement?.data && typeof props.selectedElement.data === 'object' && !Array.isArray(props.selectedElement.data) ? props.selectedElement.data : {})
 const imageSourceDraft = ref('')
 const imageSourceError = ref('')
+const mediaSourceDraft = ref('')
+const mediaSourceError = ref('')
 const imageFileInput = ref(null)
+const mediaFileInput = ref(null)
 const elementEditorSection = ref('style')
 const chartImportDraft = ref('')
 const chartImportError = ref('')
@@ -74,24 +121,26 @@ const updatePosition = (key, value) => emit('update-element-position', { key, va
 const updateContent = (value) => emit('update-element-content', value)
 const updateField = (key, value) => emit('update-element-field', { key, value })
 const updateData = (value) => emit('update-element-data', value)
-const updateSlideField = (key, value) => emit('update-slide-field', { key, value })
-const setActivePanel = (panel) => emit('update:activePanel', panel)
 const selectElement = (id) => emit('select-element', id)
 const clearElement = () => emit('clear-element')
 const copyElement = () => { if (props.selectedElement) emit('copy-element', props.selectedElement.id) }
 const deleteElement = () => { if (props.selectedElement) emit('delete-element', props.selectedElement.id) }
 
-watch([() => props.selectedElement?.id, () => props.selectedElement?.src], () => {
+watch([() => props.selectedElement?.id, () => props.selectedElement?.src, () => props.selectedElement?.url], () => {
   const source = props.selectedElement?.src || ''
   imageSourceDraft.value = /^data:image\//i.test(source) ? '' : source
   imageSourceError.value = ''
+  const mediaSource = props.selectedElement?.url || props.selectedElement?.src || ''
+  mediaSourceDraft.value = /^data:(audio|video)\//i.test(mediaSource) ? '' : mediaSource
+  mediaSourceError.value = ''
 }, { immediate: true })
 
 watch(() => props.selectedElement?.id, () => {
   const type = props.selectedElement?.type
-  elementEditorSection.value = ['image', 'chart'].includes(type) ? 'content' : 'style'
+  elementEditorSection.value = ['image', 'chart', 'audio', 'video', 'table', 'h5', 'subject'].includes(type) ? 'content' : 'style'
   chartImportDraft.value = ''
   chartImportError.value = ''
+  mediaSourceError.value = ''
 }, { immediate: true })
 
 const applyImageSource = () => {
@@ -132,6 +181,58 @@ const handleImageFile = (event) => {
   reader.readAsDataURL(file)
   event.target.value = ''
 }
+const openMediaFilePicker = () => mediaFileInput.value?.click()
+const handleMediaFile = (event) => {
+  const file = event.target?.files?.[0]
+  if (!file) return
+
+  const type = props.selectedElement?.type
+  const isAudio = type === 'audio'
+  const mediaKind = isAudio ? '音频' : '视频'
+  const mimePrefix = isAudio ? 'audio/' : 'video/'
+  const acceptedExtensions = isAudio
+    ? ['aac', 'flac', 'm4a', 'mp3', 'ogg', 'wav', 'webm']
+    : ['avi', 'm4v', 'mkv', 'mov', 'mp4', 'ogv', 'webm']
+  const extension = file.name.split('.').pop()?.toLowerCase()
+  const isAcceptedFile = file.type.startsWith(mimePrefix) || (!file.type && acceptedExtensions.includes(extension))
+
+  if (!isAcceptedFile) {
+    mediaSourceError.value = `请选择${mediaKind}文件`
+    event.target.value = ''
+    return
+  }
+
+  const maxSize = isAudio ? 20 * 1024 * 1024 : 50 * 1024 * 1024
+  if (file.size > maxSize) {
+    mediaSourceError.value = `${mediaKind}不能超过 ${isAudio ? '20' : '50'}MB`
+    event.target.value = ''
+    return
+  }
+
+  const reader = new FileReader()
+  reader.onload = () => {
+    mediaSourceDraft.value = ''
+    mediaSourceError.value = ''
+    updateField('url', String(reader.result || ''))
+  }
+  reader.onerror = () => { mediaSourceError.value = `读取${mediaKind}失败，请重新选择` }
+  reader.readAsDataURL(file)
+  event.target.value = ''
+}
+const applyMediaSource = () => {
+  const source = mediaSourceDraft.value.trim()
+  if (source && !/^(https?:\/\/|data:(audio|video)\/|blob:|\/|\.\/|\.\.\/)/i.test(source)) {
+    mediaSourceError.value = '请输入 http(s) 地址或项目内相对路径'
+    return
+  }
+  mediaSourceError.value = ''
+  updateField('url', source)
+}
+const clearMediaSource = () => {
+  mediaSourceDraft.value = ''
+  mediaSourceError.value = ''
+  updateField('url', '')
+}
 const updateChartItem = (index, key, value) => {
   updateData(chartData.value.map((item, itemIndex) => itemIndex === index ? { ...item, [key]: key === 'value' ? Number(value) : value } : { ...item }))
 }
@@ -143,6 +244,30 @@ const removeChartItem = (index) => {
   if (chartData.value.length <= 1) return
   updateData(chartData.value.filter((_, itemIndex) => itemIndex !== index).map((item) => ({ ...item })))
 }
+const updateTableCell = (rowIndex, columnIndex, value) => {
+  const rows = tableData.value.map((row) => [...row])
+  while (rows.length <= rowIndex) rows.push([])
+  while (rows[rowIndex].length <= columnIndex) rows[rowIndex].push('')
+  rows[rowIndex][columnIndex] = String(value ?? '')
+  updateData(rows)
+}
+const addTableRow = () => {
+  if (tableData.value.length >= 12) return
+  updateData([...tableData.value.map((row) => [...row]), Array.from({ length: tableColumnCount.value }, (_, index) => `内容${index + 1}`)])
+}
+const removeTableRow = (index) => {
+  if (tableData.value.length <= 1) return
+  updateData(tableData.value.filter((_, rowIndex) => rowIndex !== index).map((row) => [...row]))
+}
+const addTableColumn = () => {
+  if (tableColumnCount.value >= 8) return
+  updateData(tableData.value.map((row) => [...row, '']))
+}
+const removeTableColumn = () => {
+  if (tableColumnCount.value <= 1) return
+  updateData(tableData.value.map((row) => row.slice(0, -1)))
+}
+const updateSubjectField = (key, value) => updateData({ ...subjectData.value, [key]: value })
 const importChartData = () => {
   const rows = chartImportDraft.value
     .split(/\r?\n/)
@@ -194,7 +319,7 @@ const typeInitials = {
 </script>
 
 <template>
-  <aside class="properties" :class="{ 'has-selected-element': hasSelectedElement, 'is-content-focused': ['image', 'chart'].includes(selectedElement?.type) }" aria-label="页面属性设置">
+  <aside class="properties" :class="{ 'has-selected-element': hasSelectedElement, 'is-content-focused': ['image', 'chart', 'audio', 'video', 'table', 'h5', 'subject'].includes(selectedElement?.type) }" aria-label="页面属性设置">
     <header class="properties-header">
       <div>
         <span class="properties-kicker">{{ hasSelectedElement ? '元素属性' : '页面属性' }}</span>
@@ -319,6 +444,82 @@ const typeInitials = {
           <p class="content-help">每行一项，支持英文逗号、中文逗号或 Tab 分隔；数值范围为 0–100。</p>
         </template>
 
+        <template v-else-if="['audio', 'video'].includes(selectedElement.type)">
+          <div class="media-content-preview">
+            <audio v-if="selectedElement.type === 'audio' && currentMediaSource" :src="currentMediaSource" controls :autoplay="Boolean(selectedElement.autoplay)" />
+            <video v-else-if="selectedElement.type === 'video' && currentMediaSource" :src="currentMediaSource" controls :autoplay="Boolean(selectedElement.autoplay)" />
+            <span v-else>{{ selectedElement.type === 'audio' ? '暂无音频地址' : '暂无视频地址' }}</span>
+          </div>
+          <label>{{ selectedElement.type === 'audio' ? '音频标题' : '视频标题' }}</label>
+          <el-input :model-value="contentValue" maxlength="60" show-word-limit @update:model-value="updateContent" />
+          <label>{{ selectedElement.type === 'audio' ? '音频地址' : '视频地址' }}</label>
+          <el-input v-model="mediaSourceDraft" clearable placeholder="https://… 或 /assets/…" @keyup.enter="applyMediaSource">
+            <template #append><el-button @click="applyMediaSource">应用</el-button></template>
+          </el-input>
+          <p v-if="mediaSourceError" class="content-error" role="alert">{{ mediaSourceError }}</p>
+          <div class="media-source-actions">
+            <el-button :icon="Upload" @click="openMediaFilePicker">选择本地{{ selectedElement.type === 'audio' ? '音频' : '视频' }}</el-button>
+            <el-button text @click="clearMediaSource">清除地址</el-button>
+          </div>
+          <input
+            ref="mediaFileInput"
+            hidden
+            type="file"
+            :accept="selectedElement.type === 'audio' ? 'audio/*' : 'video/*'"
+            @change="handleMediaFile"
+          />
+          <label class="switch-field"><span>自动播放</span><el-switch :model-value="Boolean(selectedElement.autoplay)" @update:model-value="updateField('autoplay', $event)" /></label>
+          <label class="switch-field"><span>显示控制条</span><el-switch :model-value="selectedElement.controls !== false" @update:model-value="updateField('controls', $event)" /></label>
+          <p class="content-help">支持选择本地{{ selectedElement.type === 'audio' ? '音频' : '视频' }}；{{ selectedElement.type === 'audio' ? '音频不超过 20MB' : '视频不超过 50MB' }}。文件会随当前课件数据保存。</p>
+        </template>
+
+        <template v-else-if="selectedElement.type === 'table'">
+          <label>表格标题</label>
+          <el-input :model-value="contentValue" maxlength="60" show-word-limit @update:model-value="updateContent" />
+          <div class="table-editor-heading">
+            <label>表格数据</label>
+            <span>{{ tableData.length }} 行 × {{ tableColumnCount }} 列</span>
+          </div>
+          <div v-if="tableData.length" class="table-data-editor">
+            <div v-for="(row, rowIndex) in tableData" :key="`table-row-${rowIndex}`" class="table-data-row">
+              <el-input v-for="columnIndex in tableColumnCount" :key="`table-cell-${rowIndex}-${columnIndex}`" :model-value="row[columnIndex - 1] || ''" :aria-label="`第 ${rowIndex + 1} 行第 ${columnIndex} 列`" placeholder="单元格" @update:model-value="updateTableCell(rowIndex, columnIndex - 1, $event)" />
+              <el-button text circle :icon="Close" :disabled="tableData.length <= 1" :aria-label="`删除第 ${rowIndex + 1} 行`" @click="removeTableRow(rowIndex)" />
+            </div>
+          </div>
+          <el-empty v-else :image-size="40" description="暂无表格数据" />
+          <div class="table-editor-actions">
+            <el-button :icon="Plus" @click="addTableRow">添加行</el-button>
+            <el-button @click="addTableColumn">添加列</el-button>
+            <el-button text type="danger" :disabled="tableColumnCount <= 1" @click="removeTableColumn">删除末列</el-button>
+          </div>
+          <el-button class="initialize-table" @click="updateData([['列 1', '列 2'], ['内容 1', '内容 2']])">重置为两列表格</el-button>
+          <p class="content-help">每一行对应一条记录，输入框会即时同步到页面数据。</p>
+        </template>
+
+        <template v-else-if="selectedElement.type === 'h5'">
+          <label>H5 标题</label>
+          <el-input :model-value="contentValue" maxlength="80" show-word-limit @update:model-value="updateContent" />
+          <label>H5 HTML 内容</label>
+          <el-input :model-value="currentH5Html" type="textarea" :rows="8" maxlength="12000" show-word-limit placeholder="粘贴或编辑可嵌入的 HTML5 内容" @update:model-value="updateField('html', $event)" />
+          <label>模块 ID</label>
+          <el-input :model-value="selectedElement.moduleId || selectedElement.module_id || ''" maxlength="80" placeholder="可选，用于关联互动模块" @update:model-value="updateField('moduleId', $event)" />
+          <label>嵌入方式</label>
+          <el-select :model-value="selectedElement.embedMode || selectedElement.embed_mode || 'standalone'" @update:model-value="updateField('embedMode', $event)"><el-option label="独立运行" value="standalone" /><el-option label="嵌入页面" value="slide_fragment" /></el-select>
+          <p class="content-help">可编辑标题、HTML、模块关联和嵌入方式；已有互动模块仍可从画布按钮预览。</p>
+        </template>
+
+        <template v-else-if="selectedElement.type === 'subject'">
+          <label>学科工具名称</label>
+          <el-input :model-value="contentValue" maxlength="80" show-word-limit @update:model-value="updateContent" />
+          <label>工具类型</label>
+          <el-select :model-value="selectedElement.subjectType || selectedElement.subject_type || 'geometry'" @update:model-value="updateField('subjectType', $event)"><el-option label="几何绘图" value="geometry" /><el-option label="物理实验" value="physics" /><el-option label="化学结构" value="chemistry" /><el-option label="数据分析" value="data" /><el-option label="通用学科工具" value="general" /></el-select>
+          <label>工具说明</label>
+          <el-input :model-value="subjectData.description || subjectData.instruction || ''" type="textarea" :rows="4" maxlength="240" show-word-limit placeholder="描述工具要帮助学生观察或完成什么" @update:model-value="updateSubjectField('description', $event)" />
+          <label>初始参数</label>
+          <el-input :model-value="subjectData.parameters || subjectData.initial_state || ''" maxlength="240" placeholder="例如：a=3,b=4" @update:model-value="updateSubjectField('parameters', $event)" />
+          <p class="content-help">学科工具的类型、说明和初始参数会保存到组件数据，便于后续重新生成或导出。</p>
+        </template>
+
         <template v-else>
           <label>{{ ['text', 'formula'].includes(selectedElement.type) ? (selectedElement.type === 'formula' ? '公式内容' : '文本内容') : '元素说明' }}</label>
           <el-input
@@ -440,36 +641,123 @@ const typeInitials = {
     </template>
 
     <template v-else>
-      <div class="tabs">
-        <button :class="{ active: activePanel === 'content' }" @click="setActivePanel('content')">内容</button>
-        <button :class="{ active: activePanel === 'style' }" @click="setActivePanel('style')">样式</button>
-        <button :class="{ active: activePanel === 'layout' }" @click="setActivePanel('layout')">布局</button>
-      </div>
-
-      <section v-if="activePanel === 'content'">
+      <section class="page-settings-section">
+        <div class="panel-section-heading">
+          <strong>页面信息</strong>
+          <span>保存到当前页面</span>
+        </div>
         <label>页面标题</label>
-        <el-input :model-value="slide.title" maxlength="20" show-word-limit @update:model-value="updateSlideField('title', $event)" />
-        <label>引导文案</label>
-        <el-input :model-value="slide.description" type="textarea" :rows="4" maxlength="70" show-word-limit @update:model-value="updateSlideField('description', $event)" />
+        <el-input
+          :model-value="page?.title || ''"
+          maxlength="80"
+          show-word-limit
+          placeholder="输入页面标题"
+          @update:model-value="updatePageField('title', $event)"
+        />
+        <label>页面类型</label>
+        <el-select :model-value="page?.pageType || page?.page_type || 'content'" @update:model-value="updatePageField('pageType', $event)">
+          <el-option label="封面页" value="cover" />
+          <el-option label="目录页" value="toc" />
+          <el-option label="内容页" value="content" />
+          <el-option label="总结页" value="summary" />
+        </el-select>
+        <label>讲稿与页面备注</label>
+        <el-input
+          :model-value="page?.notes || ''"
+          type="textarea"
+          :rows="4"
+          maxlength="1200"
+          show-word-limit
+          placeholder="补充讲解提示、课堂活动或页面备注"
+          @update:model-value="updatePageField('notes', $event)"
+        />
       </section>
 
-      <section v-else-if="activePanel === 'style'">
+      <section class="page-settings-section">
+        <div class="panel-section-heading">
+          <strong>页面外观</strong>
+          <span>即时预览</span>
+        </div>
         <label>主题色</label>
-        <div class="theme-picker"><button v-for="item in themes" :key="item.id" :class="{ selected: slide.theme === item.id }" :style="{ background: item.color }" :title="item.name" @click="updateSlideField('theme', item.id)"></button></div>
-      </section>
-
-      <section v-else-if="activePanel === 'layout'">
+        <div class="theme-picker" role="listbox" aria-label="选择页面主题">
+          <button
+            v-for="theme in themes"
+            :key="theme.id"
+            type="button"
+            class="theme-picker-item"
+            :class="{ active: (page?.theme || 'blue') === theme.id }"
+            :aria-label="theme.name"
+            :aria-selected="(page?.theme || 'blue') === theme.id"
+            @click="updatePageTheme(theme.id)"
+          >
+            <span class="theme-picker-dot" :style="{ backgroundColor: theme.color }" />
+            <span>{{ theme.name }}</span>
+          </button>
+        </div>
         <label>页面布局</label>
-        <div class="layout-picker"><button v-for="item in layouts" :key="item" :class="{ active: slide.layout === item }" @click="updateSlideField('layout', item)"><i></i><i></i><span>{{ item }}</span></button></div>
+        <el-select :model-value="page?.layout || ''" placeholder="选择页面布局" clearable @update:model-value="updatePageLayout">
+          <el-option v-for="layout in layouts" :key="layout" :label="layout" :value="layout" />
+        </el-select>
+        <label>背景色</label>
+        <div class="color-field page-background-color-field">
+          <el-color-picker :model-value="page?.backgroundColor || page?.background_color || '#f9fbff'" @update:model-value="updatePageField('backgroundColor', $event)" />
+          <span>{{ page?.backgroundColor || page?.background_color || '#f9fbff' }}</span>
+        </div>
+        <label>背景图</label>
+        <div v-if="pageBackgroundPreview" class="page-background-card">
+          <img :src="pageBackgroundPreview" alt="当前页面背景图" />
+          <div class="page-background-copy">
+            <strong>{{ pageBackground.name || '已绑定个人资源' }}</strong>
+            <small>来自个人资源库</small>
+          </div>
+          <el-button text type="danger" size="small" @click="emit('clear-page-background')">清除</el-button>
+        </div>
+        <el-button class="resource-picker-trigger" :loading="resourcesLoading" @click="openResourcePicker">
+          {{ pageBackgroundPreview ? '更换资源库背景图' : '从个人资源库选择背景图' }}
+        </el-button>
+        <p class="content-help">背景资源会随页面绑定，后续重新生成或编辑时仍可作为上下文使用。</p>
       </section>
 
+      <section class="selection-empty-state">
+        <el-icon><ChatDotRound /></el-icon>
+        <div>
+          <strong>选择元素开始编辑</strong>
+          <p>点击画布中的元素，或从上方列表选择元素，即可修改其内容、样式和布局。</p>
+        </div>
+      </section>
       <section class="page-actions">
         <label>页面操作</label>
         <el-button :icon="CopyDocument" @click="emit('copy-slide')">复制页面</el-button>
         <el-button :icon="Delete" @click="emit('remove-slide')">删除页面</el-button>
       </section>
 
-      <div class="assistant-tip"><el-icon><ChatDotRound /></el-icon><p>点击画布中的元素，或从上方元素列表选择元素，即可打开对应的属性设置。</p></div>
+      <el-dialog v-model="resourcePickerVisible" title="从个人资源库选择背景图" width="520px" append-to-body>
+        <div class="resource-picker-toolbar">
+          <el-input v-model="resourceKeyword" clearable placeholder="搜索图片名称" />
+          <el-button text @click="emit('refresh-resources')">刷新</el-button>
+        </div>
+        <div v-if="resourcesLoading" class="resource-picker-loading">正在读取个人资源库…</div>
+        <div v-else-if="filteredImageResources.length" class="resource-picker-list">
+          <button
+            v-for="resource in filteredImageResources"
+            :key="resource.id"
+            type="button"
+            class="resource-picker-item"
+            @click="selectBackgroundResource(resource)"
+          >
+            <span class="resource-picker-thumbnail">
+              <img v-if="resourcePreview(resource)" :src="resourcePreview(resource)" :alt="resourceName(resource)" />
+              <span v-else>IMG</span>
+            </span>
+            <span class="resource-picker-copy">
+              <strong>{{ resourceName(resource) }}</strong>
+              <small>{{ resource.fileType || resource.file_type || '图片资源' }}</small>
+            </span>
+            <span class="resource-picker-select">使用</span>
+          </button>
+        </div>
+        <el-empty v-else :image-size="54" description="个人资源库中暂无图片，可先上传一张图片" />
+      </el-dialog>
     </template>
   </aside>
 </template>
@@ -520,6 +808,11 @@ const typeInitials = {
 .image-content-preview { position: relative; display: grid; place-items: center; aspect-ratio: 16 / 9; margin-bottom: 14px; overflow: hidden; border: 1px solid var(--zh-line-border); border-radius: var(--zh-radius8); color: var(--zh-text-caption); background: var(--zh-background-light); font-size: 10px; }
 .image-content-preview img { display: block; width: 100%; height: 100%; object-fit: cover; }
 .image-content-preview::after { position: absolute; inset: 0; border: 1px solid rgb(255 255 255 / 55%); border-radius: inherit; content: ''; pointer-events: none; }
+.media-content-preview { display: grid; place-items: center; min-height: 70px; margin-bottom: 14px; padding: 10px; overflow: hidden; border: 1px solid var(--zh-line-border); border-radius: var(--zh-radius8); background: var(--zh-background-light); }
+.media-content-preview audio, .media-content-preview video { width: 100%; max-height: 150px; }
+.media-content-preview span { color: var(--zh-text-caption); font-size: 11px; }
+.media-source-actions { display: grid; grid-template-columns: 1fr auto; align-items: center; gap: 6px; margin-top: 10px; }
+.media-source-actions :deep(.el-button) { margin: 0; }
 .image-source-actions { display: grid; grid-template-columns: 1fr auto; align-items: center; gap: 6px; margin-top: 10px; }
 .image-source-actions :deep(.el-button) { margin: 0; }
 .properties label.switch-field { display: flex; align-items: center; justify-content: space-between; gap: 12px; }
@@ -538,6 +831,15 @@ const typeInitials = {
 .chart-data-row :deep(.el-input-number .el-input__wrapper) { padding-right: 28px; padding-left: 7px; }
 .add-chart-item { width: 100%; margin-top: 10px; margin-left: 0; border-style: dashed; }
 .import-chart-data { width: 100%; margin-top: 8px; margin-left: 0; }
+.table-editor-heading { display: flex; align-items: baseline; justify-content: space-between; gap: 8px; margin-top: 16px; }
+.table-editor-heading label { margin: 0; }
+.table-editor-heading span { color: var(--zh-text-caption); font-size: 9px; }
+.table-data-editor { display: grid; gap: 7px; margin-top: 8px; overflow-x: auto; }
+.table-data-row { display: grid; grid-template-columns: repeat(auto-fit, minmax(70px, 1fr)) 28px; align-items: center; gap: 5px; min-width: 300px; }
+.table-data-row :deep(.el-button) { width: 28px; height: 28px; margin: 0; color: var(--zh-text-caption); }
+.table-editor-actions { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 10px; }
+.table-editor-actions :deep(.el-button), .initialize-table { margin: 0; }
+.initialize-table { width: 100%; margin-top: 8px; border-style: dashed; }
 .properties label { display: block; margin: 0 0 9px; color: var(--zh-text-secondary); font-size: 11px; font-weight: 600; }
 .properties label:not(:first-child) { margin-top: 16px; }
 .properties :deep(.el-input), .properties :deep(.el-input-number), .properties :deep(.el-select) { width: 100%; }
@@ -551,20 +853,38 @@ const typeInitials = {
 .properties :deep(.el-radio-button__inner) { display: flex; align-items: center; justify-content: center; box-sizing: border-box; width: 100%; height: 38px; padding: 8px 4px; font-size: 10px; line-height: 1.2; }
 .slider-value { display: flex; justify-content: space-between; color: var(--zh-text-caption); font-size: 10px; }
 .slider-value strong { color: var(--zh-text-theme); font: 700 11px var(--zh-font-number); }
-.element-hint, .assistant-tip { display: flex; gap: 8px; margin: 16px; padding: 12px; border-radius: var(--zh-radius8); background: var(--zh-background-weaken); }
-.element-hint .el-icon, .assistant-tip .el-icon { flex: none; color: var(--zh-text-theme); }
-.element-hint p, .assistant-tip p, .hint { margin: 0; color: var(--zh-text-secondary); font-size: 10px; line-height: 1.6; }
-.tabs { display: grid; grid-template-columns: repeat(3, 1fr); padding: 10px 14px 0; border-bottom: 1px solid var(--zh-line-parting); }
-.tabs button { padding: 8px; border: 0; border-bottom: 2px solid transparent; color: var(--zh-text-caption); background: transparent; cursor: pointer; }
-.tabs button.active { border-color: var(--zh-line-theme); color: var(--zh-text-theme); }
-.theme-picker { display: flex; gap: 12px; }
-.theme-picker button { width: 24px; height: 24px; border: 2px solid var(--zh-background-primary); border-radius: 50%; box-shadow: 0 0 0 1px var(--zh-line-border); cursor: pointer; }
-.theme-picker button.selected { outline: 2px solid var(--zh-text-theme); outline-offset: 2px; }
-.layout-picker { display: grid; grid-template-columns: repeat(3, 1fr); gap: 8px; }
-.layout-picker button { display: grid; grid-template-rows: 26px auto; gap: 4px; min-height: 66px; padding: 7px 4px; border: 1px solid var(--zh-line-border); border-radius: 6px; color: var(--zh-text-caption); background: var(--zh-background-light); font-size: 9px; cursor: pointer; }
-.layout-picker button.active { border-color: var(--zh-line-theme); color: var(--zh-text-theme); background: var(--zh-background-weaken); }
-.layout-picker i { display: block; width: 70%; height: 4px; margin: auto; background: var(--zh-line-theme50); }
-.layout-picker i:nth-child(2) { width: 48%; }
+.element-hint { display: flex; gap: 8px; margin: 16px; padding: 12px; border-radius: var(--zh-radius8); background: var(--zh-background-weaken); }
+.element-hint .el-icon { flex: none; color: var(--zh-text-theme); }
+.element-hint p, .hint { margin: 0; color: var(--zh-text-secondary); font-size: 10px; line-height: 1.6; }
+.selection-empty-state { display: flex; gap: 10px; margin: 16px; padding: 14px; border: 1px dashed var(--zh-line-border); border-radius: var(--zh-radius8); color: var(--zh-text-secondary); background: var(--zh-background-light); }
+.selection-empty-state .el-icon { flex: none; margin-top: 1px; color: var(--zh-text-theme); }
+.selection-empty-state strong { display: block; margin-bottom: 4px; color: var(--zh-text-primary); font-size: 12px; }
+.selection-empty-state p { margin: 0; font-size: 10px; line-height: 1.6; }
+.page-settings-section { padding-top: 14px !important; }
+.page-settings-section label:not(:first-child) { margin-top: 15px; }
+.theme-picker { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 7px; }
+.theme-picker-item { display: flex; align-items: center; gap: 7px; min-width: 0; padding: 8px; border: 1px solid var(--zh-line-border); border-radius: var(--zh-radius8); color: var(--zh-text-secondary); background: var(--zh-background-light); font-size: 10px; cursor: pointer; }
+.theme-picker-item:hover, .theme-picker-item.active { border-color: var(--zh-line-theme); color: var(--zh-text-theme); background: var(--zh-background-weaken); }
+.theme-picker-dot { flex: none; width: 14px; height: 14px; border-radius: 50%; box-shadow: inset 0 0 0 2px rgb(255 255 255 / 70%); }
+.page-background-card { display: grid; grid-template-columns: 54px minmax(0, 1fr) auto; align-items: center; gap: 8px; margin-bottom: 8px; padding: 6px; border: 1px solid var(--zh-line-border); border-radius: var(--zh-radius8); background: var(--zh-background-light); }
+.page-background-card img { display: block; width: 54px; height: 38px; border-radius: 5px; object-fit: cover; }
+.page-background-copy { display: grid; min-width: 0; gap: 3px; }
+.page-background-copy strong, .page-background-copy small { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.page-background-copy strong { color: var(--zh-text-primary); font-size: 10px; }
+.page-background-copy small { color: var(--zh-text-caption); font-size: 9px; }
+.resource-picker-trigger { width: 100%; margin: 0; border-style: dashed; }
+.resource-picker-toolbar { display: grid; grid-template-columns: minmax(0, 1fr) auto; align-items: center; gap: 8px; margin-bottom: 12px; }
+.resource-picker-list { display: grid; gap: 7px; max-height: 420px; overflow: auto; }
+.resource-picker-item { display: grid; grid-template-columns: 48px minmax(0, 1fr) auto; align-items: center; gap: 9px; width: 100%; padding: 7px; border: 1px solid var(--zh-line-border); border-radius: var(--zh-radius8); color: var(--zh-text-secondary); background: var(--zh-background-light); text-align: left; cursor: pointer; }
+.resource-picker-item:hover { border-color: var(--zh-line-theme); background: var(--zh-background-weaken); }
+.resource-picker-thumbnail { display: grid; place-items: center; width: 48px; height: 36px; overflow: hidden; border-radius: 5px; color: var(--zh-text-theme); background: var(--zh-line-theme20); font: 700 9px var(--zh-font-number); }
+.resource-picker-thumbnail img { display: block; width: 100%; height: 100%; object-fit: cover; }
+.resource-picker-copy { display: grid; min-width: 0; gap: 3px; }
+.resource-picker-copy strong, .resource-picker-copy small { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.resource-picker-copy strong { color: var(--zh-text-primary); font-size: 11px; }
+.resource-picker-copy small { color: var(--zh-text-caption); font-size: 9px; }
+.resource-picker-select { color: var(--zh-text-theme); font-size: 10px; font-weight: 700; }
+.resource-picker-loading { padding: 42px 0; color: var(--zh-text-caption); text-align: center; font-size: 11px; }
 .page-actions { display: grid; gap: 8px; }
 .page-actions :deep(.el-button) { justify-content: flex-start; margin: 0; }
 </style>

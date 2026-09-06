@@ -13,8 +13,6 @@ const commonStyles = `
   body{font-family:"Microsoft YaHei","PingFang SC","Segoe UI",sans-serif;color:var(--ink);background:var(--paper)}
   .slide{position:relative;width:1280px;height:720px;padding:58px 68px;overflow:hidden;background:var(--paper)}
   .slide.dark{--ink:#f5f7ff;--muted:#b9c6e5;--line:rgba(255,255,255,.18);--soft:rgba(255,255,255,.08);--paper:#101936;color:var(--ink);background:#101936}
-  .slide:before{content:"";position:absolute;top:-210px;right:-150px;width:510px;height:510px;border-radius:50%;background:color-mix(in srgb,var(--accent) 13%,transparent);pointer-events:none}
-  .slide.dark:before{background:color-mix(in srgb,var(--accent) 32%,transparent)}
   .eyebrow{position:relative;z-index:1;margin:0 0 24px;color:var(--accent);font-size:16px;font-weight:700;letter-spacing:.12em}
   h1,h2,h3,p{position:relative;z-index:1}
   h1{margin:0;font-size:46px;line-height:1.18;letter-spacing:-.04em}

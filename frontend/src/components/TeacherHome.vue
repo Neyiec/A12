@@ -10,6 +10,7 @@ import { ElMessage, ElMessageBox } from 'element-plus'
 import {
   Collection,
   Document,
+  EditPen,
   MagicStick,
   Microphone,
   Monitor,
@@ -62,13 +63,15 @@ const viewMode = ref('welcome') // 'welcome' | 'chat'
 const chatSessionId = ref(null)
 const chatPrompt = ref('')
 const chatResourceIds = ref([])
+/** 从欢迎页/聊天页一路带到工作台的资料、上传文件和社区内容上下文。 */
+const chatWorkspaceContext = ref({ resourceIds: [], resource_ids: [], uploadedResources: [], uploaded_resources: [], community: null })
+const pendingUploadedResources = ref([])
 /** 普通对话切换到备课流时，保留切换前的消息用于页面续接和首次模型上下文。 */
 const chatContinuationHistory = ref([])
 /** 欢迎页输入的会话类型：普通对话不进入备课补充信息流程。 */
 const chatMode = ref('planning') // 'planning' | 'general'
 /** 是否以"恢复历史"方式打开会话（由侧栏历史对话触发，ChatView 据此拉取消息回显） */
 const chatResume = ref(false)
-const isDevelopment = import.meta.env.DEV
 
 const filteredAvailableResources = computed(() => {
   const query = resourceSearch.value.trim().toLowerCase()
@@ -84,16 +87,32 @@ const voiceStatusText = computed(() => {
 
 const openProject = (project) => router.push({
   path: '/main/workspace',
-  query: { ...(route.query.preview ? { preview: '1' } : {}), projectId: project.id },
+  query: { projectId: project.id },
 })
-const openPresentationFixture = () => router.push({
+const openNewWorkspace = () => router.push({
   path: '/main/workspace',
-  query: {
-    ...(route.query.preview ? { preview: '1' } : {}),
-    pptFixture: '1',
-    templateTitle: '光合作用 · 固定测试样例',
-  },
+  query: route.query.preview ? { preview: '1' } : {},
 })
+
+const normalizeResourceIds = (resourceIds = []) => [...new Set(
+  (Array.isArray(resourceIds) ? resourceIds : [resourceIds])
+    .map((item) => String(item ?? '').trim())
+    .filter(Boolean),
+)]
+const normalizeWorkspaceContext = (context = {}, resourceIds = []) => {
+  const ids = normalizeResourceIds(resourceIds.length ? resourceIds : (context.resourceIds || context.resource_ids || []))
+  const uploaded = Array.isArray(context.uploadedResources)
+    ? context.uploadedResources
+    : Array.isArray(context.uploaded_resources) ? context.uploaded_resources : []
+  return {
+    ...context,
+    resourceIds: ids,
+    resource_ids: ids,
+    uploadedResources: uploaded.slice(0, 30),
+    uploaded_resources: uploaded.slice(0, 30),
+    community: context.community || null,
+  }
+}
 
 const loadProjects = async () => {
   projectsLoading.value = true
@@ -222,10 +241,14 @@ const handleVoiceRecordingStop = async () => {
  * 不因为 Java 接口的必填字段而偷偷替教师做出学科/年级判断；若从普通对话切换，
  * 同时把切换前的历史交给 ChatView 做回显和首次请求上下文注入。
  */
-const startPlanningSession = async (text, resourceIds = [], history = null) => {
+const startPlanningSession = async (text, resourceIds = [], history = null, workspaceContext = {}) => {
   const previousMode = chatMode.value
   const normalizedText = String(text || '').trim()
-  const normalizedResourceIds = Array.isArray(resourceIds) ? [...resourceIds] : []
+  const normalizedResourceIds = normalizeResourceIds(resourceIds)
+  const normalizedWorkspaceContext = normalizeWorkspaceContext({
+    ...workspaceContext,
+    uploadedResources: workspaceContext.uploadedResources || workspaceContext.uploaded_resources || pendingUploadedResources.value,
+  }, normalizedResourceIds)
   const normalizedPreviousHistory = Array.isArray(history)
     ? history
       .filter((item) => item && (item.role === 'user' || item.role === 'assistant') && String(item.content || '').trim())
@@ -256,6 +279,7 @@ const startPlanningSession = async (text, resourceIds = [], history = null) => {
     chatSessionId.value = sessionId
     chatPrompt.value = normalizedText
     chatResourceIds.value = normalizedResourceIds
+    chatWorkspaceContext.value = normalizedWorkspaceContext
     chatContinuationHistory.value = normalizedPreviousHistory
     chatMode.value = 'planning'
     chatResume.value = false
@@ -281,6 +305,11 @@ const sendPrompt = async () => {
     chatSessionId.value = `local-chat-${Date.now()}`
     chatPrompt.value = text
     chatResourceIds.value = [...selectedResourceIds.value]
+    // 普通对话后续也可以切换到生成工作台；提前保留资料/上传文件上下文，
+    // 避免只有备课流能把资源带进工作台。
+    chatWorkspaceContext.value = normalizeWorkspaceContext({
+      uploadedResources: pendingUploadedResources.value,
+    }, selectedResourceIds.value)
     chatContinuationHistory.value = []
     chatResume.value = false
     viewMode.value = 'chat'
@@ -291,7 +320,9 @@ const sendPrompt = async () => {
 
   prompt.value = ''
   activeSuggestionId.value = null
-  await startPlanningSession(text, [...selectedResourceIds.value], [])
+  await startPlanningSession(text, [...selectedResourceIds.value], [], normalizeWorkspaceContext({
+    uploadedResources: pendingUploadedResources.value,
+  }, selectedResourceIds.value))
 }
 
 /** 欢迎页快捷键：Enter 发送，Shift+Enter 保留换行；中文输入法确认候选词时不抢占 Enter。 */
@@ -308,8 +339,11 @@ const handlePlanningRequest = async (payload) => {
   const resourceIds = typeof payload === 'object' && Array.isArray(payload?.resourceIds)
     ? payload.resourceIds
     : chatResourceIds.value
+  const workspaceContext = typeof payload === 'object' && payload?.workspaceContext
+    ? payload.workspaceContext
+    : chatWorkspaceContext.value
   if (!String(text || '').trim()) return
-  await startPlanningSession(text, resourceIds, history)
+  await startPlanningSession(text, resourceIds, history, workspaceContext)
 }
 
 /** 关闭聊天视图，返回欢迎页 */
@@ -318,6 +352,8 @@ const closeChatView = () => {
   chatSessionId.value = null
   chatPrompt.value = ''
   chatResourceIds.value = []
+  chatWorkspaceContext.value = { resourceIds: [], resource_ids: [], uploadedResources: [], uploaded_resources: [], community: null }
+  pendingUploadedResources.value = []
   chatContinuationHistory.value = []
   chatMode.value = 'planning'
   chatResume.value = false
@@ -346,6 +382,7 @@ watch(openChatSession, (target) => {
   chatSessionId.value = target.id
   chatPrompt.value = target.title || ''
   chatResourceIds.value = []
+  chatWorkspaceContext.value = { resourceIds: [], resource_ids: [], uploadedResources: [], uploaded_resources: [], community: null }
   chatContinuationHistory.value = []
   chatResume.value = true
   viewMode.value = 'chat'
@@ -357,14 +394,20 @@ const openWorkspaceFromChat = (payload) => {
   const projectId = payload && typeof payload === 'object' ? payload.projectId : payload
   const pptTheme = payload && typeof payload === 'object' ? payload.pptTheme : ''
   const generationKey = payload && typeof payload === 'object' ? payload.generationKey : ''
+  const resourceIds = normalizeResourceIds(payload && typeof payload === 'object' ? payload.resourceIds : chatResourceIds.value)
+  const workspaceContext = normalizeWorkspaceContext(
+    payload && typeof payload === 'object' ? (payload.workspaceContext || {}) : chatWorkspaceContext.value,
+    resourceIds,
+  )
   router.push({
     path: '/main/workspace',
     query: {
-      ...(route.query.preview ? { preview: '1' } : {}),
       sessionId: chatSessionId.value,
       ...(projectId ? { projectId } : {}),
       ...(pptTheme ? { pptTheme } : {}),
       ...(generationKey ? { pptGeneration: generationKey } : {}),
+      resourceIds: JSON.stringify(resourceIds),
+      workspaceContext: JSON.stringify(workspaceContext),
     },
   })
 }
@@ -405,7 +448,11 @@ const openKnowledgeDialog = async () => {
 }
 const triggerResourceUpload = () => resourceFileInput.value?.click()
 const uploadLocalFiles = async (rawFiles) => {
-  const supportedExtensions = ['pdf', 'doc', 'docx', 'ppt', 'pptx', 'txt', 'md']
+  const supportedExtensions = [
+    'pdf', 'doc', 'docx', 'ppt', 'pptx', 'txt', 'md',
+    'jpg', 'jpeg', 'png', 'gif', 'webp', 'svg',
+    'mp3', 'wav', 'm4a', 'ogg', 'mp4', 'avi', 'mov', 'mkv', 'webm',
+  ]
   const files = Array.from(rawFiles || []).filter((file) => supportedExtensions.includes(file.name.split('.').pop()?.toLowerCase()))
   if (!files.length) return
   resourceUploading.value = true; resourceUploadProgress.value = 0
@@ -415,6 +462,19 @@ const uploadLocalFiles = async (rawFiles) => {
       const resource = await uploadResource(file, (progress) => { resourceUploadProgress.value = Math.round(((index + progress / 100) / files.length) * 100) })
       const resourceId = resource?.id || resource?.resource_id
       if (resourceId && !selectedResourceIds.value.includes(resourceId)) selectedResourceIds.value.push(resourceId)
+      if (resourceId) {
+        pendingUploadedResources.value = [
+          ...pendingUploadedResources.value.filter((item) => String(item.resource_id || item.id) !== String(resourceId)),
+          {
+            resource_id: String(resourceId),
+            id: String(resourceId),
+            file_name: file.name,
+            file_type: file.type || file.name.split('.').pop()?.toLowerCase() || '',
+            file_size: file.size,
+            source: 'teacher_upload',
+          },
+        ]
+      }
       uploadedResourceNames.value.push(file.name)
     }
     ElMessage.success(`${files.length} 份资料已上传并引用`)
@@ -472,6 +532,9 @@ onMounted(loadProjects)
       <p class="eyebrow">{{ TEACHER_HOME.greeting.eyebrow }}</p>
       <h1>{{ TEACHER_HOME.greeting.title }}</h1>
       <p class="intro">{{ TEACHER_HOME.greeting.description }}</p>
+      <div class="welcome-actions motion-stage motion-stage-2">
+        <el-button type="primary" :icon="EditPen" @click="openNewWorkspace">新建课件</el-button>
+      </div>
     </div>
 
     <section
@@ -546,7 +609,6 @@ onMounted(loadProjects)
     </section>
 
     <p class="composer-hint motion-stage motion-stage-4">{{ TEACHER_HOME.composer.hint }} · Enter 发送 · Shift + Enter 换行</p>
-    <el-button v-if="isDevelopment" text class="fixture-entry" @click="openPresentationFixture">打开固定 PPT 样例（不调用 AI）</el-button>
     </template>
 
     <!-- 聊天视图 -->
@@ -557,6 +619,7 @@ onMounted(loadProjects)
       :session-id="chatSessionId"
       :initial-prompt="chatPrompt"
       :resource-ids="chatResourceIds"
+      :workspace-context="chatWorkspaceContext"
       :continuation-history="chatContinuationHistory"
       :mode="chatMode"
       :resume="chatResume"
@@ -567,7 +630,7 @@ onMounted(loadProjects)
 
     <!-- 资料上传 / 知识库 / 语音对话框（欢迎视图和聊天视图共用）-->
     <el-dialog v-model="uploadDialogVisible" title="添加资料" width="min(560px, 92vw)">
-      <input ref="resourceFileInput" class="resource-file-input" type="file" multiple accept=".pdf,.doc,.docx,.ppt,.pptx,.txt,.md" @change="uploadPickedResource" />
+      <input ref="resourceFileInput" class="resource-file-input" type="file" multiple accept=".pdf,.doc,.docx,.ppt,.pptx,.txt,.md,.jpg,.jpeg,.png,.gif,.webp,.svg,.mp3,.wav,.m4a,.ogg,.mp4,.avi,.mov,.mkv,.webm" @change="uploadPickedResource" />
       <button
         type="button"
         :class="['upload-dropzone', { 'is-dragging': uploadDragging }]"
@@ -651,6 +714,7 @@ onMounted(loadProjects)
 }
 
 .welcome-copy { max-width: 720px; }
+.welcome-actions { display: flex; gap: 10px; margin-top: 24px; }
 .motion-stage { animation: fadeIn 300ms cubic-bezier(0, 0, 0.2, 1) both; }
 .motion-stage-1 { animation-delay: 0ms; }
 .motion-stage-2 { animation-delay: 50ms; }
@@ -682,7 +746,6 @@ h1 { margin: 0; font-size: clamp(36px, 4vw, 48px); line-height: 1.15; letter-spa
 .composer-tools :deep(.el-button) { color: var(--zh-text-secondary); }
 .composer-toolbar :deep(.el-button.is-ready) { animation: pulse 200ms cubic-bezier(0.4, 0, 0.2, 1); }
 .composer-hint { margin: 10px 0 0; color: var(--zh-text-caption); font-size: 11px; text-align: center; }
-.fixture-entry { display: block; margin: 7px auto 0; color: var(--zh-text-theme); font-size: 11px; }
 .session-fields { display:grid; grid-template-columns: 1.5fr 1fr 1fr; gap:12px; }.session-fields :deep(.el-form-item){margin-bottom:0}.prompt-preview{width:100%;padding:10px 12px;border-radius:var(--zh-radius8);color:var(--zh-text-secondary);background:var(--zh-background-light);line-height:1.65;white-space:pre-wrap}.resource-picker{display:grid;gap:8px;max-height:160px;overflow:auto;padding:10px 12px;border:1px solid var(--zh-line-border);border-radius:var(--zh-radius8);background:var(--zh-background-light)}.empty-resources{color:var(--zh-text-caption);font-size:12px}
 .resource-file-input{display:none}.resource-picker-dialog{max-height:280px;margin-top:12px}.upload-dropzone{width:100%;min-height:180px;display:grid;place-items:center;align-content:center;gap:9px;padding:24px;border:1px dashed var(--zh-line-theme50);border-radius:var(--zh-radius12);color:var(--zh-text-theme);background:var(--zh-background-weaken);cursor:pointer;transition:border-color 200ms cubic-bezier(.4,0,.2,1),background-color 200ms cubic-bezier(.4,0,.2,1),transform 200ms cubic-bezier(.4,0,.2,1),box-shadow 200ms cubic-bezier(.4,0,.2,1)}.upload-dropzone:hover,.upload-dropzone:focus-visible{border-color:var(--zh-line-theme);background:var(--zh-background-option-on);transform:translateY(-1px)}.upload-dropzone.is-dragging{border-color:var(--zh-line-theme);background:var(--zh-background-option-on);box-shadow:0 0 0 4px var(--zh-line-theme20);transform:scale(1.01)}.upload-dropzone:disabled{cursor:wait;opacity:.65}.upload-dropzone .el-icon{font-size:28px}.upload-dropzone strong{color:var(--zh-text-primary);font-size:16px}.upload-dropzone span{color:var(--zh-text-caption);font-size:12px}.uploaded-resource-list{display:grid;gap:6px;margin-top:14px;padding:12px;border-radius:var(--zh-radius8);background:var(--zh-background-light)}.uploaded-resource-list>span{color:var(--zh-text-caption);font-size:12px}.uploaded-resource-list p{margin:0;color:var(--zh-text-secondary);font-size:13px}.knowledge-picker-header{display:grid;grid-template-columns:minmax(0,1fr) 240px;align-items:center;gap:16px}.knowledge-picker-header p{margin:0;color:var(--zh-text-secondary);font-size:13px;line-height:1.6}.selected-resource-count{display:inline-block;margin-right:16px;color:var(--zh-text-caption);font-size:12px}
 .voice-panel{display:grid;justify-items:center;padding:8px 8px 0;text-align:center}.voice-orb{width:78px;height:78px;display:grid;place-items:center;padding:0;margin:4px 0 18px;border:1px solid var(--zh-line-theme20);border-radius:50%;color:var(--zh-text-theme);background:var(--zh-background-weaken);box-shadow:0 0 0 10px var(--zh-background-weaken);font-family:inherit;cursor:pointer;transition:border-color 200ms cubic-bezier(.4,0,.2,1),background-color 200ms cubic-bezier(.4,0,.2,1),box-shadow 200ms cubic-bezier(.4,0,.2,1),transform 200ms cubic-bezier(.4,0,.2,1)}.voice-orb:hover,.voice-orb:focus-visible{border-color:var(--zh-line-theme);box-shadow:0 0 0 10px var(--zh-line-theme20);transform:translateY(-1px)}.voice-orb:active{transform:scale(.96)}.voice-orb:disabled{cursor:wait;opacity:.75}.voice-orb.is-recording{border-color:var(--zh-red);color:var(--zh-red);background:var(--zh-danger-background);box-shadow:0 0 0 10px var(--zh-danger-background)}.voice-orb .el-icon{font-size:30px}.voice-panel>strong{font-size:18px}.voice-panel>p{max-width:350px;margin:8px 0 20px;color:var(--zh-text-secondary);font-size:13px;line-height:1.65}.voice-wave{height:42px;display:flex;align-items:center;gap:5px}.voice-wave i{width:3px;height:10px;border-radius:999px;background:var(--zh-line-theme50)}.voice-wave i:nth-child(2),.voice-wave i:nth-child(8){height:16px}.voice-wave i:nth-child(3),.voice-wave i:nth-child(7){height:24px}.voice-wave i:nth-child(4),.voice-wave i:nth-child(6){height:32px}.voice-wave i:nth-child(5){height:40px}.voice-status{width:100%;display:grid;grid-template-columns:auto 1fr auto;align-items:center;gap:8px;margin-top:16px;padding:12px 14px;border-radius:var(--zh-radius8);color:var(--zh-text-secondary);background:var(--zh-background-light);font-size:12px;text-align:left}.voice-status-dot{width:7px;height:7px;border-radius:50%;background:var(--zh-text-disabled)}

@@ -9,6 +9,7 @@ import request from './request'
  * @param {Object} [options.data] - 请求体数据（POST/PUT 请求）
  * @param {Object} [options.headers] - 自定义请求头
  * @param {number} [options.timeout] - 请求超时时间（毫秒）
+ * @param {AbortSignal} [options.signal] - 可选的请求取消信号
  * @returns {Promise}
  */
 export function apiRequest(options) {
@@ -19,7 +20,8 @@ export function apiRequest(options) {
     data: options.data,
     headers: options.headers,
     responseType: options.responseType,
-    timeout: options.timeout
+    timeout: options.timeout,
+    signal: options.signal,
   })
 }
 

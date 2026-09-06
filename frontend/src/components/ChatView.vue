@@ -14,7 +14,7 @@ import { Brush, Document, Promotion } from '@element-plus/icons-vue'
 import MarkdownRender from 'markstream-vue'
 import { useUserStore } from '../storage/user.js'
 import { readOutlineDraft, saveOutlineDraft } from '../utils/presentationDraft.js'
-import { confirmAiPlan, getAiPlan, getAiSession, listPptTemplates, streamSendAiSessionMessage } from '../apis/teacher.js'
+import { confirmAiPlan, getAiPlan, getAiSession, listPptTemplates, sendAiSessionAudioMessage, streamGeneralChat, streamSendAiSessionMessage, transcribeAudio } from '../apis/teacher.js'
 import {
   CHAT_COMPOSER, CLASS_LEVEL_OPTIONS, CLARIFICATION_LABELS,
   extractPlanningContext, GRADE_OPTIONS, CHAT_RESUME, DESIGN_ACTION_BAR, GEN_RESOURCE_DEFAULTS, INFO_FORM_DEFAULTS,
@@ -23,11 +23,14 @@ import {
 } from '../config/teacherChat.config.js'
 import IntentClarificationDialog from './IntentClarificationDialog.vue'
 import PptTemplatePicker from './PptTemplatePicker.vue'
+import VoiceRecorderButton from './VoiceRecorderButton.vue'
 
 const props = defineProps({
   sessionId: { type: String, required: true },
   initialPrompt: { type: String, default: '' },
   resourceIds: { type: Array, default: () => [] },
+  /** 资料上传明细、社区 Skill/案例等需要继续传给工作台的上下文。 */
+  workspaceContext: { type: Object, default: () => ({}) },
   /** 普通对话切换到备课流时，需要在当前消息列表前展示的历史消息。 */
   continuationHistory: { type: Array, default: () => [] },
   /** 普通主对话不进入备课补充信息流程；默认仍为备课工作流。 */
@@ -94,6 +97,8 @@ const composerInput = ref('')
 const planningClarificationVisible = ref(false)
 const planningClarificationQuestion = ref(null)
 const planningClarificationSubmitting = ref(false)
+/** 语音消息提交态。备课会话直接调用 API-13A，普通对话仅作转写输入。 */
+const voiceSubmitting = ref(false)
 
 // ========== 资源生成卡片数据 ==========
 /** 使用配置模块的默认值初始化资源生成卡片 */
@@ -557,6 +562,7 @@ async function requestRealOutlineChat(message) {
       textbook: infoForm.textbook,
       class_level: infoForm.classLevel,
       requirements: infoForm.requirements,
+      workspace_context: props.workspaceContext || {},
     },
     resource_ids: resourceIds,
     enable_rag: resourceIds.length > 0,
@@ -748,6 +754,7 @@ async function sendMessageToBackend(message, { includeContinuation = false } = {
       title: infoForm.courseName.trim(),
       subject: infoForm.subject,
       grade: infoForm.grade,
+      workspace_context: props.workspaceContext || {},
     }),
   }
   let finished = false
@@ -804,6 +811,103 @@ async function sendMessageToBackend(message, { includeContinuation = false } = {
     isRequesterLoading.value = false
     outlineGenerationStage.value = ''
   }
+}
+
+/** 从 API-13A 返回的完整会话中取出本轮新增内容，避免语音消息只在服务端保存、页面却没有回显。 */
+function sessionResponseData(response) {
+  if (isOk(response)) return response.data || {}
+  if (response && typeof response === 'object' && response.data && typeof response.data === 'object') return response.data
+  return response || {}
+}
+
+function appendAudioConversation(conversation = {}) {
+  const stored = parseStoredMessages(conversation.messages)
+    .filter((message) => message && (message.role === 'user' || message.role === 'assistant') && String(message.content || '').trim())
+  const latestUser = [...stored].reverse().find((message) => message.role === 'user')
+  const latestAssistant = [...stored].reverse().find((message) => message.role === 'assistant')
+  const lastVisible = messages[messages.length - 1]
+  if (latestUser && !(lastVisible?.role === 'user' && lastVisible.content === String(latestUser.content).trim())) {
+    addMessage('user', 'text', String(latestUser.content).trim())
+  }
+
+  const question = conversation.last_question || (latestAssistant?.type === 'question' ? latestAssistant.content : '')
+  if (question) {
+    const normalizedQuestion = normalizePlanningClarification(question)
+    lastClarification.value = normalizedQuestion?.text || String(question)
+    phase.value = 'clarifying'
+    addMessage('assistant', 'clarification', normalizedQuestion?.text || String(question))
+    openPlanningClarification(normalizedQuestion)
+    return
+  }
+  if (latestAssistant && String(latestAssistant.content || '').trim()) {
+    addMessage('assistant', 'text', String(latestAssistant.content).trim())
+  }
+}
+
+/** 语音录音完成后的入口：正式备课会话上传到 API-13A，并同步最新会话/大纲状态。 */
+async function handleChatVoice(file) {
+  if (!file || voiceSubmitting.value) return
+  if (isGeneralChat.value) {
+    voiceSubmitting.value = true
+    try {
+      const formData = new FormData()
+      formData.append('file', file)
+      formData.append('language', 'zh')
+      const response = await transcribeAudio(formData)
+      const text = String(response?.data?.text || response?.text || '').trim()
+      if (!text) throw new Error('未能识别到有效语音')
+      composerInput.value = composerInput.value.trim()
+        ? `${composerInput.value.trim()} ${text}`
+        : text
+      ElMessage.success('语音已转写，可继续发送')
+    } catch (error) {
+      ElMessage.error(error?.message || '语音识别失败，请重试')
+    } finally {
+      voiceSubmitting.value = false
+    }
+    return
+  }
+
+  voiceSubmitting.value = true
+  try {
+    const context = {
+      title: infoForm.courseName.trim(),
+      subject: infoForm.subject,
+      grade: infoForm.grade,
+      stage: infoForm.stage,
+      workspace_context: props.workspaceContext || {},
+    }
+    const formData = new FormData()
+    formData.append('file', file)
+    formData.append('language', 'zh')
+    formData.append('resource_ids', JSON.stringify(props.resourceIds || []))
+    formData.append('enable_rag', String(Boolean(props.resourceIds?.length)))
+    formData.append('enable_web', 'false')
+    formData.append('known_context', JSON.stringify(context))
+    formData.append('context_summary', buildContinuationContext())
+    if (composerInput.value.trim()) formData.append('message', composerInput.value.trim())
+
+    const response = await sendAiSessionAudioMessage(props.sessionId, formData)
+    const conversation = sessionResponseData(response)
+    appendAudioConversation(conversation)
+
+    // API-13A 返回的是会话快照，API-14 的 plan_json 仍由独立资源维护；
+    // 这里主动刷新一次，保证语音触发大纲后当前页面马上进入可确认状态。
+    const planResponse = await getAiPlan(props.sessionId).catch(() => null)
+    const planData = isOk(planResponse) ? planResponse.data : null
+    if (hasGeneratedOutline(parsePlanJson(planData?.plan_json))) await loadPlan()
+    composerInput.value = ''
+    ElMessage.success('语音已发送，AI 会沿用当前备课会话继续处理')
+  } catch (error) {
+    ElMessage.error(error?.message || '语音会话提交失败，请重试')
+  } finally {
+    voiceSubmitting.value = false
+    await scrollToBottom()
+  }
+}
+
+function handleChatVoiceError(error) {
+  ElMessage.error(error?.message || '录音失败，请检查浏览器麦克风权限')
 }
 
 /**
@@ -1196,7 +1300,16 @@ function startGenerateResource() {
   }
   phase.value = 'generating_resource'
   // 模板选择发生在生成前；进入工作台后继续编辑 AI 生成的页面内容。
-  emit('open-workspace', { pptTheme: selectedPptTemplateTheme.value, generationKey: String(Date.now()) })
+  emit('open-workspace', {
+    pptTheme: selectedPptTemplateTheme.value,
+    generationKey: String(Date.now()),
+    resourceIds: [...(props.resourceIds || [])],
+    workspaceContext: {
+      ...(props.workspaceContext || {}),
+      resourceIds: [...(props.resourceIds || [])],
+      resource_ids: [...(props.resourceIds || [])],
+    },
+  })
 }
 
 /** 普通对话切换到备课后，在同一条消息时间线里追加补充信息卡片。 */
@@ -1289,6 +1402,13 @@ function parsePlanJson(raw) {
   return null
 }
 
+/** 只有真正包含页面结构的大纲才算已生成；新会话的初始化 plan_json 只有标题和空 slides。 */
+function hasGeneratedOutline(value) {
+  const outline = outlineCandidate(value)
+  return Array.isArray(outline?.slides)
+    && outline.slides.some((slide) => slide && typeof slide === 'object')
+}
+
 /**
  * 恢复已有会话：按后端 messages 的原始顺序还原用户与 AI 文本消息，再渲染当前阶段卡片。
  * 大纲和澄清问题分别由独立的结构化消息渲染，避免与 messages 中的摘要重复出现。
@@ -1310,10 +1430,15 @@ async function restoreSession() {
       || '',
     )
 
-    // 有最新大纲：渲染大纲 + 操作栏，并按确认状态进入资源生成或待确认
+    // 有最新大纲：渲染大纲 + 操作栏，并按确认状态进入资源生成或待确认。
+    // 新会话的 Java 初始化 plan_json 只有标题和空 slides，不能把它当作已生成的大纲，
+    // 否则恢复历史会话时会跳过补充信息卡片，直接显示一个空标题。
     // Java mock 会话并不知道真实 Python 流生成的 plan_json，因此优先使用本地真实大纲快照。
-    let planJson = parsePlanJson(task?.plan_json)
-      || parsePlanJson(localOutlineDraft?.plan_json ?? localOutlineDraft?.outline ?? localOutlineDraft)
+    const backendPlanJson = parsePlanJson(task?.plan_json)
+    const localPlanJson = parsePlanJson(localOutlineDraft?.plan_json ?? localOutlineDraft?.outline)
+    let planJson = hasGeneratedOutline(backendPlanJson)
+      ? backendPlanJson
+      : (hasGeneratedOutline(localPlanJson) ? localPlanJson : null)
     let outlineWasRepaired = false
 
     // 历史会话可能保存过 Python 回退大纲；恢复时也要先做质量检查，避免绕过新生成流程。
@@ -1613,7 +1738,7 @@ async function restoreSession() {
     <!-- 底部输入区（flex 布局固定在页面底部，不随消息滚动）
          澄清阶段启用输入框，供教师补充回复后端提出的澄清问题 -->
     <footer class="chat-composer">
-      <div class="composer-input-row" :class="{ 'is-editable': isGeneralChat || phase === 'clarifying' }">
+      <div class="composer-input-row" :class="{ 'is-editable': isGeneralChat || phase === 'info' || phase === 'clarifying' }">
         <el-input
           v-model="composerInput"
           type="textarea"
@@ -1623,15 +1748,24 @@ async function restoreSession() {
           :readonly="isRequesterLoading || (!isGeneralChat && phase !== 'clarifying')"
           @keydown.enter="handleComposerKeydown"
         />
-        <el-button
-          type="primary"
-          circle
-          :icon="Promotion"
-          :disabled="isRequesterLoading || (!isGeneralChat && phase !== 'clarifying')"
-          :loading="isRequesterLoading"
-          :aria-label="CHAT_COMPOSER.send"
-          @click="handleComposerSubmit"
-        />
+        <span class="composer-actions">
+          <VoiceRecorderButton
+            :disabled="isRequesterLoading || (!isGeneralChat && !['info', 'clarifying'].includes(phase))"
+            :busy="voiceSubmitting"
+            label="使用语音继续会话"
+            @recorded="handleChatVoice"
+            @error="handleChatVoiceError"
+          />
+          <el-button
+            type="primary"
+            circle
+            :icon="Promotion"
+            :disabled="isRequesterLoading || (!isGeneralChat && phase !== 'clarifying')"
+            :loading="isRequesterLoading"
+            :aria-label="CHAT_COMPOSER.send"
+            @click="handleComposerSubmit"
+          />
+        </span>
       </div>
       <p class="composer-hint">{{ CHAT_COMPOSER.hint }} · Enter 发送 · Shift + Enter 换行</p>
     </footer>
@@ -2013,6 +2147,7 @@ async function restoreSession() {
   border-color: var(--zh-line-heavier);
   background: var(--zh-background-light);
 }
+.composer-actions { display: inline-flex; align-items: center; gap: 3px; flex: none; }
 .composer-input-row :deep(.el-textarea__inner) {
   min-height: 52px !important;
   padding: 6px 8px;
