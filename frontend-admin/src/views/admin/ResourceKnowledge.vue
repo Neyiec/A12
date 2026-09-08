@@ -9,8 +9,8 @@
       WarningFilled, Clock, Loading, ArrowDown, ArrowUp, Top
     - `ref`, `reactive`, `computed`, `onMounted`, `onBeforeUnmount` from Vue
   - 依赖:
-    - 无外部 API 调用，当前使用静态示例数据（后续替换为后端 API）
-  - 输入: 无 props，数据在组件内部 mock
+    - `@/apis/resource`: 导入 `getPublicResources`（API-83，分页查询公共资源）
+  - 输入: 无 props；资源列表来自 API-83（服务端分页），知识库向量化任务暂为本地模拟数据
   - 输出: 渲染公共资源管理与知识库维护视图（Tab 切换 + 筛选工具 + 数据表格 + 分页器 + 上传对话框 + 详情抽屉）
   - 监听: `admin-refresh` 自定义事件（从 AdminHeader 刷新按钮发出），触发数据重新加载
   - 对应需求文档: §4.7.3.2 — 公共资源与知识库维护
@@ -42,6 +42,7 @@ import {
   Top,
 } from '@element-plus/icons-vue'
 import { ElMessage, ElMessageBox } from 'element-plus'
+import { getPublicResources } from '@/apis/resource'
 
 // ===================================================================
 // 配置常量 — Tab 1：公共资源管理
@@ -112,7 +113,7 @@ const RESOURCE_SUBTYPE_LABEL_MAP = {
   other: '其他文件',
 }
 
-/** 学科筛选项 */
+/** 学科筛选项（用于上传分类设置） */
 const SUBJECT_OPTIONS = [
   { label: '全部学科', value: '' },
   { label: '数学', value: 'math' },
@@ -139,37 +140,38 @@ const SUBJECT_LABEL_MAP = {
   politics: '政治',
 }
 
-/** 资源处理状态筛选项 */
+/** 资源启用状态筛选项（对应 ResourceVO.status：1=启用 0=停用） */
 const RESOURCE_STATUS_OPTIONS = [
   { label: '全部状态', value: '' },
-  { label: '已就绪', value: 'ready' },
-  { label: '解析中', value: 'processing' },
-  { label: '解析失败', value: 'failed' },
-  { label: '待处理', value: 'pending' },
+  { label: '已启用', value: 1 },
+  { label: '已停用', value: 0 },
 ]
 
-/** 资源状态 → 显示标签映射 */
+/** 资源解析状态（对应 ResourceVO.ai_index_status）→ 显示标签映射 */
 const RESOURCE_STATUS_LABEL_MAP = {
-  ready: '已就绪',
-  processing: '解析中',
+  completed: '已就绪',
+  indexing: '解析中',
   failed: '解析失败',
   pending: '待处理',
+  disabled: '已停用',
 }
 
-/** 资源状态 → Tag 类型映射 */
+/** 资源解析状态 → Tag 类型映射 */
 const RESOURCE_STATUS_TAG_MAP = {
-  ready: 'success',
-  processing: '',
+  completed: 'success',
+  indexing: '',
   failed: 'danger',
   pending: 'info',
+  disabled: 'info',
 }
 
-/** 资源状态 → 圆点颜色映射 */
+/** 资源解析状态 → 圆点颜色映射 */
 const RESOURCE_STATUS_DOT_COLOR_MAP = {
-  ready: 'var(--zh-green)',
-  processing: 'var(--zh-theme-primary)',
+  completed: 'var(--zh-green)',
+  indexing: 'var(--zh-theme-primary)',
   failed: 'var(--zh-red)',
   pending: 'var(--zh-text-disabled)',
+  disabled: 'var(--zh-text-disabled)',
 }
 
 /** 学段筛选项 */
@@ -260,12 +262,10 @@ const resourceList = ref([])
 /** 向量化任务列表数据 */
 const vectorTaskList = ref([])
 
-/** Tab 1 筛选条件 */
+/** Tab 1 筛选条件（类型/状态均为 API-83 支持的服务端筛选，状态：1=启用 0=停用） */
 const resourceFilters = reactive({
   type: '',
-  subject: '',
   status: '',
-  keyword: '',
 })
 
 /** Tab 2 筛选条件 */
@@ -371,73 +371,55 @@ const uploadAllComplete = computed(() => {
 })
 
 // ===================================================================
-// Mock 数据生成 — Tab 1：资源数据
+// 数据映射工具 — Tab 1：资源数据（API-83 ResourceVO → 前端行对象）
 // ===================================================================
 
 /**
- * 随机格式化文件大小
- * @returns {string} 格式化的文件大小字符串
+ * 格式化日期时间（后端 LocalDateTime 序列化值）
+ * @param {string} value - 形如 2026-09-07T21:30:00 的时间字符串
+ * @returns {string} 形如 2026-09-07 21:30:00 的显示字符串
  */
-const randomFileSize = () => {
-  const sizes = ['12MB', '45MB', '128MB', '256MB', '320MB', '8MB', '64MB', '512MB', '1.2GB', '780MB']
-  return sizes[Math.floor(Math.random() * sizes.length)]
+const formatDateTime = (value) => {
+  if (!value) return '—'
+  return String(value).replace('T', ' ').slice(0, 19)
 }
 
 /**
- * 生成模拟资源数据
- * @returns {Array} 资源对象数组
+ * 从资源文件 URL 中提取文件扩展名
+ * @param {string} fileUrl - 资源文件 URL
+ * @returns {string} 小写扩展名，无法识别时返回 other
  */
-const generateMockResources = () => {
-  const templates = [
-    { name: '2026版高中数学教材（必修一）', type: 'textbook', format: 'pdf', subject: 'math', grade: 'senior' },
-    { name: '2026版高中数学教材（必修二）', type: 'textbook', format: 'pdf', subject: 'math', grade: 'senior' },
-    { name: '勾股定理章节测试题库', type: 'exam', format: 'docx', subject: 'math', grade: 'junior' },
-    { name: '一元二次方程综合练习', type: 'exam', format: 'docx', subject: 'math', grade: 'senior' },
-    { name: '细胞分裂动画演示课件', type: 'media', format: 'mp4', subject: 'biology', grade: 'senior' },
-    { name: '光合作用过程教学视频', type: 'media', format: 'mp4', subject: 'biology', grade: 'senior' },
-    { name: '背影课文精读PPT课件', type: 'document', format: 'pptx', subject: 'chinese', grade: 'junior' },
-    { name: '定语从句语法教学课件', type: 'document', format: 'pptx', subject: 'english', grade: 'senior' },
-    { name: '串联电路实验指导书', type: 'document', format: 'docx', subject: 'physics', grade: 'junior' },
-    { name: '牛顿第二定律实验报告模板', type: 'document', format: 'docx', subject: 'physics', grade: 'senior' },
-    { name: '化学方程式配平练习题库', type: 'exam', format: 'xlsx', subject: 'chemistry', grade: 'senior' },
-    { name: '有机化学官能团识别图谱', type: 'media', format: 'png', subject: 'chemistry', grade: 'senior' },
-    { name: '辛亥革命历史课件', type: 'document', format: 'pptx', subject: 'history', grade: 'junior' },
-    { name: '地球公转自转演示动画', type: 'media', format: 'avi', subject: 'geography', grade: 'junior' },
-    { name: '英语听力训练音频集', type: 'media', format: 'mp3', subject: 'english', grade: 'junior' },
-    { name: '分数加减法教学素材包', type: 'media', format: 'jpg', subject: 'math', grade: 'primary' },
-    { name: '概率统计教学案例集', type: 'document', format: 'pdf', subject: 'math', grade: 'senior' },
-    { name: '政治经济学基础知识题库', type: 'exam', format: 'docx', subject: 'politics', grade: 'senior' },
-    { name: '中国地理知识点汇总', type: 'document', format: 'pdf', subject: 'geography', grade: 'junior' },
-    { name: '古诗词鉴赏教学音频', type: 'media', format: 'mp3', subject: 'chinese', grade: 'senior' },
-  ]
+const extractFileExtension = (fileUrl) => {
+  const cleanPath = String(fileUrl || '').split('?')[0]
+  const dotIndex = cleanPath.lastIndexOf('.')
+  if (dotIndex === -1 || dotIndex === cleanPath.length - 1) return 'other'
+  const ext = cleanPath.slice(dotIndex + 1).toLowerCase()
+  return /^[a-z0-9]+$/.test(ext) ? ext : 'other'
+}
 
-  const statuses = ['ready', 'ready', 'ready', 'processing', 'failed', 'pending']
-
-  return templates.map((tpl, i) => {
-    const id = `R${String(i + 1).padStart(4, '0')}`
-    const day = 27 - Math.floor(i / 3)
-    const hour = 9 + (i * 3) % 14
-    const min = (i * 11) % 60
-    const status = statuses[i % statuses.length]
-
-    return {
-      id,
-      name: tpl.name,
-      type: tpl.type,
-      format: tpl.format,
-      subject: tpl.subject,
-      grade: tpl.grade,
-      size: randomFileSize(),
-      status,
-      updatedAt: `2026-07-${String(day).padStart(2, '0')} ${String(hour).padStart(2, '0')}:${String(min).padStart(2, '0')}`,
-      uploader: '管理员',
-      version: `v${Math.floor(i / 5) + 1}.${i % 5}`,
-      tags: [SUBJECT_LABEL_MAP[tpl.subject], GRADE_LABEL_MAP[tpl.grade]],
-      vectorCount: status === 'ready' ? Math.floor(Math.random() * 15000) + 500 : (status === 'processing' ? Math.floor(Math.random() * 8000) : 0),
-      vectorProgress: status === 'ready' ? 100 : (status === 'processing' ? Math.floor(Math.random() * 60) + 20 : (status === 'failed' ? Math.floor(Math.random() * 60) + 10 : 0)),
-      failReason: status === 'failed' ? '文件格式解析异常：第128页包含无法识别的编码字符' : '',
-    }
-  })
+/**
+ * 将后端 ResourceVO（API-83）映射为前端资源行对象
+ * @param {Object} vo - 后端 ResourceVO
+ * @returns {Object} 前端资源行对象
+ */
+const mapResourceRow = (vo) => {
+  const aiStatus = vo.ai_index_status || 'pending'
+  return {
+    id: vo.id,
+    name: vo.title,
+    format: extractFileExtension(vo.file_url),
+    type: vo.resource_type,
+    subject: vo.subject,
+    grade: vo.grade,
+    size: vo.file_size != null ? formatFileSize(Number(vo.file_size)) : '—',
+    status: aiStatus,
+    description: vo.description || '',
+    updatedAt: formatDateTime(vo.updated_at),
+    uploader: vo.uploaded_by != null ? `用户#${vo.uploaded_by}` : '—',
+    tags: [SUBJECT_LABEL_MAP[vo.subject], GRADE_LABEL_MAP[vo.grade]].filter(Boolean),
+    vectorProgress: aiStatus === 'completed' ? 100 : 0,
+    failReason: vo.ai_index_error || '',
+  }
 }
 
 // ===================================================================
@@ -445,7 +427,7 @@ const generateMockResources = () => {
 // ===================================================================
 
 /**
- * 生成模拟向量化任务数据
+ * 生成模拟向量化任务数据（知识库任务接口尚未提供，暂以 API-83 返回的资源数据驱动）
  * @param {Array} resources - 资源列表（用于关联资源名称）
  * @returns {Array} 任务对象数组
  */
@@ -455,7 +437,7 @@ const generateMockVectorTasks = (resources) => {
 
   return resources.map((res, i) => {
     const taskStatus = taskStatuses[i % taskStatuses.length]
-    const entryCount = taskStatus === 'completed' ? (Math.floor(Math.random() * 15000) + 500) : (taskStatus === 'processing' ? Math.floor(Math.random() * 8000) + 1000 : (res.vectorCount || Math.floor(Math.random() * 5000)))
+    const entryCount = taskStatus === 'completed' ? (Math.floor(Math.random() * 15000) + 500) : (taskStatus === 'processing' ? Math.floor(Math.random() * 8000) + 1000 : Math.floor(Math.random() * 5000))
     const progress = taskStatus === 'completed' ? 100 : (taskStatus === 'processing' ? Math.floor(Math.random() * 50) + 30 : (taskStatus === 'failed' ? Math.floor(Math.random() * 40) + 20 : 0))
     const errorMsg = taskStatus === 'failed' ? '向量化引擎异常：第' + (Math.floor(Math.random() * 200) + 1) + '页编码无法识别，请检查文件完整性' : ''
 
@@ -476,10 +458,7 @@ const generateMockVectorTasks = (resources) => {
   })
 }
 
-/** 全部资源数据（模拟数据库） */
-let allResources = []
-
-/** 全部向量化任务数据（模拟数据库） */
+/** 全部向量化任务数据（模拟数据库，由最新拉取的资源列表驱动） */
 let allVectorTasks = []
 
 // ===================================================================
@@ -516,39 +495,39 @@ const vectorCoverage = computed(() => {
 // ===================================================================
 
 /**
- * 获取资源列表数据（模拟异步请求）
- * 根据当前 Tab 1 的筛选条件 + 分页参数过滤 mock 数据
+ * 获取资源列表数据（API-83 GET /api/v1/admin/public-resources）
+ * 服务端分页，支持按资源类型与启用状态筛选
  */
-const fetchResources = () => {
+const fetchResources = async () => {
   isTableLoading.value = true
-
-  setTimeout(() => {
-    let filtered = [...allResources]
-    if (resourceFilters.type) {
-      filtered = filtered.filter((r) => r.type === resourceFilters.type)
-    }
-    if (resourceFilters.subject) {
-      filtered = filtered.filter((r) => r.subject === resourceFilters.subject)
-    }
-    if (resourceFilters.status) {
-      filtered = filtered.filter((r) => r.status === resourceFilters.status)
-    }
-    if (resourceFilters.keyword.trim()) {
-      const kw = resourceFilters.keyword.trim().toLowerCase()
-      filtered = filtered.filter((r) => r.name.toLowerCase().includes(kw))
-    }
-    // 排序：待处理/解析中 > 失败 > 已就绪
-    const statusPriority = { pending: 0, processing: 1, failed: 2, ready: 3 }
-    filtered.sort((a, b) => {
-      const sp = statusPriority[a.status] - statusPriority[b.status]
-      if (sp !== 0) return sp
-      return b.updatedAt.localeCompare(a.updatedAt)
+  try {
+    const statusValue = resourceFilters.status
+    const res = await getPublicResources({
+      resource_type: resourceFilters.type || undefined,
+      status: statusValue === '' || statusValue == null ? undefined : Number(statusValue),
+      page: resourcePagination.currentPage,
+      size: resourcePagination.pageSize,
     })
-    resourcePagination.total = filtered.length
-    const start = (resourcePagination.currentPage - 1) * resourcePagination.pageSize
-    resourceList.value = filtered.slice(start, start + resourcePagination.pageSize)
+    if (res?.code !== 0 && res?.code !== 200) {
+      ElMessage.error(res?.message || '资源加载失败')
+      resourceList.value = []
+      resourcePagination.total = 0
+      allVectorTasks = []
+      return
+    }
+    const data = res?.data || {}
+    resourceList.value = (data.records || []).map(mapResourceRow)
+    resourcePagination.total = data.total || 0
+    // 以当前页资源数据驱动 Tab 2 的模拟向量化任务（知识库任务接口尚未提供）
+    allVectorTasks = generateMockVectorTasks(resourceList.value)
+  } catch {
+    ElMessage.error('资源加载失败，请稍后重试')
+    resourceList.value = []
+    resourcePagination.total = 0
+    allVectorTasks = []
+  } finally {
     isTableLoading.value = false
-  }, 300)
+  }
 }
 
 /**
@@ -597,16 +576,18 @@ const fetchData = () => {
 }
 
 /**
- * 页面首次数据加载 — 初始化 mock 数据并触发首次渲染
+ * 页面首次数据加载 — 拉取当前 Tab 对应数据
  */
 const loadData = () => {
   isLoading.value = true
-  setTimeout(() => {
-    allResources = generateMockResources()
-    allVectorTasks = generateMockVectorTasks(allResources)
+  if (activeTab.value === 'resources') {
+    fetchResources().finally(() => {
+      isLoading.value = false
+    })
+  } else {
+    fetchVectorTasks()
     isLoading.value = false
-    fetchData()
-  }, 600)
+  }
 }
 
 // ===================================================================
@@ -619,9 +600,7 @@ const loadData = () => {
  */
 const handleTabChange = (tab) => {
   resourceFilters.type = ''
-  resourceFilters.subject = ''
   resourceFilters.status = ''
-  resourceFilters.keyword = ''
   knowledgeFilters.status = ''
   knowledgeFilters.type = ''
   knowledgeFilters.keyword = ''
@@ -652,25 +631,6 @@ const handleResourceFilterChange = () => {
 const handleKnowledgeFilterChange = () => {
   knowledgePagination.currentPage = 1
   fetchVectorTasks()
-}
-
-/**
- * Tab 1 搜索框输入防抖处理
- */
-let resourceSearchTimer = null
-const handleResourceSearchInput = () => {
-  clearTimeout(resourceSearchTimer)
-  resourceSearchTimer = setTimeout(() => {
-    handleResourceFilterChange()
-  }, 300)
-}
-
-/**
- * Tab 1 搜索框回车处理
- */
-const handleResourceSearchEnter = () => {
-  clearTimeout(resourceSearchTimer)
-  handleResourceFilterChange()
 }
 
 /**
@@ -808,7 +768,7 @@ const getProgressStatus = (status) => {
  * @param {Object} row - 当前行资源数据
  */
 const openDetailDrawer = (row) => {
-  const latest = allResources.find((r) => r.id === row.id) || row
+  const latest = resourceList.value.find((r) => r.id === row.id) || row
   currentResource.value = reactive({ ...latest })
   drawerVisible.value = true
 }
@@ -824,7 +784,7 @@ const handleRenameResource = (row) => {
   })
     .then(({ value }) => {
       const nextName = value.trim()
-      const resource = allResources.find((item) => item.id === row.id)
+      const resource = resourceList.value.find((item) => item.id === row.id)
       if (resource) {
         resource.name = nextName
         resource.updatedAt = new Date().toISOString().replace('T', ' ').slice(0, 16)
@@ -836,7 +796,7 @@ const handleRenameResource = (row) => {
         currentResource.value.name = nextName
         currentResource.value.updatedAt = resource?.updatedAt || currentResource.value.updatedAt
       }
-      fetchData()
+      // 重命名 API（API-87）尚未接入，暂为本地模拟，不重新拉取以免覆盖
       ElMessage.success(`已将资源重命名为「${nextName}」`)
     })
     .catch(() => {})
@@ -1025,13 +985,11 @@ const isFileOversized = (bytes) => {
   return bytes > MAX_UPLOAD_FILE_SIZE
 }
 
-/** 将已完成的 mock 上传文件写入资源列表 */
+/** 将已完成的 mock 上传文件写入资源列表（上传 API 尚未接入，暂为本地模拟） */
 const appendUploadedResources = (files) => {
-  const firstNewResourceIndex = allResources.length
   files.forEach((file, idx) => {
-    const newId = `R${String(firstNewResourceIndex + idx + 1).padStart(4, '0')}`
-    allResources.unshift({
-      id: newId,
+    resourceList.value.unshift({
+      id: Date.now() + idx,
       name: file.name,
       type: uploadCategory.type || 'document',
       format: file.format,
@@ -1041,12 +999,10 @@ const appendUploadedResources = (files) => {
       status: 'pending',
       updatedAt: new Date().toISOString().replace('T', ' ').slice(0, 16),
       uploader: '管理员',
-      version: 'v1.0',
       tags: [
         SUBJECT_LABEL_MAP[uploadCategory.subject] || '未分类',
         GRADE_LABEL_MAP[uploadCategory.grade] || '未分类',
       ],
-      vectorCount: 0,
       vectorProgress: 0,
       failReason: '',
     })
@@ -1060,9 +1016,8 @@ const finishMockUpload = (files) => {
     uploadTimer = null
   }
   appendUploadedResources(files)
-  allVectorTasks = generateMockVectorTasks(allResources)
+  allVectorTasks = generateMockVectorTasks(resourceList.value)
   isUploading.value = false
-  fetchResources()
   ElMessage.success(`成功上传 ${files.length} 个资源，系统正在自动解析...`)
 }
 
@@ -1116,13 +1071,13 @@ const handleDeleteResource = (row) => {
     },
   )
     .then(() => {
-      allResources = allResources.filter((r) => r.id !== row.id)
+      // 删除 API（API-89）尚未接入，暂为本地模拟删除，刷新后恢复
+      resourceList.value = resourceList.value.filter((r) => r.id !== row.id)
       allVectorTasks = allVectorTasks.filter((t) => t.resourceId !== row.id)
       ElMessage.success(`已删除资源「${row.name}」`)
-      if (resourceList.value.length === 1 && resourcePagination.currentPage > 1) {
+      if (resourceList.value.length === 0 && resourcePagination.currentPage > 1) {
         resourcePagination.currentPage--
       }
-      fetchResources()
     })
     .catch(() => {})
 }
@@ -1135,11 +1090,11 @@ const handleReparse = (row) => {
   const resourceId = row.resourceId || row.id
   const name = row.resourceName || row.name
 
-  // 更新资源状态为 processing
-  const resIdx = allResources.findIndex((r) => r.id === resourceId)
-  if (resIdx !== -1) {
-    allResources[resIdx].status = 'processing'
-    allResources[resIdx].vectorProgress = 0
+  // 解析 API 尚未接入，暂为本地模拟：更新资源状态为 indexing
+  const resource = resourceList.value.find((r) => r.id === resourceId)
+  if (resource) {
+    resource.status = 'indexing'
+    resource.vectorProgress = 0
   }
   // 更新或创建向量化任务
   const taskIdx = allVectorTasks.findIndex((t) => t.resourceId === resourceId)
@@ -1150,7 +1105,6 @@ const handleReparse = (row) => {
     allVectorTasks[taskIdx].failReason = ''
   }
   ElMessage.success(`已重新发起「${name}」的解析任务`)
-  fetchData()
 }
 
 /**
@@ -1164,12 +1118,12 @@ const handleCancelTask = (row) => {
     { confirmButtonText: '确认取消', cancelButtonText: '返回', type: 'warning' },
   )
     .then(() => {
+      // 取消 API 尚未接入，暂为本地模拟
       const taskIdx = allVectorTasks.findIndex((t) => t.id === row.id)
       if (taskIdx !== -1) allVectorTasks[taskIdx].status = 'cancelled'
-      const resIdx = allResources.findIndex((r) => r.id === row.resourceId)
-      if (resIdx !== -1) allResources[resIdx].status = 'pending'
+      const resource = resourceList.value.find((r) => r.id === row.resourceId)
+      if (resource) resource.status = 'pending'
       ElMessage.success(`已取消「${row.resourceName}」的解析任务`)
-      fetchData()
     })
     .catch(() => {})
 }
@@ -1188,16 +1142,16 @@ const handleRebuildAllIndex = () => {
     },
   )
     .then(() => {
+      // 重建索引 API 尚未接入，暂为本地模拟
       isTableLoading.value = true
       setTimeout(() => {
-        allResources.forEach((r) => {
-          r.status = 'processing'
+        resourceList.value.forEach((r) => {
+          r.status = 'indexing'
           r.vectorProgress = 0
         })
         allVectorTasks.forEach((t) => { t.status = 'processing'; t.progress = 0; t.duration = null; t.failReason = '' })
         ElMessage.success('已发起全量索引重建任务')
         isTableLoading.value = false
-        fetchData()
       }, 500)
     })
     .catch(() => {})
@@ -1263,7 +1217,6 @@ onBeforeUnmount(() => {
     clearInterval(uploadTimer)
     uploadTimer = null
   }
-  if (resourceSearchTimer) clearTimeout(resourceSearchTimer)
   if (knowledgeSearchTimer) clearTimeout(knowledgeSearchTimer)
 })
 </script>
@@ -1328,22 +1281,6 @@ onBeforeUnmount(() => {
         </el-select>
 
         <el-select
-          v-model="resourceFilters.subject"
-          placeholder="全部学科"
-          clearable
-          size="default"
-          style="width: 130px;"
-          @change="handleResourceFilterChange"
-        >
-          <el-option
-            v-for="opt in SUBJECT_OPTIONS"
-            :key="opt.value"
-            :label="opt.label"
-            :value="opt.value"
-          />
-        </el-select>
-
-        <el-select
           v-model="resourceFilters.status"
           placeholder="全部状态"
           clearable
@@ -1358,18 +1295,6 @@ onBeforeUnmount(() => {
             :value="opt.value"
           />
         </el-select>
-
-        <el-input
-          v-model="resourceFilters.keyword"
-          placeholder="搜索资源名称 / 文件名..."
-          clearable
-          size="default"
-          :prefix-icon="Search"
-          style="width: 260px;"
-          @input="handleResourceSearchInput"
-          @keyup.enter="handleResourceSearchEnter"
-          @clear="handleResourceFilterChange"
-        />
 
         <div class="flex items-center gap-2 ml-auto">
           <el-button type="primary" :icon="Upload" @click="openUploadDialog">
@@ -1512,7 +1437,7 @@ onBeforeUnmount(() => {
                   <span class="flex items-center gap-1.5">
                     <span
                       class="inline-block w-1.5 h-1.5 rounded-full shrink-0"
-                      :class="{ 'animate-pulse': row.status === 'processing' }"
+                      :class="{ 'animate-pulse': row.status === 'indexing' }"
                       :style="{ background: getResourceStatusDotColor(row.status) }"
                     ></span>
                     {{ RESOURCE_STATUS_LABEL_MAP[row.status] || row.status }}
@@ -1573,13 +1498,13 @@ onBeforeUnmount(() => {
             <!-- 空数据占位 -->
             <template #empty>
               <el-empty description="暂无资源数据" :image-size="80">
-                <template v-if="resourceFilters.type || resourceFilters.subject || resourceFilters.status || resourceFilters.keyword">
+                <template v-if="resourceFilters.type || resourceFilters.status !== ''">
                   <span :style="{ fontSize: 'var(--zh-font-size13)', color: 'var(--zh-text-caption)' }">
                     没有符合条件的资源，请调整筛选条件
                   </span>
                   <el-button
                     type="primary" link size="small" class="mt-2"
-                    @click="resourceFilters.type = ''; resourceFilters.subject = ''; resourceFilters.status = ''; resourceFilters.keyword = ''; handleResourceFilterChange();"
+                    @click="resourceFilters.type = ''; resourceFilters.status = ''; handleResourceFilterChange();"
                   >
                     清除筛选
                   </el-button>
@@ -2373,9 +2298,9 @@ onBeforeUnmount(() => {
               {{ currentResource.uploader || '管理员' }}
             </span>
 
-            <span :style="{ fontSize: 'var(--zh-font-size13)', color: 'var(--zh-text-caption)' }">版本</span>
+            <span :style="{ fontSize: 'var(--zh-font-size13)', color: 'var(--zh-text-caption)' }">描述</span>
             <span :style="{ fontSize: 'var(--zh-font-size13)', color: 'var(--zh-text-caption)' }">
-              {{ currentResource.version }}
+              {{ currentResource.description || '—' }}
             </span>
           </div>
         </div>
@@ -2414,25 +2339,19 @@ onBeforeUnmount(() => {
           <div class="flex items-center gap-2 mb-2">
             <span
               class="inline-block w-2 h-2 rounded-full"
-              :class="{ 'animate-pulse': currentResource.status === 'processing' }"
+              :class="{ 'animate-pulse': currentResource.status === 'indexing' }"
               :style="{ background: getResourceStatusDotColor(currentResource.status) }"
             ></span>
             <span :style="{ fontSize: 'var(--zh-font-size14)', fontWeight: 500, color: 'var(--zh-text-primary)' }">
               {{ RESOURCE_STATUS_LABEL_MAP[currentResource.status] || currentResource.status }}
-            </span>
-            <span
-              v-if="currentResource.status === 'ready'"
-              :style="{ fontSize: 'var(--zh-font-size13)', color: 'var(--zh-text-caption)' }"
-            >
-              · {{ (currentResource.vectorCount || 0).toLocaleString() }} 条知识条目
             </span>
           </div>
           <el-progress
             :percentage="currentResource.vectorProgress || 0"
             :status="getProgressStatus(currentResource.status)"
             :stroke-width="8"
-            :striped="currentResource.status === 'processing'"
-            :striped-flow="currentResource.status === 'processing'"
+            :striped="currentResource.status === 'indexing'"
+            :striped-flow="currentResource.status === 'indexing'"
           />
           <!-- 失败原因提示 -->
           <div

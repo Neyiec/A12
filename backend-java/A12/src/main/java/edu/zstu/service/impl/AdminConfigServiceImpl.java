@@ -43,6 +43,7 @@ public class AdminConfigServiceImpl implements AdminConfigService {
     private final ExpTaskMapper expTaskMapper;
     private final AdmAuditMapper auditMapper;
     private final ComContentMapper contentMapper;
+    private final SysRoleMapper roleMapper;
     private final BusinessLogService businessLogService;
     private final RedisCacheUtil redisCacheUtil;
 
@@ -51,6 +52,7 @@ public class AdminConfigServiceImpl implements AdminConfigService {
                                   ResMaterialMapper materialMapper, AdmResourceMapper admResourceMapper,
                                   AiTaskMapper aiTaskMapper, ExpTaskMapper expTaskMapper,
                                   AdmAuditMapper auditMapper, ComContentMapper contentMapper,
+                                  SysRoleMapper roleMapper,
                                   BusinessLogService businessLogService, RedisCacheUtil redisCacheUtil) {
         this.configMapper = configMapper;
         this.versionMapper = versionMapper;
@@ -62,6 +64,7 @@ public class AdminConfigServiceImpl implements AdminConfigService {
         this.expTaskMapper = expTaskMapper;
         this.auditMapper = auditMapper;
         this.contentMapper = contentMapper;
+        this.roleMapper = roleMapper;
         this.businessLogService = businessLogService;
         this.redisCacheUtil = redisCacheUtil;
     }
@@ -109,15 +112,6 @@ public class AdminConfigServiceImpl implements AdminConfigService {
         Sys_Config existing = configMapper.findByConfigKey(dto.getConfig_key());
 
         if (existing != null) {
-            // 保存当前版本到历史表
-            AiConfigVersion history = new AiConfigVersion();
-            history.setConfigId(existing.getId());
-            history.setVersion(existing.getVersion());
-            history.setConfigValue(existing.getConfig_value());
-            history.setCreatedBy(currentUser);
-            history.setCreatedAt(LocalDateTime.now());
-            versionMapper.insert(history);
-
             // 更新现有配置：新值、新描述、版本+1
             existing.setConfig_value(dto.getConfig_value());
             existing.setDescription(dto.getDescription());
@@ -125,6 +119,16 @@ public class AdminConfigServiceImpl implements AdminConfigService {
             existing.setUpdated_by(currentUser);
             existing.setStatus("draft");
             configMapper.update(existing);
+
+            // 将新版本写入历史表（创建时已记录 v1，此处记录版本+1 后的新版本，避免 uk_config_version 冲突）
+            AiConfigVersion history = new AiConfigVersion();
+            history.setConfigId(existing.getId());
+            history.setVersion(existing.getVersion());
+            history.setConfigValue(dto.getConfig_value());
+            history.setCreatedBy(currentUser);
+            history.setCreatedAt(LocalDateTime.now());
+            versionMapper.insert(history);
+
             evictConfigCache(existing);
             businessLogService.record("operation", "admin_config", "update_ai_config", "config", existing.getId(),
                     Map.of("config_key", existing.getConfig_key(), "version", existing.getVersion()));
@@ -201,22 +205,23 @@ public class AdminConfigServiceImpl implements AdminConfigService {
 
         Integer currentUser = CurrentHolder.getCurrentId();
 
-        // 保存当前版本到历史表（记录回滚原因）
-        AiConfigVersion rollbackHistory = new AiConfigVersion();
-        rollbackHistory.setConfigId(config.getId());
-        rollbackHistory.setVersion(config.getVersion());
-        rollbackHistory.setConfigValue(config.getConfig_value());
-        rollbackHistory.setReason(dto.getReason());
-        rollbackHistory.setCreatedBy(currentUser);
-        rollbackHistory.setCreatedAt(LocalDateTime.now());
-        versionMapper.insert(rollbackHistory);
-
-        // 将当前配置更新为目标版本的配置值
+        // 将当前配置更新为目标版本的配置值（当前版本在创建/更新时已写入历史表，无需重复记录）
         config.setConfig_value(targetVersion.getConfigValue());
         config.setVersion(config.getVersion() + 1);
         config.setUpdated_by(currentUser);
         config.setStatus("draft");
         configMapper.update(config);
+
+        // 回滚产生的新版本写入历史表，reason 记录回滚原因
+        AiConfigVersion rollbackHistory = new AiConfigVersion();
+        rollbackHistory.setConfigId(config.getId());
+        rollbackHistory.setVersion(config.getVersion());
+        rollbackHistory.setConfigValue(targetVersion.getConfigValue());
+        rollbackHistory.setReason(dto.getReason());
+        rollbackHistory.setCreatedBy(currentUser);
+        rollbackHistory.setCreatedAt(LocalDateTime.now());
+        versionMapper.insert(rollbackHistory);
+
         evictConfigCache(config);
         businessLogService.record("operation", "admin_config", "rollback_ai_config", "config", id,
                 Map.of("target_version", dto.getTarget_version(), "new_version", config.getVersion()));
@@ -331,7 +336,12 @@ public class AdminConfigServiceImpl implements AdminConfigService {
                     today.put("new_log_count", countSince(logs, Sys_Log::getCreate_at, todayStart));
 
                     Map<String, Object> distribution = new LinkedHashMap<>();
-                    distribution.put("users_by_type", groupCount(users, Sys_User::getUser_type));
+                    // RBAC 重构后按角色(role_code)统计用户分布，键名保持 users_by_type 兼容前端
+                    Map<String, Object> usersByRole = new LinkedHashMap<>();
+                    for (Map<String, Object> row : roleMapper.countUsersGroupByRole()) {
+                        usersByRole.put(String.valueOf(row.get("role_code")), row.get("user_count"));
+                    }
+                    distribution.put("users_by_type", usersByRole);
                     distribution.put("resources_by_type", mergeCounts(groupCount(materials, Res_Material::getFile_type),
                             groupCount(platformResources, Adm_Resource::getResource_type)));
                     distribution.put("materials_by_ai_index_status", groupCount(materials, Res_Material::getAi_index_status));
@@ -408,7 +418,10 @@ public class AdminConfigServiceImpl implements AdminConfigService {
         return "logs:" + scope + ":" +
                 blankToAll(dto.getLog_type()) + ":" +
                 blankToAll(dto.getModule()) + ":" +
-                (dto.getUser_id() == null ? "all" : dto.getUser_id()) + ":p" +
+                (dto.getUser_id() == null ? "all" : dto.getUser_id()) + ":" +
+                blankToAll(dto.getKeyword()) + ":" +
+                (dto.getStart_time() == null ? "all" : dto.getStart_time()) + ":" +
+                (dto.getEnd_time() == null ? "all" : dto.getEnd_time()) + ":p" +
                 dto.getPage() + ":s" + dto.getSize();
     }
 
@@ -530,11 +543,17 @@ public class AdminConfigServiceImpl implements AdminConfigService {
     }
 
     private List<LogVO> filterLogs(LogQueryDTO dto, String forcedType) {
+        String keyword = dto.getKeyword() == null ? "" : dto.getKeyword().trim().toLowerCase();
         return logMapper.findAll().stream()
                 .filter(l -> forcedType == null || forcedType.equals(l.getLog_type()))
                 .filter(l -> dto.getLog_type() == null || dto.getLog_type().isBlank() || dto.getLog_type().equals(l.getLog_type()))
                 .filter(l -> dto.getModule() == null || dto.getModule().isBlank() || dto.getModule().equals(l.getModule()))
                 .filter(l -> dto.getUser_id() == null || dto.getUser_id().equals(l.getUser_id()))
+                .filter(l -> dto.getStart_time() == null || l.getCreate_at() != null && !l.getCreate_at().isBefore(dto.getStart_time()))
+                .filter(l -> dto.getEnd_time() == null || l.getCreate_at() != null && !l.getCreate_at().isAfter(dto.getEnd_time()))
+                .filter(l -> keyword.isEmpty()
+                        || (l.getAction() != null && l.getAction().toLowerCase().contains(keyword))
+                        || (l.getDetail() != null && l.getDetail().toLowerCase().contains(keyword)))
                 .map(this::toLogVO)
                 .toList();
     }

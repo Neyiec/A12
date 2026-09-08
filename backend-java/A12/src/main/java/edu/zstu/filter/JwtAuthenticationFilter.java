@@ -63,7 +63,7 @@ public class JwtAuthenticationFilter implements Filter {
         String token = authHeader.substring(7);
 
         // 校验 JWT 签名
-                Claims claims = jwtUtil.parseToken(token);
+        Claims claims = jwtUtil.parseToken(token);
         if (claims == null) {
             log.warn("jwt auth invalid token path={}, method={}", req.getRequestURI(), req.getMethod());
             writeUnauthorized(res, "令牌无效");

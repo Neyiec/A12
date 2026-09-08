@@ -8,6 +8,13 @@ class Result(BaseModel):
     data: Any = None
 
 
+class TemplateMutationRequest(BaseModel):
+    """管理后台 PPT 模板创建/替换请求：template_data 为模板 JSON 文件的文本内容"""
+    name: str | None = None
+    template_data: str | None = None
+    description: str | None = None
+
+
 class OutlineGenerateRequest(BaseModel):
     session_id: int | None = None
     title: str

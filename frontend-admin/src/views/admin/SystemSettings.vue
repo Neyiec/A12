@@ -8,15 +8,17 @@
       MagicStick, Cpu, Edit, ArrowDown, Top, CopyDocument, InfoFilled
     - `ref`, `reactive`, `computed`, `onMounted`, `onBeforeUnmount`, `watch` from Vue
   - 依赖:
-    - `../apis/export`: 导入 `getExportTemplates`（API-98，分页查询导出模板）
-  - 输入: 无 props，导出模板数据来自 API-98，系统日志数据为组件内部 mock
+    - `../apis/export`: 导入 `getExportTemplates`（API-98，分页查询导出模板）、
+      `createExportTemplate`（API-95，创建导出模板）、`replaceExportTemplate`（API-100，替换模板）
+    - `../apis/config`: 导入 `getSystemLogs`（API-106，分页查询系统日志）
+  - 输入: 无 props，导出模板数据来自 API-98，系统日志数据来自 API-106
   - 输出: 渲染系统配置视图（Tab 切换 + AI参数表单 + 导出模板表格 + 系统日志表格 + 上传对话框 + 日志详情对话框）
   - 监听: `admin-refresh` 自定义事件（从 AdminHeader 刷新按钮发出），触发数据重新加载
   - 对应需求文档: §4.7.3.3 — 系统配置与数据看板
 -->
 
 <script setup>
-import { ref, reactive, onMounted, onBeforeUnmount, watch } from 'vue'
+import { ref, reactive, onMounted, onBeforeUnmount, watch, nextTick } from 'vue'
 import {
   Search,
   Refresh,
@@ -32,9 +34,11 @@ import {
   Top,
   CopyDocument,
   InfoFilled,
+  Loading,
 } from '@element-plus/icons-vue'
 import { ElMessage, ElMessageBox } from 'element-plus'
-import { getExportTemplates } from '@/apis/export'
+import { getExportTemplates, createExportTemplate, replaceExportTemplate, deleteExportTemplate, downloadExportTemplate } from '@/apis/export'
+import { getAiConfigs, createAiConfig, getSystemLogs } from '@/apis/config'
 
 // ===================================================================
 // 配置常量 — Tab 定义
@@ -73,6 +77,25 @@ const AI_DEFAULTS = {
     '你是一个专业的教育AI助手，名为"智核"。你的任务是帮助一线教师完成备课、课件制作、教案编写和教学反思。请始终以教育专业视角回应，引用权威教材和课程标准，确保内容准确、科学、适合目标学段。在不确定时，应主动标注"此内容需教师进一步核实"。',
 }
 
+/** AI 参数配置分组（对应 sys_config.config_group，API-102/103 固定取值） */
+const AI_CONFIG_GROUP = 'ai_model'
+
+/**
+ * AI 表单字段 → 后端配置项映射
+ * numeric 为 true 时回填时执行数值解析，保存时转为字符串存入 config_value
+ */
+const AI_FIELD_DEFS = [
+  { field: 'defaultModel', configKey: 'default_model', description: '默认模型', numeric: false },
+  { field: 'temperature', configKey: 'temperature', description: '生成随机性（Temperature）', numeric: true },
+  { field: 'topP', configKey: 'top_p', description: '核采样概率（Top-P）', numeric: true },
+  { field: 'maxTokens', configKey: 'max_tokens', description: '最大生成 Token 数', numeric: true },
+  { field: 'frequencyPenalty', configKey: 'frequency_penalty', description: '频率惩罚', numeric: true },
+  { field: 'presencePenalty', configKey: 'presence_penalty', description: '存在惩罚', numeric: true },
+  { field: 'repetitionPenalty', configKey: 'repetition_penalty', description: '重复惩罚', numeric: true },
+  { field: 'maxWords', configKey: 'max_words', description: '最大生成长度（字）', numeric: true },
+  { field: 'systemPrompt', configKey: 'system_prompt', description: '系统提示词', numeric: false },
+]
+
 // ===================================================================
 // 配置常量 — Tab 2：导出模板管理
 // ===================================================================
@@ -101,55 +124,56 @@ const TEMPLATE_STATUS_OPTIONS = [
 // 配置常量 — Tab 3：系统日志
 // ===================================================================
 
-/** 日志级别筛选项 */
+/** 日志类型筛选项（对应后端 sys_log.log_type 取值） */
 const LOG_LEVEL_OPTIONS = [
-  { label: '全部级别', value: '' },
-  { label: 'ERROR', value: 'error' },
-  { label: 'WARN', value: 'warn' },
-  { label: 'INFO', value: 'info' },
-  { label: 'DEBUG', value: 'debug' },
+  { label: '全部类型', value: '' },
+  { label: '操作', value: 'operation' },
+  { label: '审核', value: 'audit' },
+  { label: '下载', value: 'download' },
+  { label: '浏览', value: 'browse' },
 ]
 
-/** 日志级别 → 显示标签映射 */
+/** 日志类型 → 显示标签映射 */
 const LOG_LEVEL_LABEL_MAP = {
-  error: 'ERROR', warn: 'WARN', info: 'INFO', debug: 'DEBUG',
+  operation: '操作', audit: '审核', download: '下载', browse: '浏览',
 }
 
-/** 日志级别 → Tag 类型映射 */
+/** 日志类型 → Tag 类型映射 */
 const LOG_LEVEL_TAG_TYPE_MAP = {
-  error: 'danger', warn: 'warning', info: '', debug: 'info',
+  operation: '', audit: 'warning', download: 'success', browse: 'info',
 }
 
-/** 日志级别 → 圆点颜色映射 */
+/** 日志类型 → 圆点颜色映射 */
 const LOG_LEVEL_DOT_COLOR_MAP = {
-  error: 'var(--zh-red)',
-  warn: 'var(--zh-orange)',
-  info: 'var(--zh-cyan)',
-  debug: 'var(--zh-text-disabled)',
+  operation: 'var(--zh-cyan)',
+  audit: 'var(--zh-orange)',
+  download: 'var(--zh-green)',
+  browse: 'var(--zh-text-disabled)',
 }
 
-/** 日志模块筛选项 */
+/** 日志模块筛选项（对应后端 sys_log.module 取值） */
 const LOG_MODULE_OPTIONS = [
   { label: '全部模块', value: '' },
-  { label: 'AI 引擎', value: 'ai-engine' },
-  { label: '知识库', value: 'knowledge-base' },
-  { label: '导出服务', value: 'export-service' },
-  { label: '存储服务', value: 'storage' },
-  { label: '用户系统', value: 'user-system' },
-  { label: '社区模块', value: 'community' },
-  { label: '系统', value: 'system' },
+  { label: '项目', value: 'project' },
+  { label: '认证', value: 'auth' },
+  { label: '用户', value: 'user' },
+  { label: '用户管理', value: 'admin_user' },
+  { label: '角色管理', value: 'admin_role' },
+  { label: '系统配置', value: 'admin_config' },
+  { label: '内容审核', value: 'admin_moderation' },
+  { label: '社区', value: 'community' },
+  { label: '资源库', value: 'resource' },
+  { label: '公共资源', value: 'admin_resource' },
+  { label: 'AI 引擎', value: 'ai' },
+  { label: '导出', value: 'export' },
+  { label: '导出模板', value: 'admin_export_template' },
+  { label: '告警', value: 'admin_alert' },
 ]
 
 /** 日志模块 → 显示标签映射 */
-const LOG_MODULE_LABEL_MAP = {
-  'ai-engine': 'AI 引擎',
-  'knowledge-base': '知识库',
-  'export-service': '导出服务',
-  storage: '存储服务',
-  'user-system': '用户系统',
-  community: '社区模块',
-  system: '系统',
-}
+const LOG_MODULE_LABEL_MAP = Object.fromEntries(
+  LOG_MODULE_OPTIONS.filter((o) => o.value).map((o) => [o.value, o.label]),
+)
 
 /** 每页条数选项 */
 const PAGE_SIZE_OPTIONS = [10, 20, 50, 100]
@@ -180,6 +204,9 @@ const aiConfig = reactive({ ...AI_DEFAULTS })
 /** 参数是否有未保存的修改 */
 const isAiDirty = ref(false)
 
+/** AI 配置加载中（回填期间抑制 dirty 监听，避免误报未保存修改） */
+const isAiLoading = ref(false)
+
 /** AI 配置保存中 */
 const isAiSaving = ref(false)
 
@@ -199,8 +226,8 @@ const templatePagination = reactive({ currentPage: 1, pageSize: 20, total: 0 })
 /** 上传模板对话框可见性 */
 const templateUploadVisible = ref(false)
 
-/** 上传模板表单 */
-const templateUploadForm = reactive({ name: '', type: 'pptx', version: '', description: '' })
+/** 上传模板表单数据（名称即 Python 侧 theme；模板文件存储于 Python 服务，版本固定 v1） */
+const templateUploadForm = reactive({ name: '', type: 'pptx', description: '' })
 
 /** 上传中 */
 const isTemplateUploading = ref(false)
@@ -208,8 +235,21 @@ const isTemplateUploading = ref(false)
 /** 当前上传模式：create | replace */
 const uploadMode = ref('create')
 
-/** 替换目标模板 ID */
+/** 替换目标模板 ID（Python 侧 theme） */
 const replaceTargetId = ref(null)
+
+/** 隐藏文件选择 input 引用 */
+const templateFileInputRef = ref(null)
+
+/** 拖拽区高亮状态 */
+const isTemplateDragOver = ref(false)
+
+/** 已选模板文件（单文件队列：模板一次上传一个文件） */
+const templateFile = ref(null)
+
+/** 模板文件约束：仅接受 JSON 模板文件（含 html_template 字段，用于 PPT 生成） */
+const TEMPLATE_FILE_ACCEPT = '.json'
+const TEMPLATE_FILE_MAX_SIZE = 20 * 1024 * 1024
 
 // ===================================================================
 // 响应式状态 — Tab 3：系统日志
@@ -248,96 +288,135 @@ const contextDataExpanded = ref(false)
 
 watch(
   () => ({ ...aiConfig }),
-  () => { isAiDirty.value = true },
+  () => {
+    if (isAiLoading.value) return
+    isAiDirty.value = true
+  },
   { deep: true },
 )
 
 // ===================================================================
-// Mock 数据生成 — Tab 3：系统日志
+// 数据适配 — 后端 ConfigVO → AI 参数表单（Tab 1：AI 参数配置）
 // ===================================================================
 
 /**
- * 生成模拟系统日志数据
- * @returns {Array} 日志对象数组
+ * 将后端配置项数组按 config_key 回填到 AI 参数表单
+ * 后端 config_value 一律为字符串；数值字段解析失败或缺失时回落默认值
+ * @param {Array<{config_key: string, config_value: string}>} configs - API-102 返回的配置项
  */
-const generateMockLogs = () => {
-  const levels = ['error', 'warn', 'info', 'debug']
-  const modules = ['ai-engine', 'knowledge-base', 'export-service', 'storage', 'user-system', 'community', 'system']
-  const operators = ['admin', 'system', 'scheduler', 'admin', 'scanner']
-
-  const errorMsgs = [
-    '上传失败：Connection timeout after 30000ms to bucket "zh-templates"',
-    '向量化引擎异常：第128页编码无法识别，请检查文件完整性',
-    'AI 模型调用超时：GPT-4o API 响应超过 60s，已自动降级',
-    '存储空间不足：磁盘使用率 92%，无法写入新文件',
-    '数据库连接池耗尽：Active=50, Idle=0, Waiting=12',
-  ]
-  const warnMsgs = [
-    '导出任务队列积压：当前排队 47 项，最长等待 28 分钟',
-    'Token 用量接近限制：本月已用 85%（425万/500万）',
-    '知识库索引重建耗时过长：预计剩余 15 分钟',
-    'API 响应延迟升高：P99 = 8.2s（正常 < 3s）',
-    '用户并发数超过阈值：当前 1280 人（阈值 1000）',
-  ]
-  const infoMsgs = [
-    '模板生成成功：用户 admin 导出了「勾股定理」课件',
-    '知识库向量化完成：「2026 版数学教材」入库 2.3 万条',
-    '新模板上传成功：「互动课件模板 - 科技感」v1.0',
-    '用户登录成功：张老师 (T0042) 来自 192.168.1.100',
-    'AI 参数配置已更新：temperature 0.7 → 0.8',
-    '社区内容审核通过：「勾股定理互动教学案例」(R0001)',
-    '系统定时任务完成：日志清理 1,280 条过期记录',
-    '资源解析完成：「细胞分裂动画.mp4」生成 1,200 条知识条目',
-  ]
-  const debugMsgs = [
-    'RAG 检索请求：query="勾股定理证明方法", topK=10',
-    '向量匹配耗时：12ms, 候选集=1,280',
-    '知识条目写入：batch=500, latency=45ms',
-    '缓存命中率：92.3% (12,400/13,430)',
-    'WebSocket 心跳检测：所有连接正常',
-  ]
-
-  const logs = []
-  for (let i = 0; i < 50; i++) {
-    const level = levels[i % 4]
-    const module = modules[i % 7]
-    let message = ''
-    if (level === 'error') message = errorMsgs[i % errorMsgs.length]
-    else if (level === 'warn') message = warnMsgs[i % warnMsgs.length]
-    else if (level === 'info') message = infoMsgs[i % infoMsgs.length]
-    else message = debugMsgs[i % debugMsgs.length]
-
-    const minutesAgo = i * 7 + Math.floor(Math.random() * 5)
-    const logDate = new Date(Date.now() - minutesAgo * 60000)
-    const ts = logDate.toISOString().replace('T', ' ').slice(0, 19) + '.' + String(Math.floor(Math.random() * 1000)).padStart(3, '0')
-
-    logs.push({
-      id: `LOG${String(i + 1).padStart(5, '0')}`,
-      timestamp: ts,
-      level,
-      module,
-      moduleLabel: LOG_MODULE_LABEL_MAP[module] || module,
-      message,
-      operator: operators[i % 5],
-      requestId: `req_${Math.random().toString(36).slice(2, 10)}`,
-      ip: `192.168.${Math.floor(Math.random() * 255)}.${Math.floor(Math.random() * 255)}`,
-      stackTrace:
-        level === 'error'
-          ? `at ObjectStorageService.upload (src/services/storage.ts:142:15)
-at TemplateController.handleUpload (src/controllers/template.ts:88:22)
-at async middleware (src/middleware/auth.ts:34:5)`
-          : '',
-      contextData:
-        level === 'error'
-          ? JSON.stringify({ bucket: 'zh-templates', fileName: '2026版数学教材（必修三）.pdf', fileSize: '128MB', retryCount: 3, timeoutMs: 30000 }, null, 2)
-          : '',
-    })
-  }
-  return logs
+const applyAiConfigs = (configs) => {
+  const valueMap = new Map((configs || []).map((c) => [c.config_key, c.config_value]))
+  AI_FIELD_DEFS.forEach(({ field, configKey, numeric }) => {
+    const raw = valueMap.get(configKey)
+    if (raw === undefined || raw === null || raw === '') {
+      aiConfig[field] = AI_DEFAULTS[field]
+      return
+    }
+    if (!numeric) {
+      aiConfig[field] = raw
+      return
+    }
+    const num = Number(raw)
+    aiConfig[field] = Number.isFinite(num) ? num : AI_DEFAULTS[field]
+  })
 }
 
-/** 全部日志数据（模拟数据库） */
-let allLogs = []
+/**
+ * 批量保存 AI 参数（API-103）— 按字段映射逐项提交，任一失败时提示并返回 false
+ * 后端按 config_key upsert：已存在则版本+1 并保存历史版本，否则新建
+ * @param {Object} values - 表单字段值（field → value）
+ * @returns {Promise<boolean>} 是否全部保存成功
+ */
+const saveAiConfigs = async (values) => {
+  const results = await Promise.all(
+    AI_FIELD_DEFS.map(({ field, configKey, description, numeric }) =>
+      createAiConfig({
+        config_group: AI_CONFIG_GROUP,
+        config_key: configKey,
+        config_value: numeric ? String(values[field]) : values[field],
+        description,
+      }),
+    ),
+  )
+  const failed = results.find((res) => res?.code !== 0 && res?.code !== 200)
+  if (failed) {
+    ElMessage.error(failed?.message || 'AI 参数配置保存失败')
+    return false
+  }
+  return true
+}
+
+/**
+ * 获取 AI 参数配置（API-102，config_group 固定 ai_model）
+ * 回填期间抑制 dirty 监听，避免误报"未保存修改"
+ */
+const fetchAiConfigs = async () => {
+  isAiLoading.value = true
+  try {
+    const res = await getAiConfigs({ config_group: AI_CONFIG_GROUP })
+    if (res?.code !== 0 && res?.code !== 200) {
+      ElMessage.error(res?.message || 'AI 参数配置加载失败')
+      return
+    }
+    applyAiConfigs(res?.data || [])
+    // 等待排队的 dirty watcher 执行完毕（期间被 isAiLoading 抑制）
+    await nextTick()
+  } catch {
+    ElMessage.error('AI 参数配置加载失败，请稍后重试')
+  } finally {
+    isAiLoading.value = false
+    isAiDirty.value = false
+  }
+}
+
+// ===================================================================
+// 数据适配 — 后端 LogVO → 页面行数据（Tab 3：系统日志）
+// ===================================================================
+
+/**
+ * 将时间格式化为 "YYYY-MM-DD HH:mm:ss"（日志精确到秒）
+ * @param {string|Date|undefined} value - 后端返回的时间
+ * @returns {string} 格式化后的时间文本
+ */
+const formatLogTime = (value) => {
+  if (!value) return '—'
+  const date = new Date(value)
+  if (Number.isNaN(date.getTime())) return value
+  const pad = (n) => String(n).padStart(2, '0')
+  return `${date.getFullYear()}-${pad(date.getMonth() + 1)}-${pad(date.getDate())} ${pad(date.getHours())}:${pad(date.getMinutes())}:${pad(date.getSeconds())}`
+}
+
+/**
+ * 将时间选择器的值转换为后端可解析的 ISO 格式（yyyy-MM-ddTHH:mm:ss）
+ * @param {Date|string} value - 时间选择器值
+ * @returns {string|undefined} ISO 时间字符串，无法解析时返回 undefined
+ */
+const toIsoDateTime = (value) => {
+  const date = value instanceof Date ? value : new Date(value)
+  if (Number.isNaN(date.getTime())) return undefined
+  const pad = (n) => String(n).padStart(2, '0')
+  return `${date.getFullYear()}-${pad(date.getMonth() + 1)}-${pad(date.getDate())}T${pad(date.getHours())}:${pad(date.getMinutes())}:${pad(date.getSeconds())}`
+}
+
+/**
+ * 将后端 LogVO 归一化为表格所需结构
+ * level 字段承载后端 log_type；message 显示操作动作；detail JSON 放入 contextData 供详情查看
+ * @param {Object} vo - 后端日志对象
+ * @returns {Object} 归一化后的日志对象
+ */
+const normalizeLog = (vo) => ({
+  id: vo.id,
+  timestamp: formatLogTime(vo.created_at),
+  level: vo.log_type || '',
+  module: vo.module || '',
+  moduleLabel: LOG_MODULE_LABEL_MAP[vo.module] || vo.module || '—',
+  message: vo.action || '',
+  operator: vo.user_id != null ? `#${vo.user_id}` : 'system',
+  requestId: vo.request_id || '—',
+  ip: vo.ip || '—',
+  stackTrace: vo.error_message || '',
+  contextData: vo.detail || '',
+})
 
 // ===================================================================
 // 数据适配
@@ -403,44 +482,59 @@ const fetchTemplates = async () => {
 }
 
 /**
- * 获取日志列表数据（模拟异步请求）
+ * 获取日志列表数据（API-106）
+ * 将前端筛选条件映射为后端查询参数，服务端过滤分页（结果按创建时间倒序）
  */
-const fetchLogs = () => {
+const fetchLogs = async () => {
   isTableLoading.value = true
-  setTimeout(() => {
-    let filtered = [...allLogs]
-    if (logFilters.level) filtered = filtered.filter((l) => l.level === logFilters.level)
-    if (logFilters.module) filtered = filtered.filter((l) => l.module === logFilters.module)
-    if (logFilters.keyword.trim()) {
-      const kw = logFilters.keyword.trim().toLowerCase()
-      filtered = filtered.filter((l) => l.message.toLowerCase().includes(kw))
+  try {
+    // 组装查询参数：只传有效的筛选条件
+    const params = { page: logPagination.currentPage, size: logPagination.pageSize }
+    if (logFilters.level) params.log_type = logFilters.level
+    if (logFilters.module) params.module = logFilters.module
+    if (logFilters.keyword.trim()) params.keyword = logFilters.keyword.trim()
+    if (Array.isArray(logFilters.timeRange) && logFilters.timeRange.length === 2) {
+      params.start_time = toIsoDateTime(logFilters.timeRange[0])
+      params.end_time = toIsoDateTime(logFilters.timeRange[1])
     }
-    filtered.sort((a, b) => b.timestamp.localeCompare(a.timestamp))
-    logPagination.total = filtered.length
-    const start = (logPagination.currentPage - 1) * logPagination.pageSize
-    logList.value = filtered.slice(start, start + logPagination.pageSize)
+
+    const res = await getSystemLogs(params)
+    if (res?.code !== 0 && res?.code !== 200) {
+      ElMessage.error(res?.message || '系统日志加载失败')
+      logList.value = []
+      logPagination.total = 0
+      return
+    }
+    const data = res?.data
+    const rows = data?.records || data?.list || data?.items || []
+    logList.value = rows.map(normalizeLog)
+    logPagination.total = Number(data?.total ?? rows.length)
+  } catch {
+    ElMessage.error('系统日志加载失败，请稍后重试')
+  } finally {
     isTableLoading.value = false
-  }, 300)
+  }
 }
 
 /**
  * 获取当前 Tab 对应的数据
  */
-const fetchData = () => {
-  if (activeTab.value === 'templates') fetchTemplates()
-  else if (activeTab.value === 'logs') fetchLogs()
+const fetchData = async () => {
+  if (activeTab.value === 'ai') await fetchAiConfigs()
+  else if (activeTab.value === 'templates') await fetchTemplates()
+  else if (activeTab.value === 'logs') await fetchLogs()
 }
 
 /**
  * 页面首次数据加载
  */
-const loadData = () => {
+const loadData = async () => {
   isLoading.value = true
-  setTimeout(() => {
-    allLogs = generateMockLogs()
+  try {
+    await fetchData()
+  } finally {
     isLoading.value = false
-    fetchData()
-  }, 600)
+  }
 }
 
 // ===================================================================
@@ -477,7 +571,7 @@ const handleRefresh = () => {
 // ===================================================================
 
 /**
- * 保存 AI 参数配置 — 二次确认后模拟保存
+ * 保存 AI 参数配置（API-103）— 二次确认后按字段逐项提交
  */
 const handleAiSave = () => {
   ElMessageBox.confirm(
@@ -485,19 +579,24 @@ const handleAiSave = () => {
     '保存配置',
     { confirmButtonText: '确认保存', cancelButtonText: '取消', type: 'info' },
   )
-    .then(() => {
+    .then(async () => {
       isAiSaving.value = true
-      setTimeout(() => {
-        isAiSaving.value = false
-        isAiDirty.value = false
+      try {
+        const ok = await saveAiConfigs({ ...aiConfig })
+        if (!ok) return
+        await fetchAiConfigs()
         ElMessage.success('AI 参数配置已保存并生效')
-      }, 800)
+      } catch {
+        ElMessage.error('AI 参数配置保存失败，请稍后重试')
+      } finally {
+        isAiSaving.value = false
+      }
     })
     .catch(() => {})
 }
 
 /**
- * 恢复全部 AI 参数为默认值 — 二次确认后重置
+ * 恢复全部 AI 参数为默认值 — 二次确认后将默认值写回后端（API-103）
  */
 const handleAiReset = () => {
   ElMessageBox.confirm(
@@ -505,10 +604,19 @@ const handleAiReset = () => {
     '恢复默认',
     { confirmButtonText: '确认恢复', cancelButtonText: '取消', type: 'warning' },
   )
-    .then(() => {
-      Object.assign(aiConfig, AI_DEFAULTS)
-      isAiDirty.value = false
-      ElMessage.success('已恢复为默认设置并自动保存')
+    .then(async () => {
+      isAiSaving.value = true
+      try {
+        const ok = await saveAiConfigs(AI_DEFAULTS)
+        if (!ok) return
+        Object.assign(aiConfig, AI_DEFAULTS)
+        await fetchAiConfigs()
+        ElMessage.success('已恢复为默认设置并自动保存')
+      } catch {
+        ElMessage.error('恢复默认设置失败，请稍后重试')
+      } finally {
+        isAiSaving.value = false
+      }
     })
     .catch(() => {})
 }
@@ -607,29 +715,26 @@ const handleSetDefault = (row) => {
 }
 
 /**
- * 下载模板
- * @param {Object} row - 模板行数据
- */
-const handleDownloadTemplate = (row) => {
-  ElMessage.success(`开始下载「${row.name}」`)
-}
-
-/**
- * 打开替换模板对话框 — 预填当前模板信息
+ * 打开替换模板对话框 — 预填当前模板信息，等待选择新文件（默认模板不可替换）
  * @param {Object} row - 模板行数据
  */
 const openReplaceDialog = (row) => {
+  if (row.isDefault) {
+    ElMessage.warning('默认模板不可替换，请新建模板后使用')
+    return
+  }
   uploadMode.value = 'replace'
   replaceTargetId.value = row.id
   templateUploadForm.name = row.name
   templateUploadForm.type = row.type
-  templateUploadForm.version = ''
   templateUploadForm.description = ''
+  templateFile.value = null
+  isTemplateDragOver.value = false
   templateUploadVisible.value = true
 }
 
 /**
- * 删除模板 — 二次确认
+ * 删除模板 — 二次确认后调用 DELETE 接口（默认模板后端同样拒绝删除）
  * @param {Object} row - 模板行数据
  */
 const handleDeleteTemplate = (row) => {
@@ -642,12 +747,44 @@ const handleDeleteTemplate = (row) => {
     '确认删除',
     { confirmButtonText: '确认删除', cancelButtonText: '取消', type: 'warning', confirmButtonClass: 'el-button--danger' },
   )
-    .then(() => {
-      ElMessage.success(`已删除模板「${row.name}」`)
-      if (templateList.value.length === 1 && templatePagination.currentPage > 1) templatePagination.currentPage--
-      fetchTemplates()
+    .then(async () => {
+      try {
+        const res = await deleteExportTemplate(row.id)
+        if (res?.code !== 0 && res?.code !== 200) {
+          ElMessage.error(res?.message || `删除模板「${row.name}」失败`)
+          return
+        }
+        ElMessage.success(`已删除模板「${row.name}」`)
+        if (templateList.value.length === 1 && templatePagination.currentPage > 1) templatePagination.currentPage--
+        fetchTemplates()
+      } catch {
+        ElMessage.error('删除模板失败，请稍后重试')
+      }
     })
     .catch(() => {})
+}
+
+/**
+ * 下载模板 JSON 文件 — 请求 blob 后经 objectURL 触发浏览器下载（文件名与 Python 侧一致：theme.json）
+ * @param {Object} row - 模板行数据
+ */
+const handleDownloadTemplate = async (row) => {
+  try {
+    const response = await downloadExportTemplate(row.id)
+    const blob = new Blob([response?.data], { type: 'application/json' })
+    const url = window.URL.createObjectURL(blob)
+    const link = document.createElement('a')
+    link.href = url
+    link.download = `${row.id}.json`
+    link.click()
+    window.URL.revokeObjectURL(url)
+    ElMessage.success(`已开始下载「${row.name}」模板文件`)
+  } catch (error) {
+    const message = error?.response?.data && typeof error.response.data === 'string'
+      ? (() => { try { return JSON.parse(error.response.data)?.message } catch { return null } })()
+      : null
+    ElMessage.error(message || `下载模板「${row.name}」失败，请稍后重试`)
+  }
 }
 
 /**
@@ -658,39 +795,196 @@ const openUploadDialog = () => {
   replaceTargetId.value = null
   templateUploadForm.name = ''
   templateUploadForm.type = 'pptx'
-  templateUploadForm.version = ''
   templateUploadForm.description = ''
+  templateFile.value = null
+  isTemplateDragOver.value = false
   templateUploadVisible.value = true
 }
 
+// ===================================================================
+// 上传模板 — 文件选择与拖拽（结构参考用户端个人资源库上传素材）
+// ===================================================================
+
 /**
- * 模拟文件选择 — 自动填入模板名称
- * @param {Object} file - 文件对象，含 name 和 size
+ * 获取文件扩展名（小写）
+ * @param {string} name - 文件名
+ * @returns {string} 扩展名（不含点），无扩展名返回空串
  */
-const handleTemplateFileSelect = (file) => {
-  if (!templateUploadForm.name) {
-    templateUploadForm.name = file.name.replace(/\.(pptx|docx)$/i, '')
-  }
+const getFileExtension = (name) => {
+  const parts = String(name || '').toLowerCase().split('.')
+  return parts.length > 1 ? parts.pop() : ''
 }
 
 /**
- * 执行模板上传/替换 — 含基础校验
+ * 格式化文件大小为可读文本
+ * @param {number} bytes - 字节数
+ * @returns {string} 如 "4.2 MB"
  */
-const handleTemplateUpload = () => {
-  if (!templateUploadForm.name.trim()) { ElMessage.warning('请输入模板名称'); return }
-  if (!templateUploadForm.version.trim()) { ElMessage.warning('请输入版本号'); return }
+const formatFileSize = (bytes) => {
+  if (!Number.isFinite(bytes) || bytes < 0) return '—'
+  if (bytes < 1024) return `${bytes} B`
+  if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(1)} KB`
+  return `${(bytes / (1024 * 1024)).toFixed(1)} MB`
+}
 
+/** 打开系统文件选择器（上传中禁止） */
+const openTemplateFilePicker = () => {
+  if (!isTemplateUploading.value) templateFileInputRef.value?.click()
+}
+
+/**
+ * 文件选择 input change 处理 — 取文件后清空 input 允许重复选择同一文件
+ */
+const onTemplateFileInputChange = (event) => {
+  addTemplateFile(event.target?.files)
+  if (event.target) event.target.value = ''
+}
+
+/** 拖拽悬停高亮 */
+const onTemplateDragOver = (event) => {
+  event.preventDefault()
+  if (!isTemplateUploading.value) isTemplateDragOver.value = true
+}
+
+/** 拖拽离开取消高亮（仅当离开拖拽区本身） */
+const onTemplateDragLeave = (event) => {
+  event.preventDefault()
+  if (event.currentTarget === event.target || !event.currentTarget.contains(event.relatedTarget)) {
+    isTemplateDragOver.value = false
+  }
+}
+
+/** 放置文件 — 进入队列 */
+const onTemplateDrop = (event) => {
+  event.preventDefault()
+  isTemplateDragOver.value = false
+  if (!isTemplateUploading.value) addTemplateFile(event.dataTransfer?.files)
+}
+
+/**
+ * 将所选文件加入队列（单文件：重复选择直接覆盖）
+ * 校验扩展名（.json）、大小（≤20MB）与 JSON 格式（顶层对象且含 html_template 字段），
+ * 通过后读取文本内容存入队列项，类型锁定 pptx，名称为空时自动回填（去掉扩展名）
+ * @param {FileList|Array} files - 待加入的文件列表
+ */
+const addTemplateFile = async (files) => {
+  if (isTemplateUploading.value) return
+  const incoming = Array.from(files || [])
+  if (!incoming.length) return
+  if (incoming.length > 1) {
+    ElMessage.info('模板一次只能上传一个文件，已选取第一个文件')
+  }
+  const file = incoming[0]
+  const ext = getFileExtension(file.name)
+  if (ext !== 'json') {
+    ElMessage.warning('仅支持 .json 模板文件（模板 JSON 需含 html_template 字段）')
+    return
+  }
+  if (file.size > TEMPLATE_FILE_MAX_SIZE) {
+    ElMessage.warning(`文件 ${formatFileSize(file.size)} 超过 20MB 限制，已跳过`)
+    return
+  }
+  // 校验 JSON 格式与模板结构
+  let content
+  try {
+    content = await file.text()
+  } catch {
+    ElMessage.error('读取模板文件失败，请重试')
+    return
+  }
+  let parsed
+  try {
+    parsed = JSON.parse(content)
+  } catch (error) {
+    ElMessage.warning(`模板文件不是有效的 JSON 格式：${error?.message || '解析失败'}`)
+    return
+  }
+  if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) {
+    ElMessage.warning('模板 JSON 顶层必须是对象（{...}）')
+    return
+  }
+  if (!String(parsed.html_template || '').trim()) {
+    ElMessage.warning('模板 JSON 缺少 html_template 字段，无法用于 PPT 生成')
+    return
+  }
+  const stem = file.name.replace(/\.json$/i, '')
+  templateFile.value = {
+    uid: `${Date.now()}-${Math.random().toString(16).slice(2)}`,
+    file,
+    content,
+    name: file.name,
+    size: file.size,
+    format: 'json',
+    status: 'ready',
+    progress: 0,
+    error: '',
+  }
+  // 名称即 Python 侧 theme（模板文件名），名称为空时自动回填文件名去后缀
+  templateUploadForm.type = 'pptx'
+  if (!templateUploadForm.name.trim()) {
+    templateUploadForm.name = stem
+  }
+}
+
+/** 移除已选文件（上传中禁止） */
+const removeTemplateFile = () => {
+  if (isTemplateUploading.value) return
+  templateFile.value = null
+}
+
+/** 文件状态显示文本 */
+const getTemplateFileStatusText = (status, progress) =>
+  status === 'success' ? '已完成' : status === 'uploading' ? `${progress}%` : status === 'error' ? '失败' : '待上传'
+
+/**
+ * 执行模板上传/替换 — 调用 API-95 创建 / API-100 替换
+ * template_data 提交所选 JSON 文件的文本内容，Python 侧落盘为 {theme}.json（theme 即表单名称）
+ */
+const handleTemplateUpload = async () => {
+  if (!templateFile.value) { ElMessage.warning('请先选择模板文件'); return }
+  if (!templateUploadForm.name.trim()) { ElMessage.warning('请输入模板名称'); return }
+
+  const item = templateFile.value
   isTemplateUploading.value = true
-  setTimeout(() => {
-    if (uploadMode.value === 'create') {
-      ElMessage.success(`模板「${templateUploadForm.name}」上传成功`)
-    } else {
-      ElMessage.success(`模板「${templateUploadForm.name}」已替换为 ${templateUploadForm.version}`)
+  item.status = 'uploading'
+  item.progress = 0
+  item.error = ''
+  // JSON 提交无字节级进度，用渐进模拟呈现（完成后跳 100%）
+  const progressTimer = setInterval(() => {
+    if (item.progress < 90) item.progress = Math.min(90, item.progress + 6)
+  }, 150)
+
+  try {
+    const payload = {
+      name: templateUploadForm.name.trim(),
+      export_type: 'pptx',
+      template_data: item.content,
+      description: templateUploadForm.description || undefined,
     }
-    isTemplateUploading.value = false
+    const res = uploadMode.value === 'create'
+      ? await createExportTemplate(payload)
+      : await replaceExportTemplate(replaceTargetId.value, payload)
+    if (res?.code !== 0 && res?.code !== 200) {
+      item.status = 'error'
+      item.error = res?.message || '上传失败'
+      ElMessage.error(res?.message || `模板「${templateUploadForm.name}」上传失败`)
+      return
+    }
+    item.status = 'success'
+    item.progress = 100
+    ElMessage.success(uploadMode.value === 'create'
+      ? `模板「${templateUploadForm.name}」上传成功`
+      : `模板「${templateUploadForm.name}」已替换`)
     templateUploadVisible.value = false
     fetchTemplates()
-  }, 1500)
+  } catch (error) {
+    item.status = 'error'
+    item.error = error?.message || '上传失败，请重试'
+    ElMessage.error('上传模板失败，请稍后重试')
+  } finally {
+    clearInterval(progressTimer)
+    isTemplateUploading.value = false
+  }
 }
 
 /**
@@ -1328,32 +1622,25 @@ onBeforeUnmount(() => {
           </div>
         </el-card>
 
-        <!-- 上传/替换模板对话框 -->
+        <!-- 上传/替换模板对话框（结构参考用户端个人资源库上传素材） -->
         <el-dialog
           v-model="templateUploadVisible"
           :title="uploadMode === 'create' ? '上传导出模板' : '替换模板'"
-          width="520px"
+          width="680px"
           destroy-on-close
+          :close-on-click-modal="!isTemplateUploading"
+          :close-on-press-escape="!isTemplateUploading"
+          :show-close="!isTemplateUploading"
           :style="{ '--el-dialog-bg-color': 'var(--zh-background-pop)', '--el-dialog-border-radius': 'var(--zh-radius16)' }"
         >
-          <!-- 拖拽上传区（仅新建模式） -->
-          <div
-            v-if="uploadMode === 'create'"
-            class="upload-dropzone flex flex-col items-center justify-center gap-3 cursor-pointer transition-all duration-200 mb-5"
-            :style="{ border: '2px dashed var(--zh-line-heavier)', borderRadius: 'var(--zh-radius12)', background: 'var(--zh-background-light-gray)', minHeight: '140px' }"
+          <!-- 隐藏文件选择 input（由拖拽区点击触发） -->
+          <input
+            ref="templateFileInputRef"
+            class="visually-hidden"
+            type="file"
+            :accept="TEMPLATE_FILE_ACCEPT"
+            @change="onTemplateFileInputChange"
           >
-            <el-icon :size="48" :style="{ color: 'var(--zh-text-caption)' }"><Upload /></el-icon>
-            <p :style="{ fontSize: 'var(--zh-font-size14)', color: 'var(--zh-text-caption)' }">
-              将文件拖拽到此处，或<span :style="{ color: 'var(--zh-text-link)', textDecoration: 'underline' }">点击上传</span>
-            </p>
-            <p :style="{ fontSize: 'var(--zh-font-size12)', color: 'var(--zh-text-disabled)' }">
-              支持 .pptx / .docx，最大 20MB
-            </p>
-            <!-- 演示用示例文件按钮 -->
-            <el-button size="small" @click="handleTemplateFileSelect({ name: '标准课件模板.pptx', size: 4.2 * 1024 * 1024 })">
-              + 添加示例文件 (PPTX)
-            </el-button>
-          </div>
 
           <!-- 替换模式提示 -->
           <div
@@ -1361,36 +1648,103 @@ onBeforeUnmount(() => {
             class="flex items-center gap-3 p-4 rounded-lg mb-5"
             :style="{ background: 'var(--zh-background-light-gray)', border: '1px solid var(--zh-line-border)' }"
           >
-            <InfoFilled :size="20" :style="{ color: 'var(--zh-cyan)' }" />
+            <el-icon :size="16" :style="{ color: 'var(--zh-cyan)' }"><InfoFilled /></el-icon>
             <span :style="{ fontSize: 'var(--zh-font-size13)', color: 'var(--zh-text-secondary)' }">
-              将替换模板「{{ templateUploadForm.name }}」，新版本号将覆盖旧版本
+              将替换模板「{{ templateUploadForm.name }}」的模板内容，替换后立即生效
             </span>
           </div>
 
-          <!-- 表单区 -->
-          <div class="flex flex-col gap-4">
+          <!-- 拖拽上传区 -->
+          <div
+            class="upload-dropzone"
+            :class="{ 'is-dragover': isTemplateDragOver, 'is-uploading': isTemplateUploading }"
+            @click="openTemplateFilePicker"
+            @dragenter.prevent="onTemplateDragOver"
+            @dragover.prevent="onTemplateDragOver"
+            @dragleave.prevent="onTemplateDragLeave"
+            @drop.prevent="onTemplateDrop"
+          >
+            <el-icon :size="42" class="upload-dropzone-icon">
+              <Loading v-if="isTemplateUploading" class="upload-loading-icon" />
+              <Upload v-else />
+            </el-icon>
+            <strong>{{ isTemplateUploading ? '正在上传模板，请稍候…' : '拖拽文件到这里，或点击选择文件' }}</strong>
+            <span>支持 .pptx / .docx 模板文件，单文件最大 20MB，一次上传一个文件</span>
+          </div>
+
+          <!-- 已选文件队列（单文件） -->
+          <section v-if="templateFile" class="upload-queue" aria-label="待上传模板文件">
+            <div class="upload-file-list">
+              <div class="upload-file-item">
+                <span class="upload-file-mark">{{ templateFile.format }}</span>
+                <div class="upload-file-info">
+                  <div class="upload-file-title-row">
+                    <strong :title="templateFile.name">{{ templateFile.name }}</strong>
+                  </div>
+                  <el-progress
+                    v-if="templateFile.status === 'uploading' || templateFile.status === 'success'"
+                    :percentage="templateFile.progress"
+                    :stroke-width="4"
+                    :show-text="false"
+                    :status="templateFile.status === 'success' ? 'success' : undefined"
+                  />
+                  <small v-if="templateFile.status === 'error'" class="upload-error">{{ templateFile.error }}</small>
+                </div>
+                <span class="upload-file-size">{{ formatFileSize(templateFile.size) }}</span>
+                <span
+                  class="upload-file-status"
+                  :class="{ 'is-success': templateFile.status === 'success', 'is-error': templateFile.status === 'error' }"
+                >
+                  {{ getTemplateFileStatusText(templateFile.status, templateFile.progress) }}
+                </span>
+                <el-button
+                  text
+                  circle
+                  :icon="Delete"
+                  :disabled="isTemplateUploading"
+                  aria-label="移除文件"
+                  @click="removeTemplateFile"
+                />
+              </div>
+            </div>
+          </section>
+
+          <!-- 表单区：模板名称与类型 -->
+          <div class="flex flex-col gap-4 mt-5">
             <div class="flex flex-col gap-1.5">
               <span :style="{ fontSize: 'var(--zh-font-size13)', color: 'var(--zh-text-caption)' }">模板名称</span>
-              <el-input v-model="templateUploadForm.name" placeholder="请输入模板名称" size="default" :disabled="uploadMode === 'replace'" />
+              <el-input
+                v-model="templateUploadForm.name"
+                placeholder="请输入模板名称"
+                size="default"
+                maxlength="50"
+                :disabled="uploadMode === 'replace' || isTemplateUploading"
+              />
             </div>
-            <div class="flex items-center gap-4">
-              <div class="flex flex-col gap-1.5 flex-1">
-                <span :style="{ fontSize: 'var(--zh-font-size13)', color: 'var(--zh-text-caption)' }">模板类型</span>
-                <el-select v-model="templateUploadForm.type" size="default" style="width: 100%;" :disabled="uploadMode === 'replace'">
-                  <el-option v-for="opt in TEMPLATE_TYPE_OPTIONS.filter(o => o.value)" :key="opt.value" :label="opt.label" :value="opt.value" />
-                </el-select>
-              </div>
-              <div class="flex flex-col gap-1.5 flex-1">
-                <span :style="{ fontSize: 'var(--zh-font-size13)', color: 'var(--zh-text-caption)' }">版本号</span>
-                <el-input v-model="templateUploadForm.version" placeholder="如 v2.0" size="default" />
-              </div>
+            <div class="flex flex-col gap-1.5">
+              <span :style="{ fontSize: 'var(--zh-font-size13)', color: 'var(--zh-text-caption)' }">模板类型</span>
+              <el-select
+                v-model="templateUploadForm.type"
+                size="default"
+                style="width: 100%;"
+                :disabled="!!templateFile || uploadMode === 'replace' || isTemplateUploading"
+              >
+                <el-option label="PPTX 课件" value="pptx" />
+              </el-select>
+              <span v-if="templateFile" :style="{ fontSize: 'var(--zh-font-size12)', color: 'var(--zh-text-disabled)' }">
+                类型已锁定为 PPTX 课件，Word 教案模板暂未开放
+              </span>
             </div>
           </div>
 
           <template #footer>
             <div class="flex justify-end gap-3">
-              <el-button @click="templateUploadVisible = false">取消</el-button>
-              <el-button type="primary" :loading="isTemplateUploading" @click="handleTemplateUpload">
+              <el-button :disabled="isTemplateUploading" @click="templateUploadVisible = false">取消</el-button>
+              <el-button
+                type="primary"
+                :disabled="isTemplateUploading || !templateFile"
+                @click="handleTemplateUpload"
+              >
                 {{ isTemplateUploading ? '上传中...' : (uploadMode === 'create' ? '确认上传' : '确认替换') }}
               </el-button>
             </div>
@@ -1417,7 +1771,7 @@ onBeforeUnmount(() => {
 
           <el-select
             v-model="logFilters.level"
-            placeholder="全部级别"
+            placeholder="全部类型"
             clearable
             size="default"
             style="width: 120px;"
@@ -1495,7 +1849,7 @@ onBeforeUnmount(() => {
             </el-table-column>
 
             <!-- 列：级别 -->
-            <el-table-column prop="level" label="级别" width="85" align="center">
+            <el-table-column prop="level" label="类型" width="85" align="center">
               <template #default="{ row }">
                 <el-tag :type="getLogLevelTagType(row.level)" size="small" effect="plain">
                   <span class="flex items-center gap-1.5">
@@ -1620,7 +1974,7 @@ onBeforeUnmount(() => {
             </div>
 
             <!-- 堆栈跟踪（仅 ERROR 级别） -->
-            <div v-if="currentLog.level === 'error' && currentLog.stackTrace" class="mb-4">
+            <div v-if="currentLog.stackTrace" class="mb-4">
               <div
                 class="flex items-center gap-2 cursor-pointer select-none py-1"
                 @click="stackTraceExpanded = !stackTraceExpanded"
@@ -1727,11 +2081,72 @@ onBeforeUnmount(() => {
   border-color: var(--zh-line-heavier) !important;
 }
 
-/* ===== 上传拖拽区悬浮态 ===== */
-.upload-dropzone:hover {
-  border-color: var(--zh-text-theme) !important;
-  background: var(--zh-background-weaken) !important;
+/* ===== 上传模板拖拽区与文件队列（样式参考用户端个人资源库上传素材） ===== */
+.upload-dropzone {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 10px;
+  padding: 24px;
+  border: 1.5px dashed var(--zh-line-heavier);
+  border-radius: var(--zh-radius12);
+  color: var(--zh-text-secondary);
+  background: var(--zh-background-light-gray);
+  cursor: pointer;
+  transition: border-color 180ms ease, background-color 180ms ease, box-shadow 180ms ease;
 }
+.upload-dropzone:hover,
+.upload-dropzone.is-dragover {
+  border-color: var(--zh-text-theme);
+  background: var(--zh-background-option-on);
+  box-shadow: inset 0 0 0 1px var(--zh-text-theme);
+}
+.upload-dropzone.is-uploading { cursor: wait; opacity: 0.82; }
+.upload-dropzone strong { color: var(--zh-text-primary); font-size: 14px; font-weight: 600; }
+.upload-dropzone span { color: var(--zh-text-caption); font-size: 12px; text-align: center; }
+.upload-dropzone-icon { color: var(--zh-text-theme); }
+.upload-loading-icon { animation: template-upload-spin 1.4s linear infinite; }
+
+.upload-queue { margin-top: 20px; }
+.upload-queue :deep(.el-progress-bar__outer) { background: var(--zh-background-option); }
+.upload-file-list { border: 1px solid var(--zh-line-border); border-radius: var(--zh-radius8); }
+.upload-file-item { display: flex; align-items: center; gap: 10px; min-height: 66px; padding: 10px 12px; }
+.upload-file-mark {
+  width: 38px;
+  height: 38px;
+  display: grid;
+  place-items: center;
+  flex: 0 0 38px;
+  border-radius: 7px;
+  color: var(--zh-text-theme);
+  background: var(--zh-background-weaken);
+  font-size: 10px;
+  font-weight: 700;
+  text-transform: uppercase;
+}
+.upload-file-info { min-width: 0; flex: 1; }
+.upload-file-title-row { display: flex; align-items: center; gap: 4px; min-width: 0; }
+.upload-file-title-row strong {
+  min-width: 0;
+  overflow: hidden;
+  color: var(--zh-text-primary);
+  font-size: 13px;
+  font-weight: 500;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.upload-file-info :deep(.el-progress) { margin-top: 5px; }
+.upload-file-size { flex: 0 0 62px; color: var(--zh-text-caption); font-size: 12px; text-align: right; font-family: var(--zh-font-number); }
+.upload-file-status { flex: 0 0 48px; color: var(--zh-text-caption); font-size: 12px; text-align: right; }
+.upload-file-status.is-success { color: var(--zh-green); }
+.upload-file-status.is-error,
+.upload-error { color: var(--zh-red); }
+.upload-error { display: block; margin-top: 4px; overflow: hidden; font-size: 11px; text-overflow: ellipsis; white-space: nowrap; }
+
+.visually-hidden { position: absolute; width: 1px; height: 1px; overflow: hidden; clip: rect(0 0 0 0); white-space: nowrap; }
+
+@keyframes template-upload-spin { to { transform: rotate(360deg); } }
 
 /* ===== 旋转动画（折叠箭头） ===== */
 .rotate-180 {

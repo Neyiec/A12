@@ -7,8 +7,12 @@
     - ElementPlus Icons: Search, Plus, Edit, Delete, Refresh, Lock, UserFilled
     - `ref`, `reactive`, `computed`, `onMounted`, `onBeforeUnmount`, `nextTick` from Vue
   - 依赖:
-    - 无外部 API 调用，当前使用静态示例数据（后续替换为后端 API）
-  - 输入: 无 props，数据在组件内部 mock
+    - `getAdminRoles`: 来自 `../apis/user.js`（API-80 查询角色列表，含权限矩阵/描述/成员数/状态）
+    - `createAdminRole`: 来自 `../apis/user.js`（API-80A 创建角色，创建成功后自动打开权限抽屉）
+    - `updateAdminRole`: 来自 `../apis/user.js`（API-80B 更新角色信息，仅更新传入字段）
+    - `deleteAdminRole`: 来自 `../apis/user.js`（API-80C 删除角色，硬删除并级联清理关联）
+    - `updateRolePermissions`: 来自 `../apis/user.js`（API-82 配置角色权限，提交权限矩阵 JSON）
+  - 输入: 无 props，角色数据来自后端 API-80
   - 输出: 渲染角色管理视图（工具栏 + 数据表格 + 展开行 + 分页器 + 新增/编辑对话框 + 权限编辑抽屉）
   - 监听: `admin-refresh` 自定义事件（从 AdminHeader 刷新按钮发出），触发数据重新加载
   - 跳转: 成员数点击可跳转到用户管理页并预筛该角色（通过 query 参数传递）
@@ -27,6 +31,7 @@ import {
   UserFilled,
 } from '@element-plus/icons-vue'
 import { ElMessage, ElMessageBox } from 'element-plus'
+import { getAdminRoles, createAdminRole, updateAdminRole, deleteAdminRole, updateRolePermissions } from '@/apis/user.js'
 
 const router = useRouter()
 
@@ -165,6 +170,7 @@ const formRef = ref(null)
 /** 对话框表单数据 */
 const dialogForm = reactive({
   id: null,
+  role_code: '',
   name: '',
   description: '',
   icon: 'shield',
@@ -173,6 +179,14 @@ const dialogForm = reactive({
 
 /** 表单校验规则 */
 const formRules = {
+  role_code: [
+    { required: true, message: '请输入角色编码', trigger: 'blur' },
+    {
+      pattern: /^[a-z][a-z0-9_]{1,49}$/,
+      message: '小写字母开头，仅可包含小写字母/数字/下划线',
+      trigger: 'blur',
+    },
+  ],
   name: [
     { required: true, message: '请输入角色名称', trigger: 'blur' },
     { min: 2, max: 20, message: '角色名称长度须在 2 到 20 个字符之间', trigger: 'blur' },
@@ -206,135 +220,67 @@ const isSavingPerm = ref(false)
 const hasPermChanges = ref(false)
 
 // ===================================================================
-// Mock 数据生成
+// 数据适配 — 后端 API-80 角色对象 → 页面行数据
 // ===================================================================
 
-/**
- * 生成模拟角色数据
- * 后续替换为后端 API 调用
- * @returns {Array} 角色对象数组
- */
-const generateMockRoles = () => {
-  // 定义所有角色模板
-  const templates = [
-    {
-      id: '0001',
-      name: '超级管理员',
-      description: '拥有系统全部权限，可管理所有模块和用户',
-      icon: 'shield',
-      memberCount: 3,
-      status: 'active',
-      created_at: '2026-01-15 09:30',
-      permissions: buildFullPermissions(true),
-    },
-    {
-      id: '0002',
-      name: '内容审核员',
-      description: '负责内容审核与社区治理，可查看知识库但不可编辑',
-      icon: 'search',
-      memberCount: 23,
-      status: 'active',
-      created_at: '2026-01-20 14:00',
-      permissions: buildPartialPermissions({
-        dashboard: ['view'],
-        audit: ['view', 'audit', 'delete'],
-        resources: ['view'],
-      }),
-    },
-    {
-      id: '0003',
-      name: '知识库维护员',
-      description: '负责公共资源和知识库的内容维护与更新',
-      icon: 'book',
-      memberCount: 8,
-      status: 'active',
-      created_at: '2026-02-08 11:20',
-      permissions: buildPartialPermissions({
-        dashboard: ['view'],
-        resources: ['view', 'edit', 'delete'],
-      }),
-    },
-    {
-      id: '0004',
-      name: '系统配置管理员',
-      description: '负责系统配置修改，可查看用户和角色但不可编辑',
-      icon: 'gear',
-      memberCount: 2,
-      status: 'active',
-      created_at: '2026-03-01 16:45',
-      permissions: buildPartialPermissions({
-        dashboard: ['view'],
-        users: ['view'],
-        roles: ['view'],
-        settings: ['view', 'modify'],
-      }),
-    },
-    {
-      id: '0005',
-      name: '普通教师',
-      description: '基础角色，仅可查看数据看板和个人信息',
-      icon: 'user',
-      memberCount: 45,
-      status: 'active',
-      created_at: '2026-03-15 08:00',
-      permissions: buildPartialPermissions({
-        dashboard: ['view'],
-      }),
-    },
-    {
-      id: '0006',
-      name: '访客',
-      description: '受限角色，仅可查看数据看板概览，不可导出和统计',
-      icon: 'edit',
-      memberCount: 5,
-      status: 'disabled',
-      created_at: '2026-04-10 10:30',
-      permissions: buildPartialPermissions({
-        dashboard: ['view'],
-      }),
-    },
-  ]
-  return templates
+/** 角色 role_code → 图标预设映射（后端不返回图标，按编码固定分配便于区分） */
+const ROLE_ICON_BY_CODE = {
+  super_admin: 'shield',
+  admin: 'gear',
+  content_auditor: 'search',
+  knowledge_curator: 'book',
+  teacher: 'user',
 }
 
 /**
- * 根据模块-操作映射构建权限数据结构
- * @param {Object|boolean} spec — true 表示全选，或 { moduleKey: [actionKey, ...] } 映射
- * @returns {Array} 权限对象数组
+ * ISO 时间字符串格式化为本地 "YYYY-MM-DD HH:mm"
+ * @param {string|undefined} value - 后端返回的时间
+ * @returns {string} 格式化后的时间文本
  */
-const buildPartialPermissions = (spec) => {
-  return PERMISSION_MODULES.map((mod) => {
-    const allowedActions = spec[mod.key] || []
-    return {
-      moduleKey: mod.key,
-      moduleLabel: mod.label,
-      actions: mod.actions.map((act) => ({
-        key: act.key,
-        label: act.label,
-        granted: allowedActions.includes(act.key),
-      })),
-    }
-  })
+const formatTime = (value) => {
+  if (!value) return ''
+  const date = new Date(value)
+  if (Number.isNaN(date.getTime())) return value
+  const pad = (n) => String(n).padStart(2, '0')
+  return `${date.getFullYear()}-${pad(date.getMonth() + 1)}-${pad(date.getDate())} ${pad(date.getHours())}:${pad(date.getMinutes())}`
 }
 
 /**
- * 构建全选/全不选权限数据
- * @param {boolean} allGranted — true 全选，false 全不选
- * @returns {Array} 权限对象数组
+ * 解析后端返回的权限矩阵（JSON 字符串 → 数组）
+ * 解析失败时返回空数组，权限抽屉会回退为全未勾选
+ * @param {string|Array} raw - 后端 permissions 字段
+ * @returns {Array} [{moduleKey, moduleLabel, actions:[{key,label,granted}]}]
  */
-const buildFullPermissions = (allGranted) => {
-  return PERMISSION_MODULES.map((mod) => ({
-    moduleKey: mod.key,
-    moduleLabel: mod.label,
-    actions: mod.actions.map((act) => ({
-      key: act.key,
-      label: act.label,
-      granted: allGranted,
-    })),
-  }))
+const parsePermissions = (raw) => {
+  if (Array.isArray(raw)) return raw
+  if (typeof raw !== 'string' || !raw) return []
+  try {
+    const parsed = JSON.parse(raw)
+    return Array.isArray(parsed) ? parsed : []
+  } catch {
+    return []
+  }
 }
 
-/** 全部角色数据（模拟数据库） */
+/**
+ * 将后端 API-80 角色对象归一化为页面行数据
+ * @param {Object} r - 后端角色对象 {role_id, role_code, role_name, description,
+ *                     permissions, status, member_count, created_at}
+ * @returns {Object} 页面行数据
+ */
+const normalizeRole = (r) => ({
+  id: r.role_id,
+  role_code: r.role_code,
+  name: r.role_name,
+  description: r.description || '',
+  icon: ROLE_ICON_BY_CODE[r.role_code] || 'user',
+  memberCount: r.member_count ?? 0,
+  status: r.status === 1 ? 'active' : 'disabled',
+  created_at: formatTime(r.created_at),
+  permissions: parsePermissions(r.permissions),
+})
+
+/** 全部角色数据（API-80 拉取后缓存，筛选/分页在本页面内进行） */
 let allRoles = []
 
 // ===================================================================
@@ -342,14 +288,12 @@ let allRoles = []
 // ===================================================================
 
 /**
- * 发送筛选请求（模拟）
- * 将筛选条件 + 分页参数合并后过滤 mock 数据
+ * 本地筛选 + 分页渲染
+ * API-80 一次返回全量角色，状态/关键词筛选与分页在页面内完成
  */
 const fetchRoles = () => {
   isTableLoading.value = true
-
-  // 模拟网络延迟
-  setTimeout(() => {
+  try {
     let filtered = [...allRoles]
 
     // 状态筛选
@@ -371,22 +315,31 @@ const fetchRoles = () => {
     const start = (pagination.currentPage - 1) * pagination.pageSize
     const end = start + pagination.pageSize
     roleList.value = filtered.slice(start, end)
-
+  } finally {
     isTableLoading.value = false
-  }, 300)
+  }
 }
 
 /**
  * 页面首次数据加载
- * 显示全页骨架屏，加载完成后渲染表格
+ * 请求 API-80 获取真实角色列表，失败时提示并渲染空状态（不白屏）
  */
-const loadData = () => {
+const loadData = async () => {
   isLoading.value = true
-  setTimeout(() => {
-    allRoles = generateMockRoles()
-    isLoading.value = false
+  try {
+    const res = await getAdminRoles()
+    if (res?.code !== 0 && res?.code !== 200) {
+      ElMessage.error(res?.message || '角色列表加载失败')
+      allRoles = []
+      return
+    }
+    allRoles = (res?.data || []).map(normalizeRole)
     fetchRoles()
-  }, 600)
+  } catch {
+    ElMessage.error('角色列表加载失败，请稍后重试')
+  } finally {
+    isLoading.value = false
+  }
 }
 
 /**
@@ -457,6 +410,7 @@ const getIconOption = (key) => ROLE_ICON_OPTIONS.find((o) => o.key === key) || R
 const openCreateDialog = () => {
   dialogMode.value = 'create'
   dialogForm.id = null
+  dialogForm.role_code = ''
   dialogForm.name = ''
   dialogForm.description = ''
   dialogForm.icon = 'user'
@@ -472,6 +426,7 @@ const openCreateDialog = () => {
 const openEditDialog = (row) => {
   dialogMode.value = 'edit'
   dialogForm.id = row.id
+  dialogForm.role_code = row.role_code || ''
   dialogForm.name = row.name
   dialogForm.description = row.description
   dialogForm.icon = row.icon
@@ -481,83 +436,79 @@ const openEditDialog = (row) => {
 
 /**
  * 对话框确认提交
- * 根据模式执行新增或编辑逻辑
+ * 创建模式调用 API-80A 创建角色；编辑模式后端暂无更新接口，仍为页面内模拟
  */
 const handleDialogConfirm = async () => {
   // 表单校验
   const valid = await formRef.value.validate().catch(() => false)
   if (!valid) return
 
-  // 名称唯一性检查（模拟异步校验，新增模式且名称变更时触发）
-  if (dialogMode.value === 'create') {
-    const duplicate = allRoles.some(
-      (r) => r.name === dialogForm.name,
-    )
-    if (duplicate) {
-      ElMessage.warning(`角色名称「${dialogForm.name}」已存在，请更换名称`)
-      return
-    }
-  } else {
-    const duplicate = allRoles.some(
-      (r) => r.name === dialogForm.name && r.id !== dialogForm.id,
-    )
-    if (duplicate) {
-      ElMessage.warning(`角色名称「${dialogForm.name}」已被其他角色使用，请更换名称`)
-      return
-    }
+  // 名称唯一性预检（后端仍会校验，这里提前给出反馈）
+  const duplicate = allRoles.some(
+    (r) => r.name === dialogForm.name && (dialogMode.value === 'create' || r.id !== dialogForm.id),
+  )
+  if (duplicate) {
+    ElMessage.warning(`角色名称「${dialogForm.name}」已被使用，请更换名称`)
+    return
   }
 
-  isSubmitting.value = true
-
-  // 模拟 API 请求
-  setTimeout(() => {
-    if (dialogMode.value === 'create') {
-      // 新增：模拟插入数据（空权限集，提示用户去配置权限）
-      const newId = String(allRoles.length + 1).padStart(4, '0')
-      const iconOpt = getIconOption(dialogForm.icon)
-      const newRole = {
-        id: newId,
-        name: dialogForm.name,
+  if (dialogMode.value === 'create') {
+    // 创建角色（API-80A）
+    isSubmitting.value = true
+    try {
+      const res = await createAdminRole({
+        role_code: dialogForm.role_code,
+        role_name: dialogForm.name,
         description: dialogForm.description,
-        icon: dialogForm.icon,
-        memberCount: 0,
-        status: dialogForm.status,
-        created_at: new Date().toISOString().replace('T', ' ').slice(0, 16),
-        permissions: buildFullPermissions(false),
+        status: dialogForm.status === 'active' ? 1 : 0,
+      })
+      if (res?.code !== 0 && res?.code !== 200) {
+        ElMessage.error(res?.message || '创建角色失败')
+        return
       }
+      // 后端返回与 API-80 列表项一致的结构，归一化后插入列表头部
+      const newRole = normalizeRole(res.data)
       allRoles.unshift(newRole)
-      ElMessage.success(`已成功创建角色「${newRole.name}」`)
-      // 新增成功后自动弹出权限配置抽屉
-      isSubmitting.value = false
+      ElMessage.success(`已成功创建角色「${newRole.name}」，请配置权限`)
       dialogVisible.value = false
       fetchRoles()
       // 延迟打开权限抽屉，确保 DOM 更新完毕
       setTimeout(() => {
         openPermDrawer(newRole)
       }, 200)
-    } else {
-      // 编辑：更新现有数据
+    } catch {
+      ElMessage.error('创建角色失败，请稍后重试')
+    } finally {
+      isSubmitting.value = false
+    }
+  } else {
+    // 更新角色信息（API-80B）：role_code 不传（不可修改），仅提交表单编辑的字段
+    isSubmitting.value = true
+    try {
+      const res = await updateAdminRole(dialogForm.id, {
+        role_name: dialogForm.name,
+        description: dialogForm.description,
+        status: dialogForm.status === 'active' ? 1 : 0,
+      })
+      if (res?.code !== 0 && res?.code !== 200) {
+        ElMessage.error(res?.message || '更新角色失败')
+        return
+      }
+      // 用后端返回的最新数据整体替换列表中的行（成员数/状态等同步刷新）
+      const updated = normalizeRole(res.data)
       const idx = allRoles.findIndex((r) => r.id === dialogForm.id)
       if (idx !== -1) {
-        allRoles[idx].name = dialogForm.name
-        allRoles[idx].description = dialogForm.description
-        allRoles[idx].icon = dialogForm.icon
-        allRoles[idx].status = dialogForm.status
+        allRoles.splice(idx, 1, updated)
       }
-      // 同时更新当前页的表格显示
-      const row = roleList.value.find((r) => r.id === dialogForm.id)
-      if (row) {
-        row.name = dialogForm.name
-        row.description = dialogForm.description
-        row.icon = dialogForm.icon
-        row.status = dialogForm.status
-      }
-      ElMessage.success(`已成功更新角色「${dialogForm.name}」的信息`)
-      isSubmitting.value = false
+      ElMessage.success(`已成功更新角色「${updated.name}」的信息`)
       dialogVisible.value = false
       fetchRoles()
+    } catch {
+      ElMessage.error('更新角色失败，请稍后重试')
+    } finally {
+      isSubmitting.value = false
     }
-  }, 400)
+  }
 }
 
 /**
@@ -585,15 +536,23 @@ const handleDeleteRole = (row) => {
     type: 'warning',
     confirmButtonClass: 'el-button--danger',
   })
-    .then(() => {
-      // 模拟 API 删除
-      allRoles = allRoles.filter((r) => r.id !== row.id)
-      ElMessage.success(`已删除角色「${row.name}」`)
-      // 如果当前页删空了且不是第一页，回到上一页
-      if (roleList.value.length === 1 && pagination.currentPage > 1) {
-        pagination.currentPage--
+    .then(async () => {
+      try {
+        const res = await deleteAdminRole(row.id)
+        if (res?.code !== 0 && res?.code !== 200) {
+          ElMessage.error(res?.message || '删除角色失败')
+          return
+        }
+        ElMessage.success(`已删除角色「${row.name}」`)
+        // 本地列表同步移除；如果当前页删空了且不是第一页，回到上一页
+        allRoles = allRoles.filter((r) => r.id !== row.id)
+        if (roleList.value.length === 1 && pagination.currentPage > 1) {
+          pagination.currentPage--
+        }
+        fetchRoles()
+      } catch {
+        ElMessage.error('删除角色失败，请稍后重试')
       }
-      fetchRoles()
     })
     .catch(() => {
       // 用户取消删除，不做任何操作
@@ -697,38 +656,46 @@ const isGlobalAllChecked = computed({
 })
 
 /**
- * 保存权限配置
- * 将复选框状态写回角色数据
+ * 保存权限配置（API-82）
+ * 将复选框状态转为权限矩阵 JSON 提交后端；后端仅返回 Result<Void>，
+ * 成功后用提交的矩阵同步本地列表显示（持有者的鉴权缓存由后端清除）
  */
-const handleSavePermissions = () => {
+const handleSavePermissions = async () => {
   isSavingPerm.value = true
-
-  setTimeout(() => {
+  try {
+    // 将校验状态转为权限矩阵（与 API-82 约定的结构一致，后端解析 granted=true 的权限码）
+    const matrix = PERMISSION_MODULES.map((mod) => ({
+      moduleKey: mod.key,
+      moduleLabel: mod.label,
+      actions: mod.actions.map((act) => ({
+        key: act.key,
+        label: act.label,
+        granted: !!permCheckStates[mod.key]?.[act.key],
+      })),
+    }))
+    const res = await updateRolePermissions(permEditingRoleId.value, JSON.stringify(matrix))
+    if (res?.code !== 0 && res?.code !== 200) {
+      ElMessage.error(res?.message || '保存权限配置失败')
+      return
+    }
+    // 本地列表同步更新
     const idx = allRoles.findIndex((r) => r.id === permEditingRoleId.value)
     if (idx !== -1) {
-      // 将校验状态转回权限数据结构
-      allRoles[idx].permissions = PERMISSION_MODULES.map((mod) => ({
-        moduleKey: mod.key,
-        moduleLabel: mod.label,
-        actions: mod.actions.map((act) => ({
-          key: act.key,
-          label: act.label,
-          granted: !!permCheckStates[mod.key]?.[act.key],
-        })),
-      }))
+      allRoles[idx].permissions = matrix
     }
-    // 更新当前页显示
     const row = roleList.value.find((r) => r.id === permEditingRoleId.value)
     if (row) {
-      const src = allRoles.find((r) => r.id === permEditingRoleId.value)
-      if (src) row.permissions = src.permissions
+      row.permissions = matrix
     }
 
-    isSavingPerm.value = false
     hasPermChanges.value = false
     permDrawerVisible.value = false
     ElMessage.success(`角色「${permEditingRoleName.value}」的权限配置已保存`)
-  }, 400)
+  } catch {
+    ElMessage.error('保存权限配置失败，请稍后重试')
+  } finally {
+    isSavingPerm.value = false
+  }
 }
 
 /**
@@ -1285,6 +1252,17 @@ onBeforeUnmount(() => {
               {{ opt.emoji }}
             </div>
           </div>
+        </el-form-item>
+
+        <!-- 角色编码（全局唯一，创建后不可修改，编辑态置灰） -->
+        <el-form-item label="角色编码" prop="role_code">
+          <el-input
+            v-model="dialogForm.role_code"
+            placeholder="如 content_auditor（小写字母开头，可含数字/下划线）"
+            maxlength="50"
+            :disabled="dialogMode === 'edit'"
+            :style="{ '--el-border-radius-base': 'var(--zh-radius8)' }"
+          />
         </el-form-item>
 
         <!-- 角色名称 -->

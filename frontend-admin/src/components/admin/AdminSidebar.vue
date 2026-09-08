@@ -3,14 +3,15 @@
   - 导入:
     - `useRouter` / `useRoute`: Vue Router 实例，用于路由跳转和当前路径检测
     - `useUserStore`: Pinia 用户状态 store，获取当前登录管理员信息
-    - ElementPlus Icons: 菜单图标组件
+    - `logout`: 来自 `../apis/login.js`（API-08 退出登录，后端删除 Redis 登录令牌）
+    - ElementPlus Icons: 菜单图标组件 + SwitchButton（退出登录）
   - Props:
     - `collapsed`: Boolean — 由父组件 main.vue 传入，控制侧边栏折叠/展开状态
   - 输出:
     - 渲染侧边栏功能树导航（el-menu），点击叶子节点触发路由跳转
     - 高亮当前激活的路由对应菜单项
     - 折叠态下 hover 父节点弹出子菜单浮层（ElMenu 原生行为）
-    - 底部展示当前登录管理员头像和名称
+    - 底部展示当前登录管理员头像和名称，点击弹出操作菜单（退出登录），登出后清除本地状态并跳转 /login
   - 菜单结构:
     - 数据看板 → /main/dashboard (el-menu-item)
     - 系统管理 (el-sub-menu)
@@ -24,6 +25,8 @@
 import { ref, computed, watch } from 'vue'
 import { useRouter, useRoute } from 'vue-router'
 import { useUserStore } from '../../storage/user'
+import { logout } from '../../apis/login.js'
+import { ElMessage } from 'element-plus'
 import {
   Setting,
   UserFilled,
@@ -31,6 +34,7 @@ import {
   FolderOpened,
   Monitor,
   Avatar,
+  SwitchButton,
 } from '@element-plus/icons-vue'
 
 /** Props: 侧边栏折叠状态，由父组件 main.vue 控制 */
@@ -175,6 +179,28 @@ const adminRole = computed(() => {
   }
   return '管理员'
 })
+
+/** 底部用户信息区 DOM 引用 — el-dropdown 通过 virtual-ref 绑定到此元素作为点击触发区 */
+const userTriggerRef = ref(null)
+
+/**
+ * 处理用户操作菜单命令 — 退出登录
+ * 调用后端登出接口删除 Redis 登录令牌（失败不阻塞本地登出），
+ * 随后清除 Pinia 本地状态并跳转登录页，路由守卫会拦截未携带 token 的访问
+ * @param {string} command - el-dropdown 命令标识
+ */
+const handleUserCommand = async (command) => {
+  if (command !== 'logout') return
+  try {
+    await logout()
+  } catch {
+    // 后端登出失败（网络异常/令牌已失效）不阻塞本地登出
+  } finally {
+    userStore.clearUser()
+    ElMessage.success('已退出登录')
+    router.push('/login')
+  }
+}
 </script>
 
 <template>
@@ -262,9 +288,9 @@ const adminRole = computed(() => {
       </template>
     </el-menu>
 
-    <!-- ===== 底部：管理员信息区（保持不变） ===== -->
+    <!-- ===== 底部：管理员信息区（保持原样，点击任意处弹出操作菜单） ===== -->
     <div class="flex-shrink-0 border-t px-3 py-4" :class="collapsed ? 'px-0' : ''" style="border-color: var(--zh-line-parting);">
-      <!-- 折叠态下 el-tooltip 显示管理员名称 + 角色 -->
+      <!-- 原用户信息区：结构与样式保持不变，仅挂模板 ref 供下方 el-dropdown 虚拟触发绑定 -->
       <el-tooltip
         :content="`${adminName} · ${adminRole}`"
         placement="right"
@@ -272,7 +298,11 @@ const adminRole = computed(() => {
         :show-after="300"
         effect="dark"
       >
-        <div class="flex items-center" :class="collapsed ? 'justify-center gap-0' : 'gap-3'">
+        <div
+          ref="userTriggerRef"
+          class="flex items-center"
+          :class="collapsed ? 'justify-center gap-0' : 'gap-3'"
+        >
           <!-- 管理员头像 -->
           <el-avatar
             :size="36"
@@ -299,6 +329,28 @@ const adminRole = computed(() => {
           </div>
         </div>
       </el-tooltip>
+
+      <!--
+        操作按钮列表：通过 virtual-ref 直接绑定到上方用户信息区触发，
+        不包裹原元素（el-dropdown 与 el-tooltip 嵌套同一触发节点时点击监听会丢失）
+      -->
+      <el-dropdown
+        trigger="click"
+        placement="top-start"
+        popper-class="sidebar-user-dropdown"
+        :virtual-ref="userTriggerRef"
+        virtual-triggering
+        @command="handleUserCommand"
+      >
+        <template #dropdown>
+          <el-dropdown-menu>
+            <el-dropdown-item command="logout" class="user-dropdown-danger">
+              <el-icon><SwitchButton /></el-icon>
+              退出登录
+            </el-dropdown-item>
+          </el-dropdown-menu>
+        </template>
+      </el-dropdown>
     </div>
   </aside>
 </template>
@@ -419,5 +471,46 @@ const adminRole = computed(() => {
 .sidebar-menu :deep(.el-menu--popup .el-menu-item.is-active) {
   background: var(--zh-background-option-on);
   color: var(--zh-text-theme);
+}
+</style>
+
+<!--
+  用户操作菜单弹出面板样式（非 scoped）
+  el-dropdown 的 popper 默认 teleport 到 body，scoped 样式无法命中，
+  参照本组件内 .el-menu--popup 的视觉规范：pop 背景 + radius8 + shadow2 + 边框
+-->
+<style>
+.sidebar-user-dropdown {
+  background: var(--zh-background-pop) !important;
+  border-radius: var(--zh-radius8) !important;
+  box-shadow: var(--zh-shadow2) !important;
+  border: 1px solid var(--zh-line-border) !important;
+  padding: 4px 0 !important;
+  min-width: 160px !important;
+}
+
+.sidebar-user-dropdown .el-dropdown-menu__item {
+  height: 40px;
+  line-height: 40px;
+  padding: 0 16px;
+  font-size: var(--zh-font-size13);
+  color: var(--zh-text-secondary);
+}
+
+.sidebar-user-dropdown .el-dropdown-menu__item:not(.is-disabled):hover,
+.sidebar-user-dropdown .el-dropdown-menu__item:not(.is-disabled):focus {
+  background: var(--zh-background-option);
+  color: var(--zh-text-primary);
+}
+
+/* 危险操作（退出登录）— 默认与悬浮态均使用功能色 Token */
+.sidebar-user-dropdown .el-dropdown-menu__item.user-dropdown-danger {
+  color: var(--zh-red);
+}
+
+.sidebar-user-dropdown .el-dropdown-menu__item.user-dropdown-danger:not(.is-disabled):hover,
+.sidebar-user-dropdown .el-dropdown-menu__item.user-dropdown-danger:not(.is-disabled):focus {
+  background: var(--zh-danger-background);
+  color: var(--zh-danger-clicked);
 }
 </style>

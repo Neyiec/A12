@@ -1,10 +1,14 @@
 package edu.zstu.controller;
 
+import edu.zstu.service.PythonPptClient;
 import edu.zstu.utils.Result;
 import edu.zstu.dto.ExportTemplateCreateDTO;
 import edu.zstu.service.AdminExportService;
 import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.http.*;
 import org.springframework.web.bind.annotation.*;
+
+import java.nio.charset.StandardCharsets;
 
 /**
  * 后台 — 导出模板模块 Controller
@@ -86,5 +90,49 @@ public class AdminExportController {
             adminExportService.updateTemplateStatus(id, status);
             return Result.success();
         } catch (RuntimeException e) { return Result.error(400, e.getMessage()); }
+    }
+
+    /**
+     * 删除导出模板（id 即 Python 侧 theme，默认模板不可删除）
+     *
+     * @param id 模板ID（路径参数）
+     * @return 操作结果（无数据体）
+     */
+    @DeleteMapping("/{id}")
+    public Result<?> deleteTemplate(@PathVariable String id) {
+        try {
+            adminExportService.deleteTemplate(id);
+            return Result.success();
+        } catch (RuntimeException e) { return Result.error(400, e.getMessage()); }
+    }
+
+    /**
+     * 下载导出模板 JSON 文件（流式返回，UTF-8 附件文件名）
+     *
+     * @param id 模板ID（路径参数）
+     * @return 模板 JSON 文件字节流
+     */
+    @GetMapping("/{id}/download")
+    public ResponseEntity<byte[]> downloadTemplate(@PathVariable String id) {
+        try {
+            PythonPptClient.PythonFileResult file = adminExportService.downloadTemplate(id);
+            return ResponseEntity.ok()
+                    .contentType(MediaType.parseMediaType(file.contentType))
+                    .header(HttpHeaders.CONTENT_DISPOSITION, ContentDisposition.attachment()
+                            .filename(file.filename, StandardCharsets.UTF_8)
+                            .build().toString())
+                    .contentLength(file.bytes.length)
+                    .body(file.bytes);
+        } catch (RuntimeException e) {
+            String message = "{\"code\":400,\"message\":\"" + escapeJson(e.getMessage()) + "\",\"data\":null}";
+            return ResponseEntity.status(HttpStatus.BAD_REQUEST)
+                    .contentType(MediaType.APPLICATION_JSON)
+                    .body(message.getBytes(StandardCharsets.UTF_8));
+        }
+    }
+
+    private String escapeJson(String value) {
+        if (value == null) return "";
+        return value.replace("\\", "\\\\").replace("\"", "\\\"");
     }
 }

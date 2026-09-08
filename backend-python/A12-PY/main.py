@@ -3,8 +3,9 @@ from fastapi.middleware.cors import CORSMiddleware
 import json
 import tempfile
 from pathlib import Path
+from urllib.parse import quote
 
-from fastapi.responses import FileResponse, StreamingResponse
+from fastapi.responses import FileResponse, Response, StreamingResponse
 
 from a12_ppt.config import get_settings
 from a12_ppt.asr import transcribe_audio
@@ -13,8 +14,12 @@ from a12_ppt.lesson_plan import LessonPlanGenerator, export_lesson_plan_to_docx
 from a12_ppt.presentation import (
     DEFAULT_THEME,
     PPTGenerator,
+    create_template,
+    delete_template,
     export_html_slides_to_pptx,
+    get_template_file,
     list_templates,
+    replace_template,
     validate_html,
 )
 from a12_ppt.models import (
@@ -37,6 +42,7 @@ from a12_ppt.models import (
     ResourceIndexSyncRequest,
     Result,
     SlideModifyRequest,
+    TemplateMutationRequest,
 )
 from a12_ppt.resources import resource_index_store, save_upload
 from a12_ppt.outline_chat import OutlineChatWorkflow
@@ -181,6 +187,48 @@ async def templates() -> Result:
         "default_theme": DEFAULT_THEME,
         "templates": templates_data,
     })
+
+
+@app.post("/api/v1/python/templates")
+async def create_ppt_template(request: TemplateMutationRequest) -> Result:
+    """管理后台创建 PPT 模板：template_data 必须是含 html_template 的模板 JSON 文本"""
+    try:
+        return Result(data=create_template(request.name, request.template_data, request.description))
+    except ValueError as exc:
+        return Result(code=400, message=str(exc))
+
+
+@app.patch("/api/v1/python/templates/{theme}")
+async def replace_ppt_template(theme: str, request: TemplateMutationRequest) -> Result:
+    """管理后台替换 PPT 模板内容（覆盖原 JSON 文件）"""
+    try:
+        return Result(data=replace_template(theme, request.template_data, request.description))
+    except ValueError as exc:
+        return Result(code=400, message=str(exc))
+
+
+@app.delete("/api/v1/python/templates/{theme}")
+async def delete_ppt_template(theme: str) -> Result:
+    """管理后台删除 PPT 模板（默认模板受保护）"""
+    try:
+        return Result(data=delete_template(theme))
+    except ValueError as exc:
+        return Result(code=400, message=str(exc))
+
+
+@app.get("/api/v1/python/templates/{theme}/file")
+async def download_ppt_template_file(theme: str):
+    """管理后台下载模板 JSON 文件，业务错误以非 2xx 返回（调用方按字节流处理）"""
+    try:
+        path = get_template_file(theme)
+    except ValueError as exc:
+        raise HTTPException(status_code=404, detail=str(exc))
+    filename = quote(path.name)
+    return Response(
+        content=path.read_bytes(),
+        media_type="application/json",
+        headers={"Content-Disposition": f"attachment; filename*=UTF-8''{filename}"},
+    )
 
 
 @app.post("/api/v1/python/outlines/generate")

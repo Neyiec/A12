@@ -9,7 +9,7 @@ import java.time.LocalDateTime;
 
 /**
  * 系统日志查询参数
- * 支持按用户、日志类型、所属模块和时间范围筛选
+ * 支持按用户、日志类型、所属模块、关键词（模糊匹配 action/detail）和时间范围筛选
  */
 @EqualsAndHashCode(callSuper = true)
 @Data
@@ -19,6 +19,7 @@ public class LogQueryDTO extends PageQuery {
     private Integer user_id;
     private String log_type;
     private String module;
+    private String keyword;
     private LocalDateTime start_time;
     private LocalDateTime end_time;
 }
