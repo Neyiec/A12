@@ -1,4 +1,4 @@
-﻿# API 接口文档
+# API 接口文档
 
 
 > 项目: A12 — 智能备课与教学成果管理平台  
@@ -1842,7 +1842,52 @@ Python requirements were pinned for the outline workflow stack: `langchain-core>
 
 ## API-80 GET /api/v1/admin/roles
 **功能**: 查询后台角色、权限集合及审核范围
-**响应 VO**: `Result<Array<{role_id, role_name, permissions, audit_scope}>>`
+**响应 VO**: `Result<Array<{role_id, role_code, role_name, description, permissions, audit_scope, status, member_count, created_at}>>`
+**说明**: permissions 为权限矩阵 JSON 字符串 `[{"moduleKey","moduleLabel","actions":[{"key","label","granted"}]}]`；member_count 为该角色下有效（未软删除）用户数；status 1=启用/0=停用；结果缓存 10 分钟，角色/权限变更时自动失效
+**后端实现**: `AdminUserServiceImpl#listRoles`（Redis 缓存键 `admin:roles`）
+
+---
+
+## API-80A POST /api/v1/admin/roles
+**功能**: 创建后台角色（不包含权限配置，创建后通过 API-82 配置权限）
+**请求体 (JSON)**
+| 字段 | 类型 | 必填 | 说明 |
+|---|---|---|---|
+| `role_code` | String | **是** | 角色标识，全局唯一，小写字母开头，可含小写字母/数字/下划线 |
+| `role_name` | String | **是** | 角色名称，全局唯一，最长 50 字符 |
+| `description` | String | 否 | 角色说明，最长 255 字符 |
+| `sort_order` | Integer | 否 | 展示排序，缺省追加到现有角色末尾 |
+| `status` | Integer | 否 | 1=启用（默认）/ 0=停用 |
+**后端 DTO**: `RoleDTO`
+**响应 VO**: `Result<Map>` — 与 API-80 列表项结构一致（新建角色 permissions 全未授权、member_count 为 0）
+**说明**: 创建成功后清除 `admin:roles` 角色列表缓存
+**所需权限**: `roles:create`
+
+---
+
+## API-80B PUT /api/v1/admin/roles/{id}
+**功能**: 更新角色信息（仅更新请求体中传入的字段）
+**路径参数**: `id` — 角色ID
+**请求体 (JSON)**
+| 字段 | 类型 | 必填 | 说明 |
+|---|---|---|---|
+| `role_name` | String | 否 | 角色名称，全局唯一（排除自身），最长 50 字符 |
+| `description` | String | 否 | 角色说明，最长 255 字符 |
+| `sort_order` | Integer | 否 | 展示排序 |
+| `status` | Integer | 否 | 1=启用 / 0=停用 |
+**说明**: `role_code` 为角色标识不可修改；启停角色会即时改变持有该角色用户的有效权限（其鉴权缓存同步失效）
+**后端 DTO**: `RoleUpdateDTO`
+**响应 VO**: `Result<Map>` — 与 API-80 列表项结构一致
+**所需权限**: `roles:edit`
+
+---
+
+## API-80C DELETE /api/v1/admin/roles/{id}
+**功能**: 删除角色（硬删除，`sys_user_role`/`sys_role_permission` 关联行由外键级联清理）
+**路径参数**: `id` — 角色ID
+**说明**: 删除后持有该角色的用户将立即失去对应权限（其鉴权缓存同步失效），操作与影响人数写入业务日志；前端应在删除前向管理员二次确认并展示成员数
+**响应 VO**: `Result<Void>`
+**所需权限**: `roles:delete`
 
 ---
 
@@ -1858,6 +1903,34 @@ Python requirements were pinned for the outline workflow stack: `langchain-core>
 **功能**: 配置后台功能权限及审核范围
 **路径参数**: `id` — 角色ID
 **请求体 (JSON)**: `permissions`(String JSON) **是**
+**响应 VO**: `Result<Void>`
+
+---
+
+## API-82A PUT /api/v1/admin/users/{id}
+**功能**: 更新后台用户信息（仅更新请求体中非空的字段，未传字段保持原值）
+**路径参数**: `id` — 用户ID
+**请求体 (JSON)**
+| 字段 | 类型 | 必填 | 说明 |
+|---|---|---|---|
+| `username` | String | 否 | 用户名，变更时校验重名（软删除用户不参与查重） |
+| `password` | String | 否 | 明文密码，传入即重置（后端哈希存储并更新 password_changed_at），不传保持原密码 |
+| `real_name` | String | 否 | 真实姓名 |
+| `phone` | String | 否 | 手机号 |
+| `email` | String | 否 | 邮箱 |
+| `avatar` | String | 否 | 头像URL |
+| `roles` | String(JSON) | 否 | 角色列表 |
+| `permissions` | String(JSON) | 否 | 权限列表 |
+**说明**: 账号启用/停用走 API-77，本接口不处理 `is_active`；`user_type` 不支持通过本接口修改
+**后端 DTO**: `UserDTO`（同 API-78）
+**响应 VO**: `Result<UserVO>`
+
+---
+
+## API-82B DELETE /api/v1/admin/users/{id}
+**功能**: 删除用户（软删除：置 `deleted_at` 并停用，所有查询自动过滤已删除用户）
+**路径参数**: `id` — 用户ID
+**说明**: 不能删除当前登录账号；删除后同时清除该用户的 Redis 登录态与资料缓存，并写入业务日志
 **响应 VO**: `Result<Void>`
 
 ---
@@ -2037,23 +2110,26 @@ Python requirements were pinned for the outline workflow stack: `langchain-core>
 # 十一、后台 — 导出模板模块
 
 ## API-98 GET /api/v1/admin/export-templates
-**功能**: 分页查询导出模板
+**功能**: 分页查询导出模板（数据源为 Python PPT 服务模板 JSON 文件，`id` 即 Python 侧 `theme`）
 **查询参数**: export_type(否), status(否), page(否), size(否)
-**响应 VO**: `Result<PageResult<{id, name, export_type, version, status, created_at, updated_at}>>`
+**响应 VO**: `Result<PageResult<{id, name, export_type, version, status, size, is_default, created_at, updated_at}>>`
+
+> 说明：模板真实存储于 Python 服务（`a12_ppt/templates/*.json`）；`export_type` 固定 `pptx`、`status` 固定 `published`、`version` 固定 `1`；`size` 为模板文件字节数；Python 不提供创建/更新时间（返回 null）。
 
 ---
 
 ## API-99 POST /api/v1/admin/export-templates
-**功能**: 创建导出模板及首个版本
-**请求体 (JSON)**: name(**是**), export_type(**是**), template_data(**是**), description(否)
-**响应 VO**: `Result<{id, version}>`
+**功能**: 创建导出模板（转发 Python 落盘为 `{theme}.json`，theme 即 `name`）
+**请求体 (JSON)**: name(**是**), export_type(**是**，目前仅支持 `pptx`), template_data(**是**，模板 JSON 文件文本内容，顶层对象且必须含 `html_template` 字段), description(否)
+**响应 VO**: `Result<{id, version}>`（id 即 theme，version 固定 1）
+**错误**: 模板名称重复 / 非法字符、JSON 非法或缺 `html_template` 字段时返回 code=400
 
 ---
 
 ## API-100 PATCH /api/v1/admin/export-templates/{id}
-**功能**: 更新模板元数据或创建新版本
-**路径参数**: `id` — 模板ID
-**请求体**: name(否), template_data(否), description(否)
+**功能**: 替换模板内容（转发 Python 覆盖 `{theme}.json`；默认模板「素白风」不可替换）
+**路径参数**: `id` — 模板ID（即 theme）
+**请求体**: name(忽略), template_data(**是**，新模板 JSON 文件文本内容), description(否)
 **响应 VO**: `Result<{id, version}>`
 
 ---
@@ -2063,6 +2139,20 @@ Python requirements were pinned for the outline workflow stack: `langchain-core>
 **路径参数**: `id` — 模板ID
 **请求体**: status(String) **是** `published`/`unpublished`
 **响应 VO**: `Result<Void>`
+
+---
+
+## DELETE /api/v1/admin/export-templates/{id}
+**功能**: 删除导出模板（转发 Python 删除 `{theme}.json`；默认模板「素白风」不可删除）
+**路径参数**: `id` — 模板ID（即 theme）
+**响应 VO**: `Result<Void>`
+
+---
+
+## GET /api/v1/admin/export-templates/{id}/download
+**功能**: 下载模板 JSON 文件（从 Python 拉取字节流，`Content-Type: application/json`，UTF-8 附件文件名 `{theme}.json`）
+**路径参数**: `id` — 模板ID（即 theme）
+**响应**: 文件字节流；模板不存在时返回 code=400 JSON 错误体
 
 ---
 
@@ -2164,9 +2254,11 @@ Python requirements were pinned for the outline workflow stack: `langchain-core>
 
 ## API-127 GET /api/v1/admin/system-logs
 **功能**: 查询脱敏后的系统运行及异常日志
-**查询参数**: log_type(否), module(否), start_time(否), end_time(否), page(默认1), size(默认10)
+**查询参数**: log_type(否: operation/audit/download/browse), module(否), keyword(否: 模糊匹配 action/detail), start_time(否), end_time(否), page(默认1), size(默认10)
 **后端 DTO**: `LogQueryDTO`
 **响应 VO**: `Result<PageResult<LogVO>>`
+**说明**: 结果按 created_at 倒序；查询结果缓存 20 秒（缓存键包含全部筛选参数）
+**所需权限**: `settings:view`
 
 ---
 
@@ -2524,6 +2616,18 @@ Python requirements were pinned for the outline workflow stack: `langchain-core>
 | `aliases` | List<String> | 可匹配别名 |
 | `is_default` | Boolean | 是否默认模板 |
 | `filename` | String | 模板文件名 |
+| `size` | long | 模板文件字节数 |
+
+**管理后台模板维护端点**（仅由 Java 后端内部调用，管理后台增删替换下载的数据来源）：
+
+| 端点 | 说明 |
+|---|---|
+| `POST /api/v1/python/templates` | 创建模板，`{name, template_data, description?}`；`template_data` 为模板 JSON 文件文本，顶层对象且必须含 `html_template`；名称重复/非法、JSON 非法返回 `Result(code=400)` |
+| `PATCH /api/v1/python/templates/{theme}` | 替换模板内容，覆盖 `{theme}.json`；默认模板「素白风」拒绝替换 |
+| `DELETE /api/v1/python/templates/{theme}` | 删除模板；默认模板「素白风」拒绝删除 |
+| `GET /api/v1/python/templates/{theme}/file` | 下载模板 JSON 文件（`application/json` + `Content-Disposition` attachment，`filename*=UTF-8''`）；不存在返回 HTTP 404 |
+
+> 模板名称（theme）约束：中文/字母/数字/下划线/连字符，长度 ≤ 50；写入后清除模板列表缓存（lru_cache）。
 
 ---
 

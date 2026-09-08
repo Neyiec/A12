@@ -1,5 +1,6 @@
 import axios from 'axios'
 import router from '../router/index'
+import { ElMessage } from 'element-plus'
 // 全局用户 store — 统一管理 token，替代直接操作 localStorage
 import { useUserStore } from '../storage/user.js'
 
@@ -22,7 +23,8 @@ service.interceptors.request.use(
     const userStore = useUserStore()
     const token = userStore.token
     if (token) {
-      config.headers['token'] = token
+      // 后端 JWT 过滤器及 MSW mock 均从 Authorization 请求头读取 Bearer token
+      config.headers['Authorization'] = 'Bearer ' + token
     }
     return config
   },
@@ -75,9 +77,14 @@ service.interceptors.response.use(
           router.replace('/login')
           break
         }
-        case 403:
-          console.error('拒绝访问')
+        case 403: {
+          // 权限不足 — 弹出后端返回的具体提示（AdminAuthFilter 返回 "缺少权限: xxx" / "无访问权限"）
+          // grouping 合并相同内容的提示，避免页面并发请求时重复弹出
+          const message = data?.message || '无访问权限，请联系管理员'
+          ElMessage.error({ message, grouping: true, duration: 3000 })
+          console.error('拒绝访问:', message)
           break
+        }
         case 404:
           console.error('请求的资源不存在')
           break

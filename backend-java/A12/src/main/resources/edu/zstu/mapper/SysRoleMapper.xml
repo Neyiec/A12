@@ -1,0 +1,158 @@
+<?xml version="1.0" encoding="UTF-8" ?>
+<!DOCTYPE mapper PUBLIC "-//mybatis.org//DTD Mapper 3.0//EN" "http://mybatis.org/dtd/mybatis-3-mapper.dtd">
+<mapper namespace="edu.zstu.mapper.SysRoleMapper">
+
+    <resultMap id="RoleResultMap" type="edu.zstu.entity.Sys_Role">
+        <id column="id" property="id"/>
+        <result column="role_code" property="role_code"/>
+        <result column="role_name" property="role_name"/>
+        <result column="description" property="description"/>
+        <result column="sort_order" property="sort_order"/>
+        <result column="status" property="status"/>
+        <result column="created_at" property="created_at"/>
+        <result column="updated_at" property="updated_at"/>
+    </resultMap>
+
+    <resultMap id="PermissionResultMap" type="edu.zstu.entity.Sys_Permission">
+        <id column="id" property="id"/>
+        <result column="perm_code" property="perm_code"/>
+        <result column="perm_name" property="perm_name"/>
+        <result column="module_key" property="module_key"/>
+        <result column="module_label" property="module_label"/>
+        <result column="action_key" property="action_key"/>
+        <result column="action_label" property="action_label"/>
+        <result column="description" property="description"/>
+        <result column="status" property="status"/>
+        <result column="created_at" property="created_at"/>
+        <result column="updated_at" property="updated_at"/>
+    </resultMap>
+
+    <sql id="Role_Columns">
+        r.id, r.role_code, r.role_name, r.description, r.sort_order, r.status, r.created_at, r.updated_at
+    </sql>
+
+    <sql id="Permission_Columns">
+        p.id, p.perm_code, p.perm_name, p.module_key, p.module_label, p.action_key, p.action_label,
+        p.description, p.status, p.created_at, p.updated_at
+    </sql>
+
+    <!-- ==================== 角色查询 ==================== -->
+
+    <select id="findRoleById" resultMap="RoleResultMap">
+        SELECT <include refid="Role_Columns"/> FROM sys_role r WHERE r.id = #{id}
+    </select>
+
+    <select id="findRoleByCode" resultMap="RoleResultMap">
+        SELECT <include refid="Role_Columns"/> FROM sys_role r WHERE r.role_code = #{roleCode}
+    </select>
+
+    <insert id="insertRole" useGeneratedKeys="true" keyProperty="id">
+        INSERT INTO sys_role(role_code, role_name, description, sort_order, status, created_at, updated_at)
+        VALUES(#{role_code}, #{role_name}, #{description}, #{sort_order}, #{status}, #{created_at}, NOW())
+    </insert>
+
+    <update id="updateRole">
+        UPDATE sys_role
+        <set>
+            <if test="role_name != null">role_name = #{role_name},</if>
+            <if test="description != null">description = #{description},</if>
+            <if test="sort_order != null">sort_order = #{sort_order},</if>
+            <if test="status != null">status = #{status},</if>
+            updated_at = NOW()
+        </set>
+        WHERE id = #{id}
+    </update>
+
+    <delete id="deleteRoleById">
+        DELETE FROM sys_role WHERE id = #{id}
+    </delete>
+
+    <select id="findAllRoles" resultMap="RoleResultMap">
+        SELECT <include refid="Role_Columns"/> FROM sys_role r ORDER BY r.sort_order, r.id
+    </select>
+
+    <select id="findRolesByUserId" resultMap="RoleResultMap">
+        SELECT <include refid="Role_Columns"/>
+        FROM sys_user_role ur
+        JOIN sys_role r ON r.id = ur.role_id AND r.status = 1
+        WHERE ur.user_id = #{userId}
+        ORDER BY r.sort_order, r.id
+    </select>
+
+    <select id="findUserRolesByUserIds" resultType="map">
+        SELECT ur.user_id AS user_id, r.id AS role_id, r.role_code AS role_code,
+               r.role_name AS role_name, r.sort_order AS sort_order
+        FROM sys_user_role ur
+        JOIN sys_role r ON r.id = ur.role_id AND r.status = 1
+        WHERE ur.user_id IN
+        <foreach collection="userIds" item="uid" open="(" separator="," close=")">#{uid}</foreach>
+        ORDER BY ur.user_id, r.sort_order, r.id
+    </select>
+
+    <select id="findPermCodesByUserId" resultType="java.lang.String">
+        SELECT DISTINCT p.perm_code
+        FROM sys_user_role ur
+        JOIN sys_role r ON r.id = ur.role_id AND r.status = 1
+        JOIN sys_role_permission rp ON rp.role_id = r.id
+        JOIN sys_permission p ON p.id = rp.permission_id AND p.status = 1
+        WHERE ur.user_id = #{userId}
+    </select>
+
+    <!-- ==================== 用户-角色关联维护 ==================== -->
+
+    <insert id="insertUserRole">
+        INSERT IGNORE INTO sys_user_role(user_id, role_id, created_at)
+        VALUES(#{userId}, #{roleId}, NOW())
+    </insert>
+
+    <delete id="deleteUserRoles">
+        DELETE FROM sys_user_role WHERE user_id = #{userId}
+    </delete>
+
+    <select id="findUserIdsByRoleId" resultType="java.lang.Integer">
+        SELECT user_id FROM sys_user_role WHERE role_id = #{roleId}
+    </select>
+
+    <!-- ==================== 权限查询与角色-权限关联维护 ==================== -->
+
+    <select id="findAllPermissions" resultMap="PermissionResultMap">
+        SELECT <include refid="Permission_Columns"/>
+        FROM sys_permission p
+        WHERE p.status = 1
+        ORDER BY p.id
+    </select>
+
+    <select id="findPermissionByCode" resultMap="PermissionResultMap">
+        SELECT <include refid="Permission_Columns"/>
+        FROM sys_permission p
+        WHERE p.perm_code = #{permCode} AND p.status = 1
+    </select>
+
+    <select id="findPermissionsByRoleId" resultMap="PermissionResultMap">
+        SELECT <include refid="Permission_Columns"/>
+        FROM sys_role_permission rp
+        JOIN sys_permission p ON p.id = rp.permission_id AND p.status = 1
+        WHERE rp.role_id = #{roleId}
+        ORDER BY p.id
+    </select>
+
+    <delete id="deleteRolePermissions">
+        DELETE FROM sys_role_permission WHERE role_id = #{roleId}
+    </delete>
+
+    <insert id="insertRolePermission">
+        INSERT IGNORE INTO sys_role_permission(role_id, permission_id, created_at)
+        VALUES(#{roleId}, #{permissionId}, NOW())
+    </insert>
+
+    <!-- ==================== 统计 ==================== -->
+
+    <select id="countUsersGroupByRole" resultType="map">
+        SELECT r.role_code AS role_code, COUNT(*) AS user_count
+        FROM sys_user_role ur
+        JOIN sys_role r ON r.id = ur.role_id
+        JOIN sys_user u ON u.id = ur.user_id AND u.deleted_at IS NULL
+        GROUP BY r.role_code
+        ORDER BY MIN(r.sort_order), r.role_code
+    </select>
+</mapper>

@@ -18,9 +18,7 @@ public class Sys_User{
     private String email;
     private String phone;
     private String avatar; //头像url
-    private String user_type; //用户类型teacher/admin
-    private String roles; //json字符串         扮演的角色 比如teacher ，team_leader
-    private String permissions; //json字符串 权限列表
+    // 角色与权限已迁移至 RBAC 表（sys_role/sys_permission/sys_user_role/sys_role_permission），见 SysRoleMapper
     private int is_active; //是否激活 1表示是 0表示否
     private Integer email_verified;
     private Integer phone_verified;

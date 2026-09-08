@@ -3,11 +3,15 @@
   - 导入:
     - ElementPlus 组件: ElCard, ElTable, ElTableColumn, ElTag, ElButton, ElInput, ElSelect, ElOption,
       ElPagination, ElDialog, ElForm, ElFormItem, ElAvatar, ElSkeleton, ElEmpty, ElMessageBox, ElMessage,
-      ElTooltip, ElRadioGroup, ElRadioButton
-    - ElementPlus Icons: Search, Plus, Edit, Delete, Refresh, UserFilled
+      ElTooltip
+    - ElementPlus Icons: Search, Plus, Edit, Delete, Refresh, UserFilled, CircleCheck
     - `ref`, `reactive`, `computed`, `onMounted` from Vue
   - 依赖:
     - `getAdminUsers`: 来自 `../apis/user.js`（API-75 分页查询后台用户）
+    - `updateUserStatus`: 来自 `../apis/user.js`（API-77 启用/停用用户）
+    - `createAdminUser`: 来自 `../apis/user.js`（API-78 创建单个后台账号）
+    - `updateAdminUser`: 来自 `../apis/user.js`（API-82A 更新后台用户，PUT /api/v1/admin/users/{id}）
+    - `deleteAdminUser`: 来自 `../apis/user.js`（API-82B 删除后台用户，DELETE /api/v1/admin/users/{id}）
   - 输入: 接收筛选条件与分页参数，请求后端用户列表
   - 输出: 渲染用户管理视图（工具栏 + 数据表格 + 分页器 + 新增/编辑对话框）
   - 监听: `admin-refresh` 自定义事件（从 AdminHeader 刷新按钮发出），触发数据重新加载
@@ -25,7 +29,7 @@ import {
   CircleCheck,
 } from '@element-plus/icons-vue'
 import { ElMessage, ElMessageBox } from 'element-plus'
-import { getAdminUsers, updateUserStatus, createAdminUser } from '@/apis/user.js'
+import { getAdminUsers, updateUserStatus, createAdminUser, updateAdminUser, deleteAdminUser } from '@/apis/user.js'
 
 // ===================================================================
 // 配置常量 — 所有下拉选项、表格列、分页参数集中管理
@@ -119,7 +123,6 @@ const dialogForm = reactive({
   phone: '',
   email: '',
   roles: [],
-  status: 'active',
   password: '',
 })
 
@@ -141,19 +144,20 @@ const createRules = {
     message: '请至少选择一个角色',
     trigger: 'change',
   }],
-  status: [{ required: true, message: '请选择状态', trigger: 'change' }],
   password: [
     { required: true, message: '请输入初始密码', trigger: 'blur' },
     { min: 6, message: '密码长度不能少于 6 个字符', trigger: 'blur' },
   ],
 }
 
-/** 编辑模式下的表单校验规则（无密码字段） */
+/** 编辑模式下的表单校验规则（密码选填：留空不修改，填写则校验长度） */
 const editRules = {
   username: createRules.username,
   email: createRules.email,
   roles: createRules.roles,
-  status: createRules.status,
+  password: [
+    { min: 6, message: '密码长度不能少于 6 个字符', trigger: 'blur' },
+  ],
 }
 
 /** 当前校验规则（根据模式动态切换） */
@@ -192,6 +196,7 @@ const normalizeUser = (u) => ({
   email: u.email ?? '',
   avatar: u.avatar ?? '',
   role: u.role ?? u.user_type ?? '',
+  roles: u.roles ?? '',
   status:
     u.status ?? (u.is_active === 1 ? 'active' : u.is_active === 0 ? 'banned' : 'active'),
   created_at: formatTime(u.created_at ?? u.create_time ?? ''),
@@ -303,7 +308,6 @@ const openCreateDialog = () => {
   dialogForm.phone = ''
   dialogForm.email = ''
   dialogForm.roles = []
-  dialogForm.status = 'active'
   dialogForm.password = ''
   dialogVisible.value = true
 }
@@ -320,15 +324,23 @@ const openEditDialog = (row) => {
   dialogForm.real_name = row.real_name || ''
   dialogForm.phone = row.phone || ''
   dialogForm.email = row.email
-  dialogForm.roles = row.role ? [row.role] : []
-  dialogForm.status = row.status
+  // 优先回填后端 roles JSON；旧数据无 roles 时回退到 user_type
+  let presetRoles = []
+  try {
+    const parsed = row.roles ? JSON.parse(row.roles) : []
+    if (Array.isArray(parsed) && parsed.length) presetRoles = parsed
+  } catch {
+    // roles JSON 解析失败则忽略，走 user_type 回退
+  }
+  if (!presetRoles.length && row.role) presetRoles = [row.role]
+  dialogForm.roles = presetRoles
   dialogForm.password = ''
   dialogVisible.value = true
 }
 
 /**
  * 对话框确认提交
- * 新建模式调用 API-78 创建后台账号；编辑模式暂未接入，成功后刷新列表
+ * 新建模式调用 API-78 创建后台账号；编辑模式调用 API-82A 更新用户信息，成功后刷新列表
  */
 const handleDialogConfirm = async () => {
   // 表单校验
@@ -354,7 +366,20 @@ const handleDialogConfirm = async () => {
       }
       ElMessage.success(`已成功创建用户「${dialogForm.username}」`)
     } else {
-      // 编辑模式接口（API-81）尚未接入，暂以模拟提交占位
+      // 更新用户信息（API-82A）：只提交表单编辑的字段，后端仅更新非空字段；
+      // 不传 user_type 避免覆盖用户类型；password 仅在填写时提交，后端重置密码，留空保持原密码
+      const res = await updateAdminUser(dialogForm.id, {
+        username: dialogForm.username,
+        real_name: dialogForm.real_name,
+        phone: dialogForm.phone,
+        email: dialogForm.email,
+        roles: JSON.stringify(dialogForm.roles),
+        ...(dialogForm.password ? { password: dialogForm.password } : {}),
+      })
+      if (res?.code !== 0 && res?.code !== 200) {
+        ElMessage.error(res?.message || '更新用户失败')
+        return
+      }
       ElMessage.success(`已成功更新用户「${dialogForm.username}」的信息`)
     }
     dialogVisible.value = false
@@ -375,7 +400,7 @@ const handleDialogClose = () => {
 }
 
 /**
- * 删除用户 — 二次确认后执行
+ * 删除用户 — 二次确认后调用删除接口（API-82B，软删除）并刷新列表
  * @param {Object} row - 当前行用户数据
  */
 const handleDeleteUser = (row) => {
@@ -390,13 +415,21 @@ const handleDeleteUser = (row) => {
     },
   )
     .then(async () => {
-      // 删除接口尚未接入，这里仅模拟并刷新列表
-      ElMessage.success(`已删除用户「${row.username}」`)
-      // 如果当前页删空了且不是第一页，回到上一页
-      if (userList.value.length === 1 && pagination.currentPage > 1) {
-        pagination.currentPage--
+      try {
+        const res = await deleteAdminUser(row.id)
+        if (res?.code !== 0 && res?.code !== 200) {
+          ElMessage.error(res?.message || '删除用户失败')
+          return
+        }
+        ElMessage.success(`已删除用户「${row.username}」`)
+        // 如果当前页删空了且不是第一页，回到上一页
+        if (userList.value.length === 1 && pagination.currentPage > 1) {
+          pagination.currentPage--
+        }
+        await fetchUsers()
+      } catch {
+        ElMessage.error('删除失败，请稍后重试')
       }
-      await fetchUsers()
     })
     .catch(() => {
       // 用户取消删除，不做任何操作
@@ -931,23 +964,16 @@ onBeforeUnmount(() => {
           </el-select>
         </el-form-item>
 
-        <!-- 状态 -->
-        <el-form-item label="状态" prop="status">
-          <el-radio-group v-model="dialogForm.status">
-            <el-radio value="active">正常</el-radio>
-            <el-radio value="banned">已封禁</el-radio>
-          </el-radio-group>
-        </el-form-item>
-
-        <!-- 初始密码（仅新增模式） -->
+        <!-- 密码：新增模式为必填初始密码；编辑模式为选填重置密码，留空不修改 -->
         <el-form-item
-          v-if="dialogMode === 'create'"
-          label="初始密码"
+          :label="dialogMode === 'create' ? '初始密码' : '重置密码'"
           prop="password"
         >
           <el-input
             v-model="dialogForm.password"
-            placeholder="请输入初始密码（不少于 6 个字符）"
+            :placeholder="dialogMode === 'create'
+              ? '请输入初始密码（不少于 6 个字符）'
+              : '留空则保持原密码；填写则重置为该密码（不少于 6 个字符）'"
             show-password
             :style="{ '--el-border-radius-base': 'var(--zh-radius8)' }"
           />

@@ -14,5 +14,7 @@ public interface AdminExportService {
     Map<String, Object> createTemplate(ExportTemplateCreateDTO dto);
     Map<String, Object> updateTemplate(String id, ExportTemplateCreateDTO dto);
     void updateTemplateStatus(String id, String status);
+    void deleteTemplate(String id);
+    PythonPptClient.PythonFileResult downloadTemplate(String id);
 }
 

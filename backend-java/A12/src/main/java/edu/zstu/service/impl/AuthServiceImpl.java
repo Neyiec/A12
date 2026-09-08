@@ -2,8 +2,12 @@ package edu.zstu.service.impl;
 
 import cn.hutool.core.bean.BeanUtil;
 import cn.hutool.core.util.RandomUtil;
+import com.fasterxml.jackson.core.type.TypeReference;
+import com.fasterxml.jackson.databind.ObjectMapper;
 import edu.zstu.dto.*;
+import edu.zstu.entity.Sys_Role;
 import edu.zstu.entity.Sys_User;
+import edu.zstu.mapper.SysRoleMapper;
 import edu.zstu.mapper.SysUserMapper;
 import edu.zstu.service.AuthService;
 import edu.zstu.service.BusinessLogService;
@@ -14,6 +18,7 @@ import edu.zstu.utils.RedisCacheUtil;
 import edu.zstu.utils.RedisRateLimiter;
 import edu.zstu.vo.LoginVO;
 import edu.zstu.vo.UserVO;
+import io.jsonwebtoken.Claims;
 import org.springframework.data.redis.core.StringRedisTemplate;
 import org.springframework.mail.SimpleMailMessage;
 import org.springframework.mail.javamail.JavaMailSender;
@@ -24,6 +29,7 @@ import org.springframework.web.context.request.ServletRequestAttributes;
 
 import java.time.Duration;
 import java.util.HashMap;
+import java.util.List;
 import java.util.Map;
 import java.util.concurrent.TimeUnit;
 import lombok.extern.slf4j.Slf4j;
@@ -32,7 +38,11 @@ import lombok.extern.slf4j.Slf4j;
 @Service
 public class AuthServiceImpl implements AuthService {
 
+    /** 新注册用户的默认角色编码 */
+    private static final String DEFAULT_ROLE_CODE = "teacher";
+
     private final SysUserMapper userMapper;
+    private final SysRoleMapper roleMapper;
     private final PasswordUtil passwordUtil;
     private final JwtUtil jwtUtil;
     private final StringRedisTemplate redisTemplate;
@@ -40,12 +50,15 @@ public class AuthServiceImpl implements AuthService {
     private final BusinessLogService businessLogService;
     private final RedisCacheUtil redisCacheUtil;
     private final RedisRateLimiter rateLimiter;
+    private final ObjectMapper objectMapper;
 
-    public AuthServiceImpl(SysUserMapper userMapper, PasswordUtil passwordUtil,
+    public AuthServiceImpl(SysUserMapper userMapper, SysRoleMapper roleMapper, PasswordUtil passwordUtil,
                            JwtUtil jwtUtil, StringRedisTemplate redisTemplate,
                            JavaMailSender mailSender, BusinessLogService businessLogService,
-                           RedisCacheUtil redisCacheUtil, RedisRateLimiter rateLimiter) {
+                           RedisCacheUtil redisCacheUtil, RedisRateLimiter rateLimiter,
+                           ObjectMapper objectMapper) {
         this.userMapper = userMapper;
+        this.roleMapper = roleMapper;
         this.passwordUtil = passwordUtil;
         this.jwtUtil = jwtUtil;
         this.redisTemplate = redisTemplate;
@@ -53,6 +66,7 @@ public class AuthServiceImpl implements AuthService {
         this.businessLogService = businessLogService;
         this.redisCacheUtil = redisCacheUtil;
         this.rateLimiter = rateLimiter;
+        this.objectMapper = objectMapper;
     }
 
     @Override
@@ -78,7 +92,7 @@ public class AuthServiceImpl implements AuthService {
             throw new RuntimeException("邮箱已存在");
         }
 
-        // 3. 创建用户（直接激活 is_active=1）
+        // 3. 创建用户（直接激活 is_active=1），默认授予 teacher 角色
         String hashedPassword = passwordUtil.hash(dto.getPassword());
         Sys_User user = new Sys_User();
         user.setUsername(dto.getUsername());
@@ -87,9 +101,6 @@ public class AuthServiceImpl implements AuthService {
         user.setPhone(dto.getPhone());
         user.setEmail(dto.getEmail());
         user.setAvatar(dto.getAvatar() != null ? dto.getAvatar() : "");
-        user.setUser_type("teacher");
-        user.setRoles("[\"teacher\"]");
-        user.setPermissions("[]");
         user.setIs_active(1);
         user.setEmail_verified(1);
         user.setPhone_verified(0);
@@ -98,10 +109,14 @@ public class AuthServiceImpl implements AuthService {
         if (result <= 0) {
             throw new RuntimeException("注册失败，请稍后重试");
         }
+        Sys_Role defaultRole = roleMapper.findRoleByCode(DEFAULT_ROLE_CODE);
+        if (defaultRole != null) {
+            roleMapper.insertUserRole(user.getId(), defaultRole.getId());
+        }
         evictUserCache(user);
         log.info("register success userId={}, username={}", user.getId(), user.getUsername());
         businessLogService.record("operation", "auth", "register", "user", user.getId(),
-                Map.of("username", user.getUsername(), "user_type", user.getUser_type()));
+                Map.of("username", user.getUsername(), "role", DEFAULT_ROLE_CODE));
         return toUserVO(user);
     }
 
@@ -146,6 +161,7 @@ public class AuthServiceImpl implements AuthService {
         BeanUtil.copyProperties(user, vo, "id");
         vo.setToken(token);
         vo.setUser_id(user.getId());
+        fillRoleFields(vo);
         return vo;
     }
 
@@ -236,6 +252,7 @@ public class AuthServiceImpl implements AuthService {
         LoginVO vo = new LoginVO();
         BeanUtil.copyProperties(user, vo, "id");
         vo.setUser_id(user.getId());
+        fillRoleFields(vo);
         String newToken = jwtUtil.generateToken(Map.of("user_id", user.getId()));
         redisTemplate.opsForValue().set("token:user:" + user.getId(), newToken, 7, TimeUnit.DAYS);
         vo.setToken(newToken);
@@ -265,7 +282,15 @@ public class AuthServiceImpl implements AuthService {
     @Override
     public void logout(String authorization) {
         log.info("logout currentUserId={}", CurrentHolder.getCurrentId());
+        // JwtAuthenticationFilter 跳过 /api/v1/auth/**，CurrentHolder 在此端点恒为 null，
+        // 需直接从 Authorization 头解析 JWT 得到 userId，再删除对应的 Redis 登录令牌
         Integer userId = CurrentHolder.getCurrentId();
+        if (userId == null && authorization != null && authorization.startsWith("Bearer ")) {
+            Claims claims = jwtUtil.parseToken(authorization.substring(7));
+            if (claims != null) {
+                userId = claims.get("user_id", Integer.class);
+            }
+        }
         if (userId != null) {
             redisTemplate.delete("token:user:" + userId);
             log.info("logout success userId={}", userId);
@@ -293,7 +318,39 @@ public class AuthServiceImpl implements AuthService {
     private UserVO toUserVO(Sys_User user) {
         UserVO vo = new UserVO();
         BeanUtil.copyProperties(user, vo);
+        fillRoleFields(vo);
         return vo;
+    }
+
+    /**
+     * 装配角色相关字段（RBAC 重构后不再存于 sys_user）：
+     * roles = 角色编码数组 JSON，user_type = 首个角色编码（主角色，兼容前端），
+     * permissions 固定 "[]"（角色权限矩阵走 API-80/82 查询）
+     */
+    private void fillRoleFields(Object target) {
+        Integer userId;
+        if (target instanceof UserVO) userId = ((UserVO) target).getId();
+        else if (target instanceof LoginVO) userId = ((LoginVO) target).getUser_id();
+        else return;
+        if (userId <= 0) return;
+
+        List<String> codes = roleMapper.findRolesByUserId(userId).stream()
+                .map(Sys_Role::getRole_code)
+                .toList();
+        try {
+            String rolesJson = objectMapper.writeValueAsString(codes);
+            if (target instanceof UserVO) {
+                ((UserVO) target).setRoles(rolesJson);
+                ((UserVO) target).setUser_type(codes.isEmpty() ? null : codes.get(0));
+                ((UserVO) target).setPermissions("[]");
+            } else {
+                ((LoginVO) target).setRoles(rolesJson);
+                ((LoginVO) target).setUser_type(codes.isEmpty() ? null : codes.get(0));
+                ((LoginVO) target).setPermissions("[]");
+            }
+        } catch (Exception ignored) {
+            // 序列化失败时角色字段保持为空，不影响主流程
+        }
     }
 
     private void evictUserCache(Sys_User user) {

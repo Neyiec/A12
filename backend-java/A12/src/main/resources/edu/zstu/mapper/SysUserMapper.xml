@@ -10,9 +10,6 @@
         <result column="email" property="email"/>
         <result column="phone" property="phone"/>
         <result column="avatar" property="avatar"/>
-        <result column="user_type" property="user_type"/>
-        <result column="roles" property="roles"/>
-        <result column="permissions" property="permissions"/>
         <result column="is_active" property="is_active"/>
         <result column="email_verified" property="email_verified"/>
         <result column="phone_verified" property="phone_verified"/>
@@ -26,7 +23,7 @@
 
     <sql id="Base_Columns">
         id, username, password_hash, real_name, email, phone, avatar,
-        user_type, roles, permissions, is_active, email_verified, phone_verified,
+        is_active, email_verified, phone_verified,
         last_login_at, last_login_ip, password_changed_at, deleted_at, created_at, updated_at
     </sql>
 
@@ -52,9 +49,9 @@
 
     <insert id="insert" useGeneratedKeys="true" keyProperty="id">
         INSERT INTO sys_user(username, password_hash, real_name, email, phone, avatar,
-                             user_type, roles, permissions, is_active, created_at, updated_at)
+                             is_active, created_at, updated_at)
         VALUES(#{username}, #{password_hash}, #{real_name}, #{email}, #{phone}, #{avatar},
-               #{user_type}, #{roles}, #{permissions}, #{is_active}, NOW(), NOW())
+               #{is_active}, NOW(), NOW())
     </insert>
 
     <update id="update">
@@ -66,9 +63,6 @@
             <if test="email != null">email = #{email},</if>
             <if test="phone != null">phone = #{phone},</if>
             <if test="avatar != null">avatar = #{avatar},</if>
-            <if test="user_type != null">user_type = #{user_type},</if>
-            <if test="roles != null">roles = #{roles},</if>
-            <if test="permissions != null">permissions = #{permissions},</if>
             <if test="is_active != null">is_active = #{is_active},</if>
             <if test="email_verified != null">email_verified = #{email_verified},</if>
             <if test="phone_verified != null">phone_verified = #{phone_verified},</if>
@@ -96,6 +90,7 @@
     <delete id="deleteById">
         UPDATE sys_user SET deleted_at = NOW(), is_active = 0, updated_at = NOW() WHERE id = #{id}
     </delete>
+    <!-- user_type 参数现按角色编码(role_code)过滤：拥有该角色的用户才命中 -->
     <select id="findByQuery" resultMap="BaseResultMap">
         SELECT <include refid="Base_Columns"/> FROM sys_user
         <where>
@@ -104,7 +99,11 @@
                 AND (username LIKE CONCAT('%',#{keyword},'%') OR real_name LIKE CONCAT('%',#{keyword},'%') OR email LIKE CONCAT('%',#{keyword},'%') OR phone LIKE CONCAT('%',#{keyword},'%'))
             </if>
             <if test="user_type != null and user_type != ''">
-                AND user_type = #{user_type}
+                AND EXISTS (
+                    SELECT 1 FROM sys_user_role ur
+                    JOIN sys_role r ON r.id = ur.role_id
+                    WHERE ur.user_id = sys_user.id AND r.role_code = #{user_type}
+                )
             </if>
             <if test="is_active != null">
                 AND is_active = #{is_active}

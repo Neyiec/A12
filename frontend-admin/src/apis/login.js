@@ -50,6 +50,15 @@ export function getRouters() {
 }
 
 /**
+ * 退出登录（API-08）
+ * 后端删除 Redis 中该用户的登录令牌；Authorization 头由 request 拦截器自动附加
+ * @returns {Promise<Result<Void>>} 后端返回登出结果
+ */
+export function logout() {
+  return post('/api/v1/auth/logout')
+}
+
+/**
  * 通过邮箱验证码重置密码
  * @param {{ username: string, code: string, new_password: string }} data - 重置资料
  * @returns {Promise<Result<Void>>} 后端返回重置结果

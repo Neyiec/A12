@@ -1,4 +1,5 @@
 import json
+import re
 import unicodedata
 from functools import lru_cache
 from pathlib import Path
@@ -7,6 +8,8 @@ from typing import Any
 
 TEMPLATE_DIR = Path(__file__).resolve().parents[1] / "templates"
 DEFAULT_THEME = "素白风"
+
+_THEME_PATTERN = re.compile(r"[\w-]+")
 
 
 def _norm(value: str | None) -> str:
@@ -48,6 +51,7 @@ def list_templates() -> list[dict[str, Any]]:
             "aliases": aliases,
             "is_default": file_theme == DEFAULT_THEME,
             "filename": path.name,
+            "size": path.stat().st_size,
         })
     return items
 
@@ -105,4 +109,94 @@ def get_template(theme: str | None) -> dict[str, Any] | None:
     meta = selected.get("_template_meta") or {}
     selected["_selected_theme"] = meta.get("theme") or DEFAULT_THEME
     return selected
+
+
+# ===================================================================
+# 模板 CRUD — 供管理后台增删替换下载（theme 即文件名去 .json 后缀）
+# ===================================================================
+
+
+def _clear_cache() -> None:
+    list_templates.cache_clear()
+    load_templates.cache_clear()
+
+
+def _sanitize_theme(name: str | None) -> str:
+    theme = unicodedata.normalize("NFKC", (name or "")).strip()
+    if not theme:
+        raise ValueError("模板名称不能为空")
+    if len(theme) > 50 or not _THEME_PATTERN.fullmatch(theme):
+        raise ValueError("模板名称仅支持中文、字母、数字、下划线和连字符，长度不超过 50")
+    return theme
+
+
+def _require_template_file(theme: str | None) -> Path:
+    try:
+        clean = _sanitize_theme(theme)
+    except ValueError as exc:
+        raise ValueError(f"非法的模板 ID：{exc}") from exc
+    path = TEMPLATE_DIR / f"{clean}.json"
+    # 防路径穿越：解析后必须仍在模板目录内
+    if path.resolve().parent != TEMPLATE_DIR.resolve():
+        raise ValueError("非法的模板 ID")
+    if not path.exists():
+        raise ValueError(f"模板「{clean}」不存在")
+    return path
+
+
+def _parse_template_data(template_data: str | None) -> dict[str, Any]:
+    if template_data is None or not str(template_data).strip():
+        raise ValueError("模板内容不能为空")
+    try:
+        data = json.loads(str(template_data))
+    except Exception as exc:
+        raise ValueError(f"模板内容不是有效的 JSON：{exc}") from exc
+    if not isinstance(data, dict):
+        raise ValueError("模板 JSON 顶层必须是对象（{...}）")
+    if not str(data.get("html_template") or "").strip():
+        raise ValueError("模板 JSON 缺少 html_template 字段，无法用于 PPT 生成")
+    return data
+
+
+def _write_template_file(path: Path, data: dict[str, Any], description: str | None) -> None:
+    data["template_name"] = path.stem
+    if description is not None and str(description).strip():
+        data["description"] = str(description).strip()
+    data["is_default"] = path.stem == DEFAULT_THEME
+    data.pop("export_info", None)
+    TEMPLATE_DIR.mkdir(parents=True, exist_ok=True)
+    path.write_text(json.dumps(data, ensure_ascii=False, indent=2), encoding="utf-8")
+    _clear_cache()
+
+
+def create_template(name: str, template_data: str, description: str | None = None) -> dict[str, Any]:
+    theme = _sanitize_theme(name)
+    data = _parse_template_data(template_data)
+    path = TEMPLATE_DIR / f"{theme}.json"
+    if path.exists():
+        raise ValueError(f"模板「{theme}」已存在，请更换名称")
+    _write_template_file(path, data, description)
+    return {"theme": theme, "filename": path.name}
+
+
+def replace_template(theme: str, template_data: str, description: str | None = None) -> dict[str, Any]:
+    path = _require_template_file(theme)
+    if path.stem == DEFAULT_THEME:
+        raise ValueError("默认模板不可替换，请新建模板后使用")
+    data = _parse_template_data(template_data)
+    _write_template_file(path, data, description)
+    return {"theme": path.stem, "filename": path.name}
+
+
+def delete_template(theme: str) -> dict[str, Any]:
+    path = _require_template_file(theme)
+    if path.stem == DEFAULT_THEME:
+        raise ValueError("默认模板不可删除")
+    path.unlink()
+    _clear_cache()
+    return {"theme": path.stem, "filename": path.name}
+
+
+def get_template_file(theme: str) -> Path:
+    return _require_template_file(theme)
 

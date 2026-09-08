@@ -55,6 +55,65 @@ public class PythonPptClient {
         return getJson("/api/v1/python/templates", Map.of());
     }
 
+    /**
+     * 管理后台创建 PPT 模板 — Python 落盘为 {theme}.json
+     * @param name         模板名称（即 theme / 文件名去后缀）
+     * @param templateData 模板 JSON 文件文本内容（必须含 html_template 字段）
+     * @param description  模板描述（选填）
+     */
+    public Map<String, Object> createTemplate(String name, String templateData, String description) {
+        log.info("createTemplate name={}", name);
+        Map<String, Object> payload = new LinkedHashMap<>();
+        payload.put("name", name);
+        payload.put("template_data", templateData);
+        if (description != null && !description.isBlank()) payload.put("description", description);
+        return postJson("/api/v1/python/templates", payload);
+    }
+
+    /** 管理后台替换 PPT 模板内容（覆盖 {theme}.json，默认模板由 Python 侧拒绝） */
+    public Map<String, Object> replaceTemplate(String theme, String templateData, String description) {
+        log.info("replaceTemplate theme={}", theme);
+        Map<String, Object> payload = new LinkedHashMap<>();
+        payload.put("template_data", templateData);
+        if (description != null && !description.isBlank()) payload.put("description", description);
+        return patchJson("/api/v1/python/templates/" + urlEncode(theme), payload);
+    }
+
+    /** 管理后台删除 PPT 模板（默认模板由 Python 侧拒绝） */
+    public Map<String, Object> deleteTemplate(String theme) {
+        log.info("deleteTemplate theme={}", theme);
+        return deleteJson("/api/v1/python/templates/" + urlEncode(theme), Map.of());
+    }
+
+    /** 管理后台下载模板 JSON 文件（业务错误由 Python 以非 2xx 返回，此处抛出异常） */
+    public PythonFileResult downloadTemplate(String theme) {
+        try {
+            HttpRequest request = HttpRequest.newBuilder()
+                    .uri(URI.create(baseUrl + "/api/v1/python/templates/" + urlEncode(theme) + "/file"))
+                    .timeout(Duration.ofSeconds(requestTimeoutSeconds))
+                    .GET()
+                    .build();
+            HttpResponse<byte[]> response = httpClient.send(request, HttpResponse.BodyHandlers.ofByteArray());
+            log.info("downloadTemplate theme={}, statusCode={}", theme, response.statusCode());
+            if (response.statusCode() < 200 || response.statusCode() >= 300) {
+                throw new RuntimeException("Python服务调用失败，HTTP " + response.statusCode());
+            }
+            String contentType = response.headers().firstValue("content-type")
+                    .orElse("application/json")
+                    .split(";")[0]
+                    .trim();
+            String filename = response.headers().firstValue("content-disposition")
+                    .map(this::filenameFromContentDisposition)
+                    .filter(value -> value != null && !value.isBlank())
+                    .orElse(theme + ".json");
+            return new PythonFileResult(response.body(), contentType, filename);
+        } catch (RuntimeException e) {
+            throw e;
+        } catch (Exception e) {
+            throw new RuntimeException("下载Python模板文件失败: " + e.getMessage(), e);
+        }
+    }
+
     public Map<String, Object> uploadResource(byte[] fileBytes, String filename, String contentType) {
         return uploadFile("/api/v1/python/resources/upload", fileBytes, filename, contentType, Map.of());
     }
