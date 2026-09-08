@@ -1,12 +1,16 @@
 <script setup>
 import { computed, nextTick, onBeforeUnmount, onMounted, reactive, ref, watch } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
-import { ElMessage } from 'element-plus'
-import { FullScreen, Plus, Promotion } from '@element-plus/icons-vue'
-import { addProjectPermission, batchSaveProjectPages, createProject, createProjectPage, deleteProjectPage, generateInteractiveModule, generatePresentation, getAiPlan, getProject, getProjectPage, getProjectVersionDiff, listProjectPages, listProjectVersions, modifyPresentationSlide, patchProject, restoreProjectVersion, reviseProjectWithAi, saveProjectVersion, sendAiSessionMessage, saveProjectPage, streamGeneralChat, validateProjectComponent } from '../apis/teacher'
+import { ElMessage, ElMessageBox } from 'element-plus'
+import { Aim, Plus, Promotion } from '@element-plus/icons-vue'
+import MarkdownRender from 'markstream-vue'
+import { addProjectComponent, addProjectPermission, archiveProject, batchSaveProjectPages, copyProject, createAiRun, createProject, deleteProject, deleteProjectPage, downloadResource, generateInteractiveModule, generatePresentation, getAiPlan, getAiRun, getProject, getProjectPage, getProjectVersionDiff, listProjectPages, listProjectVersions, listProjects, listResources, modifyPresentation, modifyPresentationSlide, patchProject, recognizeIntent, restoreProject, restoreProjectVersion, reviseProjectWithAi, saveProjectVersion, sendAiSessionAudioMessage, sendAiSessionMessage, streamAiRunEvents, streamGeneralChat, transcribeAudio, updateProjectComponent, validatePresentationHtml, validateProjectComponent } from '../apis/teacher'
 import IntentClarificationDialog from './IntentClarificationDialog.vue'
 import CreationWorkspaceToolbar from './CreationWorkspaceToolbar.vue'
 import WorkspacePropertiesPanel from './WorkspacePropertiesPanel.vue'
+import LessonPlanEditor from './LessonPlanEditor.vue'
+import VoiceRecorderButton from './VoiceRecorderButton.vue'
+import SubjectToolRuntime from './SubjectToolRuntime.vue'
 import { useUserStore } from '../storage/user.js'
 import { readOutlineDraft, readPresentationDraft, savePresentationDraft } from '../utils/presentationDraft.js'
 import { createPresentationFixture } from '../mock/data/presentationFixture.js'
@@ -16,15 +20,22 @@ const route = useRoute()
 const userStore = useUserStore()
 const prompt = ref('')
 const selectedSlide = ref(0)
+const draggingSlideIndex = ref(null)
+const slideDropIndex = ref(null)
 const activeTool = ref('')
 const selectedElementId = ref(null)
 const draggingElementId = ref(null)
-const activePanel = ref('content')
 const canvasZoom = ref(86)
 const canvasZoomInput = ref('86')
 const CANVAS_ZOOM_MIN = 50
 const CANVAS_ZOOM_MAX = 200
 const CANVAS_ZOOM_STEP = 10
+const CANVAS_WHEEL_ZOOM_STEP = 8
+const canvasAreaRef = ref(null)
+const canvasPanning = ref(false)
+let canvasPanGesture = null
+let canvasCenterFrame = null
+let canvasViewportObserver = null
 const previewVisible = ref(false)
 const previewSlideIndex = ref(0)
 const previewDeckRef = ref(null)
@@ -60,9 +71,21 @@ const runStatus = ref('idle')
 const runProgress = ref(0)
 const runStage = ref('')
 const generationError = ref('')
+const runTimeline = ref([])
+const runToolCalls = ref([])
+const runRetrievalSources = ref([])
+const runReflection = ref(null)
+const runRecoveryNode = ref('')
+const runFailureReason = ref('')
+const activeRunId = ref('')
+const activeRunEventId = ref('')
+const runStreamConnected = ref(false)
+let activeRunStreamAbort = null
+let runStreamReconnectCount = 0
+let runStreamReconnectTimer = null
 const revisionSubmitting = ref(false)
 const discussionSubmitting = ref(false)
-const intentSubmitting = ref(false)
+const workspaceVoiceSubmitting = ref(false)
 const revisionStage = ref('')
 const assistantConversationRef = ref(null)
 const presentationId = ref('')
@@ -74,20 +97,88 @@ const htmlElements = ref([])
 const htmlSelectedElementId = ref(null)
 const htmlSelectedElement = ref(null)
 const htmlSelectionRestoreKey = ref('')
+let pendingHtmlPanelSelection = null
+const pageBackgroundImage = (slide) => String(slide?.backgroundImage || slide?.background_image || slide?.background?.src || '').trim()
+const pageBackgroundColor = (slide) => String(slide?.backgroundColor || slide?.background_color || slide?.background?.color || '').trim()
+const safeCssUrl = (value) => String(value || '').replace(/["'()\\]/g, '')
+const pageCanvasStyle = (slide, includeZoom = false) => {
+  const style = {
+    '--accent': (themes.find((item) => item.id === slide?.theme) || themes[0]).color,
+    backgroundImage: 'none',
+  }
+  const image = pageBackgroundImage(slide)
+  const color = pageBackgroundColor(slide)
+  if (includeZoom) style['--canvas-zoom'] = canvasZoom.value / 100
+  if (/^(#[0-9a-f]{3,8}|rgba?\([^)]{1,80}\)|hsla?\([^)]{1,100}\)|transparent|white|black)$/i.test(color)) style.backgroundColor = color
+  if (image) {
+    style.backgroundImage = `url("${safeCssUrl(image)}")`
+    style.backgroundSize = 'cover'
+    style.backgroundPosition = 'center'
+  }
+  return style
+}
+// 清除旧项目和旧模板遗留在 slide 根节点上的右上角装饰伪元素。
+// 该元素不是 PPT 内容，不能被选中或编辑，因此在加载页面时直接从 HTML 中移除。
+const stripSlideDecorativeCircle = (source) => String(source || '')
+  .replace(/\.slide(?:\.dark)?\s*:{1,2}before\s*\{[^{}]*\}/gi, '')
+const withHtmlPageBackground = (source, slide) => {
+  const html = stripSlideDecorativeCircle(source)
+  const image = pageBackgroundImage(slide)
+  const color = pageBackgroundColor(slide)
+  if (!image && !color) return html
+  const background = [
+    color ? `background-color:${color} !important;` : '',
+    image ? `background-image:url("${safeCssUrl(image)}") !important;background-size:cover !important;background-position:center !important;` : '',
+  ].join('')
+  // HTML 幻灯片通常由内部 `.slide` 根节点铺满画布，单独设置 html/body
+  // 会被该节点自己的 background 覆盖，因此页面背景需要同时作用于实际画布根节点。
+  const style = `<style data-a12-page-background>html,body,.slide,.slide.dark{${background}}html,body{background-repeat:no-repeat !important;}</style>`
+  const marker = /<style data-a12-page-background>[\s\S]*?<\/style>/i
+  if (marker.test(html)) return html.replace(marker, style)
+  if (/<\/head>/i.test(html)) return html.replace(/<\/head>/i, `${style}</head>`)
+  return `${style}${html}`
+}
 const versionDialogVisible = ref(false)
 const permissionDialogVisible = ref(false)
 const versionLoading = ref(false)
 const versions = ref([])
 const versionDiff = ref(null)
 const permissionUserId = ref('')
+const projectManagerVisible = ref(false)
+const projectListLoading = ref(false)
+const projectActionLoading = ref(false)
+const workspaceProjects = ref([])
+const workspaceResources = ref([])
+const workspaceResourcesLoading = ref(false)
+const workspaceResourceBindingOverride = ref(null)
+const contextManagerVisible = ref(false)
+const contextManagerIds = ref([])
+const contextManagerSaving = ref(false)
+const lessonPlanVisible = ref(false)
+const lessonPlanDraft = ref(null)
+const projectNameDraft = ref('')
 const autosaveState = ref('已保存')
 const testCaseBootstrapping = ref(false)
 const hydratingProject = ref(false)
 const savingPage = ref(false)
+const qualityPanelVisible = ref(false)
+const qualityReport = ref(null)
+const qualityReportSource = ref('')
+const revisionPreviewVisible = ref(false)
+const pendingDeckRevision = ref(null)
+const revisionUndoSnapshot = ref(null)
 const workspaceClientVersion = `workspace-${Date.now()}`
 const loadedPageDetailIds = new Set()
 const componentValidationCache = new Map()
+const pendingComponentSync = new WeakMap()
 let autosaveTimer = null
+let pageSavePromise = null
+let orderSavePromise = null
+let localChangeVersion = 0
+let localStructureVersion = 0
+let savedChangeVersion = 0
+let savedStructureVersion = 0
+let autosaveQueued = false
 let workspaceMessageInstance = null
 const showWorkspaceMessage = (type, message) => {
   workspaceMessageInstance?.close()
@@ -131,11 +222,11 @@ const elementPresets = [
   { id: 'footer', type: 'text', name: '页脚说明', target: 'footer', content: '', position: { x: 0, y: 86, width: 100, height: 14, rotation: 0, zIndex: 5 }, style: { color: '#ffffff', fontSize: 10, fontWeight: 400, opacity: 100, textAlign: 'left', lineHeight: 1.5 } },
 ]
 const extendedElementPresets = [
-  { id: 'audio', type: 'audio', name: '音频讲解', content: '教师讲解示例音频', position: { x: 8, y: 48, width: 30, height: 14, rotation: 0, zIndex: 3 }, style: { color: '#2563eb', backgroundColor: '#eff6ff', borderColor: '#bfdbfe', borderWidth: 1, borderRadius: 12, opacity: 100 } },
-  { id: 'video', type: 'video', name: '视频演示', content: '课堂实验演示视频', position: { x: 40, y: 48, width: 30, height: 18, rotation: 0, zIndex: 3 }, style: { color: '#173d78', backgroundColor: '#eef2ff', borderColor: '#c7d2fe', borderWidth: 1, borderRadius: 12, opacity: 100 } },
+  { id: 'audio', type: 'audio', name: '音频讲解', content: '教师讲解示例音频', url: '', src: '', autoplay: false, controls: true, position: { x: 8, y: 48, width: 30, height: 14, rotation: 0, zIndex: 3 }, style: { color: '#2563eb', backgroundColor: '#eff6ff', borderColor: '#bfdbfe', borderWidth: 1, borderRadius: 12, opacity: 100 } },
+  { id: 'video', type: 'video', name: '视频演示', content: '课堂实验演示视频', url: '', src: '', autoplay: false, controls: true, position: { x: 40, y: 48, width: 30, height: 18, rotation: 0, zIndex: 3 }, style: { color: '#173d78', backgroundColor: '#eef2ff', borderColor: '#c7d2fe', borderWidth: 1, borderRadius: 12, opacity: 100 } },
   { id: 'table', type: 'table', name: '数据表格', content: '小组测量记录', data: [['小组', '边 a', '边 b'], ['A组', '3', '4'], ['B组', '5', '12']], position: { x: 8, y: 64, width: 44, height: 18, rotation: 0, zIndex: 3 }, style: { color: '#2563eb', backgroundColor: '#f8fbff', borderColor: '#bfdbfe', borderWidth: 1, borderRadius: 10, opacity: 100 } },
-  { id: 'h5', type: 'h5', name: 'H5互动组件', content: '互动问答 H5', position: { x: 54, y: 64, width: 36, height: 18, rotation: 0, zIndex: 3 }, style: { color: '#ff6b3f', backgroundColor: '#fff7ed', borderColor: '#fed7aa', borderWidth: 1, borderRadius: 12, opacity: 100 } },
-  { id: 'subject', type: 'subject', name: '学科工具', content: '直角三角形测量工具', position: { x: 54, y: 43, width: 36, height: 18, rotation: 0, zIndex: 3 }, style: { color: '#1f993f', backgroundColor: '#f0fdf4', borderColor: '#bbf7d0', borderWidth: 1, borderRadius: 12, opacity: 100 } },
+  { id: 'h5', type: 'h5', name: 'H5互动组件', content: '互动问答 H5', html: '', moduleId: '', embedMode: 'standalone', position: { x: 54, y: 64, width: 36, height: 18, rotation: 0, zIndex: 3 }, style: { color: '#ff6b3f', backgroundColor: '#fff7ed', borderColor: '#fed7aa', borderWidth: 1, borderRadius: 12, opacity: 100 } },
+  { id: 'subject', type: 'subject', name: '学科工具', content: '直角三角形测量工具', subjectType: 'geometry', data: { description: '', parameters: '' }, position: { x: 54, y: 43, width: 36, height: 18, rotation: 0, zIndex: 3 }, style: { color: '#1f993f', backgroundColor: '#f0fdf4', borderColor: '#bbf7d0', borderWidth: 1, borderRadius: 12, opacity: 100 } },
 ]
 const allElementPresets = [...elementPresets, ...extendedElementPresets]
 let elementSequence = 1
@@ -164,7 +255,11 @@ const slides = reactive([
   { title: '公式推导', eyebrow: '03 / 建立模型', description: '将三边长度转化为面积，归纳勾股定理的表达式。', layout: '双栏探究', theme: 'green' },
   { title: '互动练习', eyebrow: '04 / 动手验证', description: '完成三组测量与计算，检验你的发现是否始终成立。', layout: '双栏探究', theme: 'orange' },
 ])
-slides.forEach((slide) => { slide.elements = createMockElements() })
+slides.forEach((slide, index) => {
+  slide.elements = createMockElements()
+  slide.pageType = index === 0 ? 'cover' : 'content'
+  slide.page_type = slide.pageType
+})
 const current = computed(() => slides[selectedSlide.value])
 const syncHtmlCanvasSource = (slide = current.value) => {
   htmlCanvasSourceSlide.value = slide || null
@@ -172,9 +267,10 @@ const syncHtmlCanvasSource = (slide = current.value) => {
 }
 const htmlCanvasFrameSource = computed(() => {
   if (!current.value?.html) return ''
-  return htmlCanvasSourceSlide.value === current.value
+  const source = htmlCanvasSourceSlide.value === current.value
     ? htmlCanvasSource.value
     : String(current.value.html)
+  return withHtmlPageBackground(source, current.value)
 })
 const setCanvasZoom = (value) => {
   const rawValue = String(value ?? '').trim()
@@ -185,11 +281,85 @@ const setCanvasZoom = (value) => {
   }
   canvasZoom.value = Math.round(Math.min(CANVAS_ZOOM_MAX, Math.max(CANVAS_ZOOM_MIN, numericValue)))
   canvasZoomInput.value = String(canvasZoom.value)
+  // 当前不开放画布拖动，因此缩放始终保持页面位于工作区几何中心。
+  void nextTick(centerCanvasView)
 }
 const adjustCanvasZoom = (delta) => setCanvasZoom(canvasZoom.value + delta)
 const resetCanvasZoom = () => setCanvasZoom(86)
 const commitCanvasZoomInput = () => setCanvasZoom(canvasZoomInput.value)
+const applyCanvasCenter = () => {
+  const canvasArea = canvasAreaRef.value
+  if (!canvasArea) return
+  canvasArea.scrollTo({
+    left: Math.max(0, (canvasArea.scrollWidth - canvasArea.clientWidth) / 2),
+    top: Math.max(0, (canvasArea.scrollHeight - canvasArea.clientHeight) / 2),
+    behavior: 'auto',
+  })
+}
+const centerCanvasView = () => {
+  // 尺寸在 Vue 更新、HTML iframe 完成布局后才稳定；连续两帧校准确保
+  // 无滚动条时由 CSS 居中，有滚动条时则同时回到 X/Y 中点。
+  if (canvasCenterFrame != null) cancelAnimationFrame(canvasCenterFrame)
+  applyCanvasCenter()
+  canvasCenterFrame = requestAnimationFrame(() => {
+    canvasCenterFrame = requestAnimationFrame(() => {
+      canvasCenterFrame = null
+      applyCanvasCenter()
+    })
+  })
+}
+const preventCanvasMiddleMouse = (event) => {
+  if (event.button === 1) event.preventDefault()
+}
+const handleCanvasWheel = (event, canvasArea = event.currentTarget) => {
+  const delta = Number(event.deltaY || 0)
+  if (!delta || !canvasArea?.getBoundingClientRect) return
+  event.preventDefault()
+  const previousZoom = canvasZoom.value
+  const nextZoom = Math.round(Math.min(CANVAS_ZOOM_MAX, Math.max(CANVAS_ZOOM_MIN, previousZoom + (delta < 0 ? CANVAS_WHEEL_ZOOM_STEP : -CANVAS_WHEEL_ZOOM_STEP))))
+  if (nextZoom === previousZoom) return
+  setCanvasZoom(nextZoom)
+}
+const startCanvasPan = (event, canvasArea = event.currentTarget) => {
+  if (event.button !== 1 || !canvasArea) return
+  event.preventDefault()
+  event.stopPropagation()
+  canvasPanning.value = true
+  canvasPanGesture = {
+    pointerId: event.pointerId,
+    canvasArea,
+    capturesPointer: event.currentTarget === canvasArea,
+    startClientX: event.clientX,
+    startClientY: event.clientY,
+    startScrollLeft: canvasArea.scrollLeft,
+    startScrollTop: canvasArea.scrollTop,
+  }
+  // iframe 内的事件必须保留在 iframe 文档中处理；跨文档抢占指针会造成浏览器重绘抖动。
+  if (canvasPanGesture.capturesPointer) {
+    try { canvasArea.setPointerCapture?.(event.pointerId) } catch { /* 浏览器已接管指针 */ }
+  }
+}
+const moveCanvasPan = (event) => {
+  const gesture = canvasPanGesture
+  if (!gesture || event.pointerId !== gesture.pointerId) return
+  event.preventDefault()
+  gesture.canvasArea.scrollLeft = gesture.startScrollLeft - (event.clientX - gesture.startClientX)
+  gesture.canvasArea.scrollTop = gesture.startScrollTop - (event.clientY - gesture.startClientY)
+}
+const stopCanvasPan = (event) => {
+  const gesture = canvasPanGesture
+  if (!gesture || (event?.pointerId != null && event.pointerId !== gesture.pointerId)) return
+  try {
+    if (gesture.capturesPointer && gesture.canvasArea?.hasPointerCapture?.(gesture.pointerId)) gesture.canvasArea.releasePointerCapture(gesture.pointerId)
+  } catch { /* 已由浏览器释放指针捕获 */ }
+  canvasPanGesture = null
+  canvasPanning.value = false
+}
 watch(current, (slide) => syncHtmlCanvasSource(slide), { immediate: true })
+watch(selectedSlide, () => {
+  // 切页后总从画布中心展示，不把上一页的平移视角带到新页面。
+  void nextTick(centerCanvasView)
+})
 const themeForSlide = (slide) => themes.find((item) => item.id === slide?.theme) || themes[0]
 const theme = computed(() => themeForSlide(current.value))
 const unwrapResponse = (response) => {
@@ -210,14 +380,219 @@ const presentationFixtureMode = computed(() => import.meta.env.DEV && (
   String(route.query.pptFixture || '') === '1' || import.meta.env.VITE_PPT_FIXTURE_MODE === 'true'
 ))
 const project = ref(null)
-const defaultSlide = (index = 1) => ({ title: `新建页面 ${index}`, eyebrow: '教学内容', description: '在右侧完善页面文案与布局，或通过 AI 对话继续创作。', layout: '图文并置', theme: 'blue', elements: createMockElements() })
+const projectLoadError = ref('')
+const defaultSlide = (index = 1) => ({ title: `新建页面 ${index}`, eyebrow: '教学内容', description: '在右侧完善页面文案与布局，或通过 AI 对话继续创作。', layout: '图文并置', theme: 'blue', pageType: index === 1 ? 'cover' : 'content', page_type: index === 1 ? 'cover' : 'content', elements: createMockElements() })
 const parseJson = (value, fallback = {}) => { try { return typeof value === 'string' ? JSON.parse(value) : (value || fallback) } catch { return fallback } }
+const routeQueryValue = (value) => Array.isArray(value) ? value[0] : value
+const queryArrayValue = (value) => {
+  const parsed = parseJson(routeQueryValue(value), null)
+  if (Array.isArray(parsed)) return parsed
+  if (typeof value === 'string') return value.split(',').map((item) => item.trim()).filter(Boolean)
+  return value == null || value === '' ? [] : [value]
+}
+const workspaceRequestErrorMessage = (error, fallback) => {
+  const status = Number(error?.response?.status ?? error?.status ?? (Number.isFinite(Number(error?.code)) ? error.code : 0))
+  const detail = String(error?.response?.data?.message || error?.message || '')
+  if (status === 502 || /502|ECONNREFUSED|Network Error|网络错误/i.test(detail)) {
+    return '教师端服务暂时未连接（Java 网关 8088），项目内容无法从服务器读取；请启动教师端服务后点击“重新加载”。'
+  }
+  if (status === 401) return '登录状态已失效，请重新登录后再打开课件。'
+  if (status === 403) return '当前账号没有权限打开这个课件。'
+  if (status === 404) return '课件或页面不存在，可能已被删除。'
+  return detail || fallback
+}
+const pageRecords = (value) => {
+  if (Array.isArray(value)) return value
+  if (!value || typeof value !== 'object') return []
+  const nested = value.records || value.items || value.list || value.pages || value.data || []
+  return Array.isArray(nested) ? nested : pageRecords(nested)
+}
+const lessonPlanTitle = computed(() => String(
+  project.value?.project_name
+  || routeQueryValue(route.query.templateTitle)
+  || current.value?.title
+  || 'A12 教学教案',
+))
+const lessonPlanSubject = computed(() => String(
+  routeQueryValue(route.query.subject)
+  || project.value?.subject
+  || presentationMetadata.value?.subject
+  || '',
+))
+const lessonPlanGrade = computed(() => String(
+  routeQueryValue(route.query.grade)
+  || project.value?.grade
+  || presentationMetadata.value?.grade
+  || '',
+))
+const normalizedResourceIds = (values = []) => [...new Set(
+  (Array.isArray(values) ? values : [values])
+    .map((item) => String(item ?? '').trim())
+    .filter(Boolean),
+)]
+const normalizeWorkspaceResource = (resource = {}) => {
+  const id = resource.id ?? resource.resource_id ?? resource.resourceId
+  return {
+    id: id == null ? '' : String(id),
+    name: String(resource.name || resource.file_name || resource.filename || resource.title || `资源 ${id || ''}`),
+    fileType: String(resource.file_type || resource.fileType || resource.mime_type || resource.mimeType || ''),
+    fileUrl: resource.file_url || resource.fileUrl || resource.url || '',
+    thumbnail: resource.thumbnail || resource.thumbnail_url || resource.cover_url || '',
+    previewUrl: resource.preview_url || resource.previewUrl || '',
+    description: resource.description || '',
+    allowAi: resource.allow_ai !== false && resource.allowAi !== false,
+    raw: resource,
+  }
+}
+const loadWorkspaceResources = async () => {
+  workspaceResourcesLoading.value = true
+  try {
+    const response = unwrapResponse(await listResources({ page: 1, size: 100 }))
+    const records = Array.isArray(response)
+      ? response
+      : response?.records || response?.items || response?.list || response?.resources || []
+    workspaceResources.value = records.map(normalizeWorkspaceResource).filter((resource) => resource.id)
+  } catch (error) {
+    workspaceResources.value = []
+    WorkspaceMessage.warning(workspaceRequestErrorMessage(error, '个人资源库加载失败，仍可继续编辑页面'))
+  } finally {
+    workspaceResourcesLoading.value = false
+  }
+}
+/** 工作台后续讨论、修改、重新生成和互动组件生成共用的上下文。 */
+const workspaceContextPayload = () => {
+  const storedContext = presentationMetadata.value?.workspace_context || presentationMetadata.value?.workspaceContext || {}
+  const routeContext = {
+    ...(storedContext && typeof storedContext === 'object' ? storedContext : {}),
+    ...parseJson(routeQueryValue(route.query.workspaceContext), {}),
+  }
+  const resourceIds = workspaceResourceBindingOverride.value !== null
+    ? normalizedResourceIds(workspaceResourceBindingOverride.value)
+    : normalizedResourceIds([
+      ...queryArrayValue(route.query.resourceIds),
+      ...(Array.isArray(routeContext.resourceIds) ? routeContext.resourceIds : []),
+      ...(Array.isArray(routeContext.resource_ids) ? routeContext.resource_ids : []),
+      ...(Array.isArray(routeContext.bound_materials) ? routeContext.bound_materials : []),
+      ...(Array.isArray(routeContext.bind_materials) ? routeContext.bind_materials : []),
+      current.value?.background?.resource_id,
+      current.value?.background?.resourceId,
+      current.value?.backgroundResourceId,
+    ])
+  const uploadedResources = Array.isArray(routeContext.uploadedResources)
+    ? routeContext.uploadedResources
+    : Array.isArray(routeContext.uploaded_resources) ? routeContext.uploaded_resources : []
+  const community = routeContext.community || (route.query.communityId ? {
+    id: routeQueryValue(route.query.communityId),
+    type: routeQueryValue(route.query.communityType) || '',
+    title: routeQueryValue(route.query.templateTitle) || '',
+  } : null)
+  return {
+    ...routeContext,
+    session_id: sessionId.value ? String(sessionId.value) : undefined,
+    project_id: projectId.value ? String(projectId.value) : undefined,
+    resourceIds,
+    resource_ids: resourceIds,
+    bound_materials: resourceIds,
+    bind_materials: resourceIds,
+    uploadedResources: uploadedResources.slice(0, 30),
+    uploaded_resources: uploadedResources.slice(0, 30),
+    workspace_resource_bindings: workspaceResources.value
+      .filter((resource) => resourceIds.includes(String(resource.id)))
+      .slice(0, 30)
+      .map((resource) => ({ id: String(resource.id), name: resource.name, file_type: resource.fileType || resource.file_type || '' })),
+    current_page: current.value ? {
+      page_id: current.value.pageId || current.value.page_id || null,
+      title: current.value.title || '',
+      background_resource_id: current.value.background?.resource_id || current.value.backgroundResourceId || null,
+    } : null,
+    community,
+    community_skill: community?.type === 'Skill' ? community : (routeContext.community_skill || null),
+    community_case: community?.type === '案例' || community?.type === '测试案例' ? community : (routeContext.community_case || null),
+  }
+}
+const openWorkspaceContextManager = () => {
+  contextManagerIds.value = [...workspaceContextPayload().resource_ids]
+  contextManagerVisible.value = true
+}
+const removeContextResource = (id) => {
+  contextManagerIds.value = contextManagerIds.value.filter((item) => String(item) !== String(id))
+}
+const saveWorkspaceContextBindings = async () => {
+  contextManagerSaving.value = true
+  try {
+    workspaceResourceBindingOverride.value = normalizedResourceIds(contextManagerIds.value)
+    contextManagerVisible.value = false
+    if (projectId.value) await syncProjectWorkspaceContextIfNeeded()
+    else if (sessionId.value) saveCurrentPresentationDraft()
+    WorkspaceMessage.success('AI 资料绑定已保存')
+  } catch (error) {
+    WorkspaceMessage.error(error?.message || 'AI 资料绑定保存失败')
+  } finally {
+    contextManagerSaving.value = false
+  }
+}
+const qualityArray = (value) => {
+  if (Array.isArray(value)) return value.map((item) => typeof item === 'object' ? (item?.message || item?.text || item?.description || item?.title || JSON.stringify(item)) : String(item)).filter(Boolean)
+  if (typeof value === 'string') return value.split(/\r?\n|[；;]/).map((item) => item.trim()).filter(Boolean)
+  return value ? [String(value)] : []
+}
+const normalizeQualityReport = (raw) => {
+  let value = raw
+  if (typeof value === 'string') value = parseJson(value, null)
+  if (Array.isArray(value)) value = { suggestions: value }
+  if (!value || typeof value !== 'object') return null
+  const nested = value.quality_report || value.qualityReport || value.report
+  if (nested && nested !== value) {
+    const normalized = normalizeQualityReport(nested)
+    if (normalized) {
+      return {
+        ...normalized,
+        summary: normalized.summary || String(value.summary || value.reflection || value.message || ''),
+        suggestions: [...new Set([...normalized.suggestions, ...qualityArray(value.suggestions || value.fixes || value.recommendations)])],
+      }
+    }
+  }
+  const scoreValue = value.score ?? value.quality_score ?? value.qualityScore ?? value.overall_score ?? value.total_score
+  const score = Number(scoreValue)
+  const normalizedScore = Number.isFinite(score) ? (score <= 1 ? Math.round(score * 100) : Math.round(score)) : null
+  const issues = qualityArray(value.issues || value.problems || value.structure_issues || value.structureProblems)
+  const risks = qualityArray(value.risks || value.content_risks || value.contentRisks || value.warnings)
+  const suggestions = qualityArray(value.suggestions || value.fixes || value.recommendations || value.improvements)
+  const summary = String(value.summary || value.reflection || value.analysis || value.message || '').trim()
+  const retryCount = Number(value.retry_count ?? value.retryCount ?? 0)
+  if (normalizedScore == null && !issues.length && !risks.length && !suggestions.length && !summary) return null
+  return { score: normalizedScore, summary, issues, risks, suggestions, retryCount: Number.isFinite(retryCount) ? retryCount : 0, raw: value }
+}
+const setQualityReport = (raw, source = '') => {
+  const normalized = normalizeQualityReport(raw)
+  if (normalized) {
+    qualityReport.value = normalized
+    qualityReportSource.value = source
+  }
+  return normalized
+}
+const openQualityPanel = () => {
+  if (!qualityReport.value) WorkspaceMessage.info('当前还没有生成质量报告；完成一次 AI 生成或重新生成后会在这里显示。')
+  qualityPanelVisible.value = true
+}
+const applyQualitySuggestion = async (suggestion) => {
+  const instruction = String(suggestion || '').trim()
+  if (!instruction) return
+  qualityPanelVisible.value = false
+  prompt.value = `请根据质量建议修改当前页面：${instruction}`
+  await nextTick()
+  await sendAssistantMessage()
+}
 const normalizeOutlinePayload = (planData = {}) => {
   const parsedPlan = parseJson(planData.plan_json ?? planData.outline ?? planData, {})
   const outline = parsedPlan?.outline
   if (outline && typeof outline === 'object' && !Array.isArray(outline)) return outline
   return parsedPlan && typeof parsedPlan === 'object' && !Array.isArray(parsedPlan) ? parsedPlan : {}
 }
+const lessonPlanOutline = computed(() => {
+  const localDraft = sessionId.value ? readOutlineDraft(sessionId.value) : null
+  return normalizeOutlinePayload(localDraft || presentationMetadata.value || {})
+})
 const getPresentationPayload = (rawResponse) => {
   const response = unwrapResponse(rawResponse)
   const candidate = response?.presentation || response?.result || response
@@ -234,12 +609,14 @@ const normalizePresentationSlides = (data = {}) => {
       footer: String(slide?.footer || ''),
       layout: slide?.layout || '重点陈述',
       theme: slide?.theme || 'blue',
-      html: String(slide?.html || ''),
+      html: stripSlideDecorativeCircle(slide?.html || ''),
       notes: String(slide?.notes || ''),
       slideNo: Number(slide?.slide_no) || index + 1,
       interactiveAssets: slide?.interactive_assets || slide?.metadata?.interactive_assets || [],
       metadata: slide?.metadata || {},
-      elements: Array.isArray(slide?.elements) ? slide.elements : []
+      elements: Array.isArray(slide?.elements) ? slide.elements : [],
+      pageOrder: Number(slide?.page_order ?? slide?.pageOrder ?? index + 1),
+      page_order: Number(slide?.page_order ?? slide?.pageOrder ?? index + 1),
     }))
     .filter((slide) => slide.html.trim())
 }
@@ -262,16 +639,58 @@ const applyGeneratedPresentation = (rawResponse, { persist = true, notify = true
   if (!generatedSlides.length) throw new Error('HTML PPT 生成服务未返回页面')
 
   clearGenerationFailureMessages()
-  slides.splice(0, slides.length, ...generatedSlides)
+  // API-139A 只返回 slide_no/title/html 时，必须把现有项目页的身份合并回来。
+  // 否则后续批量保存会把每一页当成新页，表现为“整体修改后重复页面”。
+  const previousSlides = [...slides]
+  const usedPreviousSlides = new Set()
+  const generatedWithIdentity = generatedSlides.map((generatedSlide, index) => {
+    const explicitPageId = generatedSlide.pageId
+      || generatedSlide.page_id
+      || generatedSlide.metadata?.pageId
+      || generatedSlide.metadata?.page_id
+      || generatedSlide.metadata?.source_page_id
+    const generatedTitle = String(generatedSlide.title || '').trim()
+    const generatedSlideNo = Number(generatedSlide.slideNo || generatedSlide.slide_no || index + 1)
+    const previous = previousSlides.find((candidate) => {
+      if (!candidate || usedPreviousSlides.has(candidate)) return false
+      if (explicitPageId && String(candidate.pageId || candidate.page_id) === String(explicitPageId)) return true
+      return false
+    }) || previousSlides.find((candidate) => {
+      if (!candidate || usedPreviousSlides.has(candidate) || !generatedTitle) return false
+      return String(candidate.title || '').trim() === generatedTitle
+    }) || previousSlides.find((candidate) => {
+      if (!candidate || usedPreviousSlides.has(candidate)) return false
+      return Number(candidate.slideNo || candidate.slide_no || 0) === generatedSlideNo
+    }) || previousSlides[index]
+    if (previous) usedPreviousSlides.add(previous)
+    const pageId = explicitPageId || previous?.pageId || previous?.page_id || null
+    return {
+      ...generatedSlide,
+      ...(pageId ? { pageId, page_id: pageId, componentId: pageId } : {}),
+      ...((previous?.pageOrder ?? previous?.page_order) != null
+        ? { pageOrder: previous.pageOrder ?? previous.page_order, page_order: previous.pageOrder ?? previous.page_order }
+        : {}),
+      ...(previous?.pageVersion ? { pageVersion: previous.pageVersion } : {}),
+      ...(previous?.clientVersion ? { clientVersion: previous.clientVersion } : {}),
+      ...(projectId.value ? { dirty: true } : {}),
+    }
+  })
+  slides.splice(0, slides.length, ...generatedWithIdentity)
+  if (projectId.value) markSlideComponentDirty(slides[0], 'deck:ai', { structure: true })
   selectedSlide.value = 0
   selectedElementId.value = null
-  activePanel.value = 'content'
   htmlSelectionRestoreKey.value = ''
   htmlElements.value = []
   htmlSelectedElementId.value = null
   htmlSelectedElement.value = null
   presentationId.value = String(data.presentation_id || '')
-  presentationMetadata.value = data.metadata && typeof data.metadata === 'object' ? data.metadata : null
+  presentationMetadata.value = data.metadata && typeof data.metadata === 'object'
+    ? {
+      ...data.metadata,
+      ...(data.workspace_context || data.workspaceContext ? { workspace_context: data.workspace_context || data.workspaceContext } : {}),
+    }
+    : ((data.workspace_context || data.workspaceContext) ? { workspace_context: data.workspace_context || data.workspaceContext } : null)
+  setQualityReport(data.quality_report || data.qualityReport || data.reflection || presentationMetadata.value?.quality_report || presentationMetadata.value?.reflection, 'HTML PPT 生成')
   runStatus.value = 'completed'
   runProgress.value = 100
   runStage.value = 'HTML PPT 已生成'
@@ -282,8 +701,9 @@ const applyGeneratedPresentation = (rawResponse, { persist = true, notify = true
       title: data.title || generatedSlides[0].title,
       slide_count: generatedSlides.length,
       request_key: String(routeQueryValue(route.query.pptGeneration) || '') || null,
-      slides: generatedSlides,
-      metadata: presentationMetadata.value
+      slides: generatedWithIdentity,
+      metadata: presentationMetadata.value,
+      workspace_context: workspaceContextPayload(),
     })
   }
 
@@ -313,9 +733,10 @@ const saveCurrentPresentationDraft = () => {
     request_key: String(routeQueryValue(route.query.pptGeneration) || '') || existing.request_key || null,
     slides,
     metadata: presentationMetadata.value || existing.metadata || null,
+    workspace_context: workspaceContextPayload(),
   })
 }
-const htmlDragTargetSelector = '[data-ppt-element],h1,h2,h3,h4,h5,h6,p,li,img,svg,table,header,main,section,article,aside,footer,figure,div[class],.card,.item,.box,.panel'
+const htmlDragTargetSelector = '[data-ppt-element],h1,h2,h3,h4,h5,h6,p,li,img,audio,video,iframe,svg,table,header,main,section,article,aside,footer,figure,div[class],.card,.item,.box,.panel'
 const htmlTextTargetSelector = 'h1,h2,h3,h4,h5,h6,p,li,span,strong,em,small,td,th,blockquote'
 const htmlSlideHistories = new WeakMap()
 const previewFrameObservers = new Set()
@@ -331,6 +752,7 @@ const serializeHtmlSlide = (document) => {
   const root = document.documentElement.cloneNode(true)
   root.querySelector('#a12-html-drag-style')?.remove()
   root.querySelector('.a12-html-editor-overlay')?.remove()
+  root.querySelectorAll('.a12-html-element-proxy').forEach((element) => element.remove())
   root.querySelectorAll('[data-a12-drag-selected]').forEach((element) => element.removeAttribute('data-a12-drag-selected'))
   root.querySelectorAll('[data-a12-html-editing]').forEach((element) => {
     element.removeAttribute('data-a12-html-editing')
@@ -352,6 +774,10 @@ const applyHtmlSlideChange = (slide, nextHtml, { record = true } = {}) => {
     history.redo.length = 0
   }
   slide.html = nextHtml
+  // 编辑操作直接修改了 slide.html，而 iframe 的 srcdoc 使用的是单独的快照。
+  // 不同步会导致下一次重绘时重新显示删除前的旧元素。
+  if (htmlCanvasSourceSlide.value === slide) syncHtmlCanvasSource(slide)
+  markSlideComponentDirty(slide)
   saveCurrentPresentationDraft()
   return true
 }
@@ -425,6 +851,36 @@ const attachHtmlDragEditor = (iframe) => {
       pointer-events: none !important;
     }
     .a12-html-editor-overlay.is-visible { display: block; }
+    .a12-html-move-handle {
+      position: absolute !important;
+      top: 0 !important;
+      left: 0 !important;
+      right: 0 !important;
+      bottom: 0 !important;
+      z-index: 0 !important;
+      display: none;
+      box-sizing: border-box !important;
+      border-radius: inherit !important;
+      background: transparent !important;
+      cursor: move !important;
+      pointer-events: auto !important;
+      touch-action: none !important;
+      user-select: none !important;
+    }
+    .a12-html-editor-overlay.is-h5 .a12-html-move-handle { display: flex; }
+    .a12-html-element-proxy {
+      position: fixed !important;
+      z-index: 2147483645 !important;
+      display: block !important;
+      box-sizing: border-box !important;
+      border: 1px solid transparent !important;
+      background: transparent !important;
+      cursor: grab !important;
+      pointer-events: auto !important;
+      touch-action: none !important;
+      user-select: none !important;
+    }
+    .a12-html-element-proxy:active { cursor: grabbing !important; }
     .a12-html-editor-toolbar {
       position: absolute !important;
       right: -1px !important;
@@ -480,6 +936,7 @@ const attachHtmlDragEditor = (iframe) => {
   const overlay = document.createElement('div')
   overlay.className = 'a12-html-editor-overlay'
   overlay.innerHTML = `
+    <div class="a12-html-move-handle" aria-label="移动 H5 元素"></div>
     <div class="a12-html-editor-toolbar">
       <button type="button" data-action="undo" title="撤销 Ctrl+Z">撤销</button>
       <button type="button" data-action="redo" title="重做 Ctrl+Y">重做</button>
@@ -493,9 +950,11 @@ const attachHtmlDragEditor = (iframe) => {
   document.body.appendChild(overlay)
   const resizeHandle = overlay.querySelector('.a12-html-resize-handle')
   const rotateHandle = overlay.querySelector('.a12-html-rotate-handle')
+  const moveHandle = overlay.querySelector('.a12-html-move-handle')
   const panelElementById = new Map()
   const elementPanelId = new WeakMap()
   const elementPanelKey = new WeakMap()
+  const h5ElementProxies = new Map()
 
   const defaultChartData = [
     { label: '一', value: 68 },
@@ -510,6 +969,40 @@ const attachHtmlDragEditor = (iframe) => {
     }))
   }
   const getChartData = (element) => normalizeChartData(parseJson(element?.getAttribute('data-a12-chart-data'), []))
+  const getTableData = (element) => [...(element?.querySelectorAll?.('tr') || [])]
+    .map((row) => [...row.querySelectorAll('th,td')].map((cell) => String(cell.textContent || '').trim()))
+    .filter((row) => row.length)
+  const renderHtmlTable = (element, value = getTableData(element)) => {
+    if (!element) return
+    const rows = Array.isArray(value) && value.length ? value : [['列 1', '列 2'], ['内容 1', '内容 2']]
+    const normalizedRows = rows.map((row) => Array.isArray(row) ? row.map((cell) => String(cell ?? '')) : [String(row ?? '')])
+    element.innerHTML = ''
+    const table = document.createElement('table')
+    table.style.width = '100%'
+    table.style.height = '100%'
+    table.style.borderCollapse = 'collapse'
+    table.style.color = 'inherit'
+    normalizedRows.forEach((row, rowIndex) => {
+      const tr = document.createElement('tr')
+      row.forEach((cell) => {
+        const cellNode = document.createElement(rowIndex === 0 ? 'th' : 'td')
+        cellNode.textContent = cell
+        cellNode.style.padding = '6px 8px'
+        cellNode.style.border = '1px solid rgb(37 99 235 / 18%)'
+        cellNode.style.textAlign = 'left'
+        cellNode.style.background = rowIndex === 0 ? 'rgb(219 234 254 / 70%)' : 'transparent'
+        tr.appendChild(cellNode)
+      })
+      table.appendChild(tr)
+    })
+    element.appendChild(table)
+    element.setAttribute('data-a12-table-data', JSON.stringify(normalizedRows))
+    element.style.overflow = 'hidden'
+    element.style.padding = element.style.padding || '8px'
+    element.style.backgroundColor = element.style.backgroundColor || '#f8fbff'
+    element.style.border = element.style.border || '1px solid #bfdbfe'
+    element.style.borderRadius = element.style.borderRadius || '10px'
+  }
   const markChartPart = (element) => {
     element.setAttribute('data-a12-chart-part', '')
     return element
@@ -643,14 +1136,14 @@ const attachHtmlDragEditor = (iframe) => {
   const isCandidate = (element) => {
     if (!element || element === document.body || element.classList?.contains('slide') || ['HTML', 'HEAD', 'SCRIPT', 'STYLE', 'META', 'LINK', 'TITLE'].includes(element.tagName)) return false
     if (element.hasAttribute?.('data-a12-chart-part')) return false
-    if (element.closest?.('.a12-html-editor-overlay')) return false
+    if (element.closest?.('.a12-html-editor-overlay, .a12-html-element-proxy')) return false
     const rect = element.getBoundingClientRect()
     return rect.width > 6 && rect.height > 6
   }
   const collectCandidates = () => [...document.querySelectorAll(htmlDragTargetSelector)].filter(isCandidate)
   const panelText = (element, type) => {
     if (type === 'image') return String(element.getAttribute('alt') || '').trim().slice(0, 160)
-    if (type === 'h5') return String(element.getAttribute('data-name') || element.getAttribute('title') || '互动模块').trim().slice(0, 160)
+    if (['audio', 'video', 'h5', 'subject', 'table'].includes(type)) return String(element.getAttribute('data-name') || element.getAttribute('title') || element.innerText || element.textContent || `${type} 组件`).replace(/\s+/g, ' ').trim().slice(0, 160)
     if (type === 'chart') return String(element.querySelector('[data-a12-chart-title]')?.textContent || element.getAttribute('data-a12-chart-title') || element.textContent || '数据图表').replace(/\s+/g, ' ').trim().slice(0, 160)
     return String(element.innerText || element.textContent || '').replace(/\s+/g, ' ').trim().slice(0, 160)
   }
@@ -674,8 +1167,15 @@ const attachHtmlDragEditor = (iframe) => {
       type,
       name: panelName(element, type, index),
       content: panelText(element, type),
-      src: type === 'image' ? String(element.currentSrc || element.getAttribute('src') || '') : undefined,
+      src: ['image', 'audio', 'video'].includes(type) ? String(element.currentSrc || element.getAttribute('src') || '') : undefined,
       alt: type === 'image' ? String(element.getAttribute('alt') || '') : undefined,
+      url: ['audio', 'video'].includes(type) ? String(element.currentSrc || element.getAttribute('src') || '') : undefined,
+      html: type === 'h5' ? String(element.getAttribute('srcdoc') || element.srcdoc || '') : undefined,
+      moduleId: type === 'h5' ? String(element.getAttribute('data-module-id') || '') : undefined,
+      embedMode: type === 'h5' ? String(element.getAttribute('data-embed-mode') || 'standalone') : undefined,
+      subjectType: type === 'subject' ? String(element.getAttribute('data-subject-type') || 'general') : undefined,
+      autoplay: ['audio', 'video'].includes(type) ? Boolean(element.autoplay) : undefined,
+      controls: ['audio', 'video'].includes(type) ? element.controls !== false : undefined,
       htmlTag: element.tagName.toLowerCase(),
       htmlKey: key,
       position: {
@@ -701,7 +1201,7 @@ const attachHtmlDragEditor = (iframe) => {
         objectFit: computed.objectFit || 'cover',
         showCaption: true,
       },
-      data: type === 'chart' ? getChartData(element) : undefined,
+      data: type === 'chart' ? getChartData(element) : type === 'table' ? getTableData(element) : type === 'subject' ? parseJson(element.getAttribute('data-subject-data'), {}) : undefined,
     }
   }
   const updateGlobalSelection = () => {
@@ -736,6 +1236,7 @@ const attachHtmlDragEditor = (iframe) => {
       return panelElement(element, index, id, key)
     })
     htmlElements.value = nextElements
+    syncH5ElementProxies(candidates)
     const restoreKey = htmlSelectionRestoreKey.value
     const restored = restoreKey ? candidates.find((element, index) => elementKey(element, index) === restoreKey) : null
     if (restored) select(restored)
@@ -744,6 +1245,7 @@ const attachHtmlDragEditor = (iframe) => {
   const updateOverlay = () => {
     if (!selected?.isConnected) {
       overlay.classList.remove('is-visible')
+      overlay.classList.remove('is-h5')
       updateGlobalSelection()
       return
     }
@@ -752,7 +1254,9 @@ const attachHtmlDragEditor = (iframe) => {
     overlay.style.top = `${rect.top}px`
     overlay.style.width = `${rect.width}px`
     overlay.style.height = `${rect.height}px`
+    overlay.classList.toggle('is-h5', elementType(selected) === 'h5')
     overlay.classList.add('is-visible')
+    syncH5ElementProxies()
     updateGlobalSelection()
   }
   const clearSelection = ({ preserveRestoreKey = false } = {}) => {
@@ -827,7 +1331,8 @@ const attachHtmlDragEditor = (iframe) => {
     interaction = null
     if (completed.animationFrame) frameWindow.cancelAnimationFrame(completed.animationFrame)
     applyInteractionFrame(completed)
-    if (completed.element.hasPointerCapture?.(completed.pointerId)) completed.element.releasePointerCapture(completed.pointerId)
+    const captureTarget = completed.captureTarget || completed.element
+    if (captureTarget.hasPointerCapture?.(completed.pointerId)) captureTarget.releasePointerCapture(completed.pointerId)
     if (!completed.moved || !isCurrentSlide()) return
     commitDocument()
   }
@@ -878,6 +1383,60 @@ const attachHtmlDragEditor = (iframe) => {
     element.setPointerCapture?.(event.pointerId)
     event.preventDefault()
   }
+  const beginMoveInteraction = (event) => {
+    if (!selected || event.button !== 0) return
+    const computed = frameWindow.getComputedStyle(selected)
+    const origin = parseCssTranslate(computed.translate)
+    interaction = {
+      type: 'move',
+      element: selected,
+      pointerId: event.pointerId,
+      startX: event.clientX,
+      startY: event.clientY,
+      originX: origin.x,
+      originY: origin.y,
+      nextX: origin.x,
+      nextY: origin.y,
+      animationFrame: 0,
+      moved: false,
+      captureTarget: event.currentTarget,
+    }
+    event.currentTarget.setPointerCapture?.(event.pointerId)
+    event.preventDefault()
+    event.stopPropagation()
+  }
+  const syncH5ElementProxies = (candidates = collectCandidates()) => {
+    const h5Elements = candidates.filter((element) => elementType(element) === 'h5' && element.isConnected)
+    const activeElements = new Set(h5Elements)
+    for (const [element, proxy] of h5ElementProxies) {
+      if (activeElements.has(element)) continue
+      proxy.remove()
+      h5ElementProxies.delete(element)
+    }
+    h5Elements.forEach((element) => {
+      let proxy = h5ElementProxies.get(element)
+      if (!proxy) {
+        proxy = document.createElement('div')
+        proxy.className = 'a12-html-element-proxy'
+        proxy.setAttribute('role', 'button')
+        proxy.setAttribute('aria-label', '选择 H5 元素')
+        proxy.title = '点击选择 H5，拖动可移动'
+        proxy.addEventListener('pointerdown', (event) => {
+          if (event.button !== 0 || !element.isConnected) return
+          select(element)
+          beginMoveInteraction(event)
+        })
+        document.body.appendChild(proxy)
+        h5ElementProxies.set(element, proxy)
+      }
+      const rect = element.getBoundingClientRect()
+      proxy.style.left = `${rect.left}px`
+      proxy.style.top = `${rect.top}px`
+      proxy.style.width = `${rect.width}px`
+      proxy.style.height = `${rect.height}px`
+      proxy.style.visibility = rect.width > 6 && rect.height > 6 ? 'visible' : 'hidden'
+    })
+  }
   const beginHandleInteraction = (type, event) => {
     if (!selected || event.button !== 0) return
     const rect = selected.getBoundingClientRect()
@@ -900,6 +1459,7 @@ const attachHtmlDragEditor = (iframe) => {
       nextRotation: parseCssRotation(computed.rotate),
       animationFrame: 0,
       moved: false,
+      captureTarget: event.currentTarget,
     }
     event.currentTarget.setPointerCapture?.(event.pointerId)
     event.preventDefault()
@@ -1058,13 +1618,23 @@ const attachHtmlDragEditor = (iframe) => {
   const updateContent = (value) => {
     if (!selected?.isConnected) return false
     const content = String(value ?? '')
-    if (elementType(selected) === 'image') selected.setAttribute('alt', content)
-    else if (elementType(selected) === 'chart') {
+    const type = elementType(selected)
+    if (type === 'image') selected.setAttribute('alt', content)
+    else if (type === 'chart') {
       const titleNode = selected.querySelector('[data-a12-chart-title]')
       if (titleNode) {
         selected.setAttribute('data-a12-chart-title', content)
         titleNode.textContent = content || '数据图表'
       } else renderHtmlChart(selected, getChartData(selected), content)
+    } else if (['audio', 'video', 'h5', 'subject'].includes(type)) {
+      selected.setAttribute('data-name', content)
+      selected.setAttribute('title', content)
+      if (type === 'h5') {
+        const titleNode = selected.contentDocument?.querySelector('title')
+        if (titleNode) titleNode.textContent = content
+      }
+    } else if (type === 'table') {
+      selected.setAttribute('data-name', content)
     }
     else selected.textContent = content
     updateOverlay()
@@ -1072,16 +1642,28 @@ const attachHtmlDragEditor = (iframe) => {
     return true
   }
   const updateField = (key, value) => {
-    if (!selected?.isConnected || !['src', 'alt'].includes(key)) return false
-    if (key === 'src' && elementType(selected) === 'image') selected.setAttribute('src', String(value || ''))
-    if (key === 'alt' && elementType(selected) === 'image') selected.setAttribute('alt', String(value || '').slice(0, 80))
+    if (!selected?.isConnected || !['src', 'alt', 'url', 'html', 'moduleId', 'embedMode', 'subjectType', 'autoplay', 'controls'].includes(key)) return false
+    const type = elementType(selected)
+    if (key === 'src' && ['image', 'audio', 'video'].includes(type)) selected.setAttribute('src', String(value || ''))
+    if (key === 'alt' && type === 'image') selected.setAttribute('alt', String(value || '').slice(0, 80))
+    if (key === 'url' && ['audio', 'video'].includes(type)) selected.setAttribute('src', String(value || ''))
+    if (key === 'html' && type === 'h5') selected.setAttribute('srcdoc', String(value || ''))
+    if (key === 'moduleId' && type === 'h5') selected.setAttribute('data-module-id', String(value || ''))
+    if (key === 'embedMode' && type === 'h5') selected.setAttribute('data-embed-mode', String(value || 'standalone'))
+    if (key === 'subjectType' && type === 'subject') selected.setAttribute('data-subject-type', String(value || 'general'))
+    if (key === 'autoplay' && ['audio', 'video'].includes(type)) selected.autoplay = Boolean(value)
+    if (key === 'controls' && ['audio', 'video'].includes(type)) selected.controls = Boolean(value)
     updateOverlay()
     commitDocument()
     return true
   }
   const updateData = (value) => {
-    if (!selected?.isConnected || elementType(selected) !== 'chart' || !Array.isArray(value)) return false
-    renderHtmlChart(selected, value)
+    if (!selected?.isConnected) return false
+    const type = elementType(selected)
+    if (type === 'chart' && Array.isArray(value)) renderHtmlChart(selected, value)
+    else if (type === 'table' && Array.isArray(value)) renderHtmlTable(selected, value)
+    else if (type === 'subject' && value && typeof value === 'object' && !Array.isArray(value)) selected.setAttribute('data-subject-data', JSON.stringify(value))
+    else return false
     updateOverlay()
     commitDocument()
     return true
@@ -1099,7 +1681,8 @@ const attachHtmlDragEditor = (iframe) => {
   const insertElement = (type, options = {}) => {
     if (!isCurrentSlide()) return false
     const index = htmlElements.value.length
-    const node = type === 'image' ? document.createElement('img') : document.createElement('div')
+    const tagName = { image: 'img', audio: 'audio', video: 'video', h5: 'iframe', table: 'div' }[type] || 'div'
+    const node = document.createElement(tagName)
     const id = `a12-${type}-${Date.now()}`
     node.setAttribute('data-ppt-element', id)
     node.setAttribute('data-ppt-type', type)
@@ -1107,8 +1690,8 @@ const attachHtmlDragEditor = (iframe) => {
     node.style.boxSizing = 'border-box'
     node.style.left = type === 'chart' ? `${62 + (index % 2) * 4}%` : `${10 + (index % 5) * 5}%`
     node.style.top = type === 'chart' ? `${10 + (index % 3) * 6}%` : `${12 + (index % 4) * 7}%`
-    node.style.width = type === 'text' ? '28%' : type === 'image' ? '24%' : type === 'chart' ? '28%' : '30%'
-    node.style.height = type === 'text' ? '12%' : type === 'image' ? '24%' : type === 'chart' ? '28%' : '16%'
+    node.style.width = type === 'text' ? '28%' : type === 'image' ? '24%' : type === 'chart' ? '28%' : type === 'table' ? '42%' : ['video', 'h5'].includes(type) ? '36%' : '30%'
+    node.style.height = type === 'text' ? '12%' : type === 'image' ? '24%' : type === 'chart' ? '28%' : type === 'table' ? '20%' : ['video', 'h5'].includes(type) ? '24%' : '14%'
     node.style.zIndex = '8'
     node.style.borderRadius = type === 'shape' && options.shapeKind === 'circle' ? '50%' : '12px'
     if (type === 'text') {
@@ -1137,6 +1720,35 @@ const attachHtmlDragEditor = (iframe) => {
       node.style.border = '1px solid #bfdbfe'
       node.setAttribute('data-a12-chart-data', JSON.stringify([{ label: '一', value: 68 }, { label: '二', value: 82 }, { label: '三', value: 55 }]))
       renderHtmlChart(node, undefined, '新增图表')
+    } else if (type === 'audio' || type === 'video') {
+      node.setAttribute('data-name', type === 'audio' ? '新增音频讲解' : '新增视频演示')
+      node.setAttribute('title', type === 'audio' ? '新增音频讲解' : '新增视频演示')
+      node.controls = true
+      node.style.padding = '8px'
+      node.style.backgroundColor = type === 'audio' ? '#eff6ff' : '#eef2ff'
+      node.style.border = '1px solid #bfdbfe'
+    } else if (type === 'table') {
+      node.setAttribute('data-name', '新增数据表格')
+      node.style.color = '#173d78'
+      node.setAttribute('data-a12-table-data', JSON.stringify([['列 1', '列 2'], ['内容 1', '内容 2']]))
+      renderHtmlTable(node, [['列 1', '列 2'], ['内容 1', '内容 2']])
+    } else if (type === 'h5') {
+      node.setAttribute('data-name', '新增 H5 互动')
+      node.setAttribute('data-embed-mode', 'standalone')
+      node.setAttribute('sandbox', 'allow-scripts')
+      node.setAttribute('title', '新增 H5 互动')
+      node.srcdoc = '<!doctype html><html lang="zh-CN"><body style="margin:0;display:grid;place-items:center;height:100vh;font:16px sans-serif;color:#c2410c;background:#fff7ed">请在右侧编辑或粘贴 H5 内容</body></html>'
+      node.style.border = '1px solid #fed7aa'
+      node.style.borderRadius = '12px'
+    } else if (type === 'subject') {
+      node.setAttribute('data-name', '新增学科工具')
+      node.setAttribute('data-subject-type', 'general')
+      node.setAttribute('data-subject-data', JSON.stringify({ description: '', parameters: '' }))
+      node.textContent = '新增学科工具 · 可在右侧配置'
+      node.style.padding = '16px'
+      node.style.color = '#166534'
+      node.style.backgroundColor = '#f0fdf4'
+      node.style.border = '1px solid #bbf7d0'
     }
     document.body.appendChild(node)
     refreshElements()
@@ -1177,13 +1789,20 @@ const attachHtmlDragEditor = (iframe) => {
   document.addEventListener('dblclick', handleDoubleClick)
   document.addEventListener('keydown', handleKeydown)
   document.addEventListener('blur', handleDocumentBlur, true)
+  moveHandle.addEventListener('pointerdown', beginMoveInteraction)
   resizeHandle.addEventListener('pointerdown', (event) => beginHandleInteraction('resize', event))
   rotateHandle.addEventListener('pointerdown', (event) => beginHandleInteraction('rotate', event))
   overlay.querySelector('.a12-html-editor-toolbar').addEventListener('click', handleToolbarClick)
   refreshElements()
 
   const controller = {
-    selectById: (id) => { const element = findElement(id); if (element) select(element) },
+    selectById: (id) => {
+      const element = findElement(id)
+      if (!element) return false
+      select(element)
+      element.scrollIntoView?.({ block: 'nearest', inline: 'nearest' })
+      return true
+    },
     clearSelection,
     updateStyle,
     updatePosition,
@@ -1204,8 +1823,11 @@ const attachHtmlDragEditor = (iframe) => {
     document.removeEventListener('dblclick', handleDoubleClick)
     document.removeEventListener('keydown', handleKeydown)
     document.removeEventListener('blur', handleDocumentBlur, true)
+    moveHandle.removeEventListener('pointerdown', beginMoveInteraction)
     if (interaction?.animationFrame) frameWindow.cancelAnimationFrame(interaction.animationFrame)
     selected?.removeAttribute('data-a12-drag-selected')
+    h5ElementProxies.forEach((proxy) => proxy.remove())
+    h5ElementProxies.clear()
     overlay.remove()
     editorStyle.remove()
     if (isCurrentSlide()) {
@@ -1238,15 +1860,29 @@ const fitHtmlFrame = (event) => {
   }
 
   resize()
-  const cleanup = attachHtmlDragEditor(iframe)
+  const editorCleanup = attachHtmlDragEditor(iframe)
+  // attachHtmlDragEditor 将 HTML 编辑控制器挂在清理函数上；这里需要把控制器一并登记，
+  // 否则工具栏点击时 activeHtmlController() 始终拿不到 insertElement 等操作方法。
+  const controller = editorCleanup?.controller || null
+  const frameDocument = iframe.contentDocument
+  const canvasArea = container.closest('.canvas-scroll-viewport')
+  // iframe 内的滚轮不会冒泡到外层画布，仅转发缩放；中键平移暂不启用。
+  const handleFrameWheel = (event) => handleCanvasWheel(event, canvasArea)
+  frameDocument?.addEventListener('wheel', handleFrameWheel, { passive: false })
+  const cleanup = () => {
+    frameDocument?.removeEventListener('wheel', handleFrameWheel)
+    editorCleanup?.()
+  }
   resize()
   if (typeof ResizeObserver === 'undefined') {
-    htmlFrameObservers.add({ iframe, observer: null, cleanup, controller: cleanup.controller || null, slide: current.value })
+    htmlFrameObservers.add({ iframe, observer: null, cleanup, controller, slide: current.value })
+    if (pendingHtmlPanelSelection?.slide === current.value && controller?.selectById?.(pendingHtmlPanelSelection.id)) pendingHtmlPanelSelection = null
     return
   }
   const observer = new ResizeObserver(resize)
   observer.observe(container)
-  htmlFrameObservers.add({ iframe, observer, cleanup, controller: cleanup.controller || null, slide: current.value })
+  htmlFrameObservers.add({ iframe, observer, cleanup, controller, slide: current.value })
+  if (pendingHtmlPanelSelection?.slide === current.value && controller?.selectById?.(pendingHtmlPanelSelection.id)) pendingHtmlPanelSelection = null
 }
 const clearPreviewFrameObservers = () => {
   previewFrameObservers.forEach(({ observer }) => observer?.disconnect())
@@ -1677,42 +2313,129 @@ const handleElementDrag = (event) => {
   }
 }
 const stopElementDrag = () => {
+  if (dragState.value?.id && current.value) markSlideComponentDirty(current.value, dragState.value.id)
   window.removeEventListener('pointermove', handleElementDrag)
   dragState.value = null
   draggingElementId.value = null
 }
 const selectElement = (id, event) => {
   event?.stopPropagation()
-  if (!elementById(id)) return
-  selectedElementId.value = id
-  activePanel.value = 'style'
+  const element = current.value?.elements?.find((item) => String(item.id) === String(id))
+  if (!element) return
+  pendingHtmlPanelSelection = null
+  selectedElementId.value = element.id
 }
 const selectElementFromPanel = (id) => {
   if (current.value?.html) {
-    activeHtmlController()?.selectById(id)
-    activePanel.value = 'style'
+    const normalizedId = String(id ?? '')
+    if (!normalizedId) return
+    const controller = activeHtmlController()
+    if (controller?.selectById?.(normalizedId)) {
+      pendingHtmlPanelSelection = null
+      return
+    }
+    // 右侧列表可能先于 iframe 的编辑控制器完成初始化，记录一次选择，
+    // 在 iframe load 后补选，避免右侧已选中但左侧没有选择框。
+    pendingHtmlPanelSelection = { slide: current.value, id: normalizedId }
+    void nextTick(() => {
+      if (pendingHtmlPanelSelection?.slide !== current.value) return
+      const retryController = activeHtmlController()
+      if (retryController?.selectById?.(normalizedId)) pendingHtmlPanelSelection = null
+    })
     return
   }
   selectElement(id)
+}
+const markSlideComponentDirty = (slide = current.value, componentId = selectedElementId.value, { structure = false } = {}) => {
+  if (!slide) return
+  pendingComponentSync.set(slide, componentId || true)
+  slide.dirty = true
+  localChangeVersion += 1
+  if (structure) localStructureVersion = localChangeVersion
+  if (projectId.value && (savingPage.value || pageSavePromise || orderSavePromise)) autosaveQueued = true
 }
 const clearElementSelection = () => {
   if (current.value?.html) activeHtmlController()?.clearSelection()
   selectedElementId.value = null
   htmlSelectedElementId.value = null
   htmlSelectedElement.value = null
-  activePanel.value = 'content'
+}
+const updatePageField = ({ key, value } = {}) => {
+  if (!current.value || !['title', 'notes', 'pageType', 'backgroundColor'].includes(key)) return
+  const nextValue = String(value ?? '')
+  if (current.value.html && ['title', 'description'].includes(key)) activeHtmlController()?.updatePageField?.(key, nextValue)
+  if (key === 'title') {
+    current.value.title = nextValue
+    current.value.page_title = nextValue
+    const titleElement = current.value.elements?.find((element) => element.target === 'title')
+    if (titleElement) titleElement.content = nextValue
+  } else if (key === 'notes') {
+    current.value.notes = nextValue
+  } else if (key === 'pageType') {
+    const pageType = nextValue || 'content'
+    current.value.pageType = pageType
+    current.value.page_type = pageType
+  } else if (key === 'backgroundColor') {
+    current.value.backgroundColor = /^#[0-9a-f]{3,8}$/i.test(nextValue) ? nextValue : '#f9fbff'
+    current.value.background_color = current.value.backgroundColor
+  }
+  markSlideComponentDirty(current.value, `page:${key}`)
+  // 非项目模式没有项目页面的深度 watch，需要主动回写本地草稿。
+  if (!projectId.value) saveCurrentPresentationDraft()
+}
+const updatePageTheme = (themeId) => {
+  if (!current.value || !themes.some((item) => item.id === themeId)) return
+  current.value.theme = themeId
+  markSlideComponentDirty(current.value, 'page:theme')
+}
+const updatePageLayout = (layout) => {
+  if (!current.value) return
+  current.value.layout = String(layout || '') || '图文并置'
+  markSlideComponentDirty(current.value, 'page:layout')
+}
+const updatePageBackground = async ({ resourceId, resource } = {}) => {
+  const id = String(resourceId || resource?.id || '').trim()
+  if (!current.value || !id) return
+  try {
+    const downloaded = unwrapResponse(await downloadResource(id))
+    const source = downloaded?.download_url || downloaded?.downloadUrl || downloaded?.url || downloaded?.preview_url
+      || resource?.fileUrl || resource?.file_url || resource?.raw?.file_url || resource?.thumbnail || ''
+    if (!source) throw new Error('该图片暂时没有可用的预览地址')
+    const name = String(resource?.name || resource?.file_name || `图片资源 ${id}`)
+    current.value.background = { resource_id: id, resourceId: id, name, src: String(source), type: 'image' }
+    current.value.backgroundResourceId = id
+    current.value.backgroundResourceName = name
+    current.value.backgroundImage = String(source)
+    current.value.background_image = String(source)
+    markSlideComponentDirty(current.value, `page-background:${id}`)
+    WorkspaceMessage.success('页面背景已更新')
+  } catch (error) {
+    WorkspaceMessage.error(error?.message || '页面背景更新失败')
+  }
+}
+const clearPageBackground = () => {
+  if (!current.value) return
+  current.value.background = null
+  current.value.backgroundResourceId = ''
+  current.value.backgroundResourceName = ''
+  current.value.backgroundImage = ''
+  current.value.background_image = ''
+  markSlideComponentDirty(current.value, 'page:background')
 }
 const updateElementStyle = ({ key, value }) => {
   if (current.value?.html) {
     activeHtmlController()?.updateStyle(key, value)
+    markSlideComponentDirty()
     return
   }
   if (!selectedElement.value) return
   selectedElement.value.style = { ...selectedElement.value.style, [key]: value }
+  markSlideComponentDirty(current.value, selectedElement.value.id)
 }
 const updateElementPosition = ({ key, value }) => {
   if (current.value?.html) {
     activeHtmlController()?.updatePosition(key, value)
+    markSlideComponentDirty()
     return
   }
   if (!selectedElement.value) return
@@ -1729,10 +2452,12 @@ const updateElementPosition = ({ key, value }) => {
     rotation: Number(clampNumber(Number(position.rotation) || 0, -180, 180).toFixed(2)),
     zIndex: Math.round(clampNumber(Number(position.zIndex) || 0, 0, 99)),
   }
+  markSlideComponentDirty(current.value, selectedElement.value.id)
 }
 const updateElementContent = (value) => {
   if (current.value?.html) {
     activeHtmlController()?.updateContent(value)
+    markSlideComponentDirty()
     return
   }
   if (!selectedElement.value) return
@@ -1741,36 +2466,51 @@ const updateElementContent = (value) => {
   if (selectedElement.value.target === 'title') current.value.title = content
   if (selectedElement.value.target === 'description') current.value.description = content
   if (selectedElement.value.target === 'footer') current.value.footer = content
+  markSlideComponentDirty(current.value, selectedElement.value.id)
 }
 const updateElementField = ({ key, value }) => {
   if (current.value?.html) {
     activeHtmlController()?.updateField(key, value)
+    markSlideComponentDirty()
     return
   }
-  if (!selectedElement.value || !['src', 'alt'].includes(key)) return
+  if (!selectedElement.value || !['src', 'alt', 'url', 'html', 'moduleId', 'embedMode', 'subjectType', 'autoplay', 'controls'].includes(key)) return
   if (key === 'src') selectedElement.value.src = String(value || '') || createMockImageSrc(selectedElement.value.content || '课堂图片')
   if (key === 'alt') selectedElement.value.alt = String(value || '').slice(0, 80)
+  if (key === 'url') {
+    selectedElement.value.url = String(value || '')
+    if (['audio', 'video'].includes(selectedElement.value.type)) selectedElement.value.src = selectedElement.value.url
+  }
+  if (key === 'html') selectedElement.value.html = String(value || '')
+  if (key === 'moduleId') { selectedElement.value.moduleId = String(value || ''); selectedElement.value.module_id = String(value || '') }
+  if (key === 'embedMode') { selectedElement.value.embedMode = String(value || 'standalone'); selectedElement.value.embed_mode = selectedElement.value.embedMode }
+  if (key === 'subjectType') selectedElement.value.subjectType = String(value || '')
+  if (key === 'autoplay' || key === 'controls') selectedElement.value[key] = Boolean(value)
+  markSlideComponentDirty(current.value, selectedElement.value.id)
 }
 const updateElementData = (value) => {
   if (current.value?.html) {
     activeHtmlController()?.updateData(value)
+    markSlideComponentDirty()
     return
   }
-  if (!selectedElement.value || selectedElement.value.type !== 'chart' || !Array.isArray(value)) return
-  selectedElement.value.data = value.slice(0, 8).map((item, index) => ({
-    label: String(item?.label || `数据${index + 1}`).slice(0, 10),
-    value: Math.max(0, Math.min(100, Number(item?.value) || 0)),
-  }))
+  if (!selectedElement.value || (selectedElement.value.type === 'subject' ? (!value || typeof value !== 'object' || Array.isArray(value)) : !Array.isArray(value))) return
+  if (selectedElement.value.type === 'chart') {
+    selectedElement.value.data = value.slice(0, 8).map((item, index) => ({
+      label: String(item?.label || `数据${index + 1}`).slice(0, 10),
+      value: Math.max(0, Math.min(100, Number(item?.value) || 0)),
+    }))
+  } else if (selectedElement.value.type === 'table') {
+    selectedElement.value.data = value
+  } else if (selectedElement.value.type === 'subject') {
+    selectedElement.value.data = { ...(selectedElement.value.data || {}), ...value }
+  } else return
+  markSlideComponentDirty(current.value, selectedElement.value.id)
 }
 const handleImageError = (element) => {
   if (!element || String(element.src || '').startsWith('data:image/svg+xml')) return
   element.src = createMockImageSrc(elementContent(element) || '图片加载失败')
   WorkspaceMessage.warning('图片加载失败，已恢复示例图')
-}
-const updateSlideField = ({ key, value }) => {
-  if (!current.value) return
-  current.value[key] = value
-  if (current.value.html && ['title', 'description'].includes(key)) activeHtmlController()?.updatePageField(key, value)
 }
 const elementTypeLabels = { text: '文本', formula: '公式', image: '图片', shape: '形状', chart: '图表', audio: '音频', video: '视频', table: '表格', h5: 'H5组件', subject: '学科工具' }
 const shapeDefaults = {
@@ -1818,7 +2558,7 @@ const insertElement = (type, options = {}, positionOverride = {}, preparedElemen
   element.position = { ...(element.position || {}), ...positionOverride }
   current.value.elements.push(element)
   selectedElementId.value = element.id
-  activePanel.value = 'style'
+  markSlideComponentDirty(current.value, element.id)
   WorkspaceMessage.success(`${elementTypeLabels[type] || '元素'}已添加`)
 }
 const handleToolSelect = (tool) => {
@@ -1869,15 +2609,49 @@ const createInteractiveElement = (module, position = {}) => {
     style: { color: '#ff6b3f', backgroundColor: '#fff7ed', borderColor: '#fed7aa', borderWidth: 1, borderRadius: 12, opacity: 100 },
   }
 }
+const interactivePptContext = () => {
+  const asRecord = (value) => {
+    if (!value) return null
+    if (typeof value === 'string') return parseJson(value, null)
+    return typeof value === 'object' && !Array.isArray(value) ? value : null
+  }
+  const roots = [project.value, current.value, route.query]
+  const contexts = []
+  const visit = (value, depth = 0) => {
+    const record = asRecord(value)
+    if (!record || depth > 2 || contexts.includes(record)) return
+    contexts.push(record)
+    ;['metadata', 'outline', 'plan_json', 'generation_options', 'known_context', 'context', 'request_context'].forEach((key) => visit(record[key], depth + 1))
+  }
+  roots.forEach((root) => visit(root))
+  slides.forEach((slide) => visit(slide?.metadata))
+  const field = (...names) => {
+    for (const context of contexts) {
+      for (const name of names) {
+        const value = String(context?.[name] ?? '').trim()
+        if (value) return value
+      }
+    }
+    return ''
+  }
+  const headers = slides.map((slide) => String(slide?.eyebrow || '')).filter(Boolean).join(' · ')
+  const grade = field('grade', 'stage', 'class_level', 'audience') || (headers.match(/(小学|初中|高中|大学|[一二三四五六七八九十\d]+年级)/)?.[0] || '')
+  const subject = field('subject', 'course_subject', 'discipline') || (headers.match(/(语文|数学|英语|物理|化学|生物|历史|地理|政治|道德与法治|科学|信息技术|音乐|美术|体育)/)?.[0] || '')
+  return {
+    subject,
+    grade,
+    requirements: field('requirements', 'interactive_requirements'),
+  }
+}
 const openInteractiveDialog = () => {
   const slideTitle = String(current.value?.title || '本页内容').trim()
-  const eyebrowParts = String(current.value?.eyebrow || '').split('·')
+  const pptContext = interactivePptContext()
   interactiveForm.title = `${slideTitle} · 课堂互动`
   interactiveForm.topic = slideTitle
-  interactiveForm.subject = eyebrowParts[0]?.trim() || ''
-  interactiveForm.grade = ''
+  interactiveForm.subject = pptContext.subject
+  interactiveForm.grade = pptContext.grade
   interactiveForm.knowledge_points = String(current.value?.description || '').trim()
-  interactiveForm.requirements = ''
+  interactiveForm.requirements = pptContext.requirements
   interactiveForm.theme = theme.value?.name || ''
   interactiveForm.embed_mode = 'standalone'
   interactiveDialogVisible.value = true
@@ -1888,10 +2662,16 @@ const handleGenerateInteractiveModule = async () => {
   if (!title || !topic) return WorkspaceMessage.warning('请先填写互动模块标题和主题')
   interactiveGenerating.value = true
   try {
+    const context = workspaceContextPayload()
     const knowledgePoints = interactiveForm.knowledge_points
       .split(/[,，\n]/)
       .map((item) => item.trim())
       .filter(Boolean)
+    const contextRequirements = [
+      interactiveForm.requirements.trim(),
+      context.resource_ids.length ? `可参考资料资源 ID：${context.resource_ids.join('、')}` : '',
+      context.community?.title ? `社区参考：${context.community.title}` : '',
+    ].filter(Boolean).join('\n')
     const response = unwrapResponse(await generateInteractiveModule({
       title,
       topic,
@@ -1899,12 +2679,13 @@ const handleGenerateInteractiveModule = async () => {
       subject: interactiveForm.subject.trim() || undefined,
       grade: interactiveForm.grade.trim() || undefined,
       knowledge_points: knowledgePoints,
-      requirements: interactiveForm.requirements.trim() || undefined,
+      requirements: contextRequirements || undefined,
       theme: interactiveForm.theme.trim() || undefined,
       embed_mode: interactiveForm.embed_mode,
       language: interactiveForm.language || 'zh-CN',
     }))
     if (!response?.html) throw new Error('互动模块接口未返回可预览的 HTML 内容')
+    if (response?.metadata?.model_used !== true) throw new Error('互动模块未由真实模型生成，请检查模型服务配置后重试')
     interactiveModule.value = response
     interactivePreviewSource.value = 'generated'
     interactiveDialogVisible.value = false
@@ -1952,12 +2733,14 @@ const insertGeneratedInteractiveModule = (target = 'current') => {
     slides.splice(selectedSlide.value + 1, 0, newSlide)
     selectedSlide.value += 1
     selectedElementId.value = element.id
+    markSlideComponentDirty(newSlide, 'page:add-interactive', { structure: true })
     WorkspaceMessage.success('互动模块已作为独立页面插入，正在自动保存')
   } else {
     if (current.value?.html) {
       const inserted = activeHtmlController()?.insertInteractive?.(module)
       if (!inserted) return WorkspaceMessage.warning('HTML 页面正在加载，请稍后再试')
-      appendInteractiveAsset(current.value, module)
+    appendInteractiveAsset(current.value, module)
+      markSlideComponentDirty(current.value, htmlSelectedElementId.value)
       interactivePreviewVisible.value = false
       interactiveModule.value = null
       WorkspaceMessage.success('互动模块已插入当前 HTML 页面，正在自动保存')
@@ -1966,7 +2749,7 @@ const insertGeneratedInteractiveModule = (target = 'current') => {
     current.value.elements.push(element)
     appendInteractiveAsset(current.value, module)
     selectedElementId.value = element.id
-    activePanel.value = 'style'
+    markSlideComponentDirty(current.value, element.id)
     WorkspaceMessage.success('互动模块已插入当前页面，正在自动保存')
   }
   interactivePreviewVisible.value = false
@@ -1987,6 +2770,7 @@ const removeElement = (id = selectedElementId.value) => {
     current.value.interactive_assets = current.value.interactive_assets.filter((asset) => String(asset?.module_id || '') !== String(removed.moduleId))
   }
   selectedElementId.value = null
+  markSlideComponentDirty(current.value, removed?.id || id)
   WorkspaceMessage.success(`${removed?.name || '元素'}已删除`)
 }
 const copyElement = (id = selectedElementId.value) => {
@@ -2006,6 +2790,7 @@ const copyElement = (id = selectedElementId.value) => {
   copy.position = { ...copy.position, x: Math.min(82, Number(copy.position?.x || 0) + 4), y: Math.min(78, Number(copy.position?.y || 0) + 4) }
   current.value.elements.push(copy)
   selectedElementId.value = copy.id
+  markSlideComponentDirty(current.value, copy.id)
   WorkspaceMessage.success('元素已复制')
 }
 const clarificationFieldMeta = {
@@ -2123,18 +2908,25 @@ const pageToSlide = (page = {}, index) => {
   const parsedContent = parseJson(contentValue, {})
   const content = parsedContent && typeof parsedContent === 'object' && !Array.isArray(parsedContent) ? parsedContent : {}
   const elements = content.elements ?? content.components ?? page.elements ?? page.components ?? page.items
+  const pageType = content.pageType || content.page_type || page.page_type || page.pageType || (index === 0 ? 'cover' : 'content')
   return {
     ...defaultSlide(index + 1),
     ...content,
+    html: stripSlideDecorativeCircle(content.html ?? page.html ?? ''),
     elements: normalizeElements(elements),
     pageId: page.id || page.page_id || content.pageId || content.page_id,
     componentId: page.id || page.component_id || page.page_id || content.componentId,
+    pageOrder: Number(page.page_order ?? content.pageOrder ?? content.page_order ?? index + 1),
+    page_order: Number(page.page_order ?? content.pageOrder ?? content.page_order ?? index + 1),
     pageVersion: Number(page.page_version || content.pageVersion || content.page_version || 1),
     clientVersion: page.client_version || content.clientVersion || workspaceClientVersion,
     autosave: page.autosave ?? content.autosave ?? false,
     dirty: page.dirty ?? content.dirty ?? false,
     lastSavedAt: page.last_saved_at || content.lastSavedAt || null,
     title: content.title || page.page_title || page.title || `第 ${index + 1} 页`,
+    pageType,
+    page_type: pageType,
+    notes: content.notes || page.notes || '',
   }
 }
 const getGeneratedPagePayload = (rawResponse) => {
@@ -2165,7 +2957,7 @@ const applyGeneratedPage = (rawResponse) => {
       ...content,
       ...(candidate.title ? { title: candidate.title } : {}),
       ...(candidate.description ? { description: candidate.description } : {}),
-      html: html.trim(),
+      html: stripSlideDecorativeCircle(html.trim()),
       elements: [],
     }
     slides.splice(selectedSlide.value, 1, nextSlide)
@@ -2173,6 +2965,7 @@ const applyGeneratedPage = (rawResponse) => {
     htmlElements.value = []
     htmlSelectedElementId.value = null
     htmlSelectedElement.value = null
+    markSlideComponentDirty(nextSlide, 'page:ai')
     saveCurrentPresentationDraft()
     return true
   }
@@ -2194,6 +2987,7 @@ const applyGeneratedPage = (rawResponse) => {
     components: typeof elementPayload === 'string' ? elementPayload : JSON.stringify(elementPayload),
   }
   slides.splice(selectedSlide.value, 1, pageToSlide(page, selectedSlide.value))
+  markSlideComponentDirty(slides[selectedSlide.value], 'page:ai')
   selectedElementId.value = null
   return true
 }
@@ -2209,7 +3003,7 @@ const loadProjectPageDetail = async (index) => {
     if (detail && slides[index] === slide) slides.splice(index, 1, pageToSlide(detail, index))
   } catch (error) {
     loadedPageDetailIds.delete(detailKey)
-    WorkspaceMessage.warning(error?.message || '页面详情加载失败，已使用页面列表数据')
+    WorkspaceMessage.warning(workspaceRequestErrorMessage(error, '页面详情加载失败，已使用页面列表数据'))
   } finally {
     hydratingProject.value = false
   }
@@ -2226,29 +3020,124 @@ const syncProjectMetadataIfNeeded = async () => {
     }))
     project.value = { ...project.value, ...(response || {}) }
   } catch (error) {
-    WorkspaceMessage.warning(error?.message || '项目元数据同步失败，页面内容仍可保存')
+    WorkspaceMessage.warning(workspaceRequestErrorMessage(error, '项目元数据同步失败，页面内容仍可保存'))
+  }
+}
+const syncProjectWorkspaceContextIfNeeded = async () => {
+  if (!projectId.value || !project.value) return
+  const context = workspaceContextPayload()
+  const hasContext = Boolean(context.resource_ids.length || context.uploaded_resources.length || context.community)
+  if (!hasContext) return
+  const history = parseJson(project.value.edit_history, {})
+  const savedContext = history?.workspace_context || history?.workspaceContext
+  if (JSON.stringify(savedContext || {}) === JSON.stringify(context)) return
+  const nextHistory = Array.isArray(history)
+    ? { entries: history, workspace_context: context }
+    : { ...(history && typeof history === 'object' ? history : {}), workspace_context: context }
+  try {
+    const updated = unwrapResponse(await patchProject(projectId.value, {
+      edit_history: JSON.stringify(nextHistory),
+      current_version: Number(project.value.current_version || 1),
+    }))
+    project.value = { ...project.value, ...(updated || {}), edit_history: updated?.edit_history || JSON.stringify(nextHistory) }
+    presentationMetadata.value = { ...(presentationMetadata.value || {}), workspace_context: context }
+  } catch (error) {
+    WorkspaceMessage.warning(workspaceRequestErrorMessage(error, '工作台上下文同步失败，当前页面仍可编辑'))
+  }
+}
+const openLessonPlanEditor = () => {
+  if (!slides.length) return WorkspaceMessage.warning('当前还没有可生成教案的页面')
+  lessonPlanVisible.value = true
+}
+const saveLessonPlanDraft = async (plan) => {
+  const nextPlan = parseJson(JSON.stringify(plan || {}), {})
+  lessonPlanDraft.value = nextPlan
+  presentationMetadata.value = { ...(presentationMetadata.value || {}), lesson_plan: nextPlan }
+  if (!projectId.value || !project.value) {
+    WorkspaceMessage.success('教案已暂存在当前工作台')
+    return
+  }
+  const history = parseJson(project.value.edit_history, {})
+  const nextHistory = Array.isArray(history)
+    ? { entries: history, lesson_plan: nextPlan, workspace_context: workspaceContextPayload() }
+    : { ...(history && typeof history === 'object' ? history : {}), lesson_plan: nextPlan, workspace_context: workspaceContextPayload() }
+  try {
+    const updated = unwrapResponse(await patchProject(projectId.value, {
+      edit_history: JSON.stringify(nextHistory),
+      current_version: Number(project.value.current_version || 1),
+    }))
+    project.value = { ...project.value, ...(updated || {}), edit_history: updated?.edit_history || JSON.stringify(nextHistory) }
+    autosaveState.value = '已保存 · 教案已同步'
+    WorkspaceMessage.success('教案已保存到项目')
+  } catch (error) {
+    WorkspaceMessage.error(error?.message || '教案保存失败，已保留在当前页面')
   }
 }
 const loadProject = async () => {
   if (!projectId.value) return
   hydratingProject.value = true
+  projectLoadError.value = ''
+  presentationMetadata.value = null
+  qualityReport.value = null
+  qualityReportSource.value = ''
   try {
     project.value = unwrapResponse(await getProject(projectId.value))
+    const projectHistory = parseJson(project.value?.edit_history, {})
+    const savedWorkspaceContext = projectHistory?.workspace_context || projectHistory?.workspaceContext
+    lessonPlanDraft.value = projectHistory?.lesson_plan || projectHistory?.lessonPlan || null
+    if (savedWorkspaceContext && typeof savedWorkspaceContext === 'object') {
+      presentationMetadata.value = { ...(presentationMetadata.value || {}), workspace_context: savedWorkspaceContext }
+    }
+    setQualityReport(project.value?.reflections || project.value?.reflection || project.value?.quality_report || project.value?.qualityReport, '项目记录')
     let pages = []
     try {
       const listedPages = unwrapResponse(await listProjectPages(projectId.value))
-      pages = Array.isArray(listedPages) ? listedPages : []
+      pages = pageRecords(listedPages)
     } catch (error) {
-      pages = Array.isArray(project.value?.pages) ? project.value.pages : []
-      WorkspaceMessage.warning(error?.message || '页面列表加载失败，已使用项目详情中的页面')
+      pages = pageRecords(project.value?.pages)
+      WorkspaceMessage.warning(workspaceRequestErrorMessage(error, '页面列表加载失败，已使用项目详情中的页面'))
     }
     loadedPageDetailIds.clear()
-    slides.splice(0, slides.length, ...(pages.length ? pages.map(pageToSlide) : [defaultSlide()]))
+    const fallbackPages = pageRecords(project.value?.pages)
+    const sourcePages = pages.length ? pages : fallbackPages
+    slides.splice(0, slides.length, ...(sourcePages.length ? sourcePages.map(pageToSlide) : [defaultSlide()]))
     selectedSlide.value = 0
-  } catch (error) { WorkspaceMessage.error(error?.message || '项目内容加载失败') } finally { hydratingProject.value = false }
+    savedChangeVersion = localChangeVersion
+    savedStructureVersion = localStructureVersion
+    autosaveQueued = false
+  } catch (error) {
+    projectLoadError.value = workspaceRequestErrorMessage(error, '项目内容加载失败')
+    WorkspaceMessage.error(projectLoadError.value)
+  } finally { hydratingProject.value = false }
   await loadProjectPageDetail(0)
   await syncProjectMetadataIfNeeded()
+  await syncProjectWorkspaceContextIfNeeded()
 }
+const retryProjectLoad = async () => {
+  if (!projectId.value) return
+  await loadProject()
+  await nextTick()
+  centerCanvasView()
+}
+// 工作台组件在切换项目时会被 Vue 复用，不会重新执行 onMounted；监听项目 ID，确保“打开”真正加载新项目。
+watch(projectId, async (nextId, previousId) => {
+  if (!nextId || String(nextId) === String(previousId) || testCaseBootstrapping.value) return
+  clearTimeout(autosaveTimer)
+  localChangeVersion += 1
+  autosaveQueued = false
+  project.value = null
+  workspaceResourceBindingOverride.value = null
+  autosaveState.value = '正在打开项目…'
+  selectedSlide.value = 0
+  selectedElementId.value = null
+  htmlSelectionRestoreKey.value = ''
+  htmlElements.value = []
+  htmlSelectedElementId.value = null
+  htmlSelectedElement.value = null
+  await loadProject()
+  await nextTick()
+  centerCanvasView()
+})
 const loadTestCase = () => {
   if (!route.query.testCase) return
   const title = String(route.query.templateTitle || '临时测试案例')
@@ -2315,16 +3204,57 @@ const validateSlideComponents = async (slide) => {
     }
   }
 }
-const pagePayloadForSlide = (slide, index, overrides = {}) => ({
-  page_order: index + 1,
-  page_type: index === 0 ? 'cover' : 'content',
-  page_title: slide.title,
-  page_content: JSON.stringify(slide),
-  components: JSON.stringify(slide.elements || []),
-  client_version: slide.clientVersion || workspaceClientVersion,
-  autosave: false,
-  dirty: Boolean(slide.dirty),
-  ...overrides,
+// 项目接口会校验学科组件的 data 字段必须是对象；编辑器中的图表、表格
+// 则以数组保存实际数据。持久化时统一转换为接口约定，画布内容仍保存在
+// page_content 中，不改变编辑器的本地元素结构。
+const componentsPayloadForSlide = (slide) => (slide?.elements || []).map((element) => (
+  componentValidationPayload(element) || element
+))
+const pagePayloadForSlide = (slide, index, overrides = {}) => {
+  const { includePageOrder = true, ...payloadOverrides } = overrides
+  return {
+    ...(includePageOrder ? { page_order: index + 1 } : {}),
+    page_type: slide.pageType || slide.page_type || (index === 0 ? 'cover' : 'content'),
+    page_title: slide.title,
+    page_content: JSON.stringify(slide),
+    components: JSON.stringify(componentsPayloadForSlide(slide)),
+    client_version: slide.clientVersion || workspaceClientVersion,
+    autosave: false,
+    dirty: Boolean(slide.dirty),
+    ...payloadOverrides,
+  }
+}
+const savedPageList = (response) => {
+  const result = unwrapResponse(response)
+  return Array.isArray(result) ? result : result?.pages || result?.items || []
+}
+const applySavedPageMetadata = (savedPages, targetSlides = slides, { clearPending = false, updateOrder = true } = {}) => {
+  savedPages.forEach((page, index) => {
+    const pageId = page?.id || page?.page_id || page?.component_id
+    const slide = (pageId && targetSlides.find((item) => String(item.pageId || item.page_id || item.componentId) === String(pageId))) || targetSlides[index]
+    if (!slide) return
+    slide.pageId = pageId || slide.pageId
+    slide.componentId = page?.component_id || slide.pageId
+    const pageOrder = Number(page?.page_order ?? page?.pageOrder)
+    if (updateOrder && Number.isFinite(pageOrder)) {
+      slide.pageOrder = pageOrder
+      slide.page_order = pageOrder
+    }
+    slide.pageVersion = Number(page?.page_version || slide.pageVersion || 1)
+    slide.clientVersion = page?.client_version || slide.clientVersion || workspaceClientVersion
+    slide.autosave = Boolean(page?.autosave ?? true)
+    slide.dirty = Boolean(page?.dirty)
+    slide.lastSavedAt = page?.last_saved_at || slide.lastSavedAt || null
+    if (clearPending) pendingComponentSync.delete(slide)
+  })
+  return savedPages
+}
+const projectPagePayload = (slide, index, order = index + 1) => ({
+  ...pagePayloadForSlide(slide, index, { autosave: true, dirty: Boolean(slide.dirty), page_order: order }),
+  ...(slide.pageId ? {
+    page_id: Number(slide.pageId),
+    expected_page_version: Number(slide.pageVersion || 1),
+  } : {}),
 })
 const batchCreateProjectPages = async (targetProjectId, slideList) => {
   for (const slide of slideList) await validateSlideComponents(slide)
@@ -2333,17 +3263,8 @@ const batchCreateProjectPages = async (targetProjectId, slideList) => {
     autosave: false,
     pages: slideList.map((slide, index) => pagePayloadForSlide(slide, index)),
   }))
-  const savedPages = Array.isArray(result) ? result : result?.pages || result?.items || []
-  savedPages.forEach((page, index) => {
-    const slide = slideList[index]
-    if (!slide) return
-    slide.pageId = page.id || page.page_id
-    slide.componentId = slide.pageId
-    slide.pageVersion = Number(page.page_version || 1)
-    slide.clientVersion = page.client_version || slide.clientVersion || workspaceClientVersion
-    slide.dirty = Boolean(page.dirty)
-    slide.lastSavedAt = page.last_saved_at || null
-  })
+  const savedPages = savedPageList(result)
+  applySavedPageMetadata(savedPages, slideList, { clearPending: true })
   return savedPages
 }
 
@@ -2352,7 +3273,7 @@ const batchCreateProjectPages = async (targetProjectId, slideList) => {
  * 预览入口只负责提供可重复的测试数据，后续编辑与导出均使用项目 ID 访问 API。
  */
 const bootstrapTestCaseProject = async () => {
-  if (!import.meta.env.DEV || route.query.preview !== '1' || !route.query.testCase || projectId.value) return
+  if (!import.meta.env.DEV || !route.query.testCase || projectId.value) return
   testCaseBootstrapping.value = true
   autosaveState.value = '正在创建测试项目…'
   try {
@@ -2360,6 +3281,7 @@ const bootstrapTestCaseProject = async () => {
       project_name: String(route.query.templateTitle || '临时测试案例'),
       project_type: 'mixed',
       status: 'editing',
+      edit_history: JSON.stringify({ workspace_context: workspaceContextPayload() }),
     }))
     const createdId = created?.id || created?.project_id
     if (!createdId) throw new Error('项目创建接口未返回项目 ID')
@@ -2368,6 +3290,9 @@ const bootstrapTestCaseProject = async () => {
 
     await router.replace({ query: { ...route.query, projectId: String(createdId) } })
     project.value = { ...created, id: createdId }
+    savedChangeVersion = localChangeVersion
+    savedStructureVersion = localStructureVersion
+    autosaveQueued = false
     autosaveState.value = '已保存 · 测试项目已落库'
     WorkspaceMessage.success('测试项目已创建，页面内容已保存')
   } catch (error) {
@@ -2387,10 +3312,49 @@ const generationErrorMessage = (error) => {
 }
 
 /**
- * 工作台只保留一条对话时间线，输入内容由前端先做轻量意图识别：
- * 疑问、分析和建议进入讨论；明确的页面操作进入修改。
- * 不确定时默认讨论，避免一句普通聊天意外改动课件。
+ * 工作台只保留一条对话时间线，发送后由 AI 结合当前页和上下文判断：
+ * 普通问题进入讨论，明确的页面操作进入修改。不向教师暴露或要求手动切换模式。
  */
+const intentSubmitting = ref(false)
+const isAssistantSubmitting = computed(() => intentSubmitting.value || discussionSubmitting.value || revisionSubmitting.value || workspaceVoiceSubmitting.value)
+const assistantPlaceholder = computed(() => '例如：讨论一下怎样让导入更贴近学生，或把当前页标题改得更简洁')
+const assistantIntentHint = computed(() => {
+  if (intentSubmitting.value) return 'AI 正在判断这条消息是讨论还是页面操作…'
+  if (revisionSubmitting.value) return '正在执行页面修改，请稍候…'
+  if (discussionSubmitting.value) return '正在思考讨论内容，请稍候…'
+  if (!prompt.value.trim()) return 'AI 会根据你的表达自动判断：讨论或执行页面修改'
+  return inferredAssistantMode.value === 'revision'
+    ? '检测到页面操作，发送时由 AI 结合上下文确认'
+    : '发送时由 AI 结合上下文判断是否修改页面'
+})
+const assistantStatusText = computed(() => {
+  if (workspaceVoiceSubmitting.value) return '正在上传语音并续接 AI 会话…'
+  if (intentSubmitting.value) return 'AI 正在判断意图…'
+  if (discussionSubmitting.value) return 'AI 正在思考…'
+  if (revisionSubmitting.value) return revisionStage.value || 'AI 正在执行页面修改…'
+  return 'AI 自动判断 · Enter 发送 · Shift + Enter 换行'
+})
+/**
+ * 讨论上下文只保存尚未落地的讨论。
+ *
+ * 页面修改完成后，旧的「需求 + 确认」会被关闭，不能再被下一次确认当作待办；
+ * 否则模型会把多轮历史修改和最新问题合并，重复确认或重复执行旧操作。
+ */
+const workspaceDiscussionHistory = () => messages
+  .filter((message) => message?.includeInContext === true
+    && (message?.role === 'user' || message?.role === 'assistant')
+    && String(message?.text || '').trim())
+  .map((message) => ({ role: message.role, content: String(message.text).trim() }))
+  .slice(-6)
+const workspaceConversationTranscript = () => workspaceDiscussionHistory()
+  .slice(-8)
+  .map((message) => `${message.role === 'user' ? '教师' : 'AI'}：${message.content}`)
+  .join('\n')
+const closeDiscussionContext = () => {
+  messages.forEach((message) => {
+    if (message?.includeInContext === true) message.includeInContext = false
+  })
+}
 const inferAssistantMode = (text = '') => {
   const value = String(text).trim().replace(/\s+/g, '')
   if (!value) return 'discussion'
@@ -2398,12 +3362,11 @@ const inferAssistantMode = (text = '') => {
   const discussionPrefix = /^(你好|嗨|您好|请问|为什么|为何|怎么回事|怎么看|你觉得|你认为|分析一下|讨论一下|聊聊|建议一下|帮我想想|解释一下|介绍一下|是什么|如何理解)/i
   if (discussionPrefix.test(value)) return 'discussion'
 
-  // 工作台语境下的短命令也视为执行当前页操作，避免用户必须重复描述目标。
-  const explicitRevisionCommand = /^(请)?(执行|应用|开始|继续|执行修改|应用修改|开始修改|继续修改|修改|修改当前页|页面修改|改一下|调整一下)$/
+  const explicitRevisionCommand = /^(?:那|所以|就)?(?:请|麻烦)?(?:你)?(?:执行|应用|开始|继续|执行修改|应用修改|开始修改|继续修改|修改|修改当前页|页面修改|改|改吧|改啊|改一下|调整一下)$/
   if (explicitRevisionCommand.test(value)) return 'revision'
 
-  const revisionAction = /(修改|改一下|调整|替换|换成|改成|改为|删除|移除|添加|增加|插入|移动|拖到|缩放|放大|缩小|旋转|复制|重做|撤销|恢复|改变|设置|隐藏|显示|去掉|删掉|清空|重排|排版|对齐|换图|换色|优化|润色|精简|丰富|补充|重写|太大|太小|看不清|不清晰|居中|靠左|靠右|上移|下移)/
-  const revisionTarget = /(当前页|本页|这一页|第\d+页|页面|幻灯片|PPT|标题|文案|图片|图表|元素|组件|画布|布局|颜色|字体|字号|透明度|位置|右侧|左侧|上方|下方|背景|边框|间距|内容|列表|文字|导入|情境|案例|知识点|卡片|页眉|页脚|模块)/i
+  const revisionAction = /(修改|改一下|调整|替换|交换|互换|换一下|换成|改成|改为|删除|移除|添加|增加|新增|插入|补充|新建|追加|加上|加个|加一|移动|拖到|缩放|放大|缩小|旋转|复制|重做|撤销|恢复|改变|设置|隐藏|显示|去掉|删掉|清空|重排|排版|对齐|换图|换色|优化|润色|精简|丰富|补充|重写|太大|太小|看不清|不清晰|居中|靠左|靠右|上移|下移)/
+  const revisionTarget = /(当前页|本页|这一页|第\d+页|页面|幻灯片|界面|封面|开场页|首页|结束页|尾页|PPT|标题|文案|图片|图表|元素|组件|画布|布局|颜色|字体|字号|透明度|位置|右侧|左侧|上方|下方|背景|边框|间距|内容|列表|文字|导入|情境|案例|知识点|卡片|页眉|页脚|模块)/i
   const imperative = /^(请|帮我|把|将|给我|麻烦|直接|能不能把|可以把)/
   const naturalRevision = /^(让|使).{0,24}(更|更加|变得|优化|精简|丰富|清晰|简洁|生活化|有启发性)/
 
@@ -2413,84 +3376,227 @@ const inferAssistantMode = (text = '') => {
   return 'discussion'
 }
 const inferredAssistantMode = computed(() => inferAssistantMode(prompt.value))
-const isAssistantSubmitting = computed(() => intentSubmitting.value || discussionSubmitting.value || revisionSubmitting.value)
-const assistantPlaceholder = computed(() => '例如：讨论一下怎样让导入更贴近学生，或把当前页标题改得更简洁')
-const assistantIntentHint = computed(() => {
-  if (intentSubmitting.value) return 'AI 正在判断这条消息的意图…'
-  if (revisionSubmitting.value) return '正在执行页面修改，请稍候…'
-  if (discussionSubmitting.value) return '正在思考讨论内容，请稍候…'
-  if (!prompt.value.trim()) return 'AI 会根据你的表达自动判断：讨论或修改当前页'
-  return inferredAssistantMode.value === 'revision'
-    ? '检测到页面操作，发送时由 AI 结合上下文确认'
-    : '发送时由 AI 结合上下文判断是否修改页面'
-})
-const assistantStatusText = computed(() => {
-  if (intentSubmitting.value) return 'AI 正在判断意图…'
-  if (discussionSubmitting.value) return 'AI 正在思考…'
-  if (revisionSubmitting.value) return revisionStage.value || 'AI 正在执行页面修改…'
-  return 'AI 自动判断 · Enter 发送 · Shift + Enter 换行'
-})
-const workspaceDiscussionHistory = () => messages
-  .filter((message) => message?.includeInContext !== false
-    && (message?.role === 'user' || message?.role === 'assistant')
-    && String(message?.text || '').trim())
-  .map((message) => ({ role: message.role, content: String(message.text).trim() }))
-  .slice(-12)
-const workspaceConversationTranscript = () => workspaceDiscussionHistory()
-  .slice(-8)
-  .map((message) => `${message.role === 'user' ? '教师' : 'AI'}：${message.content}`)
-  .join('\n')
-const parseAssistantIntent = (rawText) => {
-  const text = String(rawText || '').trim().replace(/^```(?:json)?\s*/i, '').replace(/\s*```$/, '')
-  const candidates = [text]
-  const objectStart = text.indexOf('{')
-  const objectEnd = text.lastIndexOf('}')
-  if (objectStart >= 0 && objectEnd > objectStart) candidates.push(text.slice(objectStart, objectEnd + 1))
-  for (const candidate of candidates) {
+const isDiscussionQuestion = (text = '') => /^(你好|嗨|您好|请问|为什么|为何|怎么回事|怎么看|你觉得|你认为|分析一下|讨论一下|聊聊|建议一下|帮我想想|解释一下|介绍一下|是什么|如何理解)/i.test(String(text).trim().replace(/\s+/g, ''))
+const isAddPageInstruction = (text = '') => {
+  const value = String(text).trim().replace(/\s+/g, '')
+  if (!value || isDiscussionQuestion(value)) return false
+  return /(?:添加|增加|新增|插入|补充|新建|追加|加(?:上)?)(?:一个|个|一张|一页)?\s*.{0,16}(?:一页|\d+页|页面|幻灯片|界面|封面|开场页|首页|结束页|尾页)/i.test(value)
+}
+const isExplicitPageOperation = (text = '') => {
+  const value = String(text).trim().replace(/\s+/g, '')
+  if (!value || isDiscussionQuestion(value)) return false
+  const action = /(修改|改一下|调整|替换|交换|互换|换一下|换成|改成|改为|删除|移除|添加|增加|新增|插入|补充|新建|追加|加上|加个|加一|移动|拖到|缩放|放大|缩小|旋转|复制|撤销|恢复|设置|隐藏|显示|去掉|删掉|清空|重排|排版|对齐|换图|换色|优化|润色|精简|丰富|补充|重写)/
+  const target = /(当前页|本页|这一页|第\d+页|页面|页|幻灯片|界面|封面|开场页|首页|结束页|尾页|PPT|标题|文案|图片|图表|元素|组件|画布|布局|颜色|字体|字号|位置|背景|内容|文字)/i
+  return action.test(value) && target.test(value)
+}
+const isExplicitComponentOperation = (text = '') => {
+  const value = String(text).trim().replace(/\s+/g, '')
+  if (!value || isDiscussionQuestion(value)) return false
+  return /(修改|改一下|调整|替换|交换|互换|换一下|换成|改成|改为|删除|移除|添加|增加|新增|插入|移动|缩放|放大|缩小|旋转|设置|隐藏|显示|去掉|删掉|清空|优化|润色|精简|丰富|补充|重写)/.test(value)
+    && /(组件|元素|控件|模块)/.test(value)
+}
+const isRevisionConfirmation = (text = '') => {
+  const value = String(text).trim().replace(/\s+/g, '')
+  if (!value || !workspaceDiscussionHistory().length) return false
+  return /^(?:那|所以|就)?(?:请|麻烦)?(?:你)?(?:执行|应用|开始|继续|执行修改|应用修改|开始修改|继续修改|修改|修改当前页|页面修改|改|改吧|改啊|改一下|调整一下)[！!。？?]*$/.test(value)
+}
+const WORKSPACE_CHAT_TIMEOUT_MS = 30_000
+const withWorkspaceChatTimeout = async (handler) => {
+  const controller = new AbortController()
+  const timer = window.setTimeout(() => controller.abort(), WORKSPACE_CHAT_TIMEOUT_MS)
+  try {
+    return await handler(controller.signal)
+  } catch (error) {
+    if (controller.signal.aborted || error?.name === 'AbortError') {
+      throw new Error('大模型响应超时，请检查模型服务后重试。')
+    }
+    throw error
+  } finally {
+    window.clearTimeout(timer)
+  }
+}
+const intentFallbackShown = ref(false)
+const parseWorkspaceModelJson = (text) => {
+  const raw = String(text || '').trim()
+  const fenced = raw.match(/```(?:json)?\s*([\s\S]*?)```/i)
+  const candidate = (fenced?.[1] || raw).trim()
+  const start = candidate.indexOf('{')
+  const end = candidate.lastIndexOf('}')
+  if (start < 0 || end <= start) return null
+  try {
+    const parsed = JSON.parse(candidate.slice(start, end + 1))
+    return parsed && typeof parsed === 'object' && !Array.isArray(parsed) ? parsed : null
+  } catch {
+    return null
+  }
+}
+const readWorkspaceClassifierStream = async (response) => {
+  const reader = response.body?.getReader()
+  if (!reader) throw new Error('意图模型没有返回可读取的数据流')
+  const decoder = new TextDecoder()
+  let buffer = ''
+  let content = ''
+  const consumeLine = (line) => {
+    if (!line.startsWith('data:')) return
+    const data = line.slice(5).trim()
+    if (!data || data === '[DONE]') return
     try {
-      const data = JSON.parse(candidate)
-      const intent = String(data?.intent || data?.mode || data?.type || '').trim().toLowerCase()
-      if (['revision', 'modify', 'edit', 'update', '修改', '编辑', '改动', '执行'].includes(intent)) return 'revision'
-      if (['discussion', 'chat', 'conversation', 'question', '讨论', '对话', '咨询'].includes(intent)) return 'discussion'
+      const payload = JSON.parse(data)
+      const delta = payload?.choices?.[0]?.delta?.content ?? payload?.choices?.[0]?.message?.content
+      if (typeof delta === 'string') content += delta
     } catch {
-      // 模型可能在 JSON 外包裹少量说明，继续尝试下一个候选片段。
+      // 等待下一块 SSE 数据补全 JSON 行。
     }
   }
-  return ''
+  while (true) {
+    const { done, value } = await reader.read()
+    buffer += decoder.decode(value || new Uint8Array(), { stream: !done })
+    const lines = buffer.split(/\r?\n/)
+    buffer = lines.pop() || ''
+    lines.forEach(consumeLine)
+    if (done) break
+  }
+  if (buffer.trim()) consumeLine(buffer)
+  if (!content.trim()) throw new Error('意图模型未返回有效结果')
+  return content
 }
-const shouldAskModelForIntent = (text = '') => {
-  const value = String(text).trim().replace(/\s+/g, '')
-  if (!value) return false
-  // 明确的寒暄、提问和讨论前缀不需要额外调用一次模型。
-  if (/^(你好|嗨|您好|请问|为什么|为何|怎么回事|怎么看|你觉得|你认为|分析一下|讨论一下|聊聊|建议一下|帮我想想|解释一下|介绍一下|是什么|如何理解)/i.test(value)) return false
-  // “执行”这类短命令依赖前文，需要交给模型结合对话上下文判断。
-  if (/^(请)?(执行|应用|开始|继续|执行修改|应用修改|开始修改|继续修改|修改|修改当前页|页面修改|改一下|调整一下)$/.test(value)) return true
-  // 其余未被明确识别为页面操作的自然语言，交给模型判定。
-  return inferAssistantMode(value) === 'discussion'
+const requestWorkbenchOperation = async (text) => {
+  const response = await withWorkspaceChatTimeout((signal) => streamGeneralChat({
+    mode: 'workbench-intent',
+    user_id: String(userStore.userInfo?.user_id || userStore.userInfo?.id || '10001'),
+    messages: [
+      ...workspaceDiscussionHistory().slice(-6),
+      { role: 'user', content: String(text) },
+    ],
+  }, { signal }))
+  if (!response.ok) {
+    let message = ''
+    try {
+      const payload = await response.json()
+      message = payload?.message || ''
+    } catch {
+      // 保留 HTTP 状态。
+    }
+    throw new Error(message || `意图模型请求失败（HTTP ${response.status}）`)
+  }
+  const raw = await readWorkspaceClassifierStream(response)
+  const parsed = parseWorkspaceModelJson(raw)
+  if (!parsed) throw new Error('意图模型返回格式无法解析')
+  return parsed
+}
+const workspaceOperationFromIntent = (formalData, text = '') => {
+  const intent = formalData?.intent && typeof formalData.intent === 'object' ? formalData.intent : {}
+  const raw = [
+    formalData?.operation,
+    formalData?.action,
+    formalData?.intent_type,
+    formalData?.intentType,
+    formalData?.target_type,
+    formalData?.targetType,
+    formalData?.mode,
+    formalData?.type,
+    typeof formalData?.intent === 'string' ? formalData.intent : '',
+    intent.operation,
+    intent.action,
+    intent.intent_type,
+    intent.intentType,
+    intent.target_type,
+    intent.targetType,
+    intent.type,
+    intent.name,
+    intent.code,
+  ].filter(Boolean).join(' ').toLowerCase()
+  if (/(export|download|导出|下载)/.test(raw) || /导出|下载|生成文件|保存为/.test(text)) return 'export'
+  if (/(open[_ -]?project|project[_ -]?open|select[_ -]?project|打开项目|切换项目)/.test(raw) || /打开项目|切换项目|进入项目/.test(text)) return 'open_project'
+  if (/(component|element|widget|module|组件|元素|控件|模块)/.test(raw) || /组件|元素|控件|模块/.test(text)) return 'modify_component'
+  if (/(generate|create|content|compose|生成|创作|新增内容)/.test(raw) || /生成内容|创作内容|补充内容|写一段|生成一段/.test(text)) return 'generate_content'
+  if (/(modify|edit|update|revise|page|slide|页面|幻灯片|修改|编辑)/.test(raw) || isExplicitPageOperation(text) || isRevisionConfirmation(text)) return 'modify_page'
+  if (isDiscussionQuestion(text)) return 'discussion'
+  return (isAddPageInstruction(text) || isExplicitPageOperation(text) || isRevisionConfirmation(text) || inferAssistantMode(text) === 'revision') ? 'modify_page' : 'discussion'
 }
 const requestAssistantIntent = async (text) => {
-  const response = await streamGeneralChat({
-    user_id: String(userStore.userInfo?.user_id || '10001'),
-    mode: 'workbench-intent',
-    messages: [
-      ...workspaceDiscussionHistory(),
-      { role: 'user', content: `当前工作台页面：${String(current.value?.title || '').trim() || '未命名页面'}` },
-      { role: 'user', content: text },
-    ],
-  })
-  if (!response.ok) throw new Error(`意图识别请求失败（HTTP ${response.status}）`)
-  const assistantMessage = { role: 'assistant', text: '' }
-  const rawIntent = await readWorkspaceDiscussionStream(response, assistantMessage)
-  return parseAssistantIntent(rawIntent)
+  const context = workspaceContextPayload()
+  // API-13B 的 DTO 将 user_id/session_id 定义为字符串；不要把业务会话 ID
+  // 强制转换成数字，否则 UUID 或带前缀的会话会被丢弃，正式接口会退回默认会话。
+  const intentUserId = String(userStore.userInfo?.user_id || userStore.userInfo?.id || '10001')
+  const intentSessionId = String(sessionId.value || '').trim()
+  const knownContext = {
+    page: {
+      page_id: current.value?.pageId || current.value?.page_id || current.value?.componentId || null,
+      title: current.value?.title || '',
+      slide_no: selectedSlide.value + 1,
+      element_count: Array.isArray(current.value?.elements) ? current.value.elements.length : 0,
+    },
+    selected_element: selectedElement.value ? {
+      id: selectedElement.value.id,
+      name: selectedElement.value.name,
+      type: selectedElement.value.type,
+      content: selectedElement.value.content,
+    } : htmlSelectedElement.value ? {
+      id: htmlSelectedElement.value.id,
+      name: htmlSelectedElement.value.name,
+      type: htmlSelectedElement.value.type,
+      content: htmlSelectedElement.value.content,
+    } : null,
+    workspace_context: context,
+  }
+  const data = await withWorkspaceChatTimeout((signal) => recognizeIntent({
+    user_id: intentUserId,
+    ...(intentSessionId ? { session_id: intentSessionId } : {}),
+    title: String(project.value?.project_name || current.value?.title || route.query.templateTitle || 'A12 教学课件'),
+    message: String(text),
+    history: JSON.stringify(workspaceDiscussionHistory()),
+    known_context: JSON.stringify(knownContext),
+    resource_ids: JSON.stringify(context.resource_ids || []),
+    enable_rag: Boolean(context.resource_ids?.length),
+    enable_web: false,
+    slide_count: slides.length,
+    language: 'zh-CN',
+  }, { signal }))
+  const formalData = unwrapResponse(data) || {}
+  return {
+    operation: workspaceOperationFromIntent(formalData, text),
+    data: formalData,
+  }
 }
-const resolveAssistantMode = async (text) => {
-  const fallback = inferAssistantMode(text)
-  if (!shouldAskModelForIntent(text)) return fallback
+const resolveAssistantIntent = async (text) => {
+  const fallbackOperation = workspaceOperationFromIntent({}, text)
+  // 明确的问题或页面指令不需要再额外请求一次意图模型，避免“意图识别 → 普通回答”
+  // 的双重等待；同时保证“添加一页/结束页/感谢观看界面”等指令直接进入执行链路。
+  if (isDiscussionQuestion(text)) return { operation: 'discussion', data: { source: 'local-rule' }, local: true }
+  if (isExplicitComponentOperation(text)) return { operation: 'modify_component', data: { source: 'local-rule' }, local: true }
+  if (isAddPageInstruction(text) || isExplicitPageOperation(text) || isRevisionConfirmation(text)) {
+    return { operation: 'modify_page', data: { source: 'local-rule' }, local: true }
+  }
   try {
-    return (await requestAssistantIntent(text)) || fallback
-  } catch {
-    // 意图服务不可用时沿用前端规则，保证讨论和修改仍可继续。
-    return fallback
+    // 对无法由快速路径确定的自然表达，使用工作台专用分类器。
+    // 现有 API-13B 是“大纲字段提取”接口，不是工作台操作分类接口，不能直接拿它的结果
+    // 判断“讨论/修改”，否则就会出现等待很久后仍然只回复文字的情况。
+    const classifierData = await requestWorkbenchOperation(text)
+    const result = {
+      operation: workspaceOperationFromIntent(classifierData, text),
+      data: classifierData,
+    }
+    intentFallbackShown.value = false
+    // 明确的页面命令和上一轮方案确认优先执行，避免正式接口把“执行”误报成普通咨询。
+    if (isExplicitComponentOperation(text)) return { ...result, operation: 'modify_component' }
+    if (isExplicitPageOperation(text) || isRevisionConfirmation(text)) return { ...result, operation: 'modify_page' }
+    if (isDiscussionQuestion(text)) return { ...result, operation: 'discussion' }
+    return result
+  } catch (error) {
+    // 生产环境未提供工作台分类流时，保留 API-13B 和本地规则作为兼容回退。
+    try {
+      const result = await requestAssistantIntent(text)
+      intentFallbackShown.value = false
+      return result
+    } catch (fallbackError) {
+      error = fallbackError || error
+    }
+    if (!intentFallbackShown.value) {
+      intentFallbackShown.value = true
+      WorkspaceMessage.warning('正式意图识别暂时不可用，已使用本地规则继续处理；如分类不准确，请明确说“修改页面”“修改组件”“导出”或“打开项目”。')
+    }
+    return { operation: fallbackOperation, fallback: true, error }
   }
 }
 const buildRevisionInstruction = (instruction) => {
@@ -2509,10 +3615,16 @@ const workspaceDiscussionContext = () => {
   if (!slide) return ''
   const title = String(slide.title || '').trim()
   const notes = String(slide.notes || '').trim()
+  const context = workspaceContextPayload()
+  const resourceHint = context.resource_ids?.length ? `可用资料资源：${context.resource_ids.join('、')}` : ''
+  const communityHint = context.community?.title ? `社区上下文：${context.community.title}` : ''
   return [
-    '当前位于创作工作台的讨论模式。以下内容仅作为回答上下文，不要直接修改页面，也不要输出 HTML。',
+    '你正在为创作工作台生成一条文字回复。页面操作会由系统自动分流执行，不存在需要教师手动切换的“讨论模式”或“修改模式”。如果最后一条消息是在表达明确修改需求，不要声称无法修改、不要要求切换模式；只在需求确实不清楚时，针对该条消息提出一个简短问题。不要输出 HTML。',
+    '只围绕最后一条教师消息回答或确认。前序对话仅用于理解其中的指代；不要重提、合并或重新确认前序页面操作。除非最后一条教师消息明确要求“继续”“按刚才方案”“撤销”或指向此前操作，否则视为那些操作已完成。',
     title ? `当前页面：${title}` : '',
     notes ? `当前页面备注：${notes.slice(0, 600)}` : '',
+    resourceHint,
+    communityHint,
   ].filter(Boolean).join('\n')
 }
 const readWorkspaceDiscussionStream = async (response, assistantMessage) => {
@@ -2549,6 +3661,7 @@ const readWorkspaceDiscussionStream = async (response, assistantMessage) => {
   if (buffer.trim()) consumeLine(buffer)
   if (!content.trim()) throw new Error('模型未返回有效内容')
   assistantMessage.text = content
+  assistantMessage.streaming = false
   return content
 }
 const submitDiscussion = async () => {
@@ -2556,37 +3669,43 @@ const submitDiscussion = async () => {
   if (!text || isAssistantSubmitting.value) return
   const history = workspaceDiscussionHistory()
   const context = workspaceDiscussionContext()
-  messages.push({ role: 'user', text, kind: 'discussion-request' })
+  messages.push({ role: 'user', text, includeInContext: true, kind: 'discussion-request' })
   prompt.value = ''
-  const assistantMessage = {
+  // 流式读取会持续写入 text / streaming；必须保留代理对象，才能即时触发侧边对话重绘。
+  const assistantMessage = reactive({
     role: 'assistant',
     text: '',
+    streaming: true,
+    includeInContext: true,
     kind: 'discussion-reply',
-  }
+  })
   messages.push(assistantMessage)
   discussionSubmitting.value = true
   void scrollAssistantConversation()
   try {
-    const response = await streamGeneralChat({
-      user_id: String(userStore.userInfo?.user_id || '10001'),
-      messages: [
-        ...history,
-        ...(context ? [{ role: 'user', content: context }] : []),
-        { role: 'user', content: text },
-      ],
-    })
-    if (!response.ok) {
-      let message = ''
-      try {
-        const payload = await response.json()
-        message = payload?.message || ''
-      } catch {
-        // 保留 HTTP 状态作为错误信息。
+    await withWorkspaceChatTimeout(async (signal) => {
+      const response = await streamGeneralChat({
+        user_id: String(userStore.userInfo?.user_id || '10001'),
+        messages: [
+          ...history,
+          ...(context ? [{ role: 'user', content: context }] : []),
+          { role: 'user', content: text },
+        ],
+      }, { signal })
+      if (!response.ok) {
+        let message = ''
+        try {
+          const payload = await response.json()
+          message = payload?.message || ''
+        } catch {
+          // 保留 HTTP 状态作为错误信息。
+        }
+        throw new Error(message || `模型请求失败（HTTP ${response.status}）`)
       }
-      throw new Error(message || `模型请求失败（HTTP ${response.status}）`)
-    }
-    await readWorkspaceDiscussionStream(response, assistantMessage)
+      return readWorkspaceDiscussionStream(response, assistantMessage)
+    })
   } catch (error) {
+    assistantMessage.streaming = false
     assistantMessage.kind = 'discussion-error'
     assistantMessage.includeInContext = false
     assistantMessage.text = `讨论暂时无法继续：${error?.message || '连接失败，请检查模型配置。'}`
@@ -2594,6 +3713,235 @@ const submitDiscussion = async () => {
   } finally {
     discussionSubmitting.value = false
     void scrollAssistantConversation()
+  }
+}
+
+const runStorageKey = () => `a12:workspace-run:${String(sessionId.value || '')}`
+const persistActiveRun = () => {
+  if (!sessionId.value || !activeRunId.value) return
+  sessionStorage.setItem(runStorageKey(), JSON.stringify({
+    runId: activeRunId.value,
+    lastEventId: activeRunEventId.value || '',
+    updatedAt: Date.now(),
+  }))
+}
+const clearActiveRun = () => {
+  clearTimeout(runStreamReconnectTimer)
+  runStreamReconnectTimer = null
+  runStreamReconnectCount = 0
+  if (sessionId.value) sessionStorage.removeItem(runStorageKey())
+  activeRunId.value = ''
+  activeRunEventId.value = ''
+  runStreamConnected.value = false
+}
+const resetRunObservability = () => {
+  runTimeline.value = []
+  runToolCalls.value = []
+  runRetrievalSources.value = []
+  runReflection.value = null
+  runRecoveryNode.value = ''
+  runFailureReason.value = ''
+}
+const arrayValue = (value) => {
+  const parsed = parseJson(value, value)
+  if (Array.isArray(parsed)) return parsed
+  if (parsed && typeof parsed === 'object') return Object.entries(parsed).map(([key, item]) => ({ key, ...(item && typeof item === 'object' ? item : { value: item }) }))
+  return []
+}
+const runItemText = (item, fallback = '') => String(
+  item?.message
+  || item?.description
+  || item?.label
+  || item?.title
+  || item?.name
+  || item?.step_name
+  || item?.step
+  || item?.key
+  || fallback,
+).trim()
+const runStatusLabel = (status = '') => ({
+  pending: '等待', queued: '排队中', running: '执行中', executing: '执行中', processing: '处理中',
+  success: '已完成', completed: '已完成', done: '已完成', failed: '失败', error: '失败',
+  waiting_for_python_api: '等待生成服务',
+}[String(status).toLowerCase()] || String(status || '记录'))
+const normalizeRunReflection = (raw) => {
+  if (!raw) return null
+  const parsed = parseJson(raw, raw)
+  if (typeof parsed === 'string') return { summary: parsed, suggestions: [], relation: '', raw: parsed }
+  if (!parsed || typeof parsed !== 'object') return null
+  return {
+    summary: String(parsed.summary || parsed.reflection || parsed.analysis || parsed.message || '').trim(),
+    strengths: qualityArray(parsed.strengths || parsed.good_points || parsed.positives),
+    issues: qualityArray(parsed.issues || parsed.problems || parsed.risks),
+    suggestions: qualityArray(parsed.suggestions || parsed.fixes || parsed.recommendations || parsed.improvements),
+    relation: String(parsed.relation || parsed.change_relation || parsed.before_after || parsed.modification_relation || '').trim(),
+    raw: parsed,
+  }
+}
+const updateRunObservability = (task = {}, eventId = '') => {
+  const steps = arrayValue(task?.exec_steps || task?.execution_steps || task?.steps)
+  const stepTimeline = steps.map((step, index) => ({
+    id: String(step?.id || step?.step_id || `${step?.step || step?.name || 'step'}-${index}`),
+    kind: 'step',
+    label: runItemText(step, `执行步骤 ${index + 1}`),
+    status: String(step?.status || 'pending').toLowerCase(),
+    statusLabel: runStatusLabel(step?.status),
+    detail: String(step?.detail || step?.result || step?.output || '').trim(),
+  }))
+  const events = arrayValue(task?.events || task?.timeline || task?.execution_trace)
+  const eventTimeline = events.map((event, index) => ({
+    id: String(event?.id || event?.event_id || `event-${index}`),
+    kind: 'event',
+    label: runItemText(event, 'Agent 事件'),
+    status: String(event?.status || event?.state || 'record').toLowerCase(),
+    statusLabel: runStatusLabel(event?.status || event?.state),
+    detail: String(event?.detail || event?.output || event?.content || '').trim(),
+  }))
+  const currentLabel = runItemText(task?.current_step || task?.stage || task?.event || task?.message)
+  const currentEvent = currentLabel ? [{
+    id: String(eventId || task?.event_id || `current-${currentLabel}`),
+    kind: 'event',
+    label: currentLabel,
+    status: String(task?.status || 'running').toLowerCase(),
+    statusLabel: runStatusLabel(task?.status || 'running'),
+    detail: String(task?.event_detail || task?.detail || '').trim(),
+  }] : []
+  const merged = [...stepTimeline, ...eventTimeline, ...currentEvent]
+  const seen = new Set()
+  runTimeline.value = merged.filter((item) => {
+    if (seen.has(item.id)) return false
+    seen.add(item.id)
+    return true
+  }).slice(-30)
+
+  const toolTrace = arrayValue(task?.tool_calls || task?.tool_trace || task?.tools || task?.tool_invocations || task?.last_tool)
+  runToolCalls.value = toolTrace.map((tool, index) => ({
+    id: String(tool?.id || tool?.tool_call_id || `${tool?.name || 'tool'}-${index}`),
+    name: String(tool?.name || tool?.tool_name || tool?.tool || tool?.key || '工具调用'),
+    status: runStatusLabel(tool?.status || tool?.state || 'completed'),
+    detail: String(tool?.message || tool?.input_summary || tool?.output_summary || tool?.result || '').trim(),
+  })).slice(-20)
+
+  const retrieval = task?.rag_sources || task?.retrieval_sources || task?.retrieval || task?.used_resources || task?.resources || task?.rag?.sources
+  runRetrievalSources.value = arrayValue(retrieval).map((resource, index) => ({
+    id: String(resource?.id || resource?.resource_id || resource?.file_id || `resource-${index}`),
+    name: String(resource?.name || resource?.file_name || resource?.filename || resource?.title || `资料 ${index + 1}`),
+    detail: String(resource?.chunk || resource?.snippet || resource?.description || resource?.score || '').trim(),
+  })).slice(0, 30)
+  const reflection = task?.reflections || task?.reflection || task?.self_reflection || task?.quality_report || task?.qualityReport
+  const normalizedReflection = normalizeRunReflection(reflection)
+  if (normalizedReflection) runReflection.value = normalizedReflection
+  runRecoveryNode.value = String(task?.recovery_node || task?.recoveryNode || task?.recovery_step || task?.next_step || task?.resume_from || '').trim()
+  runFailureReason.value = String(task?.error_message || task?.error || task?.failure_reason || task?.reason || '').trim()
+  const progress = Number(task?.progress ?? task?.percentage ?? task?.percent ?? task?.progress_value)
+  if (Number.isFinite(progress)) runProgress.value = Math.max(0, Math.min(100, Math.round(progress <= 1 ? progress * 100 : progress)))
+  if (currentLabel) runStage.value = currentLabel
+}
+const applyRunEvent = (payload, eventId = '') => {
+  if (eventId) activeRunEventId.value = String(eventId)
+  const task = payload?.data && typeof payload.data === 'object' ? payload.data : payload
+  updateRunObservability(task, eventId)
+  setQualityReport(task?.reflections || task?.reflection || task?.quality_report || task?.qualityReport, 'AI 生成任务')
+  const status = String(task?.status || '').toLowerCase()
+  const steps = Array.isArray(task?.exec_steps) ? task.exec_steps : parseJson(task?.exec_steps, [])
+  const pendingStep = steps.find((item) => ['running', 'processing', 'waiting_for_python_api'].includes(String(item?.status || '').toLowerCase()))
+  if (pendingStep?.step === 'presentation_generate') runStage.value = '任务已创建，正在调用 HTML PPT 生成服务'
+  if (status === 'executing') runStatus.value = 'running'
+  if (status === 'failed') {
+    runStatus.value = 'failed'
+    generationError.value = task?.error_message || task?.failure_reason || '课件生成任务失败'
+  }
+  if (['completed', 'success', 'done'].includes(status)) {
+    runStatus.value = 'completed'
+    runProgress.value = 100
+  }
+  persistActiveRun()
+}
+const readRunEventStream = async (response) => {
+  if (!response.ok) throw new Error(`任务事件连接失败（HTTP ${response.status}）`)
+  const reader = response.body?.getReader?.()
+  if (!reader) return
+  const decoder = new TextDecoder()
+  let buffer = ''
+  const consume = (raw) => {
+    const lines = raw.split(/\r?\n/)
+    let eventId = ''
+    let data = ''
+    for (const line of lines) {
+      if (line.startsWith('id:')) eventId = line.slice(3).trim()
+      if (line.startsWith('data:')) data += line.slice(5).trim()
+    }
+    if (!data) return
+    try { applyRunEvent(JSON.parse(data), eventId) } catch { /* 忽略网关心跳或非 JSON 事件 */ }
+  }
+  while (true) {
+    const { value, done } = await reader.read()
+    buffer += decoder.decode(value || new Uint8Array(), { stream: !done })
+    const blocks = buffer.split(/\r?\n\r?\n/)
+    buffer = blocks.pop() || ''
+    blocks.forEach(consume)
+    if (done) break
+  }
+  if (buffer.trim()) consume(buffer)
+}
+const subscribeRunEvents = async () => {
+  if (!activeRunId.value) return
+  activeRunStreamAbort?.abort()
+  const controller = new AbortController()
+  activeRunStreamAbort = controller
+  runStreamConnected.value = true
+  try {
+    const response = await streamAiRunEvents(activeRunId.value, activeRunEventId.value, { signal: controller.signal })
+    await readRunEventStream(response)
+  } catch (error) {
+    if (error?.name !== 'AbortError') {
+      runStage.value = runStage.value || '任务连接短暂中断，正在续接…'
+      if (runStreamReconnectCount < 3 && activeRunId.value) {
+        runStreamReconnectCount += 1
+        clearTimeout(runStreamReconnectTimer)
+        runStreamReconnectTimer = setTimeout(() => { void subscribeRunEvents() }, 1200 * runStreamReconnectCount)
+      }
+    }
+  } finally {
+    if (activeRunStreamAbort === controller) activeRunStreamAbort = null
+    runStreamConnected.value = false
+  }
+}
+const startTrackedRun = async () => {
+  const task = unwrapResponse(await createAiRun(sessionId.value)) || {}
+  activeRunId.value = String(task.id || task.task_id || task.run_id || '')
+  if (!activeRunId.value) throw new Error('执行任务创建成功但未返回任务编号')
+  // 创建后立即回读一次，保证工作台展示的是服务端任务状态而非前端假进度。
+  applyRunEvent(unwrapResponse(await getAiRun(activeRunId.value)) || task)
+  persistActiveRun()
+  void subscribeRunEvents()
+}
+const restoreTrackedRun = async () => {
+  if (!sessionId.value || activeRunId.value) return
+  const saved = parseJson(sessionStorage.getItem(runStorageKey()), null)
+  if (!saved?.runId) return
+  activeRunId.value = String(saved.runId)
+  activeRunEventId.value = String(saved.lastEventId || '')
+  try {
+    const task = unwrapResponse(await getAiRun(activeRunId.value))
+    applyRunEvent(task)
+    if (String(task?.status || '').toLowerCase() === 'executing') void subscribeRunEvents()
+    else clearActiveRun()
+  } catch {
+    clearActiveRun()
+  }
+}
+const validateGeneratedSlides = async (candidateSlides, label = 'AI 返回的课件') => {
+  const htmlSlides = candidateSlides.filter((slide) => String(slide?.html || '').trim())
+  if (!htmlSlides.length) throw new Error(`${label}未包含可校验的 HTML 页面`)
+  const validations = await Promise.all(htmlSlides.map(async (slide, index) => {
+    const result = unwrapResponse(await validatePresentationHtml({ html: slide.html, strict: false })) || {}
+    return { index, result }
+  }))
+  const failed = validations.find(({ result }) => result.valid === false)
+  if (failed) {
+    const details = Array.isArray(failed.result.errors) ? failed.result.errors.filter(Boolean).join('；') : ''
+    throw new Error(`第 ${failed.index + 1} 页 HTML 校验未通过${details ? `：${details}` : ''}`)
   }
 }
 
@@ -2627,25 +3975,36 @@ const startRun = async () => {
     try {
       applyGeneratedPresentation(cachedDraft, { persist: false, notify: false })
       messages.push({ role: 'assistant', text: `已载入 ${cachedDraft.slides.length} 页 HTML PPT 草稿。`, includeInContext: false, kind: 'generation-success' })
+      // 恢复本地草稿后立即创建/回写项目，避免只恢复了界面状态，刷新或换设备又丢失内容。
+      runStage.value = '正在将本地草稿回写项目'
+      await persistGeneratedPresentationProject()
+      autosaveState.value = '已保存 · 草稿已回写'
       void scrollAssistantConversation()
       return
-    } catch {
-      // Ignore an invalid session draft and generate a fresh presentation below.
+    } catch (error) {
+      WorkspaceMessage.warning(error?.message || '本地草稿已载入，但服务器回写失败；请稍后重试保存。')
+      void scrollAssistantConversation()
+      return
     }
   }
 
+  resetRunObservability()
   runStatus.value = 'running'
   runProgress.value = 6
   runStage.value = '正在读取已确认的大纲'
 
   try {
+    await startTrackedRun()
     // 本地开发时 Java 会话仍为 mock，真实 Python 大纲会保存在本地快照中；
     // 优先读取该快照，避免进入工作台后又退回固定/空的大纲。
     const localOutlineDraft = readOutlineDraft(sessionId.value)
     const planData = localOutlineDraft?.plan_json
       ? localOutlineDraft
       : (unwrapResponse(await getAiPlan(sessionId.value)) || {})
-    const outline = normalizeOutlinePayload(planData)
+    const outline = {
+      ...normalizeOutlinePayload(planData),
+      workspace_context: workspaceContextPayload(),
+    }
     if (!Object.keys(outline).length) throw new Error('未找到已确认的大纲，请返回对话重新确认')
 
     runProgress.value = 20
@@ -2665,8 +4024,17 @@ const startRun = async () => {
     }
     const response = await generatePresentation(payload)
     runProgress.value = 88
+    runStage.value = '正在校验 HTML 页面'
+    const generated = normalizePresentationSlides(getPresentationPayload(response))
+    await validateGeneratedSlides(generated)
     runStage.value = '正在装载 HTML 页面'
     applyGeneratedPresentation(response)
+    // 从会话进入工作台的课件不能只留在浏览器草稿：生成成功即创建项目与页面，
+    // 后续刷新、退出和版本管理均以服务端项目为准。
+    runStage.value = '正在保存课件项目'
+    await persistGeneratedPresentationProject()
+    runStage.value = 'HTML PPT 已生成并保存'
+    clearActiveRun()
   } catch (error) {
     runStatus.value = 'failed'
     runProgress.value = 0
@@ -2674,19 +4042,355 @@ const startRun = async () => {
     generationError.value = generationErrorMessage(error)
     messages.push({ role: 'assistant', text: generationError.value, includeInContext: false, kind: 'generation-error' })
     WorkspaceMessage.error(generationError.value)
+    clearActiveRun()
     void scrollAssistantConversation()
   }
 }
 const retryPresentationGeneration = () => { void startRun() }
-const submitRevision = async () => {
+const pageInsertionIndex = (instruction = '') => {
+  const value = String(instruction).trim().replace(/\s+/g, '')
+  const afterMatch = value.match(/第\s*(\d{1,3})\s*页(?:后|之后)/)
+  if (afterMatch) return Math.max(0, Math.min(slides.length, Number(afterMatch[1])))
+  const beforeMatch = value.match(/第\s*(\d{1,3})\s*页(?:前|之前)/)
+  if (beforeMatch) return Math.max(0, Math.min(slides.length, Number(beforeMatch[1]) - 1))
+  if (/(末尾|最后|结尾)/.test(value)) return slides.length
+  return Math.max(0, Math.min(slides.length, selectedSlide.value + 1))
+}
+const addedPageTitle = (instruction = '') => {
+  const value = String(instruction).trim()
+  const quoted = value.match(/[“"「『](.+?)[”"」』]/)
+  if (quoted?.[1]?.trim()) return quoted[1].trim().slice(0, 40)
+  const namedPage = value.match(/(?:添加|增加|新增|插入|补充|新建|追加|加(?:上)?)(?:一个|个|一张|一页)?(?:名为|标题为|叫做)?\s*([^，。；,;]{1,30}?)(?:的)?(?:页面|幻灯片|界面|封面|开场页|首页|结束页|尾页)/)
+  if (namedPage?.[1]?.trim()) return namedPage[1].trim().replace(/^(一个|一张|一页)/, '').slice(0, 40)
+  const keyword = value.match(/(感谢观看|感谢|封面|开场|首页|结束|总结|小结|练习|活动|案例|导入|拓展|互动|讨论)/)
+  return keyword ? `${keyword[1]}页` : '新增页面'
+}
+const executeAddPageInstruction = async (instruction) => {
+  const insertAt = pageInsertionIndex(instruction)
+  const title = addedPageTitle(instruction)
+  const sourceSlide = current.value?.html
+    ? current.value
+    : slides.find((slide) => String(slide?.html || '').trim())
+  let generatedSlide = null
+
+  // 新增页面只调用单页接口生成新页，绝不把整套 slides 交给整套修改接口。
+  // 这样 AI 即使重新生成了新增页，也不会有机会覆盖原来的页面。
+  if (sourceSlide?.html) {
+    try {
+      const sourceIndex = Math.max(0, slides.indexOf(sourceSlide))
+      const response = unwrapResponse(await modifyPresentationSlide({
+        ...(presentationId.value ? { presentation_id: presentationId.value } : {}),
+        slide_no: sourceIndex + 1,
+        current_html: sourceSlide.html,
+        instruction: [
+          '这是一个新增页面生成请求，不是对原页面的修改。',
+          `请生成一张独立的新页面，页面标题为“${title}”。`,
+          `新增页面要求：${instruction}`,
+          '只返回这张新增页面的完整 HTML，保持当前课件的视觉风格；不要修改或重写其他页面。',
+        ].join('\n'),
+        outline_context: {
+          deck_title: String(project.value?.project_name || route.query.templateTitle || sourceSlide.title || 'A12 教学课件'),
+          current_slide_title: title,
+          current_slide_no: insertAt + 1,
+          selected_element: null,
+          conversation_context: workspaceConversationTranscript() || null,
+          workspace_context: workspaceContextPayload(),
+        },
+        theme: String(routeQueryValue(route.query.pptTheme) || presentationMetadata.value?.theme || sourceSlide.theme || '').trim() || undefined,
+        keep_style: true,
+      }))
+      const payload = getGeneratedPagePayload(response)
+      const html = payload?.content?.html ?? payload?.candidate?.html ?? payload?.content?.page_html ?? payload?.candidate?.page_html
+      if (typeof html === 'string' && html.trim()) {
+        generatedSlide = normalizePresentationSlides({ slides: [{
+          ...sourceSlide,
+          ...(payload.candidate || {}),
+          ...(payload.content || {}),
+          title,
+          slide_no: insertAt + 1,
+          html: html.trim(),
+          elements: [],
+          metadata: {
+            ...(sourceSlide.metadata || {}),
+            ...(payload.candidate?.metadata || {}),
+            ...(payload.content?.metadata || {}),
+            added_by_ai: true,
+          },
+        }] })[0] || null
+      }
+    } catch {
+      // 单页生成失败时保留本地新增页面，不能退化为整套课件重生成。
+    }
+  }
+
+  const isCoverPage = /(封面|开场页|首页|开场)/.test(String(instruction).replace(/\s+/g, ''))
+  const slide = await addSlide({
+    insertAt,
+    title,
+    slideData: generatedSlide || (isCoverPage ? {
+      layout: '重点陈述',
+      pageType: 'cover',
+      page_type: 'cover',
+      eyebrow: '课程封面',
+    } : null),
+  })
+  return { title: slide.title, generated: Boolean(generatedSlide) }
+}
+const isDeckRevisionInstruction = (instruction = '') => /(?:整套|全套|所有页|全部页面|每一页|全局|整体).{0,18}(?:课件|幻灯片|页面|字体|配色|风格|版式)|统一.{0,18}(?:课件|幻灯片|页面|字体|配色|风格|版式)/.test(String(instruction).replace(/\s+/g, ''))
+const cloneRevisionSlides = (value) => {
+  try { return JSON.parse(JSON.stringify(Array.isArray(value) ? value : [])) } catch { return [] }
+}
+const revisionSlideKey = (slide, index = 0) => String(
+  slide?.pageId
+  || slide?.page_id
+  || slide?.componentId
+  || slide?.metadata?.source_page_id
+  || slide?.metadata?.page_id
+  || `slide-${index + 1}`,
+)
+const revisionOperationType = (operation = {}) => {
+  const raw = String(
+    operation?.type
+    || operation?.operation
+    || operation?.action
+    || operation?.kind
+    || operation?.change_type
+    || operation?.changeType
+    || '',
+  ).toLowerCase()
+  if (/(add|insert|create|新增|添加|插入)/.test(raw)) return 'add'
+  if (/(delete|remove|drop|删除|移除)/.test(raw)) return 'delete'
+  if (/(reorder|move|sort|重排|移动|调整顺序)/.test(raw)) return 'reorder'
+  return 'modify'
+}
+const revisionOperationLabel = (type) => ({ add: '新增', delete: '删除', reorder: '重排', modify: '修改' }[type] || '修改')
+const revisionOperationDescription = (operation = {}, fallbackType = 'modify') => {
+  const type = revisionOperationType({ ...operation, type: operation?.type || fallbackType })
+  const page = operation?.slide_no ?? operation?.slideNo ?? operation?.page_no ?? operation?.pageNo
+  const from = operation?.from ?? operation?.from_index ?? operation?.fromIndex
+  const to = operation?.to ?? operation?.to_index ?? operation?.toIndex
+  const title = String(operation?.title || operation?.slide_title || operation?.page_title || '').trim()
+  if (type === 'reorder' && (from !== undefined || to !== undefined)) return `第 ${Number(from) + 1} 页 → 第 ${Number(to) + 1} 页`
+  if (title) return page ? `第 ${page} 页 · ${title}` : title
+  if (page) return `第 ${page} 页`
+  return String(operation?.description || operation?.summary || operation?.message || '页面内容')
+}
+const computedRevisionOperations = (before = [], after = []) => {
+  const operations = []
+  const beforeMap = new Map(before.map((slide, index) => [revisionSlideKey(slide, index), { slide, index }]))
+  const afterMap = new Map(after.map((slide, index) => [revisionSlideKey(slide, index), { slide, index }]))
+  after.forEach((slide, index) => {
+    const key = revisionSlideKey(slide, index)
+    const previous = beforeMap.get(key)
+    if (!previous) {
+      operations.push({ type: 'add', page_no: index + 1, title: slide.title, description: `第 ${index + 1} 页 · ${slide.title}` })
+      return
+    }
+    if (previous.index !== index) operations.push({ type: 'reorder', from_index: previous.index, to_index: index, title: slide.title })
+    if (String(previous.slide?.title || '') !== String(slide?.title || '') || String(previous.slide?.html || '') !== String(slide?.html || '')) {
+      operations.push({ type: 'modify', page_no: index + 1, title: slide.title })
+    }
+  })
+  before.forEach((slide, index) => {
+    if (!afterMap.has(revisionSlideKey(slide, index))) operations.push({ type: 'delete', page_no: index + 1, title: slide.title, description: `第 ${index + 1} 页 · ${slide.title}` })
+  })
+  return operations
+}
+const normalizeRevisionOperations = (data = {}, before = [], after = []) => {
+  const raw = data?.operations || data?.changes || data?.change_operations || data?.changeOperations
+  const parsed = parseJson(raw, raw)
+  const source = Array.isArray(parsed)
+    ? parsed
+    : Array.isArray(data?.added_slides) || Array.isArray(data?.deleted_slides) || Array.isArray(data?.reordered_slides)
+      ? [
+        ...(Array.isArray(data.added_slides) ? data.added_slides.map((item) => ({ ...item, type: 'add' })) : []),
+        ...(Array.isArray(data.deleted_slides) ? data.deleted_slides.map((item) => ({ ...item, type: 'delete' })) : []),
+        ...(Array.isArray(data.reordered_slides) ? data.reordered_slides.map((item) => ({ ...item, type: 'reorder' })) : []),
+      ]
+      : []
+  const normalized = source.map((operation, index) => {
+    const type = revisionOperationType(operation)
+    return {
+      ...operation,
+      id: operation?.id || `revision-operation-${index}`,
+      type,
+      label: revisionOperationLabel(type),
+      description: revisionOperationDescription(operation, type),
+    }
+  })
+  if (normalized.length) return normalized
+  return computedRevisionOperations(before, after).map((operation, index) => ({
+    ...operation,
+    id: `computed-revision-operation-${index}`,
+    label: revisionOperationLabel(operation.type),
+    description: revisionOperationDescription(operation, operation.type),
+  }))
+}
+const revisionChangeSummary = (data = {}, operations = [], before = [], after = []) => {
+  const raw = data?.change_summary ?? data?.changeSummary
+  if (typeof raw === 'string' && raw.trim()) return raw.trim()
+  if (raw && typeof raw === 'object') {
+    const summary = raw.summary || raw.description || raw.text || raw.message
+    if (summary) return String(summary)
+  }
+  const count = (type) => operations.filter((operation) => operation.type === type).length
+  const parts = [
+    count('add') ? `新增 ${count('add')} 页` : '',
+    count('delete') ? `删除 ${count('delete')} 页` : '',
+    count('reorder') ? `重排 ${count('reorder')} 页` : '',
+    count('modify') ? `修改 ${count('modify')} 页` : '',
+  ].filter(Boolean)
+  return parts.length ? parts.join('，') : `页面数量由 ${before.length} 页调整为 ${after.length} 页`
+}
+const applyDeckRevision = async (instruction, conversationTranscript) => {
+  if (!slides.length || !slides.every((slide) => String(slide?.html || '').trim())) {
+    throw new Error('当前课件包含不可编辑页面，暂不能执行整套 HTML 修改')
+  }
+  revisionStage.value = '正在规划整套课件修改…'
+  const localOutlineDraft = sessionId.value ? readOutlineDraft(sessionId.value) : null
+  const response = unwrapResponse(await modifyPresentation({
+    ...(presentationId.value ? { presentation_id: presentationId.value } : {}),
+    title: String(project.value?.project_name || route.query.templateTitle || slides[0]?.title || 'A12 教学课件'),
+    slides: slides.map((slide, index) => ({
+      slide_no: index + 1,
+      ...(slide.pageId ? { page_id: Number(slide.pageId), source_page_id: Number(slide.pageId) } : {}),
+      title: slide.title,
+      html: slide.html,
+      notes: slide.notes || '',
+      metadata: {
+        ...(slide.metadata || {}),
+        ...(slide.pageId ? { source_page_id: Number(slide.pageId), page_id: Number(slide.pageId) } : {}),
+      },
+    })),
+    instruction,
+    outline: {
+      ...normalizeOutlinePayload(localOutlineDraft || presentationMetadata.value || {}),
+      workspace_context: workspaceContextPayload(),
+    },
+    theme: String(routeQueryValue(route.query.pptTheme) || presentationMetadata.value?.theme || current.value?.theme || '').trim() || undefined,
+    keep_style: true,
+    conversation_context: conversationTranscript || undefined,
+  }))
+  const data = getPresentationPayload(response)
+  const nextSlides = normalizePresentationSlides(data)
+  revisionStage.value = '正在校验整套 HTML 页面…'
+  await validateGeneratedSlides(nextSlides, '整套课件修改结果')
+  const previousPageIds = slides.map((slide) => slide.pageId || slide.page_id || slide.componentId).filter(Boolean)
+  const before = cloneRevisionSlides(slides)
+  const after = cloneRevisionSlides(nextSlides)
+  const operations = normalizeRevisionOperations(data, before, after)
+  pendingDeckRevision.value = {
+    data,
+    before,
+    after,
+    previousPageIds,
+    operations,
+    summary: revisionChangeSummary(data, operations, before, after),
+    instruction,
+  }
+  revisionPreviewVisible.value = true
+  return pendingDeckRevision.value
+}
+
+const rejectDeckRevision = () => {
+  pendingDeckRevision.value = null
+  revisionPreviewVisible.value = false
+  messages.push({ role: 'assistant', text: '已取消这次整套课件修改，当前页面保持不变。', includeInContext: false, kind: 'revision-preview-rejected' })
+}
+
+const acceptDeckRevision = async () => {
+  const preview = pendingDeckRevision.value
+  if (!preview) return
+  revisionPreviewVisible.value = false
+  revisionStage.value = '正在应用已确认的整套课件修改…'
+  try {
+    revisionUndoSnapshot.value = cloneRevisionSlides(preview.before)
+    applyGeneratedPresentation(preview.data, { persist: true, notify: false })
+    if (projectId.value) {
+      const retainedPageIds = new Set(slides.map((slide) => String(slide.pageId || slide.page_id || slide.componentId || '')).filter(Boolean))
+      await persistSlideOrder({
+        deletedPageIds: preview.previousPageIds.filter((id) => !retainedPageIds.has(String(id))),
+        throwOnError: true,
+      })
+    }
+    closeDiscussionContext()
+    messages.push({
+      role: 'assistant',
+      text: `已按预览应用整套课件修改${preview.after.length ? `，共 ${preview.after.length} 页` : ''}。如需恢复，可点击“撤销本次 AI 修改”。`,
+      includeInContext: false,
+      kind: 'revision-result',
+    })
+    WorkspaceMessage.success('整套课件修改已确认并保存')
+    pendingDeckRevision.value = null
+  } catch (error) {
+    revisionPreviewVisible.value = true
+    WorkspaceMessage.error(error?.message || '确认后的整套修改保存失败，当前预览仍可继续处理')
+  } finally {
+    revisionStage.value = ''
+  }
+}
+
+const undoLastAiRevision = async () => {
+  const snapshot = revisionUndoSnapshot.value
+  if (!snapshot?.length) return
+  try {
+    const currentPageIds = slides.map((slide) => slide.pageId || slide.page_id || slide.componentId).filter(Boolean)
+    slides.splice(0, slides.length, ...cloneRevisionSlides(snapshot))
+    selectedSlide.value = Math.min(selectedSlide.value, Math.max(0, slides.length - 1))
+    selectedElementId.value = null
+    htmlSelectionRestoreKey.value = ''
+    htmlElements.value = []
+    htmlSelectedElementId.value = null
+    htmlSelectedElement.value = null
+    markSlideComponentDirty(slides[selectedSlide.value], 'deck:undo', { structure: true })
+    if (projectId.value) {
+      await persistSlideOrder({
+        deletedPageIds: currentPageIds.filter((id) => !new Set(slides.map((slide) => String(slide.pageId || slide.page_id || slide.componentId || '')).filter(Boolean)).has(String(id))),
+        throwOnError: true,
+      })
+    } else if (sessionId.value) saveCurrentPresentationDraft()
+    revisionUndoSnapshot.value = null
+    messages.push({ role: 'assistant', text: '已撤销最近一次 AI 整套修改，恢复到修改前版本。', includeInContext: false, kind: 'revision-undo' })
+    WorkspaceMessage.success('已撤销本次 AI 修改')
+  } catch (error) {
+    WorkspaceMessage.error(error?.message || '撤销失败，请稍后重试')
+  }
+}
+const submitRevision = async ({ operation = 'modify_page' } = {}) => {
   const instruction = prompt.value.trim(); if (!instruction) return
   if (revisionSubmitting.value) return
   const conversationTranscript = workspaceConversationTranscript()
   const revisionInstruction = buildRevisionInstruction(instruction)
-  messages.push({ role: 'user', text: instruction }); prompt.value = ''
+  // 修改指令本身不是下一轮讨论的上下文；成功后会连同此前确认方案一起关闭。
+  messages.push({ role: 'user', text: instruction, includeInContext: false, kind: 'revision-request' }); prompt.value = ''
   revisionSubmitting.value = true
   revisionStage.value = '正在理解修改指令…'
   try {
+    if (isAddPageInstruction(instruction) && !isDeckRevisionInstruction(instruction)) {
+      revisionStage.value = '正在新增页面…'
+      const result = await executeAddPageInstruction(instruction)
+      closeDiscussionContext()
+      messages.push({
+        role: 'assistant',
+        text: result.generated
+          ? `已新增“${result.title}”，并保持当前课件模板风格。`
+          : `已新增“${result.title}”，请在画布中继续编辑页面内容。`,
+        includeInContext: false,
+        kind: 'revision-result',
+      })
+      WorkspaceMessage.success('页面已添加')
+      return
+    }
+    if (isDeckRevisionInstruction(instruction)) {
+      await applyDeckRevision(revisionInstruction, conversationTranscript)
+      messages.push({
+        role: 'assistant',
+        text: 'AI 已生成整套课件修改预览，请检查修改清单和前后页面后选择“接受并应用”或“拒绝修改”。',
+        includeInContext: false,
+        kind: 'revision-preview',
+      })
+      return
+    }
     let applied = false
     if (current.value?.html) {
       const selectedElement = htmlSelectedElement.value
@@ -2709,17 +4413,24 @@ const submitRevision = async () => {
             content: selectedElement.content,
           } : null,
           conversation_context: conversationTranscript || null,
+          workspace_context: workspaceContextPayload(),
         },
         theme: String(routeQueryValue(route.query.pptTheme) || presentationMetadata.value?.theme || current.value.theme || '').trim() || undefined,
         keep_style: true,
       }))
       if (showClarificationForResponse(response, projectId.value ? 'project' : 'session')) return
       revisionStage.value = '正在应用 AI 返回的页面…'
+      const pagePayload = getGeneratedPagePayload(response)
+      const nextHtml = pagePayload?.content?.html ?? pagePayload?.candidate?.html ?? pagePayload?.content?.page_html ?? pagePayload?.candidate?.page_html
+      if (typeof nextHtml === 'string' && nextHtml.trim()) await validateGeneratedSlides([{ html: nextHtml.trim() }], '页面修改结果')
       applied = applyGeneratedPage(response)
       if (!applied) throw new Error('AI 修改接口未返回有效的 HTML 页面')
+      if (projectId.value) await persistCurrentSlide({ throwOnError: true })
+      closeDiscussionContext()
       messages.push({
         role: 'assistant',
-        text: String(response?.change_summary || '已根据修改要求更新当前页面，页面元素仍可继续选中和编辑。'),
+        // change_summary 可能回显供接口理解的完整上下文，不应暴露给教师。
+        text: '已完成当前页面修改。',
         includeInContext: false,
         kind: 'revision-result',
       })
@@ -2728,24 +4439,43 @@ const submitRevision = async () => {
     }
     if (projectId.value) {
       revisionStage.value = '正在提交项目页面修改…'
+      const selectedTarget = selectedElement.value || htmlSelectedElement.value
+      const targetType = operation === 'modify_component' && selectedTarget?.id ? 'component' : 'page'
+      const targetId = targetType === 'component'
+        ? String(selectedTarget.id)
+        : String(current.value.pageId || current.value.componentId || '')
       const response = unwrapResponse(await reviseProjectWithAi(projectId.value, {
-        target_type: 'slide',
-        target_id: String(current.value.componentId || selectedSlide.value + 1),
+        target_type: targetType,
+        target_id: targetId,
         instruction: revisionInstruction,
-        context: JSON.stringify({ page: current.value, conversation_context: conversationTranscript || null }),
+        context: JSON.stringify({
+          page: current.value,
+          selected_element: selectedTarget ? {
+            id: selectedTarget.id,
+            name: selectedTarget.name,
+            type: selectedTarget.type,
+            content: selectedTarget.content,
+          } : null,
+          workspace_operation: operation,
+          conversation_context: conversationTranscript || null,
+          workspace_context: workspaceContextPayload(),
+        }),
       }))
       revisionStage.value = '正在应用 AI 返回的页面…'
       applied = applyGeneratedPage(response)
       if (showClarificationForResponse(response, 'project')) return
+      if (applied) await persistCurrentSlide({ throwOnError: true })
     }
     else if (sessionId.value) {
       revisionStage.value = '正在处理页面修改请求…'
       const response = unwrapResponse(await sendAiSessionMessage(sessionId.value, {
         message: revisionInstruction,
         messages: JSON.stringify([{ role: 'user', content: revisionInstruction }]),
+        known_context: JSON.stringify({ workspace_context: workspaceContextPayload() }),
       }))
       if (showClarificationForResponse(response, 'session')) return
     }
+    if (applied) closeDiscussionContext()
     messages.push({
       role: 'assistant',
       text: applied ? '已根据修改要求更新当前页面，页面元素仍可继续选中和编辑。' : '已收到修改要求，正在结合当前页面内容进行调整。',
@@ -2777,16 +4507,17 @@ const submitClarification = async (selection) => {
       response = unwrapResponse(await sendAiSessionMessage(sessionId.value, {
         message: selection.answer,
         messages: JSON.stringify([{ role: 'user', content: selection.answer }]),
-        known_context: JSON.stringify(knownContext),
+        known_context: JSON.stringify({ ...knownContext, workspace_context: workspaceContextPayload() }),
       }))
     } else {
       response = unwrapResponse(await reviseProjectWithAi(projectId.value, {
-        target_type: 'slide',
-        target_id: String(current.value.componentId || selectedSlide.value + 1),
+        target_type: 'page',
+        target_id: String(current.value.pageId || current.value.componentId || ''),
         instruction: selection.answer,
-        context: JSON.stringify({ page: current.value, clarification: knownContext }),
+        context: JSON.stringify({ page: current.value, clarification: knownContext, workspace_context: workspaceContextPayload() }),
       }))
       applyGeneratedPage(response)
+      await persistCurrentSlide({ throwOnError: true })
     }
     if (showClarificationForResponse(response, clarificationOrigin.value)) return
     clarificationDialogVisible.value = false
@@ -2798,7 +4529,6 @@ const submitClarification = async (selection) => {
     WorkspaceMessage.error(error?.message || '补充信息提交失败')
   } finally { clarificationSubmitting.value = false }
 }
-const routeQueryValue = (value) => Array.isArray(value) ? value[0] : value
 const clearInitialClarification = async () => {
   if (!route.query.initialClarification) return
   const query = { ...route.query }
@@ -2835,45 +4565,254 @@ const handleWorkspaceKeydown = (event) => {
 onMounted(async () => {
   loadTestCase()
   initializeSessionFlow()
+  void loadWorkspaceResources()
   await bootstrapTestCaseProject()
   await loadProject()
+  await restoreTrackedRun()
   if (!projectId.value && (sessionId.value || presentationFixtureMode.value)) await startRun()
+  await nextTick()
+  centerCanvasView()
+  if (typeof ResizeObserver !== 'undefined' && canvasAreaRef.value) {
+    canvasViewportObserver = new ResizeObserver(() => centerCanvasView())
+    canvasViewportObserver.observe(canvasAreaRef.value)
+  }
   window.addEventListener('keydown', handleWorkspaceKeydown)
 })
-onBeforeUnmount(() => { htmlFrameObservers.forEach(({ observer, cleanup }) => { observer?.disconnect(); cleanup?.() }); htmlFrameObservers.clear(); clearPreviewFrameObservers(); stopElementDrag(); cancelCanvasPlacement(); workspaceMessageInstance?.close(); window.removeEventListener('keydown', handleWorkspaceKeydown) })
+onBeforeUnmount(() => { activeRunStreamAbort?.abort(); clearTimeout(runStreamReconnectTimer); if (canvasCenterFrame != null) cancelAnimationFrame(canvasCenterFrame); canvasViewportObserver?.disconnect(); canvasViewportObserver = null; htmlFrameObservers.forEach(({ observer, cleanup }) => { observer?.disconnect(); cleanup?.() }); htmlFrameObservers.clear(); clearPreviewFrameObservers(); stopCanvasPan(); stopElementDrag(); cancelCanvasPlacement(); workspaceMessageInstance?.close(); window.removeEventListener('keydown', handleWorkspaceKeydown) })
 const currentPagePayload = (slide = current.value, index = selectedSlide.value, overrides = {}) => pagePayloadForSlide(slide, index, {
+  // 普通内容保存不修改页面顺序，避免旧顺序与当前数组索引不一致时触发唯一索引冲突。
+  includePageOrder: false,
   autosave: true,
   dirty: false,
   ...overrides,
 })
-const persistCurrentSlide = async () => {
-  if (!projectId.value || savingPage.value || hydratingProject.value) return
+const persistCurrentSlide = async ({ throwOnError = false } = {}) => {
+  if (pageSavePromise) {
+    const result = await pageSavePromise
+    if (result === true && localChangeVersion > savedChangeVersion && projectId.value && !hydratingProject.value) {
+      return persistCurrentSlide({ throwOnError })
+    }
+    if (throwOnError && result !== true) throw new Error('当前页面保存失败，未继续后续操作')
+    return result
+  }
+  if (!projectId.value || hydratingProject.value) return true
   const slideIndex = selectedSlide.value
   const slide = slides[slideIndex]
-  if (!slide) return
-  savingPage.value = true; autosaveState.value = '保存中…'
-  try {
-    await validateSlideComponents(slide)
-    const payload = currentPagePayload(slide, slideIndex)
-    const response = slide.pageId
-      ? await saveProjectPage(projectId.value, slide.pageId, { ...payload, expected_page_version: Number(slide.pageVersion || 1) })
-      : await createProjectPage(projectId.value, payload)
-    const saved = unwrapResponse(response)
-    if (slides[slideIndex] === slide) {
-      slide.pageId = saved?.id || saved?.page_id || slide.pageId
-      slide.componentId = slide.pageId
-      slide.pageVersion = Number(saved?.page_version || slide.pageVersion || 1)
-      slide.clientVersion = saved?.client_version || slide.clientVersion || workspaceClientVersion
-      slide.autosave = Boolean(saved?.autosave ?? true)
-      slide.dirty = Boolean(saved?.dirty)
-      slide.lastSavedAt = saved?.last_saved_at || slide.lastSavedAt || null
+  if (!slide) return true
+  const saveVersion = localChangeVersion
+  const structureVersionAtStart = localStructureVersion
+  autosaveQueued = false
+
+  let task
+  task = (async () => {
+    savingPage.value = true
+    autosaveState.value = '保存中…'
+    try {
+      await validateSlideComponents(slide)
+      const payload = currentPagePayload(slide, slideIndex)
+      const syncTarget = pendingComponentSync.get(slide)
+      const componentTarget = syncTarget && syncTarget !== true && !String(syncTarget).startsWith('page:')
+        ? String(syncTarget)
+        : ''
+      // 当前后端 API-30 仍按 pageId 解析路径参数；保留兼容路径，
+      // 同时把组件 ID 放入请求体，等后端支持组件实体后即可无损切换。
+      const response = slide.pageId
+        ? await updateProjectComponent(projectId.value, slide.pageId, {
+          ...payload,
+          ...(componentTarget ? { component_id: componentTarget } : {}),
+          expected_page_version: Number(slide.pageVersion || 1),
+        })
+        : await addProjectComponent(projectId.value, payload)
+      const saved = unwrapResponse(response)
+      const isLatest = localChangeVersion === saveVersion && localStructureVersion === structureVersionAtStart
+      if (slides[slideIndex] === slide) {
+        slide.pageId = saved?.id || saved?.page_id || saved?.component_id || slide.pageId
+        slide.componentId = saved?.component_id || slide.pageId
+        const pageOrder = Number(saved?.page_order ?? saved?.pageOrder)
+        if (Number.isFinite(pageOrder)) {
+          slide.pageOrder = pageOrder
+          slide.page_order = pageOrder
+        }
+        slide.pageVersion = Number(saved?.page_version || slide.pageVersion || 1)
+        slide.clientVersion = saved?.client_version || slide.clientVersion || workspaceClientVersion
+        slide.autosave = Boolean(saved?.autosave ?? true)
+        slide.dirty = isLatest ? Boolean(saved?.dirty) : true
+        slide.lastSavedAt = saved?.last_saved_at || slide.lastSavedAt || null
+        if (isLatest) pendingComponentSync.delete(slide)
+      }
+      if (isLatest) {
+        savedChangeVersion = Math.max(savedChangeVersion, saveVersion)
+        if (structureVersionAtStart <= savedStructureVersion) autosaveState.value = '已保存'
+        else { autosaveState.value = '待保存'; autosaveQueued = true }
+      } else {
+        autosaveState.value = '待保存'
+        autosaveQueued = true
+      }
+      return true
+    } catch (error) {
+      autosaveState.value = '保存失败'
+      const message = error?.response?.data?.message || error?.message || '页面保存失败'
+      WorkspaceMessage.error(message.includes('Version conflict') || message.includes('版本冲突') ? '页面版本已变化，请刷新页面后重试' : message)
+      return false
+    } finally {
+      // 保存接口返回后会同步 pageId、版本号等字段；先让深度监听完成本轮刷新，避免把这些内部更新误判为新的编辑。
+      await nextTick()
+      savingPage.value = false
+      if (pageSavePromise === task) pageSavePromise = null
+      if (localChangeVersion > saveVersion || localStructureVersion > structureVersionAtStart || autosaveQueued) scheduleWorkspaceAutosave()
     }
-    autosaveState.value = '已保存'
-  } catch (error) {
-    autosaveState.value = '保存失败'
-    const message = error?.response?.data?.message || error?.message || '页面保存失败'
-    WorkspaceMessage.error(message.includes('Version conflict') || message.includes('版本冲突') ? '页面版本已变化，请刷新页面后重试' : message)
-  } finally { savingPage.value = false }
+  })()
+  pageSavePromise = task
+  const result = await task
+  if (throwOnError && result !== true) throw new Error('当前页面保存失败，未继续后续操作')
+  return result
+}
+const clearSlideDragState = () => {
+  draggingSlideIndex.value = null
+  slideDropIndex.value = null
+}
+const slideDropIndexFromEvent = (index, event) => {
+  const rect = event.currentTarget?.getBoundingClientRect?.()
+  if (!rect) return index
+  return index + (event.clientY >= rect.top + rect.height / 2 ? 1 : 0)
+}
+const startSlideDrag = (index, event) => {
+  if (slides.length < 2) return
+  draggingSlideIndex.value = index
+  slideDropIndex.value = index
+  if (event.dataTransfer) {
+    event.dataTransfer.effectAllowed = 'move'
+    event.dataTransfer.setData('text/plain', String(index))
+  }
+}
+const handleSlideDragOver = (index, event) => {
+  if (draggingSlideIndex.value === null) return
+  event.preventDefault()
+  slideDropIndex.value = slideDropIndexFromEvent(index, event)
+  if (event.dataTransfer) event.dataTransfer.dropEffect = 'move'
+}
+const persistSlideOrder = async ({ deletedPageIds = [], throwOnError = false } = {}) => {
+  if (orderSavePromise) {
+    const result = await orderSavePromise
+    if (result === true && projectId.value && !hydratingProject.value
+      && (localChangeVersion > savedChangeVersion || localStructureVersion > savedStructureVersion)) {
+      return persistSlideOrder({ deletedPageIds, throwOnError })
+    }
+    if (throwOnError && result !== true) throw new Error('页面顺序保存失败，未继续后续操作')
+    return result
+  }
+  if (!projectId.value || hydratingProject.value) return true
+
+  let task
+  task = (async () => {
+    // 页面内容先落库，再批量同步顺序，避免新页面或刚编辑的页面被顺序请求覆盖。
+    if (pageSavePromise) {
+      const pageResult = await pageSavePromise
+      if (pageResult !== true) {
+        if (throwOnError) throw new Error('当前页面保存失败，未继续保存页面顺序')
+        return false
+      }
+    }
+    if (!projectId.value || hydratingProject.value) return true
+    clearTimeout(autosaveTimer)
+    const saveVersion = localChangeVersion
+    const structureVersionAtStart = localStructureVersion
+    autosaveQueued = false
+    savingPage.value = true
+    autosaveState.value = '保存顺序中…'
+    try {
+      for (const slide of slides) await validateSlideComponents(slide)
+      const savePageBatch = async (pages) => savedPageList(await batchSaveProjectPages(projectId.value, {
+        client_version: workspaceClientVersion,
+        autosave: true,
+        pages,
+      }))
+      // 后端按数组顺序逐条更新唯一索引 (project_id, page_order)。
+      // 页面交换时直接从旧序号改到新序号会撞上仍未更新的页面，因此先全部
+      // 放到临时负序号，再提交最终的 1..N 顺序。
+      const needsStaging = slides.some((slide, index) => {
+        if (!slide.pageId) return true
+        const pageOrder = Number(slide.pageOrder ?? slide.page_order)
+        return !Number.isFinite(pageOrder) || pageOrder !== index + 1
+      })
+      if (needsStaging && slides.length) {
+        const temporaryBase = -1000000000 + (Date.now() % 100000)
+        const stagedPages = slides.map((slide, index) => projectPagePayload(slide, index, temporaryBase - index))
+        const stagedResult = await savePageBatch(stagedPages)
+        if (stagedResult.length < slides.length) throw new Error('页面顺序保存接口未返回完整页面结果')
+        // 临时序号只用于释放唯一索引，不写回画布的真实顺序。
+        applySavedPageMetadata(stagedResult, slides, { updateOrder: false })
+      }
+      const savedPages = await savePageBatch(slides.map((slide, index) => projectPagePayload(slide, index)))
+      if (savedPages.length < slides.length) throw new Error('页面顺序保存接口未返回完整页面结果')
+      const isLatest = localChangeVersion === saveVersion && localStructureVersion === structureVersionAtStart
+      applySavedPageMetadata(savedPages, slides, { clearPending: isLatest })
+      const currentPageIds = new Set(slides.map((slide) => String(slide.pageId || slide.page_id || slide.componentId || '')).filter(Boolean))
+      const stalePageIds = [...new Set(deletedPageIds.map((id) => String(id || '')).filter((id) => id && !currentPageIds.has(id)))]
+      if (stalePageIds.length) await Promise.all(stalePageIds.map((pageId) => deleteProjectPage(projectId.value, pageId)))
+      if (isLatest) {
+        savedChangeVersion = Math.max(savedChangeVersion, saveVersion)
+        savedStructureVersion = Math.max(savedStructureVersion, structureVersionAtStart)
+        autosaveState.value = '已保存'
+      } else {
+        autosaveState.value = '待保存'
+        autosaveQueued = true
+      }
+      return true
+    } catch (error) {
+      autosaveState.value = '保存失败'
+      const message = error?.response?.data?.message || error?.message || '页面顺序保存失败'
+      WorkspaceMessage.error(message.includes('Version conflict') || message.includes('版本冲突') ? '页面版本已变化，请刷新页面后重试' : message)
+      return false
+    } finally {
+      // 批量保存同样会回写每页的服务端字段，等监听队列清空后再解除保存保护。
+      await nextTick()
+      savingPage.value = false
+      if (orderSavePromise === task) orderSavePromise = null
+      if (localChangeVersion > saveVersion || localStructureVersion > structureVersionAtStart || autosaveQueued) scheduleWorkspaceAutosave()
+    }
+  })()
+  orderSavePromise = task
+  const result = await task
+  if (throwOnError && result !== true) throw new Error('页面顺序保存失败，未继续后续操作')
+  return result
+}
+const syncPageStructure = async ({ deletedPageIds = [], successMessage = '', throwOnError = false } = {}) => {
+  clearTimeout(autosaveTimer)
+  const pageSaved = await persistCurrentSlide({ throwOnError })
+  if (pageSaved === false) return false
+  const orderSaved = await persistSlideOrder({ deletedPageIds, throwOnError })
+  if (orderSaved === false) return false
+  if (successMessage) WorkspaceMessage.success(successMessage)
+  return true
+}
+const reorderSlides = (sourceIndex, dropIndex) => {
+  if (!Number.isInteger(sourceIndex) || !Number.isInteger(dropIndex)) return
+  if (sourceIndex < 0 || sourceIndex >= slides.length) return
+  const targetIndex = dropIndex > sourceIndex ? dropIndex - 1 : dropIndex
+  if (targetIndex === sourceIndex || targetIndex < 0 || targetIndex >= slides.length) return
+
+  const selectedSlideObject = slides[selectedSlide.value]
+  const [movedSlide] = slides.splice(sourceIndex, 1)
+  slides.splice(targetIndex, 0, movedSlide)
+  slides.forEach((slide, index) => {
+    slide.slideNo = index + 1
+    slide.slide_no = index + 1
+    if (slide.html) slide.eyebrow = `${String(index + 1).padStart(2, '0')} / HTML PPT`
+  })
+  const nextSelectedIndex = slides.indexOf(selectedSlideObject)
+  if (nextSelectedIndex >= 0) selectedSlide.value = nextSelectedIndex
+  markSlideComponentDirty(slides[selectedSlide.value], 'page:order', { structure: true })
+  if (sessionId.value && !projectId.value) saveCurrentPresentationDraft()
+  if (projectId.value) void persistSlideOrder()
+}
+const dropSlide = (index, event) => {
+  if (draggingSlideIndex.value === null) return
+  event.preventDefault()
+  const sourceIndex = draggingSlideIndex.value
+  const dropIndex = slideDropIndex.value ?? slideDropIndexFromEvent(index, event)
+  clearSlideDragState()
+  reorderSlides(sourceIndex, dropIndex)
 }
 const loadVersions = async () => {
   if (!projectId.value) return WorkspaceMessage.warning('演示项目不支持版本管理')
@@ -2881,61 +4820,240 @@ const loadVersions = async () => {
   try { const result = unwrapResponse(await listProjectVersions(projectId.value, { page: 1, size: 30 })); versions.value = result?.records || result?.list || result?.items || [] }
   catch (error) { WorkspaceMessage.error(error?.message || '版本历史加载失败') } finally { versionLoading.value = false }
 }
-const createVersion = async () => { if (!projectId.value) return; try { await saveProjectVersion(projectId.value, { description: `保存第 ${selectedSlide.value + 1} 页调整` }); autosaveState.value = '已创建版本'; await loadVersions(); WorkspaceMessage.success('项目版本已保存') } catch (error) { WorkspaceMessage.error(error?.message || '版本保存失败') } }
-const showVersionDiff = async (version) => { try { versionDiff.value = unwrapResponse(await getProjectVersionDiff(projectId.value, version.id || version.version_id)) } catch (error) { WorkspaceMessage.error(error?.message || '差异加载失败') } }
-const restoreVersion = async (version) => { try { await restoreProjectVersion(projectId.value, version.id || version.version_id); WorkspaceMessage.success('已恢复历史版本'); await loadVersions() } catch (error) { WorkspaceMessage.error(error?.message || '版本恢复失败') } }
+const createVersion = async () => {
+  if (!projectId.value) return WorkspaceMessage.warning('当前是临时课件，生成项目后才能保存版本')
+  try {
+    clearTimeout(autosaveTimer)
+    // 严格按“当前页 → 页面顺序 → 版本快照”执行，保证刚输入的内容不会落在版本之外。
+    if (orderSavePromise) {
+      const orderResult = await orderSavePromise
+      if (orderResult !== true) throw new Error('页面顺序保存失败，未创建版本')
+    }
+    await persistCurrentSlide({ throwOnError: true })
+    await persistSlideOrder({ throwOnError: true })
+    await saveProjectVersion(projectId.value, { description: `保存第 ${selectedSlide.value + 1} 页调整` })
+    autosaveState.value = '已创建版本'
+    await loadVersions()
+    WorkspaceMessage.success('项目版本已保存')
+  } catch (error) {
+    WorkspaceMessage.error(error?.message || '版本保存失败')
+  }
+}
+const showVersionDiff = async (version) => {
+  try {
+    versionDiff.value = unwrapResponse(await getProjectVersionDiff(projectId.value, version.id || version.version_id))
+  } catch (error) { WorkspaceMessage.error(error?.message || '差异加载失败') }
+}
+const restoreVersion = async (version) => {
+  try {
+    const restored = unwrapResponse(await restoreProjectVersion(projectId.value, version.id || version.version_id))
+    project.value = { ...(project.value || {}), ...(restored || {}) }
+    versionDiff.value = null
+    // 恢复接口会重建页面记录并生成新的页面 ID，不能继续沿用内存中的旧画布数据。
+    await loadProject()
+    await loadVersions()
+    WorkspaceMessage.success('已恢复历史版本，画布已刷新')
+  } catch (error) { WorkspaceMessage.error(error?.message || '版本恢复失败') }
+}
 const grantPermission = async () => { const userId = Number(permissionUserId.value); if (!Number.isInteger(userId) || userId <= 0) return WorkspaceMessage.warning('请输入有效用户 ID'); try { await addProjectPermission(projectId.value, { user_id: userId }); permissionUserId.value = ''; permissionDialogVisible.value = false; WorkspaceMessage.success('协作者已添加') } catch (error) { WorkspaceMessage.error(error?.message || '授权失败') } }
-watch(slides, () => { if (!projectId.value || testCaseBootstrapping.value || hydratingProject.value || savingPage.value) return; autosaveState.value = '待保存'; clearTimeout(autosaveTimer); autosaveTimer = setTimeout(persistCurrentSlide, 700) }, { deep: true })
+const projectRecordsFromResponse = (response) => {
+  const data = unwrapResponse(response)
+  if (Array.isArray(data)) return data
+  return data?.records || data?.items || data?.list || data?.projects || []
+}
+const loadWorkspaceProjects = async () => {
+  projectListLoading.value = true
+  try { workspaceProjects.value = projectRecordsFromResponse(await listProjects({ page: 1, size: 50 })) }
+  catch (error) { WorkspaceMessage.error(error?.message || '项目列表加载失败') }
+  finally { projectListLoading.value = false }
+}
+const openProjectManager = async () => {
+  projectNameDraft.value = String(project.value?.project_name || current.value?.title || '')
+  projectManagerVisible.value = true
+  await loadWorkspaceProjects()
+}
+const renameWorkspaceProject = async () => {
+  if (!projectId.value) return WorkspaceMessage.warning('当前是临时课件，生成项目后才能重命名')
+  const name = projectNameDraft.value.trim()
+  if (!name) return WorkspaceMessage.warning('请输入项目名称')
+  projectActionLoading.value = true
+  try {
+    const updated = unwrapResponse(await patchProject(projectId.value, {
+      project_name: name,
+      current_version: Number(project.value?.current_version || 1),
+    }))
+    project.value = { ...(project.value || {}), ...(updated || {}), project_name: updated?.project_name || name }
+    WorkspaceMessage.success('项目名称已保存')
+    await loadWorkspaceProjects()
+  } catch (error) { WorkspaceMessage.error(error?.message || '项目重命名失败') }
+  finally { projectActionLoading.value = false }
+}
+const copyWorkspaceProject = async () => {
+  if (!projectId.value) return WorkspaceMessage.warning('当前是临时课件，生成项目后才能复制')
+  projectActionLoading.value = true
+  try {
+    await copyProject(projectId.value, { new_name: `${projectNameDraft.value.trim() || project.value?.project_name || '未命名课件'} 副本` })
+    WorkspaceMessage.success('项目副本已创建')
+    await loadWorkspaceProjects()
+  } catch (error) { WorkspaceMessage.error(error?.message || '复制项目失败') }
+  finally { projectActionLoading.value = false }
+}
+const openWorkspaceProject = async (item) => {
+  const id = item?.id || item?.project_id
+  if (!id) return
+  projectManagerVisible.value = false
+  if (String(id) === String(projectId.value)) return
+  await router.push({
+    path: '/main/workspace',
+    query: { projectId: String(id) },
+  })
+}
+const archiveWorkspaceProject = async (id = projectId.value) => {
+  if (!id) return
+  projectActionLoading.value = true
+  try {
+    await archiveProject(id)
+    WorkspaceMessage.success('项目已归档')
+    if (String(id) === String(projectId.value)) { projectManagerVisible.value = false; goHome(); return }
+    await loadWorkspaceProjects()
+  } catch (error) { WorkspaceMessage.error(error?.message || '归档项目失败') }
+  finally { projectActionLoading.value = false }
+}
+const restoreWorkspaceProject = async (id) => {
+  if (!id) return
+  projectActionLoading.value = true
+  try { await restoreProject(id); WorkspaceMessage.success('项目已恢复'); await loadWorkspaceProjects() }
+  catch (error) { WorkspaceMessage.error(error?.message || '恢复项目失败') }
+  finally { projectActionLoading.value = false }
+}
+const removeWorkspaceProject = async (id = projectId.value) => {
+  if (!id) return
+  try { await ElMessageBox.confirm('删除后可通过项目恢复接口找回。确定删除此项目吗？', '删除项目', { type: 'warning', confirmButtonText: '删除', cancelButtonText: '取消' }) }
+  catch { return }
+  projectActionLoading.value = true
+  try {
+    await deleteProject(id)
+    WorkspaceMessage.success('项目已删除')
+    if (String(id) === String(projectId.value)) { projectManagerVisible.value = false; goHome(); return }
+    await loadWorkspaceProjects()
+  } catch (error) { WorkspaceMessage.error(error?.message || '删除项目失败') }
+  finally { projectActionLoading.value = false }
+}
+const scheduleWorkspaceAutosave = (delay = 700, { force = false } = {}) => {
+  if (!projectId.value || testCaseBootstrapping.value || hydratingProject.value) return
+  clearTimeout(autosaveTimer)
+  autosaveState.value = '待保存'
+  autosaveTimer = setTimeout(() => {
+    autosaveTimer = null
+    if (!projectId.value || hydratingProject.value) return
+    if (savingPage.value || pageSavePromise || orderSavePromise) {
+      autosaveQueued = true
+      return
+    }
+    const structurePending = localStructureVersion > savedStructureVersion
+    const contentPending = force || localChangeVersion > savedChangeVersion
+    if (structurePending) void persistSlideOrder()
+    else if (contentPending) void persistCurrentSlide()
+  }, delay)
+}
+watch(slides, () => {
+  if (!projectId.value || testCaseBootstrapping.value || hydratingProject.value || savingPage.value) return
+  scheduleWorkspaceAutosave(700, { force: true })
+}, { deep: true })
 watch(selectedSlide, () => {
   selectedElementId.value = null
+  pendingHtmlPanelSelection = null
   htmlSelectionRestoreKey.value = ''
   htmlElements.value = []
   htmlSelectedElementId.value = null
   htmlSelectedElement.value = null
 })
 onBeforeUnmount(() => clearTimeout(autosaveTimer))
-const workspaceFlowQuery = (targetProjectId = projectId.value) => ({
-  ...(route.query.preview ? { preview: '1' } : {}),
+const workspaceFlowQuery = (targetProjectId = projectId.value) => {
+  const context = workspaceContextPayload()
+  return {
   ...(route.query.testCase ? { testCase: route.query.testCase } : {}),
   ...(route.query.templateTitle ? { templateTitle: route.query.templateTitle } : {}),
   ...(route.query.pptTheme ? { pptTheme: route.query.pptTheme } : {}),
+  ...(sessionId.value ? { sessionId: String(sessionId.value) } : {}),
+  ...(context.resource_ids.length ? { resourceIds: JSON.stringify(context.resource_ids) } : {}),
+  workspaceContext: JSON.stringify(context),
+  ...(context.community?.id ? { communityId: String(context.community.id) } : {}),
+  ...(context.community?.type ? { communityType: String(context.community.type) } : {}),
   ...(targetProjectId ? { projectId: String(targetProjectId) } : {}),
   // 导出中心消费此标记后会自动完成“快照 → 预检 → 创建任务”。
   autoExport: '1',
-})
-const goHome = () => router.push({ path: '/main', query: route.query.preview ? { preview: '1' } : {} })
-const createWorkspaceProjectForExport = async () => {
+  }
+}
+const goHome = () => router.push({ path: '/main' })
+const createWorkspaceProject = async () => {
   autosaveState.value = '正在创建项目…'
+  const context = workspaceContextPayload()
   const created = unwrapResponse(await createProject({
     project_name: String(project.value?.project_name || route.query.templateTitle || `${current.value.title}教学课件`),
     project_type: 'mixed',
     status: 'editing',
+    edit_history: JSON.stringify({ workspace_context: context }),
   }))
   const createdId = created?.id || created?.project_id
   if (!createdId) throw new Error('项目创建接口未返回项目 ID')
 
   await batchCreateProjectPages(createdId, slides)
   project.value = { ...created, id: createdId }
+  savedChangeVersion = localChangeVersion
+  savedStructureVersion = localStructureVersion
+  autosaveQueued = false
   autosaveState.value = '已保存 · 项目已落库'
   return String(createdId)
+}
+const persistGeneratedPresentationProject = async () => {
+  if (projectId.value) return String(projectId.value)
+  const createdId = await createWorkspaceProject()
+  // 保留会话与主题参数，便于返回主对话；后续工作台加载则直接从项目页恢复。
+  await router.replace({ query: { ...route.query, projectId: createdId } })
+  return createdId
 }
 const exportProject = async () => {
   clearTimeout(autosaveTimer)
   try {
-    if (import.meta.env.DEV) {
-      const { ensureDevelopmentPreviewSession } = await import('../utils/previewSession.js')
-      await ensureDevelopmentPreviewSession(true)
+    // 导出统一使用当前真实登录会话，不再在开发环境强制切换到预览账号。
+    const targetProjectId = projectId.value ? String(projectId.value) : await createWorkspaceProject()
+    if (projectId.value) {
+      await persistCurrentSlide({ throwOnError: true })
+      await persistSlideOrder({ throwOnError: true })
     }
-    const targetProjectId = projectId.value ? String(projectId.value) : await createWorkspaceProjectForExport()
-    if (projectId.value) await persistCurrentSlide()
     await router.push({ path: '/main/exports', query: workspaceFlowQuery(targetProjectId) })
   } catch (error) {
     autosaveState.value = '导出准备失败'
     WorkspaceMessage.error(error?.message || '项目保存失败，无法创建导出任务')
   }
 }
-const addSlide = () => { slides.push({ ...defaultSlide(slides.length + 1), eyebrow: '新建内容' }); selectedSlide.value = slides.length - 1 }
-const copySlide = () => {
+const addSlide = async ({ insertAt = slides.length, title = '', slideData = null } = {}) => {
+  const safeInsertAt = Math.max(0, Math.min(slides.length, Number(insertAt) || 0))
+  const slide = {
+    ...defaultSlide(safeInsertAt + 1),
+    ...(slideData && typeof slideData === 'object' ? slideData : {}),
+    title: String(title || '').trim() || `新建页面 ${safeInsertAt + 1}`,
+    eyebrow: slideData?.html
+      ? `${String(safeInsertAt + 1).padStart(2, '0')} / HTML PPT`
+      : slideData?.eyebrow || (slideData?.pageType === 'cover' ? '课程封面' : '新建内容'),
+    slideNo: safeInsertAt + 1,
+    slide_no: safeInsertAt + 1,
+  }
+  slides.splice(safeInsertAt, 0, slide)
+  slides.forEach((item, index) => {
+    item.slideNo = index + 1
+    item.slide_no = index + 1
+    if (item.html) item.eyebrow = `${String(index + 1).padStart(2, '0')} / HTML PPT`
+  })
+  selectedSlide.value = safeInsertAt
+  markSlideComponentDirty(slide, 'page:add', { structure: true })
+  if (sessionId.value && !projectId.value) saveCurrentPresentationDraft()
+  if (projectId.value) await syncPageStructure({ successMessage: '页面已保存' })
+  return slide
+}
+const copySlide = async () => {
+  if (!current.value) return
   const copiedSlide = {
     ...current.value,
     title: `${current.value.title} 副本`,
@@ -2947,7 +5065,15 @@ const copySlide = () => {
     dirty: true,
   }
   slides.splice(selectedSlide.value + 1, 0, copiedSlide)
+  slides.forEach((item, index) => {
+    item.slideNo = index + 1
+    item.slide_no = index + 1
+    if (item.html) item.eyebrow = `${String(index + 1).padStart(2, '0')} / HTML PPT`
+  })
   selectedSlide.value++
+  markSlideComponentDirty(copiedSlide, 'page:copy', { structure: true })
+  if (sessionId.value && !projectId.value) saveCurrentPresentationDraft()
+  if (projectId.value) await syncPageStructure({ successMessage: '页面副本已保存' })
 }
 const removeSlide = async () => {
   if (slides.length === 1) return WorkspaceMessage.warning('课件至少保留一页')
@@ -2957,28 +5083,122 @@ const removeSlide = async () => {
     catch (error) { WorkspaceMessage.error(error?.message || '页面删除失败'); return }
   }
   slides.splice(selectedSlide.value, 1)
+  slides.forEach((item, index) => {
+    item.slideNo = index + 1
+    item.slide_no = index + 1
+    if (item.html) item.eyebrow = `${String(index + 1).padStart(2, '0')} / HTML PPT`
+  })
   selectedSlide.value = Math.max(0, selectedSlide.value - 1)
+  markSlideComponentDirty(slides[selectedSlide.value], 'page:delete', { structure: true })
+  if (sessionId.value && !projectId.value) saveCurrentPresentationDraft()
+  if (projectId.value) await persistSlideOrder()
+}
+const openProjectFromIntent = async (text) => {
+  const normalizedText = String(text || '').trim()
+  await openProjectManager()
+  const requestedName = normalizedText
+    .replace(/^(请|麻烦|帮我|直接)?\s*(打开|切换|进入)\s*(项目)?/i, '')
+    .replace(/[“”"「」『』]/g, '')
+    .trim()
+  if (requestedName) {
+    const target = workspaceProjects.value.find((item) => {
+      const name = String(item?.project_name || item?.name || '').trim()
+      return name && (name === requestedName || name.includes(requestedName) || requestedName.includes(name))
+    })
+    if (target) {
+      await openWorkspaceProject(target)
+      return
+    }
+  }
+  WorkspaceMessage.info('已打开项目管理，请选择要进入的项目。')
 }
 const sendAssistantMessage = async () => {
   const text = prompt.value.trim()
   if (!text || isAssistantSubmitting.value) return
   intentSubmitting.value = true
-  let mode = 'discussion'
+  let result = { operation: 'discussion' }
   try {
-    mode = await resolveAssistantMode(text)
+    result = await resolveAssistantIntent(text)
   } finally {
     intentSubmitting.value = false
   }
-  if (mode === 'revision') return submitRevision()
+  if (result.operation === 'export' || result.operation === 'open_project') {
+    messages.push({ role: 'user', text, includeInContext: false, kind: 'workspace-command' })
+    prompt.value = ''
+    if (result.operation === 'export') {
+      messages.push({ role: 'assistant', text: '正在准备导出当前课件…', includeInContext: false, kind: 'workspace-command-result' })
+      return exportProject()
+    }
+    messages.push({ role: 'assistant', text: '正在打开项目管理…', includeInContext: false, kind: 'workspace-command-result' })
+    return openProjectFromIntent(text)
+  }
+  if (['modify_page', 'modify_component', 'generate_content'].includes(result.operation)) return submitRevision({ operation: result.operation })
   return submitDiscussion()
 }
+/** 工作台语音输入：有正式 AI 会话时走 API-13A，确保语音和文字共享同一条会话上下文。 */
+const handleWorkspaceVoice = async (file) => {
+  if (!file || workspaceVoiceSubmitting.value || isAssistantSubmitting.value) return
+  workspaceVoiceSubmitting.value = true
+  try {
+    if (!sessionId.value) {
+      // 直接打开项目时可能没有备课会话；此时仍允许录音转写，随后由教师发送进入 API-13B。
+      const formData = new FormData()
+      formData.append('file', file)
+      formData.append('language', 'zh')
+      const response = await transcribeAudio(formData)
+      const transcript = String(response?.data?.text || response?.text || '').trim()
+      if (!transcript) throw new Error('未能识别到有效语音')
+      prompt.value = prompt.value.trim() ? `${prompt.value.trim()} ${transcript}` : transcript
+      WorkspaceMessage.success('语音已转写，请确认后发送')
+      return
+    }
+
+    const context = workspaceContextPayload()
+    const formData = new FormData()
+    formData.append('file', file)
+    formData.append('language', 'zh')
+    formData.append('resource_ids', JSON.stringify(context.resource_ids || []))
+    formData.append('enable_rag', String(Boolean(context.resource_ids?.length)))
+    formData.append('enable_web', 'false')
+    formData.append('known_context', JSON.stringify({
+      page: current.value ? {
+        page_id: current.value.pageId || current.value.page_id || current.value.componentId || null,
+        title: current.value.title || '',
+        slide_no: selectedSlide.value + 1,
+      } : null,
+      workspace_context: context,
+    }))
+    formData.append('context_summary', workspaceDiscussionContext())
+    const response = await sendAiSessionAudioMessage(sessionId.value, formData)
+    const conversation = unwrapResponse(response) || {}
+    const storedMessages = parseJson(conversation.messages, [])
+      .filter((message) => message && (message.role === 'user' || message.role === 'assistant') && String(message.content || '').trim())
+    const latestUser = [...storedMessages].reverse().find((message) => message.role === 'user')
+    const latestAssistant = [...storedMessages].reverse().find((message) => message.role === 'assistant')
+    if (latestUser) {
+      const text = String(latestUser.content).trim()
+      prompt.value = text
+      messages.push({ role: 'user', text, includeInContext: false, kind: 'voice-session' })
+    }
+    if (latestAssistant) {
+      messages.push({ role: 'assistant', text: String(latestAssistant.content).trim(), includeInContext: false, kind: 'voice-session-reply' })
+    }
+    WorkspaceMessage.success('语音已上传，AI 已沿用当前工作台会话继续处理；确认文字后点击发送即可执行页面操作')
+  } catch (error) {
+    WorkspaceMessage.error(error?.message || '语音会话提交失败，请检查麦克风权限后重试')
+  } finally {
+    workspaceVoiceSubmitting.value = false
+    void scrollAssistantConversation()
+  }
+}
+const handleWorkspaceVoiceError = (error) => WorkspaceMessage.error(error?.message || '录音失败，请检查浏览器麦克风权限')
 /** 工作台 AI 输入快捷键：Enter 发送，Shift+Enter 换行，兼容中文输入法候选确认。 */
 const handleAssistantKeydown = (event) => {
   if (event.isComposing || event.keyCode === 229 || event.shiftKey) return
   event.preventDefault()
   sendAssistantMessage()
 }
-const selectSlide = (index) => { selectedSlide.value = index; selectedElementId.value = null; activePanel.value = 'content'; loadProjectPageDetail(index) }
+const selectSlide = (index) => { selectedSlide.value = index; selectedElementId.value = null; pendingHtmlPanelSelection = null; loadProjectPageDetail(index) }
 </script>
 
 <template>
@@ -2990,43 +5210,89 @@ const selectSlide = (index) => { selectedSlide.value = index; selectedElementId.
       :project-id="route.query.projectId"
       :html-mode="Boolean(current.html)"
       @back="goHome"
-      @preview="openPreview"
       @generate-interactive="openInteractiveDialog"
+      @lesson-plan="openLessonPlanEditor"
+      @project-manage="openProjectManager"
       @export="exportProject"
       @tool-select="handleToolSelect"
     />
 
     <div class="workspace-grid">
       <aside class="assistant-panel" aria-label="AI 教学助手">
-        <header><div class="assistant-mark">智</div><div><strong>AI 教学助手</strong><span>正在编辑第 {{ selectedSlide + 1 }} 页</span></div></header>
+        <header><div class="assistant-mark">智</div><div><strong>AI 教学助手</strong><span>正在编辑第 {{ selectedSlide + 1 }} 页</span></div><el-button text size="small" class="context-manager-trigger" @click="openWorkspaceContextManager">上下文</el-button></header>
         <div class="assistant-intent-status" :class="inferredAssistantMode" role="status" aria-live="polite">
           <span class="assistant-intent-dot" aria-hidden="true"></span>
           <span>{{ assistantIntentHint }}</span>
         </div>
         <p class="assistant-mode-hint">明确的页面操作会执行修改；疑问、分析和建议只进行讨论。</p>
-        <div class="assistant-actions"><el-button type="primary" plain @click="openInteractiveDialog">生成互动模块</el-button></div>
-        <section ref="assistantConversationRef" class="conversation"><article v-for="(message, index) in messages" :key="index" :class="['message', message.role]"><span v-if="message.role === 'assistant'">智</span><p>{{ message.text }}</p></article></section>
-        <div v-if="revisionSubmitting" class="assistant-execution" role="status" aria-live="polite">
-          <span class="assistant-execution-spinner" aria-hidden="true"><i></i></span>
-          <div>
-            <strong>AI 正在执行页面修改</strong>
-            <span class="assistant-execution-detail">{{ revisionStage || '正在分析当前页面…' }}</span>
+        <section ref="assistantConversationRef" class="conversation workspace-conversation">
+          <TransitionGroup name="workspace-msg-enter" tag="div" class="workspace-message-list">
+            <article v-for="(message, index) in messages" :key="`${message.kind || message.role}-${index}`" :class="['workspace-chat-message', `is-${message.role}`]">
+              <div v-if="message.role === 'user'" class="workspace-user-bubble">{{ message.text }}</div>
+              <div v-else class="workspace-ai-bubble">
+                <div v-if="message.text" class="workspace-ai-markdown">
+                  <MarkdownRender mode="chat" :content="message.text" :final="!message.streaming" :fade="false" max-live-nodes="0" />
+                </div>
+                <div v-else-if="message.streaming" class="workspace-bubble-typing" role="status" aria-label="AI 正在回复"><i></i><i></i><i></i></div>
+              </div>
+            </article>
+          </TransitionGroup>
+          <div v-if="intentSubmitting || revisionSubmitting" class="workspace-streaming-indicator" role="status" aria-live="polite">
+            <span class="workspace-dot-pulse" aria-hidden="true"><i></i><i></i><i></i></span>
+            <span>{{ revisionSubmitting ? (revisionStage || '正在执行页面修改…') : '正在理解本次请求…' }}</span>
           </div>
-          <span class="assistant-execution-dots" aria-hidden="true"><i></i><i></i><i></i></span>
-        </div>
-        <footer class="composer"><el-input v-model="prompt" type="textarea" :rows="3" resize="none" :disabled="isAssistantSubmitting" :placeholder="assistantPlaceholder" @keydown.enter="handleAssistantKeydown" /><div><span>{{ assistantStatusText }}</span><el-button type="primary" circle :icon="Promotion" :loading="isAssistantSubmitting" :disabled="isAssistantSubmitting || !prompt.trim()" :aria-label="inferredAssistantMode === 'revision' ? '发送页面修改' : '发送讨论'" @click="sendAssistantMessage" /></div></footer>
+        </section>
+        <footer class="composer">
+          <el-input v-model="prompt" type="textarea" :rows="3" resize="none" :disabled="isAssistantSubmitting" :placeholder="assistantPlaceholder" @keydown.enter="handleAssistantKeydown" />
+          <div class="workspace-composer-actions">
+            <span>{{ assistantStatusText }}</span>
+            <div class="workspace-composer-buttons">
+              <VoiceRecorderButton
+                :disabled="isAssistantSubmitting"
+                :busy="workspaceVoiceSubmitting"
+                label="上传语音并继续工作台会话"
+                @recorded="handleWorkspaceVoice"
+                @error="handleWorkspaceVoiceError"
+              />
+              <el-button type="primary" circle :icon="Promotion" :loading="isAssistantSubmitting" :disabled="isAssistantSubmitting || !prompt.trim()" aria-label="发送消息" @click="sendAssistantMessage" />
+            </div>
+          </div>
+        </footer>
       </aside>
 
       <section class="editor-stage">
         <aside class="slide-rail" aria-label="课件页面列表">
-          <button v-for="(slide, index) in slides" :key="`${slide.title}-${index}`" :class="{ active: selectedSlide === index }" @click="selectSlide(index)">
+          <button
+            v-for="(slide, index) in slides"
+            :key="slide.pageId || slide.componentId || `${slide.title}-${slide.html ? 'html' : 'slide'}`"
+            draggable="true"
+            :class="{ active: selectedSlide === index, dragging: draggingSlideIndex === index, 'drop-before': slideDropIndex === index, 'drop-after': slideDropIndex === index + 1 }"
+            :aria-label="`第 ${index + 1} 页：${slide.title}，可拖动调整顺序`"
+            title="拖动页面可调整顺序"
+            @dragstart="startSlideDrag(index, $event)"
+            @dragover="handleSlideDragOver(index, $event)"
+            @drop="dropSlide(index, $event)"
+            @dragend="clearSlideDragState"
+            @click="selectSlide(index)"
+          >
             <span>{{ String(index + 1).padStart(2, '0') }}</span>
             <div class="thumbnail" :style="{ '--thumb': themes.find((item) => item.id === slide.theme)?.color }"><i></i><b>{{ slide.title }}</b></div>
           </button>
           <el-button text :icon="Plus" @click="addSlide">添加页面</el-button>
-        </aside>
-        <main class="canvas-area" @click="handleCanvasAreaClick">
-          <div v-if="revisionSubmitting" class="revision-overlay" role="status" aria-live="polite" @click.stop>
+       </aside>
+       <main class="canvas-area" @click="handleCanvasAreaClick">
+           <div v-if="projectId && projectLoadError" class="workspace-load-error" role="alert" @click.stop>
+             <div class="workspace-load-error-card">
+               <span class="workspace-load-error-icon" aria-hidden="true">!</span>
+               <strong>课件暂时无法打开</strong>
+               <p>{{ projectLoadError }}</p>
+               <div class="workspace-load-error-actions">
+                 <el-button type="primary" :loading="hydratingProject" @click="retryProjectLoad">重新加载</el-button>
+                 <el-button @click="goHome">返回项目列表</el-button>
+               </div>
+             </div>
+           </div>
+           <div v-if="revisionSubmitting" class="revision-overlay" role="status" aria-live="polite" @click.stop>
             <div class="revision-overlay-card">
               <span class="revision-orbit" aria-hidden="true"><i></i><i></i><i></i></span>
               <div>
@@ -3042,10 +5308,13 @@ const selectSlide = (index) => { selectedSlide.value = index; selectedElementId.
             <span v-if="placementMode" class="canvas-placement-status"><b>{{ placementInstruction }}</b><small>Esc 取消</small></span>
             <span>16:9 · 自适应窗口</span>
           </div>
-          <article v-if="current.html" class="slide-canvas html-slide-canvas" :style="{ '--canvas-zoom': canvasZoom / 100 }" :aria-label="`${current.title} HTML PPT`">
+          <div ref="canvasAreaRef" class="canvas-scroll-viewport" @wheel="handleCanvasWheel">
+          <div class="canvas-scene" :style="{ '--canvas-zoom': canvasZoom / 100, minWidth: `${Math.ceil(780 * canvasZoom / 100 + 144)}px`, minHeight: `${Math.ceil(438.75 * canvasZoom / 100 + 144)}px` }">
+          <div class="canvas-slide-stage" :style="{ width: `${Math.ceil(780 * canvasZoom / 100)}px`, height: `${Math.ceil(438.75 * canvasZoom / 100)}px` }">
+          <article v-if="current.html" class="slide-canvas html-slide-canvas" :style="pageCanvasStyle(current, true)" :aria-label="`${current.title} HTML PPT`">
             <iframe class="editable-html-frame" :srcdoc="htmlCanvasFrameSource" sandbox="allow-same-origin" :title="`${current.title} HTML PPT`" @load="fitHtmlFrame"></iframe>
           </article>
-          <article v-else class="slide-canvas" :class="[`layout-${current.layout}`, { 'is-placing': placementMode }]" :style="{ '--accent': theme.color, '--canvas-zoom': canvasZoom / 100 }" @pointerdown="startCanvasPlacement" @pointermove="handleCanvasPlacementMove" @click="handleSlideCanvasClick">
+          <article v-else class="slide-canvas" :class="[`layout-${current.layout}`, { 'is-placing': placementMode }]" :style="pageCanvasStyle(current, true)" @pointerdown="startCanvasPlacement" @pointermove="handleCanvasPlacementMove" @click="handleSlideCanvasClick">
             <span class="slide-eyebrow">{{ current.eyebrow }}</span>
             <template v-for="element in current.elements" :key="element.id">
               <h1 v-if="element.type === 'text' && element.target === 'title'" :data-element-id="element.id" :class="elementClass(element)" :style="elementStyle(element.id)" @pointerdown="startElementDrag(element.id, $event)" @click.stop="selectElement(element.id, $event)">{{ elementContent(element) }}</h1>
@@ -3090,10 +5359,20 @@ const selectSlide = (index) => { selectedSlide.value = index; selectedElementId.
                 </div>
               </div>
               <div v-else-if="['audio', 'video', 'h5', 'subject'].includes(element.type)" :data-element-id="element.id" class="workspace-widget" :class="[`widget-${element.type}`, elementClass(element)]" :style="elementStyle(element.id)" @pointerdown="startElementDrag(element.id, $event)" @click.stop="selectElement(element.id, $event)">
-                <span class="widget-icon">{{ element.type === 'audio' ? '♫' : element.type === 'video' ? '▶' : element.type === 'h5' ? 'H5' : '⌁' }}</span>
-                <div><strong>{{ elementContent(element) || element.name }}</strong><small>{{ elementTypeLabels[element.type] }}</small></div>
-                <button v-if="element.type === 'h5' && element.html" type="button" class="widget-action widget-action-button" @click.stop="previewInteractiveElement(element)">预览</button>
-                <span v-else class="widget-action">{{ element.type === 'audio' ? '播放' : element.type === 'video' ? '预览' : '打开' }}</span>
+                <template v-if="element.type === 'audio'">
+                  <audio v-if="element.url || element.src" class="workspace-media-player" :src="element.url || element.src" :controls="element.controls !== false" :autoplay="Boolean(element.autoplay)" preload="metadata" @pointerdown.stop @click.stop="selectElement(element.id, $event)" />
+                  <span v-else class="widget-empty-state">尚未添加音频文件，请在右侧选择本地文件</span>
+                </template>
+                <template v-else-if="element.type === 'video'">
+                  <video v-if="element.url || element.src" class="workspace-media-player" :src="element.url || element.src" :controls="element.controls !== false" :autoplay="Boolean(element.autoplay)" playsinline preload="metadata" @pointerdown.stop @click.stop="selectElement(element.id, $event)" />
+                  <span v-else class="widget-empty-state">尚未添加视频文件，请在右侧选择本地文件</span>
+                </template>
+                <template v-else-if="element.type === 'h5'">
+                  <iframe v-if="element.html" class="workspace-h5-frame" :srcdoc="element.html" sandbox="allow-scripts allow-forms allow-pointer-lock" :title="elementContent(element) || 'H5 互动内容'" @pointerdown.stop="selectElement(element.id, $event)" />
+                  <span v-else class="widget-empty-state">尚未添加 H5 内容，请在右侧粘贴 HTML</span>
+                  <button v-if="element.html" type="button" class="widget-action widget-action-button" @click.stop="previewInteractiveElement(element)">放大预览</button>
+                </template>
+                <SubjectToolRuntime v-else :element="element" />
               </div>
               <div v-else-if="element.type === 'table'" :data-element-id="element.id" class="workspace-widget table-widget" :class="elementClass(element)" :style="elementStyle(element.id)" @pointerdown="startElementDrag(element.id, $event)" @click.stop="selectElement(element.id, $event)">
                 <strong>{{ elementContent(element) || '数据表格' }}</strong>
@@ -3124,15 +5403,20 @@ const selectSlide = (index) => { selectedSlide.value = index; selectedElementId.
               </div>
             </div>
             <div v-else-if="['audio', 'video', 'h5', 'subject'].includes(placementPreviewElement?.type)" class="workspace-widget canvas-element placement-element-preview" :class="`widget-${placementPreviewElement.type}`" :style="placementPreviewStyle" aria-hidden="true">
-              <span class="widget-icon">{{ placementPreviewElement.type === 'audio' ? '♫' : placementPreviewElement.type === 'video' ? '▶' : placementPreviewElement.type === 'h5' ? 'H5' : '⌁' }}</span>
-              <div><strong>{{ elementContent(placementPreviewElement) || placementPreviewElement.name }}</strong><small>{{ elementTypeLabels[placementPreviewElement.type] }}</small></div>
-              <span class="widget-action">{{ placementPreviewElement.type === 'audio' ? '播放' : placementPreviewElement.type === 'video' ? '预览' : '打开' }}</span>
+              <audio v-if="placementPreviewElement.type === 'audio' && (placementPreviewElement.url || placementPreviewElement.src)" class="workspace-media-player" :src="placementPreviewElement.url || placementPreviewElement.src" controls preload="metadata" />
+              <video v-else-if="placementPreviewElement.type === 'video' && (placementPreviewElement.url || placementPreviewElement.src)" class="workspace-media-player" :src="placementPreviewElement.url || placementPreviewElement.src" controls playsinline preload="metadata" />
+              <iframe v-else-if="placementPreviewElement.type === 'h5' && placementPreviewElement.html" class="workspace-h5-frame" :srcdoc="placementPreviewElement.html" sandbox="allow-scripts allow-forms" title="H5 互动内容" />
+              <SubjectToolRuntime v-else-if="placementPreviewElement.type === 'subject'" :element="placementPreviewElement" compact />
+              <span v-else class="widget-empty-state">请在右侧配置{{ elementTypeLabels[placementPreviewElement.type] }}</span>
             </div>
             <div v-else-if="placementPreviewElement?.type === 'table'" class="workspace-widget table-widget canvas-element placement-element-preview" :style="placementPreviewStyle" aria-hidden="true">
               <strong>{{ elementContent(placementPreviewElement) || '数据表格' }}</strong>
               <div class="mock-table-grid"><span v-for="(cell, cellIndex) in (placementPreviewElement.data?.flat() || [])" :key="`placement-cell-${cellIndex}`">{{ cell }}</span></div>
             </div>
           </article>
+          </div>
+          </div>
+          </div>
           <div class="canvas-controls" @click.stop>
             <button type="button" aria-label="缩小画布" title="缩小画布" :disabled="canvasZoom <= CANVAS_ZOOM_MIN" @click="adjustCanvasZoom(-CANVAS_ZOOM_STEP)">−</button>
             <span class="canvas-zoom-field" role="group" aria-label="画布缩放比例">
@@ -3140,31 +5424,44 @@ const selectSlide = (index) => { selectedSlide.value = index; selectedElementId.
               <small>%</small>
             </span>
             <button type="button" aria-label="放大画布" title="放大画布" :disabled="canvasZoom >= CANVAS_ZOOM_MAX" @click="adjustCanvasZoom(CANVAS_ZOOM_STEP)">+</button>
-            <button type="button" aria-label="全屏预览" title="全屏预览" @click="openPreview"><el-icon><FullScreen /></el-icon></button>
+            <button type="button" aria-label="将画布回到中心" title="将画布回到中心" @click="centerCanvasView"><el-icon><Aim /></el-icon></button>
+          </div>
+          <div v-if="projectId" class="project-utilities" aria-label="项目操作">
+            <span>{{ autosaveState }}</span>
+            <el-button v-if="revisionUndoSnapshot?.length" text size="small" type="warning" @click="undoLastAiRevision">撤销本次 AI 修改</el-button>
+            <el-button text size="small" @click="openQualityPanel">质量建议</el-button>
+            <el-button text size="small" @click="createVersion">保存版本</el-button>
+            <el-button text size="small" @click="loadVersions">版本历史</el-button>
+            <el-button text size="small" @click="permissionDialogVisible = true">协作授权</el-button>
           </div>
         </main>
       </section>
 
       <WorkspacePropertiesPanel
-        :slide="current"
         :elements="workspaceElements"
         :selected-element="workspaceSelectedElement"
         :selected-element-id="workspaceSelectedElementId"
-        :active-panel="activePanel"
+        :page-number="selectedSlide + 1"
+        :page="current"
         :themes="themes"
         :layouts="layouts"
-        :page-number="selectedSlide + 1"
-        @update:active-panel="activePanel = $event"
+        :resources="workspaceResources"
+        :resources-loading="workspaceResourcesLoading"
         @update-element-style="updateElementStyle"
         @update-element-position="updateElementPosition"
         @update-element-content="updateElementContent"
         @update-element-field="updateElementField"
         @update-element-data="updateElementData"
-        @update-slide-field="updateSlideField"
         @select-element="selectElementFromPanel"
         @clear-element="clearElementSelection"
         @copy-element="copyElement"
         @delete-element="removeElement"
+        @update-page-field="updatePageField"
+        @update-page-theme="updatePageTheme"
+        @update-page-layout="updatePageLayout"
+        @update-page-background="updatePageBackground"
+        @clear-page-background="clearPageBackground"
+        @refresh-resources="loadWorkspaceResources"
         @copy-slide="copySlide"
         @remove-slide="removeSlide"
       />
@@ -3182,9 +5479,9 @@ const selectSlide = (index) => { selectedSlide.value = index; selectedElementId.
           <section v-for="(slide, slideIndex) in slides" :key="`preview-page-${slideIndex}-${slide.title}`" class="preview-page" :class="{ 'is-current': previewSlideIndex === slideIndex }" :data-preview-index="slideIndex">
             <div class="preview-page-heading"><span>第 {{ slideIndex + 1 }} 页</span><strong>{{ slide.title }}</strong></div>
             <div v-if="slide.html" class="html-preview-shell">
-              <iframe :srcdoc="slide.html" sandbox="allow-scripts" :title="`${slide.title} HTML PPT 预览`" class="preview-html-frame" @load="fitPreviewHtmlFrame"></iframe>
+              <iframe :srcdoc="withHtmlPageBackground(slide.html, slide)" sandbox="allow-scripts" :title="`${slide.title} HTML PPT 预览`" class="preview-html-frame" @load="fitPreviewHtmlFrame"></iframe>
             </div>
-            <article v-else class="slide-canvas preview-slide" :class="`layout-${slide.layout}`" :style="{ '--accent': themeForSlide(slide).color }">
+            <article v-else class="slide-canvas preview-slide" :class="`layout-${slide.layout}`" :style="pageCanvasStyle(slide)">
               <span class="slide-eyebrow">{{ slide.eyebrow }}</span>
               <template v-for="element in (slide.elements || [])" :key="`preview-${slideIndex}-${element.id}`">
                 <h1 v-if="element.type === 'text' && element.target === 'title'" :class="previewElementClass(element)" :style="previewElementStyle(element, slide)">{{ previewElementContent(element, slide) }}</h1>
@@ -3196,7 +5493,21 @@ const selectSlide = (index) => { selectedSlide.value = index; selectedElementId.
                 <div v-else-if="element.type === 'shape'" class="shape-element" :class="[previewElementClass(element), `shape-${element.shapeKind || 'rectangle'}`]" :style="previewElementStyle(element, slide)"><svg class="shape-svg" viewBox="0 0 100 100" :preserveAspectRatio="element.shapeKind === 'circle' ? 'xMidYMid meet' : 'none'" aria-hidden="true"><rect v-if="['rectangle', 'rounded'].includes(element.shapeKind)" class="shape-fill" x="4" y="4" width="92" height="92" :rx="element.shapeKind === 'rounded' ? Number(element.style?.borderRadius ?? 14) : 0" :ry="element.shapeKind === 'rounded' ? Number(element.style?.borderRadius ?? 14) : 0" /><circle v-else-if="element.shapeKind === 'circle'" class="shape-fill" cx="50" cy="50" r="46" /><polygon v-else-if="element.shapeKind === 'diamond'" class="shape-fill" points="50,4 96,50 50,96 4,50" /><polygon v-else-if="element.shapeKind === 'triangle'" class="shape-fill" points="50,4 96,96 4,96" /><rect v-else class="shape-fill" x="4" y="4" width="92" height="92" /></svg><span v-if="previewElementContent(element, slide)">{{ previewElementContent(element, slide) }}</span></div>
                 <div v-else-if="element.type === 'image'" class="image-element" :class="previewElementClass(element)" :style="previewElementStyle(element, slide)"><img :src="element.src || createMockImageSrc()" :alt="element.alt || previewElementContent(element, slide) || element.name" /><span v-if="element.style?.showCaption !== false">{{ previewElementContent(element, slide) || '图片 mock' }}</span></div>
                 <div v-else-if="element.type === 'chart'" class="chart-element" :class="previewElementClass(element)" :style="previewElementStyle(element, slide)"><header><strong>{{ previewElementContent(element, slide) || '数据图表' }}</strong><small>DATA</small></header><div class="chart-plot"><div v-for="(item, itemIndex) in (element.data || [])" :key="`preview-${slideIndex}-${element.id}-${itemIndex}`" class="chart-bar"><span class="chart-bar-fill" :style="{ height: `${Math.max(8, Math.min(100, Number(item.value) || 0))}%` }"></span><small>{{ item.label }}</small></div></div></div>
-                <div v-else-if="['audio', 'video', 'h5', 'subject'].includes(element.type)" class="workspace-widget" :class="[`widget-${element.type}`, previewElementClass(element)]" :style="previewElementStyle(element, slide)"><span class="widget-icon">{{ element.type === 'audio' ? '♫' : element.type === 'video' ? '▶' : element.type === 'h5' ? 'H5' : '⌁' }}</span><div><strong>{{ previewElementContent(element, slide) || element.name }}</strong><small>{{ elementTypeLabels[element.type] }}</small></div><span class="widget-action">{{ element.type === 'audio' ? '播放' : element.type === 'video' ? '预览' : '打开' }}</span></div>
+                <div v-else-if="['audio', 'video', 'h5', 'subject'].includes(element.type)" class="workspace-widget" :class="[`widget-${element.type}`, previewElementClass(element)]" :style="previewElementStyle(element, slide)">
+                  <template v-if="element.type === 'audio'">
+                    <audio v-if="element.url || element.src" class="workspace-media-player" :src="element.url || element.src" :controls="element.controls !== false" :autoplay="Boolean(element.autoplay)" preload="metadata" />
+                    <span v-else class="widget-empty-state">未配置音频文件</span>
+                  </template>
+                  <template v-else-if="element.type === 'video'">
+                    <video v-if="element.url || element.src" class="workspace-media-player" :src="element.url || element.src" :controls="element.controls !== false" :autoplay="Boolean(element.autoplay)" playsinline preload="metadata" />
+                    <span v-else class="widget-empty-state">未配置视频文件</span>
+                  </template>
+                  <template v-else-if="element.type === 'h5'">
+                    <iframe v-if="element.html" class="workspace-h5-frame" :srcdoc="element.html" sandbox="allow-scripts allow-forms allow-pointer-lock" :title="previewElementContent(element, slide) || 'H5 互动内容'" />
+                    <span v-else class="widget-empty-state">未配置 H5 内容</span>
+                  </template>
+                  <SubjectToolRuntime v-else :element="element" compact />
+                </div>
                 <div v-else-if="element.type === 'table'" class="workspace-widget table-widget" :class="previewElementClass(element)" :style="previewElementStyle(element, slide)"><strong>{{ previewElementContent(element, slide) || '数据表格' }}</strong><div class="mock-table-grid"><span v-for="(cell, cellIndex) in (element.data?.flat() || [])" :key="`preview-${slideIndex}-${element.id}-${cellIndex}`">{{ cell }}</span></div></div>
               </template>
             </article>
@@ -3205,8 +5516,43 @@ const selectSlide = (index) => { selectedSlide.value = index; selectedElementId.
       </div>
       <template #footer><el-button @click="closePreview">继续编辑</el-button></template>
     </el-dialog>
+    <el-dialog v-model="revisionPreviewVisible" title="确认 AI 整套修改" width="min(900px, 94vw)" :close-on-click-modal="false" :close-on-press-escape="false">
+      <div v-if="pendingDeckRevision" class="revision-preview-dialog">
+        <div class="revision-preview-summary">
+          <div><span>变更摘要</span><strong>{{ pendingDeckRevision.summary }}</strong></div>
+          <span class="revision-preview-count">{{ pendingDeckRevision.operations.length }} 项变更</span>
+        </div>
+        <section class="revision-preview-section">
+          <div class="revision-preview-section-heading"><strong>操作清单</strong><span>API-139A 返回 / 前端校验</span></div>
+          <ul class="revision-operation-list">
+            <li v-for="operation in pendingDeckRevision.operations" :key="operation.id">
+              <el-tag size="small" :type="operation.type === 'delete' ? 'danger' : operation.type === 'add' ? 'success' : operation.type === 'reorder' ? 'warning' : 'info'">{{ operation.label }}</el-tag>
+              <span>{{ operation.description }}</span>
+            </li>
+          </ul>
+        </section>
+        <section class="revision-preview-section">
+          <div class="revision-preview-section-heading"><strong>页面前后对比</strong><span>确认前不会改动画布或项目数据</span></div>
+          <div class="revision-comparison-grid">
+            <div class="revision-comparison-column">
+              <header>修改前 · {{ pendingDeckRevision.before.length }} 页</header>
+              <ol><li v-for="(slide, index) in pendingDeckRevision.before" :key="`before-${index}-${slide.title}`"><b>{{ String(index + 1).padStart(2, '0') }}</b><span>{{ slide.title }}</span></li></ol>
+            </div>
+            <div class="revision-comparison-column is-after">
+              <header>修改后 · {{ pendingDeckRevision.after.length }} 页</header>
+              <ol><li v-for="(slide, index) in pendingDeckRevision.after" :key="`after-${index}-${slide.title}`"><b>{{ String(index + 1).padStart(2, '0') }}</b><span>{{ slide.title }}</span></li></ol>
+            </div>
+          </div>
+        </section>
+      </div>
+      <el-empty v-else description="修改预览已失效，请重新发起修改" />
+      <template #footer>
+        <el-button @click="rejectDeckRevision">拒绝修改</el-button>
+        <el-button type="primary" :disabled="!pendingDeckRevision" @click="acceptDeckRevision">接受并应用</el-button>
+      </template>
+    </el-dialog>
     <el-dialog v-model="interactiveDialogVisible" title="生成互动模块" width="min(720px, 92vw)" destroy-on-close>
-      <p class="dialog-hint">调用互动模块生成服务，生成后可以先预览，再插入当前页面或作为独立页面保存。</p>
+      <p class="dialog-hint">将调用真实模型生成完整 HTML 互动内容，通常需要几十秒；生成后可先预览，再插入当前页面或作为独立页面保存。</p>
       <el-form :model="interactiveForm" label-position="top" class="interactive-form">
         <div class="interactive-form-grid">
           <el-form-item label="模块标题" required>
@@ -3273,6 +5619,21 @@ const selectSlide = (index) => { selectedSlide.value = index; selectedElementId.
         <p>{{ runStage || '正在准备页面内容…' }}</p>
         <span class="generation-hint">真实模型生成通常需要 1–7 分钟，请保持此页面打开。</span>
         <el-progress :percentage="runProgress" :show-text="false" :stroke-width="5" />
+        <div class="generation-observability">
+          <section v-if="runTimeline.length" class="generation-detail-section">
+            <header><strong>执行步骤</strong><span>{{ runTimeline.length }} 条</span></header>
+            <ol class="generation-timeline"><li v-for="item in runTimeline" :key="item.id"><i :class="`status-${item.status}`"></i><div><strong>{{ item.label }}</strong><span>{{ item.statusLabel }}<template v-if="item.detail"> · {{ item.detail }}</template></span></div></li></ol>
+          </section>
+          <section v-if="runToolCalls.length" class="generation-detail-section">
+            <header><strong>工具调用</strong><span>{{ runToolCalls.length }} 次</span></header>
+            <ul class="generation-compact-list"><li v-for="tool in runToolCalls" :key="tool.id"><b>{{ tool.name }}</b><span>{{ tool.status }}<template v-if="tool.detail"> · {{ tool.detail }}</template></span></li></ul>
+          </section>
+          <section v-if="runRetrievalSources.length" class="generation-detail-section">
+            <header><strong>RAG 引用资料</strong><span>{{ runRetrievalSources.length }} 项</span></header>
+            <ul class="generation-compact-list"><li v-for="resource in runRetrievalSources" :key="resource.id"><b>{{ resource.name }}</b><span>{{ resource.detail || resource.id }}</span></li></ul>
+          </section>
+          <section v-if="runReflection" class="generation-detail-section generation-reflection"><header><strong>反思结果</strong><span>已关联本次生成</span></header><p v-if="runReflection.summary">{{ runReflection.summary }}</p><ul v-if="runReflection.suggestions.length" class="generation-compact-list"><li v-for="(item, index) in runReflection.suggestions" :key="`run-reflection-${index}`"><span>{{ item }}</span></li></ul></section>
+        </div>
       </div>
     </div>
     <div v-else-if="runStatus === 'failed'" class="generation-overlay generation-overlay-error" role="alert">
@@ -3280,28 +5641,143 @@ const selectSlide = (index) => { selectedSlide.value = index; selectedElementId.
         <small class="generation-kicker">AI HTML PPT</small>
         <h2>课件生成失败</h2>
         <p>{{ generationError || '暂时无法生成 HTML PPT。' }}</p>
+        <p v-if="runFailureReason && runFailureReason !== generationError" class="generation-failure-detail">失败原因：{{ runFailureReason }}</p>
+        <p v-if="runRecoveryNode" class="generation-recovery">可恢复节点：{{ runRecoveryNode }}</p>
+        <div v-if="runTimeline.length" class="generation-failure-timeline"><strong>已执行节点</strong><span v-for="item in runTimeline" :key="`failed-${item.id}`">{{ item.label }} · {{ item.statusLabel }}</span></div>
         <div class="generation-actions">
           <el-button type="primary" @click="retryPresentationGeneration">重新生成</el-button>
           <el-button @click="goHome">返回教学助手</el-button>
         </div>
       </div>
     </div>
-    <div v-if="projectId" class="project-utilities"><span>{{ autosaveState }}</span><el-button text size="small" @click="createVersion">保存版本</el-button><el-button text size="small" @click="loadVersions">版本历史</el-button><el-button text size="small" @click="permissionDialogVisible = true">协作授权</el-button></div>
+    <el-dialog v-model="qualityPanelVisible" title="生成质量与改进建议" width="min(680px, 92vw)">
+      <div v-if="qualityReport" class="quality-report-panel">
+        <header class="quality-report-heading">
+          <div><span>报告来源</span><strong>{{ qualityReportSource || '最近一次生成' }}</strong></div>
+          <span v-if="qualityReport.score !== null" class="quality-score">{{ qualityReport.score }}<small>/100</small></span>
+        </header>
+        <p v-if="qualityReport.summary" class="quality-summary">{{ qualityReport.summary }}</p>
+        <section v-if="qualityReport.issues.length" class="quality-report-section">
+          <strong>结构问题</strong>
+          <ul><li v-for="(item, index) in qualityReport.issues" :key="`quality-issue-${index}`">{{ item }}</li></ul>
+        </section>
+        <section v-if="qualityReport.risks.length" class="quality-report-section quality-report-risk">
+          <strong>内容风险</strong>
+          <ul><li v-for="(item, index) in qualityReport.risks" :key="`quality-risk-${index}`">{{ item }}</li></ul>
+        </section>
+        <section v-if="qualityReport.suggestions.length" class="quality-report-section quality-report-suggestions">
+          <div class="quality-section-heading"><strong>可改进建议</strong><span>点击即可交给 AI 执行</span></div>
+          <article v-for="(item, index) in qualityReport.suggestions" :key="`quality-suggestion-${index}`">
+            <span>{{ item }}</span>
+            <el-button text type="primary" size="small" @click="applyQualitySuggestion(item)">一键修改</el-button>
+          </article>
+        </section>
+        <p v-if="qualityReport.retryCount" class="quality-retry-hint">本次生成经历了 {{ qualityReport.retryCount }} 次自动修复。</p>
+      </div>
+      <el-empty v-else description="暂无质量报告" />
+      <template #footer><el-button @click="qualityPanelVisible = false">关闭</el-button></template>
+    </el-dialog>
+    <el-dialog v-model="contextManagerVisible" title="工作台 AI 上下文" width="min(680px, 92vw)" :close-on-click-modal="false">
+      <div class="context-manager">
+        <section v-if="workspaceContextPayload().community" class="context-source-card">
+          <span>社区来源</span>
+          <strong>{{ workspaceContextPayload().community.title || '未命名内容' }}</strong>
+          <small>v{{ workspaceContextPayload().community.version || 1 }} · {{ workspaceContextPayload().community.license || '授权未说明' }}</small>
+        </section>
+        <p class="dialog-hint">选择后续讨论、修改和生成时允许 AI 检索的个人资料。绑定关系只保存在当前项目，不会写回社区。</p>
+        <el-checkbox-group v-model="contextManagerIds" v-loading="workspaceResourcesLoading" class="context-resource-picker">
+          <el-checkbox v-for="resource in workspaceResources" :key="resource.id" :value="resource.id"><span>{{ resource.name }}</span><small>{{ resource.fileType || '资料' }}</small></el-checkbox>
+          <el-empty v-if="!workspaceResourcesLoading && !workspaceResources.length" description="暂无个人资料，请先在首页上传资料" />
+        </el-checkbox-group>
+        <div v-if="contextManagerIds.length" class="context-selected-resources"><strong>当前绑定</strong><el-tag v-for="id in contextManagerIds" :key="id" closable @close="removeContextResource(id)">{{ workspaceResources.find((resource) => resource.id === String(id))?.name || `资源 ${id}` }}</el-tag></div>
+      </div>
+      <template #footer><el-button @click="contextManagerVisible = false">取消</el-button><el-button type="primary" :loading="contextManagerSaving" @click="saveWorkspaceContextBindings">保存绑定</el-button></template>
+    </el-dialog>
     <el-dialog v-model="versionDialogVisible" title="项目版本历史" width="min(680px, 92vw)"><div v-loading="versionLoading" class="version-list"><article v-for="version in versions" :key="version.id || version.version_id"><div><strong>版本 {{ version.version_number || version.id }}</strong><p>{{ version.description || '未填写说明' }}</p></div><div><el-button text size="small" @click="showVersionDiff(version)">查看差异</el-button><el-button text size="small" type="primary" @click="restoreVersion(version)">恢复此版本</el-button></div></article><p v-if="versionDiff" class="version-diff">{{ versionDiff.summary || JSON.stringify(versionDiff.differences || versionDiff) }}</p><el-empty v-if="!versionLoading && !versions.length" description="暂无历史版本" /></div><template #footer><el-button @click="versionDialogVisible = false">关闭</el-button></template></el-dialog>
     <el-dialog v-model="permissionDialogVisible" title="添加协作者" width="420px"><p class="dialog-hint">协作者将获得项目编辑权限。</p><el-input v-model="permissionUserId" inputmode="numeric" placeholder="输入用户 ID" /><template #footer><el-button @click="permissionDialogVisible = false">取消</el-button><el-button type="primary" @click="grantPermission">确认授权</el-button></template></el-dialog>
+    <el-dialog v-model="projectManagerVisible" title="项目管理" width="min(760px, 92vw)" class="project-manager-dialog">
+      <section v-if="projectId" class="project-manager-current">
+        <label>当前项目名称</label>
+        <div><el-input v-model="projectNameDraft" maxlength="80" show-word-limit /><el-button type="primary" :loading="projectActionLoading" @click="renameWorkspaceProject">保存名称</el-button></div>
+        <div class="project-manager-actions">
+          <el-button :loading="projectActionLoading" @click="copyWorkspaceProject">复制项目</el-button>
+          <el-button :loading="projectActionLoading" @click="archiveWorkspaceProject()">归档项目</el-button>
+          <el-button type="danger" plain :loading="projectActionLoading" @click="removeWorkspaceProject()">删除项目</el-button>
+        </div>
+      </section>
+      <p v-else class="dialog-hint">当前课件尚未保存为项目；导出或保存后即可使用重命名、复制、归档和删除。</p>
+      <section class="project-manager-list" v-loading="projectListLoading">
+        <div class="project-manager-list-heading"><strong>我的项目</strong><el-button text size="small" @click="loadWorkspaceProjects">刷新</el-button></div>
+        <article v-for="item in workspaceProjects" :key="item.id || item.project_id">
+          <div><strong>{{ item.project_name || item.name || '未命名项目' }}</strong><span>{{ item.status || 'editing' }} · {{ item.project_type || 'ppt' }}</span></div>
+          <div class="project-manager-item-actions">
+            <el-button text size="small" @click="openWorkspaceProject(item)">打开</el-button>
+            <el-button v-if="String(item.status).toLowerCase() === 'archived'" text size="small" :loading="projectActionLoading" @click="restoreWorkspaceProject(item.id || item.project_id)">恢复</el-button>
+            <el-button v-else text size="small" :loading="projectActionLoading" @click="archiveWorkspaceProject(item.id || item.project_id)">归档</el-button>
+            <el-button text size="small" type="danger" :loading="projectActionLoading" @click="removeWorkspaceProject(item.id || item.project_id)">删除</el-button>
+          </div>
+        </article>
+        <el-empty v-if="!projectListLoading && !workspaceProjects.length" description="暂无可管理项目" />
+      </section>
+      <template #footer><el-button @click="projectManagerVisible = false">关闭</el-button></template>
+    </el-dialog>
+    <LessonPlanEditor
+      v-model="lessonPlanVisible"
+      :title="lessonPlanTitle"
+      :subject="lessonPlanSubject"
+      :grade="lessonPlanGrade"
+      :outline="lessonPlanOutline"
+      :slides="slides"
+      :initial-plan="lessonPlanDraft"
+      @save="saveLessonPlanDraft"
+    />
 </template>
 
 <style scoped>
-.workspace{height:100dvh;display:grid;grid-template-rows:60px minmax(0,1fr);overflow:hidden;background:var(--zh-background-light)}.workspace-grid{min-height:0;display:grid;grid-template-columns:286px minmax(500px,1fr) 270px}.assistant-panel,.properties{min-height:0;background:var(--zh-background-primary)}.assistant-panel{display:flex;flex-direction:column;border-right:1px solid var(--zh-line-border)}.assistant-panel>header{display:flex;align-items:center;gap:9px;padding:16px;border-bottom:1px solid var(--zh-line-parting)}.assistant-mark{display:grid;place-items:center;width:32px;height:32px;border-radius:var(--zh-radius8);color:#fff;background:var(--zh-gradient-blue);font-weight:700}.assistant-panel header div:last-child{display:flex;flex-direction:column}.assistant-panel header strong{font-size:13px}.assistant-panel header span{margin-top:2px;color:var(--zh-text-caption);font-size:10px}.conversation{flex:1;padding:16px;overflow:auto}.message{display:flex;align-items:flex-start;gap:8px;margin-bottom:16px}.message>span{display:grid;place-items:center;flex:none;width:24px;height:24px;border-radius:6px;color:#fff;background:var(--zh-theme-primary);font-size:10px}.message p{margin:0;padding:10px 12px;border-radius:var(--zh-radius12);color:var(--zh-text-secondary);background:var(--zh-background-answer-card);font-size:12px;line-height:1.65}.message.user{justify-content:flex-end}.message.user p{color:var(--zh-text-primary);background:var(--zh-background-user-query)}.composer{padding:12px;border-top:1px solid var(--zh-line-border)}.composer>div{display:flex;align-items:center;justify-content:space-between;margin-top:8px}.composer span{color:var(--zh-text-caption);font-size:10px}.composer :deep(.el-textarea__inner){background:var(--zh-background-light);box-shadow:none}.editor-stage{display:grid;grid-template-columns:116px minmax(0,1fr);min-width:0}.slide-rail{padding:12px 9px;overflow:auto;border-right:1px solid var(--zh-line-border);background:var(--zh-background-primary)}.slide-rail>button{display:grid;grid-template-columns:18px 1fr;gap:4px;width:100%;margin-bottom:10px;padding:3px;border:1px solid transparent;border-radius:6px;color:var(--zh-text-caption);background:transparent;text-align:left;cursor:pointer}.slide-rail>button.active{border-color:var(--zh-line-theme);color:var(--zh-text-theme);background:var(--zh-background-weaken)}.thumbnail{display:flex;flex-direction:column;justify-content:center;gap:5px;height:54px;padding:8px;border-radius:4px;background:var(--zh-background-light)}.thumbnail i{width:65%;height:3px;background:var(--thumb)}.thumbnail b{overflow:hidden;color:var(--zh-text-secondary);font-size:8px;text-overflow:ellipsis;white-space:nowrap}.slide-rail :deep(.el-button){width:100%;justify-content:flex-start}.canvas-area{position:relative;display:grid;place-items:center;min-width:0;padding:44px 34px;overflow:auto;background-color:#eef0f4;background-image:radial-gradient(#c9ced7 1px,transparent 1px);background-size:18px 18px}.canvas-meta{position:absolute;top:12px;inset-inline:20px;display:flex;justify-content:space-between;color:#7c8491;font-size:10px}.slide-canvas{position:relative;width:min(780px,100%);aspect-ratio:16/9;overflow:hidden;padding:clamp(28px,4vw,52px);color:#102d54;background:#f9fbff;box-shadow:0 18px 45px rgb(40 57 82 / 18%)}.slide-canvas:after{content:'';position:absolute;top:-18%;right:-8%;width:42%;aspect-ratio:1;border-radius:50%;background:color-mix(in srgb,var(--accent) 16%,white)}.slide-eyebrow,.slide-canvas h1,.slide-canvas>p,.theorem{position:relative;z-index:1}.slide-eyebrow{color:var(--accent);font:600 10px var(--zh-font-number);letter-spacing:.12em}.slide-canvas h1{max-width:76%;margin:18px 0 0;font-size:clamp(26px,3vw,40px);line-height:1.2;letter-spacing:-.04em}.slide-canvas>p{max-width:64%;margin:12px 0;color:#607491;font-size:clamp(11px,1.2vw,15px);line-height:1.65}.theorem{display:grid;grid-template-columns:.8fr 1.2fr;align-items:center;gap:28px;width:76%;margin:28px auto}.triangle{position:relative;width:104px;height:104px;border-right:5px solid var(--accent);border-bottom:5px solid var(--accent);transform:skewY(-35deg) rotate(-10deg)}.triangle i{position:absolute;color:var(--accent);font-style:normal;font-weight:700;transform:skewY(35deg) rotate(10deg)}.triangle i:nth-child(1){bottom:-22px;left:36px}.triangle i:nth-child(2){top:40px;right:-18px}.triangle i:nth-child(3){top:-22px;left:8px}.formula{display:grid;grid-template-columns:auto 24px auto;align-items:center;font-family:var(--zh-font-number)}.formula span,.formula strong{font-size:clamp(22px,3vw,36px)}.formula em{color:#7c8da4;font-style:normal}.formula strong{color:var(--accent)}.formula small{grid-column:1/-1;margin-top:8px;color:#7c8da4;font-size:10px}.slide-canvas footer{position:absolute;z-index:1;right:0;bottom:0;left:0;display:grid;grid-template-columns:110px 1fr;padding:14px 28px;color:#fff;background:color-mix(in srgb,var(--accent) 82%,#102d54)}.slide-canvas footer p{margin:0;font-size:10px;line-height:1.5}.layout-重点陈述 h1{margin-top:54px;font-size:clamp(34px,4.4vw,52px)}.canvas-controls{position:absolute;right:18px;bottom:14px;display:flex;overflow:hidden;border-radius:var(--zh-radius8);background:var(--zh-background-capsule);box-shadow:var(--zh-shadow1)}.canvas-controls button,.canvas-controls span{padding:6px 9px;border:0;color:var(--zh-text-secondary);background:transparent;font-size:11px}.canvas-controls button{cursor:pointer}.properties{overflow:auto;border-left:1px solid var(--zh-line-border)}.properties>header{display:flex;justify-content:space-between;padding:16px;border-bottom:1px solid var(--zh-line-parting)}.properties header strong{font-size:13px}.properties header span{color:var(--zh-text-caption);font-size:10px}.tabs{display:grid;grid-template-columns:repeat(3,1fr);padding:10px 14px 0;border-bottom:1px solid var(--zh-line-parting)}.tabs button{padding:8px;border:0;border-bottom:2px solid transparent;color:var(--zh-text-caption);background:transparent;cursor:pointer}.tabs button.active{border-color:var(--zh-line-theme);color:var(--zh-text-theme)}.properties section{padding:16px;border-bottom:1px solid var(--zh-line-parting)}.properties label{display:block;margin:0 0 10px;color:var(--zh-text-secondary);font-size:11px;font-weight:600}.properties label:not(:first-child){margin-top:18px}.theme-picker{display:flex;gap:12px}.theme-picker button{width:24px;height:24px;border:2px solid var(--zh-background-primary);border-radius:50%;box-shadow:0 0 0 1px var(--zh-line-border);cursor:pointer}.theme-picker button.selected{outline:2px solid var(--zh-text-theme);outline-offset:2px}.layout-picker{display:grid;grid-template-columns:repeat(3,1fr);gap:8px}.layout-picker button{display:grid;grid-template-rows:26px auto;gap:4px;min-height:66px;padding:7px 4px;border:1px solid var(--zh-line-border);border-radius:6px;color:var(--zh-text-caption);background:var(--zh-background-light);font-size:9px;cursor:pointer}.layout-picker button.active{border-color:var(--zh-line-theme);color:var(--zh-text-theme);background:var(--zh-background-weaken)}.layout-picker i{display:block;width:70%;height:4px;margin:auto;background:var(--zh-line-theme50)}.layout-picker i:nth-child(2){width:48%}.page-actions{display:grid;gap:8px}.page-actions :deep(.el-button){justify-content:flex-start;margin:0}.assistant-tip{display:flex;gap:8px;margin:16px;padding:12px;border-radius:var(--zh-radius8);background:var(--zh-background-weaken)}.assistant-tip p,.hint{margin:0;color:var(--zh-text-secondary);font-size:10px;line-height:1.6}.preview{display:grid;place-items:center;padding:18px;background:#eef0f4}.preview-slide{width:min(780px,100%)}.preview-formula{width:max-content;margin:50px auto}.preview-dialog :deep(.el-dialog__body){padding:0}@media(max-width:1120px){.workspace-grid{grid-template-columns:250px minmax(460px,1fr)}.properties{display:none}}@media(max-width:820px){.workspace-grid{grid-template-columns:1fr}.assistant-panel{display:none}.editor-stage{grid-template-columns:88px minmax(0,1fr)}}
+.workspace-composer-buttons{display:inline-flex;align-items:center;gap:4px}
+.context-manager-trigger{margin-left:auto;flex:none}.context-manager{display:grid;gap:12px}.context-source-card{display:grid;gap:4px;padding:12px 14px;border:1px solid var(--zh-line-theme20);border-radius:var(--zh-radius10);background:var(--zh-background-weaken)}.context-source-card span,.context-source-card small{color:var(--zh-text-caption);font-size:11px}.context-source-card strong{color:var(--zh-text-primary);font-size:14px}.context-resource-picker{display:grid;gap:7px;max-height:280px;overflow:auto;padding:10px;border:1px solid var(--zh-line-border);border-radius:var(--zh-radius8);background:var(--zh-background-light)}.context-resource-picker :deep(.el-checkbox){display:flex;align-items:flex-start;margin:0}.context-resource-picker :deep(.el-checkbox__label){display:flex;align-items:baseline;gap:8px;min-width:0;color:var(--zh-text-secondary);font-size:12px}.context-resource-picker small{color:var(--zh-text-caption);font-size:10px}.context-selected-resources{display:flex;align-items:center;flex-wrap:wrap;gap:6px}.context-selected-resources strong{margin-right:3px;color:var(--zh-text-caption);font-size:11px}
+.generation-observability{display:grid;gap:8px;max-height:38vh;overflow:auto;margin-top:12px;padding-top:12px;border-top:1px solid rgb(37 99 235 / 14%);text-align:left}.generation-detail-section{padding:9px 10px;border:1px solid rgb(37 99 235 / 12%);border-radius:8px;background:rgb(255 255 255 / 74%)}.generation-detail-section header{display:flex;align-items:center;justify-content:space-between;gap:8px;margin-bottom:7px}.generation-detail-section header strong{font-size:11px}.generation-detail-section header span{color:#7c8491;font-size:10px}.generation-timeline{display:grid;gap:6px;margin:0;padding:0;list-style:none}.generation-timeline li{display:flex;align-items:flex-start;gap:7px}.generation-timeline li>i{flex:none;width:7px;height:7px;margin-top:4px;border-radius:50%;background:#9ca3af}.generation-timeline li>i.status-running,.generation-timeline li>i.status-executing,.generation-timeline li>i.status-processing{background:#2563eb;box-shadow:0 0 0 3px rgb(37 99 235 / 14%)}.generation-timeline li>i.status-completed,.generation-timeline li>i.status-success,.generation-timeline li>i.status-done{background:#16a34a}.generation-timeline li>i.status-failed,.generation-timeline li>i.status-error{background:#dc2626}.generation-timeline li div{display:grid;gap:2px;min-width:0}.generation-timeline li strong{overflow:hidden;color:#26364d;font-size:11px;text-overflow:ellipsis;white-space:nowrap}.generation-timeline li span,.generation-compact-list li span{color:#7c8491;font-size:10px;line-height:1.45}.generation-compact-list{display:grid;gap:5px;margin:0;padding:0;list-style:none}.generation-compact-list li{display:flex;gap:6px;min-width:0;color:#526176;font-size:10px;line-height:1.45}.generation-compact-list li b{flex:none;color:#334c70;font-size:10px}.generation-compact-list li span{min-width:0;overflow:hidden;text-overflow:ellipsis}.generation-reflection p{margin:0;color:#526176;font-size:10px;line-height:1.5}.generation-failure-detail,.generation-recovery{padding:8px 10px;border-radius:8px;text-align:left;font-size:11px;line-height:1.5}.generation-failure-detail{color:#9b2c2c;background:#fff3f0}.generation-recovery{color:#7a5a14;background:#fff8e7}.generation-failure-timeline{display:grid;gap:5px;padding:8px 10px;border-radius:8px;color:#7c8491;background:#f8fafc;text-align:left;font-size:10px;line-height:1.45}.generation-failure-timeline strong{color:#526176;font-size:11px}
+.revision-preview-dialog{display:grid;gap:14px}.revision-preview-summary{display:flex;align-items:center;justify-content:space-between;gap:12px;padding:14px 16px;border:1px solid var(--zh-line-theme20);border-radius:var(--zh-radius10);background:var(--zh-background-weaken)}.revision-preview-summary div{display:grid;gap:4px;min-width:0}.revision-preview-summary span:first-child{color:var(--zh-text-caption);font-size:11px}.revision-preview-summary strong{color:var(--zh-text-primary);font-size:14px;line-height:1.5}.revision-preview-count{flex:none;padding:5px 9px;border-radius:999px;color:var(--zh-text-theme);background:var(--zh-background-primary);font-size:11px}.revision-preview-section{padding:14px;border:1px solid var(--zh-line-border);border-radius:var(--zh-radius10);background:var(--zh-background-primary)}.revision-preview-section-heading{display:flex;align-items:baseline;justify-content:space-between;gap:12px;margin-bottom:10px}.revision-preview-section-heading strong{font-size:13px}.revision-preview-section-heading span{color:var(--zh-text-caption);font-size:11px}.revision-operation-list{display:grid;gap:7px;max-height:180px;overflow:auto;margin:0;padding:0;list-style:none}.revision-operation-list li{display:flex;align-items:center;gap:8px;min-width:0;padding:7px 8px;border-radius:var(--zh-radius8);background:var(--zh-background-light);color:var(--zh-text-secondary);font-size:12px}.revision-operation-list li>span{overflow:hidden;text-overflow:ellipsis;white-space:nowrap}.revision-comparison-grid{display:grid;grid-template-columns:1fr 1fr;gap:10px}.revision-comparison-column{min-width:0;border:1px solid var(--zh-line-border);border-radius:var(--zh-radius8);overflow:hidden}.revision-comparison-column header{padding:9px 11px;color:var(--zh-text-secondary);background:var(--zh-background-light);font-size:12px;font-weight:600}.revision-comparison-column.is-after header{color:var(--zh-text-theme);background:var(--zh-background-weaken)}.revision-comparison-column ol{display:grid;gap:5px;max-height:220px;overflow:auto;margin:0;padding:9px;list-style:none}.revision-comparison-column li{display:flex;align-items:center;gap:8px;min-width:0;color:var(--zh-text-secondary);font-size:12px}.revision-comparison-column li b{display:grid;place-items:center;flex:none;width:24px;height:20px;border-radius:5px;color:var(--zh-text-theme);background:var(--zh-background-weaken);font:600 10px var(--zh-font-number)}.revision-comparison-column li span{overflow:hidden;text-overflow:ellipsis;white-space:nowrap}@media(max-width:640px){.revision-comparison-grid{grid-template-columns:1fr}.revision-preview-summary{align-items:flex-start;flex-direction:column}}
+.workspace{height:100dvh;display:grid;grid-template-rows:60px minmax(0,1fr);overflow:hidden;background:var(--zh-background-light)}.workspace-grid{min-height:0;display:grid;grid-template-columns:286px minmax(500px,1fr) 270px}.assistant-panel,.properties{min-height:0;background:var(--zh-background-primary)}.assistant-panel{display:flex;flex-direction:column;border-right:1px solid var(--zh-line-border)}.assistant-panel>header{display:flex;align-items:center;gap:9px;padding:16px;border-bottom:1px solid var(--zh-line-parting)}.assistant-mark{display:grid;place-items:center;width:32px;height:32px;border-radius:var(--zh-radius8);color:#fff;background:var(--zh-gradient-blue);font-weight:700}.assistant-panel header div:last-child{display:flex;flex-direction:column}.assistant-panel header strong{font-size:13px}.assistant-panel header span{margin-top:2px;color:var(--zh-text-caption);font-size:10px}.conversation{flex:1;padding:16px;overflow:auto}.message{display:flex;align-items:flex-start;gap:8px;margin-bottom:16px}.message>span{display:grid;place-items:center;flex:none;width:24px;height:24px;border-radius:6px;color:#fff;background:var(--zh-theme-primary);font-size:10px}.message p{margin:0;padding:10px 12px;border-radius:var(--zh-radius12);color:var(--zh-text-secondary);background:var(--zh-background-answer-card);font-size:12px;line-height:1.65}.message.user{justify-content:flex-end}.message.user p{color:var(--zh-text-primary);background:var(--zh-background-user-query)}.composer{padding:12px;border-top:1px solid var(--zh-line-border)}.composer>div{display:flex;align-items:center;justify-content:space-between;margin-top:8px}.composer span{color:var(--zh-text-caption);font-size:10px}.composer :deep(.el-textarea__inner){background:var(--zh-background-light);box-shadow:none}.editor-stage{display:grid;grid-template-columns:116px minmax(0,1fr);min-width:0}.slide-rail{padding:12px 9px;overflow:auto;border-right:1px solid var(--zh-line-border);background:var(--zh-background-primary)}.slide-rail>button{display:grid;grid-template-columns:18px 1fr;gap:4px;width:100%;margin-bottom:10px;padding:3px;border:1px solid transparent;border-radius:6px;color:var(--zh-text-caption);background:transparent;text-align:left;cursor:pointer}.slide-rail>button.active{border-color:var(--zh-line-theme);color:var(--zh-text-theme);background:var(--zh-background-weaken)}.thumbnail{display:flex;flex-direction:column;justify-content:center;gap:5px;height:54px;padding:8px;border-radius:4px;background:var(--zh-background-light)}.thumbnail i{width:65%;height:3px;background:var(--thumb)}.thumbnail b{overflow:hidden;color:var(--zh-text-secondary);font-size:8px;text-overflow:ellipsis;white-space:nowrap}.slide-rail :deep(.el-button){width:100%;justify-content:flex-start}.canvas-area{position:relative;display:grid;place-items:center;min-width:0;padding:44px 34px;overflow:auto;background-color:#eef0f4;background-image:radial-gradient(#c9ced7 1px,transparent 1px);background-size:18px 18px}.canvas-meta{position:absolute;top:12px;inset-inline:20px;display:flex;justify-content:space-between;color:#7c8491;font-size:10px}.slide-canvas{position:relative;width:min(780px,100%);aspect-ratio:16/9;overflow:hidden;padding:clamp(28px,4vw,52px);color:#102d54;background:#f9fbff;box-shadow:0 18px 45px rgb(40 57 82 / 18%)}.slide-eyebrow,.slide-canvas h1,.slide-canvas>p,.theorem{position:relative;z-index:1}.slide-eyebrow{color:var(--accent);font:600 10px var(--zh-font-number);letter-spacing:.12em}.slide-canvas h1{max-width:76%;margin:18px 0 0;font-size:clamp(26px,3vw,40px);line-height:1.2;letter-spacing:-.04em}.slide-canvas>p{max-width:64%;margin:12px 0;color:#607491;font-size:clamp(11px,1.2vw,15px);line-height:1.65}.theorem{display:grid;grid-template-columns:.8fr 1.2fr;align-items:center;gap:28px;width:76%;margin:28px auto}.triangle{position:relative;width:104px;height:104px;border-right:5px solid var(--accent);border-bottom:5px solid var(--accent);transform:skewY(-35deg) rotate(-10deg)}.triangle i{position:absolute;color:var(--accent);font-style:normal;font-weight:700;transform:skewY(35deg) rotate(10deg)}.triangle i:nth-child(1){bottom:-22px;left:36px}.triangle i:nth-child(2){top:40px;right:-18px}.triangle i:nth-child(3){top:-22px;left:8px}.formula{display:grid;grid-template-columns:auto 24px auto;align-items:center;font-family:var(--zh-font-number)}.formula span,.formula strong{font-size:clamp(22px,3vw,36px)}.formula em{color:#7c8da4;font-style:normal}.formula strong{color:var(--accent)}.formula small{grid-column:1/-1;margin-top:8px;color:#7c8da4;font-size:10px}.slide-canvas footer{position:absolute;z-index:1;right:0;bottom:0;left:0;display:grid;grid-template-columns:110px 1fr;padding:14px 28px;color:#fff;background:color-mix(in srgb,var(--accent) 82%,#102d54)}.slide-canvas footer p{margin:0;font-size:10px;line-height:1.5}.layout-重点陈述 h1{margin-top:54px;font-size:clamp(34px,4.4vw,52px)}.canvas-controls{position:absolute;right:18px;bottom:14px;display:flex;overflow:hidden;border-radius:var(--zh-radius8);background:var(--zh-background-capsule);box-shadow:var(--zh-shadow1)}.canvas-controls button,.canvas-controls span{padding:6px 9px;border:0;color:var(--zh-text-secondary);background:transparent;font-size:11px}.canvas-controls button{cursor:pointer}.properties{overflow:auto;border-left:1px solid var(--zh-line-border)}.properties>header{display:flex;justify-content:space-between;padding:16px;border-bottom:1px solid var(--zh-line-parting)}.properties header strong{font-size:13px}.properties header span{color:var(--zh-text-caption);font-size:10px}.tabs{display:grid;grid-template-columns:repeat(3,1fr);padding:10px 14px 0;border-bottom:1px solid var(--zh-line-parting)}.tabs button{padding:8px;border:0;border-bottom:2px solid transparent;color:var(--zh-text-caption);background:transparent;cursor:pointer}.tabs button.active{border-color:var(--zh-line-theme);color:var(--zh-text-theme)}.properties section{padding:16px;border-bottom:1px solid var(--zh-line-parting)}.properties label{display:block;margin:0 0 10px;color:var(--zh-text-secondary);font-size:11px;font-weight:600}.properties label:not(:first-child){margin-top:18px}.theme-picker{display:flex;gap:12px}.theme-picker button{width:24px;height:24px;border:2px solid var(--zh-background-primary);border-radius:50%;box-shadow:0 0 0 1px var(--zh-line-border);cursor:pointer}.theme-picker button.selected{outline:2px solid var(--zh-text-theme);outline-offset:2px}.layout-picker{display:grid;grid-template-columns:repeat(3,1fr);gap:8px}.layout-picker button{display:grid;grid-template-rows:26px auto;gap:4px;min-height:66px;padding:7px 4px;border:1px solid var(--zh-line-border);border-radius:6px;color:var(--zh-text-caption);background:var(--zh-background-light);font-size:9px;cursor:pointer}.layout-picker button.active{border-color:var(--zh-line-theme);color:var(--zh-text-theme);background:var(--zh-background-weaken)}.layout-picker i{display:block;width:70%;height:4px;margin:auto;background:var(--zh-line-theme50)}.layout-picker i:nth-child(2){width:48%}.page-actions{display:grid;gap:8px}.page-actions :deep(.el-button){justify-content:flex-start;margin:0}.assistant-tip{display:flex;gap:8px;margin:16px;padding:12px;border-radius:var(--zh-radius8);background:var(--zh-background-weaken)}.assistant-tip p,.hint{margin:0;color:var(--zh-text-secondary);font-size:10px;line-height:1.6}.preview{display:grid;place-items:center;padding:18px;background:#eef0f4}.preview-slide{width:min(780px,100%)}.preview-formula{width:max-content;margin:50px auto}.preview-dialog :deep(.el-dialog__body){padding:0}@media(max-width:1120px){.workspace-grid{grid-template-columns:250px minmax(460px,1fr)}.properties{display:none}}@media(max-width:820px){.workspace-grid{grid-template-columns:1fr}.assistant-panel{display:none}.editor-stage{grid-template-columns:88px minmax(0,1fr)}}
 .plan-dialog-content .plan-status{margin:0 0 14px;color:var(--zh-text-secondary);font-size:13px}.plan-preview{display:grid;gap:12px;max-height:min(62vh,680px);overflow:auto;padding:2px 4px 4px 0}.plan-overview{display:flex;align-items:flex-start;justify-content:space-between;gap:18px;padding:18px;border:1px solid var(--zh-line-theme20);border-radius:var(--zh-radius12);background:linear-gradient(135deg,var(--zh-background-weaken),var(--zh-background-primary))}.plan-overview-heading{min-width:0}.plan-eyebrow{color:var(--zh-text-theme);font-size:10px;font-weight:700;letter-spacing:.12em}.plan-overview h3{margin:7px 0 6px;color:var(--zh-text-primary);font-size:19px;line-height:1.35}.plan-overview p{margin:0;color:var(--zh-text-secondary);font-size:12px;line-height:1.7}.plan-slide-count{display:inline-flex;flex:none;align-items:center;padding:7px 10px;border-radius:999px;color:var(--zh-text-theme);background:var(--zh-background-primary);font:700 12px var(--zh-font-number);white-space:nowrap}.plan-meta{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:8px}.plan-meta>span{display:grid;gap:4px;padding:11px 12px;border:1px solid var(--zh-line-border);border-radius:var(--zh-radius8);background:var(--zh-background-light)}.plan-meta small,.slide-details small{color:var(--zh-text-caption);font-size:10px}.plan-meta strong{overflow:hidden;color:var(--zh-text-primary);font-size:12px;text-overflow:ellipsis;white-space:nowrap}.plan-section{padding:14px;border:1px solid var(--zh-line-border);border-radius:var(--zh-radius10);background:var(--zh-background-primary)}.plan-section-heading{display:flex;align-items:baseline;justify-content:space-between;gap:12px;margin-bottom:10px}.plan-section-heading strong{color:var(--zh-text-primary);font-size:13px}.plan-section-heading span{color:var(--zh-text-caption);font-size:11px}.plan-bullet-list,.slide-points{display:grid;gap:7px;margin:0;padding-left:18px;color:var(--zh-text-secondary);font-size:12px;line-height:1.6}.plan-bullet-list li::marker,.slide-points li::marker{color:var(--zh-text-theme)}.plan-tags{display:flex;flex-wrap:wrap;gap:7px}.plan-tags span{padding:5px 9px;border-radius:999px;color:var(--zh-text-theme);background:var(--zh-background-weaken);font-size:11px}.plan-slide-list{display:grid;gap:8px}.plan-slide-card{display:grid;grid-template-columns:36px minmax(0,1fr);gap:10px;padding:12px;border:1px solid var(--zh-line-border);border-radius:var(--zh-radius8);background:var(--zh-background-light)}.plan-slide-number{display:grid;place-items:center;width:30px;height:30px;border-radius:8px;color:var(--zh-text-theme);background:var(--zh-background-weaken);font:700 11px var(--zh-font-number)}.plan-slide-main{min-width:0}.plan-slide-heading{display:flex;align-items:center;justify-content:space-between;gap:12px;margin-bottom:7px}.plan-slide-heading h4{margin:0;color:var(--zh-text-primary);font-size:13px}.plan-slide-heading span{color:var(--zh-text-caption);font-size:10px}.slide-points{margin-bottom:9px}.slide-details{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:10px;padding-top:9px;border-top:1px solid var(--zh-line-parting)}.slide-details p{margin:3px 0 0;color:var(--zh-text-secondary);font-size:11px;line-height:1.55}.plan-comment{margin-top:14px}.run-progress{position:fixed;z-index:100;right:24px;bottom:24px;width:min(320px,calc(100vw - 48px));padding:12px 14px;border:1px solid var(--zh-line-theme20);border-radius:var(--zh-radius12);color:var(--zh-text-secondary);background:var(--zh-background-pop);box-shadow:var(--zh-shadow2);font-size:12px}.run-progress :deep(.el-progress){margin-top:9px}
-.project-utilities{position:fixed;z-index:100;right:24px;top:72px;display:flex;align-items:center;gap:4px;padding:5px 8px;border:1px solid var(--zh-line-border);border-radius:var(--zh-radius10);color:var(--zh-text-caption);background:var(--zh-background-pop);box-shadow:var(--zh-shadow1);font-size:11px}.project-utilities span{margin:0 4px}.version-list{display:grid;gap:10px}.version-list article{display:flex;align-items:center;justify-content:space-between;gap:16px;padding:12px;border:1px solid var(--zh-line-border);border-radius:var(--zh-radius8);background:var(--zh-background-light)}.version-list strong{font-size:13px}.version-list p{margin:4px 0 0;color:var(--zh-text-caption);font-size:12px}.version-diff{margin:0;padding:12px;border-radius:var(--zh-radius8);color:var(--zh-text-secondary);background:var(--zh-background-weaken);font-size:12px;line-height:1.6;white-space:pre-wrap}.dialog-hint{margin:0 0 12px;color:var(--zh-text-secondary);font-size:13px}
+  .project-utilities{position:absolute;z-index:5;bottom:52px;left:50%;display:flex;align-items:center;gap:4px;width:max-content;max-width:calc(100% - 32px);overflow-x:auto;padding:5px 8px;border:1px solid var(--zh-line-border);border-radius:var(--zh-radius10);color:var(--zh-text-caption);background:var(--zh-background-pop);box-shadow:var(--zh-shadow1);font-size:11px;transform:translateX(-50%)}.project-utilities span{margin:0 4px;white-space:nowrap}.version-list{display:grid;gap:10px}.version-list article{display:flex;align-items:center;justify-content:space-between;gap:16px;padding:12px;border:1px solid var(--zh-line-border);border-radius:var(--zh-radius8);background:var(--zh-background-light)}.version-list strong{font-size:13px}.version-list p{margin:4px 0 0;color:var(--zh-text-caption);font-size:12px}.version-diff{margin:0;padding:12px;border-radius:var(--zh-radius8);color:var(--zh-text-secondary);background:var(--zh-background-weaken);font-size:12px;line-height:1.6;white-space:pre-wrap}.dialog-hint{margin:0 0 12px;color:var(--zh-text-secondary);font-size:13px}
+.quality-report-panel{display:grid;gap:14px}.quality-report-heading{display:flex;align-items:center;justify-content:space-between;gap:16px;padding:14px 16px;border:1px solid var(--zh-line-theme20);border-radius:var(--zh-radius10);background:var(--zh-background-weaken)}.quality-report-heading div{display:grid;gap:4px}.quality-report-heading span:first-child{color:var(--zh-text-caption);font-size:10px}.quality-report-heading strong{color:var(--zh-text-primary);font-size:14px}.quality-score{color:var(--zh-text-theme);font:700 28px var(--zh-font-number)}.quality-score small{margin-left:2px;color:var(--zh-text-caption);font-size:11px}.quality-summary{margin:0;color:var(--zh-text-secondary);font-size:13px;line-height:1.7}.quality-report-section{padding:12px 14px;border:1px solid var(--zh-line-border);border-radius:var(--zh-radius8);background:var(--zh-background-light)}.quality-report-section>strong,.quality-section-heading strong{color:var(--zh-text-primary);font-size:12px}.quality-report-section ul{display:grid;gap:6px;margin:8px 0 0;padding-left:18px;color:var(--zh-text-secondary);font-size:12px;line-height:1.55}.quality-report-risk{border-color:color-mix(in srgb,var(--el-color-warning) 35%,var(--zh-line-border))}.quality-report-suggestions{display:grid;gap:8px}.quality-section-heading{display:flex;align-items:baseline;justify-content:space-between;gap:12px}.quality-section-heading span,.quality-retry-hint{color:var(--zh-text-caption);font-size:10px}.quality-report-suggestions article{display:flex;align-items:center;justify-content:space-between;gap:12px;padding:9px 10px;border-radius:var(--zh-radius8);background:var(--zh-background-weaken)}.quality-report-suggestions article span{min-width:0;color:var(--zh-text-secondary);font-size:12px;line-height:1.5}.quality-report-suggestions article :deep(.el-button){flex:none;margin:0}.quality-retry-hint{margin:0}
+.project-manager-current{display:grid;gap:10px;padding:14px;border:1px solid var(--zh-line-theme20);border-radius:var(--zh-radius10);background:var(--zh-background-weaken)}.project-manager-current>label{color:var(--zh-text-secondary);font-size:12px;font-weight:600}.project-manager-current>div:first-of-type{display:flex;gap:8px}.project-manager-actions{display:flex;flex-wrap:wrap;gap:8px}.project-manager-list{display:grid;gap:8px;margin-top:18px;min-height:100px}.project-manager-list-heading{display:flex;align-items:center;justify-content:space-between}.project-manager-list article{display:flex;align-items:center;justify-content:space-between;gap:16px;padding:11px 12px;border:1px solid var(--zh-line-border);border-radius:var(--zh-radius8);background:var(--zh-background-light)}.project-manager-list article>div:first-child{display:grid;gap:4px;min-width:0}.project-manager-list strong{overflow:hidden;color:var(--zh-text-primary);font-size:13px;text-overflow:ellipsis;white-space:nowrap}.project-manager-list span{color:var(--zh-text-caption);font-size:11px}.project-manager-item-actions{display:flex;align-items:center;flex:none;gap:2px}
 .generic-visual{grid-column:1/-1;display:flex;align-items:center;justify-content:center;gap:14px;padding:24px;border:1px solid color-mix(in srgb,var(--accent) 24%,transparent);border-radius:var(--zh-radius12);background:color-mix(in srgb,var(--accent) 8%,white)}.generic-visual span{color:var(--accent);font-size:clamp(15px,2vw,22px);font-weight:600}.generic-visual em{color:#8a98aa;font-style:normal}
 
 /* PPT 缩略图：阻止长标题撑开网格，并在固定画布内最多展示两行。 */
 .slide-rail > button {
   grid-template-columns: 18px minmax(0, 1fr);
   min-width: 0;
-  overflow: hidden;
+  position: relative;
+  overflow: visible;
+  cursor: grab;
+  user-select: none;
+}
+.slide-rail > button:active {
+  cursor: grabbing;
+}
+.slide-rail > button.dragging {
+  opacity: .45;
+}
+.slide-rail > button.drop-before::before,
+.slide-rail > button.drop-after::after {
+  position: absolute;
+  z-index: 4;
+  right: 2px;
+  left: 2px;
+  height: 2px;
+  border-radius: 999px;
+  background: var(--zh-text-theme);
+  box-shadow: 0 0 0 2px rgb(37 99 235 / 16%);
+  content: '';
+  pointer-events: none;
+}
+.slide-rail > button.drop-before::before {
+  top: -5px;
+}
+.slide-rail > button.drop-after::after {
+  bottom: -5px;
 }
 .thumbnail {
   width: 100%;
@@ -3393,10 +5869,6 @@ const selectSlide = (index) => { selectedSlide.value = index; selectedElementId.
   pointer-events: none;
   transition: none;
   will-change: left, top, width, height;
-}
-
-.slide-canvas::after {
-  pointer-events: none;
 }
 
 .shape-element > span {
@@ -3722,6 +6194,55 @@ const selectSlide = (index) => { selectedSlide.value = index; selectedElementId.
   font-size: 9px;
 }
 
+.workspace-media-player {
+  display: block;
+  width: 100%;
+  min-width: 0;
+  min-height: 34px;
+  max-height: 100%;
+  border-radius: 7px;
+  background: rgb(255 255 255 / 76%);
+}
+
+.workspace-widget.widget-audio,
+.workspace-widget.widget-video,
+.workspace-widget.widget-h5 {
+  align-content: center;
+  flex-wrap: wrap;
+}
+
+.workspace-widget.widget-audio .workspace-media-player,
+.workspace-widget.widget-video .workspace-media-player {
+  flex: 1 1 100%;
+}
+
+.workspace-h5-frame {
+  display: block;
+  flex: 1 1 100%;
+  width: 100%;
+  min-width: 0;
+  min-height: 70px;
+  height: 100%;
+  border: 0;
+  border-radius: 7px;
+  background: #fff;
+}
+
+.widget-empty-state {
+  display: block;
+  width: 100%;
+  color: #8192aa;
+  font-size: 10px;
+  line-height: 1.5;
+  text-align: center;
+}
+
+.widget-action-button {
+  border: 0;
+  cursor: pointer;
+  font: inherit;
+}
+
 .widget-action {
   margin-left: auto;
   padding: 4px 7px;
@@ -3730,6 +6251,61 @@ const selectSlide = (index) => { selectedSlide.value = index; selectedElementId.
   background: rgb(255 255 255 / 70%);
   font-size: 9px;
   white-space: nowrap;
+}
+
+.workspace-load-error {
+  position: absolute;
+  z-index: 30;
+  inset: 0;
+  display: grid;
+  place-items: center;
+  padding: 24px;
+  background: rgb(241 245 251 / 82%);
+  backdrop-filter: blur(3px);
+}
+
+.workspace-load-error-card {
+  display: grid;
+  justify-items: center;
+  gap: 10px;
+  width: min(470px, 90%);
+  padding: 28px 30px;
+  border: 1px solid #d7e2f0;
+  border-radius: 18px;
+  background: #fff;
+  box-shadow: 0 18px 48px rgb(35 61 95 / 14%);
+  text-align: center;
+}
+
+.workspace-load-error-icon {
+  display: grid;
+  place-items: center;
+  width: 34px;
+  height: 34px;
+  border-radius: 50%;
+  color: #fff;
+  background: #e46b67;
+  font-size: 21px;
+  font-weight: 700;
+}
+
+.workspace-load-error-card strong {
+  color: #203d64;
+  font-size: 18px;
+}
+
+.workspace-load-error-card p {
+  margin: 0;
+  color: #6b7d96;
+  font-size: 13px;
+  line-height: 1.7;
+}
+
+.workspace-load-error-actions {
+  display: flex;
+  justify-content: center;
+  gap: 10px;
+  margin-top: 4px;
 }
 
 .table-widget {
@@ -3826,6 +6402,103 @@ const selectSlide = (index) => { selectedSlide.value = index; selectedElementId.
   color: var(--zh-text-caption);
   font-size: 10px;
   line-height: 1.5;
+}
+
+/* 工作台侧栏对话与主对话保持同一套气泡、流式提示和入场节奏。 */
+.workspace-conversation {
+  padding: 18px 12px;
+  scroll-behavior: smooth;
+}
+
+.workspace-message-list {
+  display: block;
+}
+
+.workspace-chat-message {
+  min-width: 0;
+}
+
+.workspace-user-bubble {
+  max-width: 86%;
+  margin: 16px 0 16px auto;
+  padding: 10px 14px;
+  border-radius: var(--zh-radius18) var(--zh-radius18) var(--zh-radius8) var(--zh-radius18);
+  color: var(--zh-text-primary);
+  background: var(--zh-background-user-query);
+  font-size: 12px;
+  line-height: 1.65;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+
+.workspace-ai-bubble {
+  width: 100%;
+  min-height: 1px;
+  margin: 16px 0;
+}
+
+.workspace-ai-markdown {
+  width: 100%;
+  padding: 10px 14px;
+  border-radius: var(--zh-radius18) var(--zh-radius18) var(--zh-radius18) var(--zh-radius8);
+  color: var(--zh-text-primary);
+  background: var(--zh-background-answer-card);
+  font-size: 12px;
+  line-height: 1.65;
+  overflow-wrap: anywhere;
+}
+
+.workspace-ai-markdown :deep(p:first-child) { margin-top: 0; }
+.workspace-ai-markdown :deep(p:last-child) { margin-bottom: 0; }
+
+.workspace-bubble-typing,
+.workspace-streaming-indicator {
+  display: flex;
+  align-items: center;
+  gap: 5px;
+  color: var(--zh-text-caption);
+}
+
+.workspace-bubble-typing {
+  width: max-content;
+  min-height: 38px;
+  padding: 10px 14px;
+  border-radius: var(--zh-radius18) var(--zh-radius18) var(--zh-radius18) var(--zh-radius8);
+  background: var(--zh-background-answer-card);
+}
+
+.workspace-streaming-indicator {
+  justify-content: center;
+  min-height: 30px;
+  padding: 6px 0 10px;
+  font-size: 10px;
+}
+
+.workspace-bubble-typing i,
+.workspace-dot-pulse i {
+  width: 5px;
+  height: 5px;
+  border-radius: 50%;
+  background: var(--zh-text-theme);
+  animation: workspace-dot-pulse 1.2s cubic-bezier(.4, 0, .2, 1) infinite;
+}
+
+.workspace-dot-pulse { display: flex; gap: 4px; }
+.workspace-bubble-typing i:nth-child(2), .workspace-dot-pulse i:nth-child(2) { animation-delay: .2s; }
+.workspace-bubble-typing i:nth-child(3), .workspace-dot-pulse i:nth-child(3) { animation-delay: .4s; }
+
+.workspace-msg-enter-enter-active {
+  transition: opacity 300ms cubic-bezier(0, 0, .2, 1), transform 300ms cubic-bezier(0, 0, .2, 1);
+}
+
+.workspace-msg-enter-enter-from {
+  opacity: 0;
+  transform: translateY(8px);
+}
+
+@keyframes workspace-dot-pulse {
+  0%, 100% { opacity: .3; transform: scale(.8); }
+  50% { opacity: 1; transform: scale(1); }
 }
 
 .widget-action-button {
@@ -4127,9 +6800,48 @@ const selectSlide = (index) => { selectedSlide.value = index; selectedElementId.
   }
 }
 
-.canvas-area .slide-canvas {
+.canvas-area {
+  display: block;
+  padding: 0;
+  overflow: hidden;
+}
+
+.canvas-scroll-viewport {
+  position: absolute;
+  inset: 0;
+  overflow: auto;
+  overscroll-behavior: contain;
+}
+
+.canvas-meta,
+.canvas-controls {
+  z-index: 10;
+}
+
+.canvas-meta {
+  pointer-events: none;
+}
+
+.canvas-scene {
+  display: grid;
+  place-items: center;
+  box-sizing: border-box;
+  width: 100%;
+  min-height: 100%;
+  padding: 72px;
+}
+
+.canvas-slide-stage {
+  position: relative;
+  flex: none;
+}
+
+.canvas-slide-stage .slide-canvas {
+  width: 780px;
+  max-width: none;
   transform: scale(var(--canvas-zoom, 1));
-  transform-origin: center center;
+  transform-origin: top left;
+  will-change: transform;
 }
 
 .canvas-controls button:disabled {
@@ -4390,6 +7102,8 @@ const selectSlide = (index) => { selectedSlide.value = index; selectedElementId.
 }
 
 @media (prefers-reduced-motion: reduce) {
+  .workspace-bubble-typing i,
+  .workspace-dot-pulse i,
   .assistant-execution-spinner,
   .assistant-execution-spinner i,
   .assistant-execution-dots i,

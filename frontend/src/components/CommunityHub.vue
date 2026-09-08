@@ -9,7 +9,7 @@ import { useRoute, useRouter } from 'vue-router'
 import { ElMessage } from 'element-plus'
 import { CollectionTag, Search, Star, User } from '@element-plus/icons-vue'
 import { COMMUNITY_PAGE } from '../config/teacherPages.config.js'
-import { createCommunityReport, createCommunitySubmission, favoriteCommunityItem, getCommunityItem, listCommunityFavorites, listCommunityItems, listCommunityRecentViews, listCommunityReports, listCommunitySubmissions, recordCommunityView, removeCommunityRecentView, reuseCommunityItem, saveCommunitySubmissionVersion, submitCommunitySubmission, unfavoriteCommunityItem, updateCommunitySubmission } from '../apis/teacher'
+import { createCommunityReport, createCommunitySubmission, favoriteCommunityItem, getCommunityItem, listCommunityFavorites, listCommunityItems, listCommunityRecentViews, listCommunityReports, listCommunitySubmissions, listResources, patchProject, recordCommunityView, removeCommunityRecentView, reuseCommunityItem, saveCommunitySubmissionVersion, submitCommunitySubmission, unfavoriteCommunityItem, updateCommunitySubmission } from '../apis/teacher'
 
 const router = useRouter()
 const route = useRoute()
@@ -26,6 +26,79 @@ const detailVisible = ref(false), submissionVisible = ref(false), collectionVisi
 const detail = ref(null), favorites = ref([]), recentViews = ref([]), submissions = ref([]), reports = ref([])
 const submission = ref({ id: null, content_type: 'lesson_case', title: '', description: '', subject: '', grade: '', lesson_type: '', content_data: '', license: 'CC BY-NC 4.0' })
 const reportForm = ref({ target_id: null, reason: '', comment: '' })
+const reuseVisible = ref(false)
+const reuseLoading = ref(false)
+const reuseResourcesLoading = ref(false)
+const reuseTarget = ref(null)
+const reuseDetail = ref(null)
+const reuseProjectName = ref('')
+const reuseVersion = ref(1)
+const reuseVariables = ref([])
+const reuseVariableValues = ref({})
+const reuseResources = ref([])
+const reuseSelectedResourceIds = ref([])
+
+const parseJsonValue = (value, fallback = null) => {
+  if (value === undefined || value === null || value === '') return fallback
+  if (typeof value !== 'string') return value
+  try { return JSON.parse(value) } catch { return fallback }
+}
+const normalizeCommunityType = (item = {}) => item.type || (item.content_type === 'skill' ? 'Skill' : '案例')
+const normalizeReuseResource = (resource = {}) => {
+  const id = resource.id ?? resource.resource_id ?? resource.resourceId
+  return id === undefined || id === null ? null : {
+    id: String(id),
+    name: String(resource.name || resource.file_name || resource.filename || resource.title || `资源 ${id}`),
+    fileType: String(resource.file_type || resource.fileType || resource.mime_type || resource.mimeType || ''),
+  }
+}
+const normalizeInputVariables = (value) => {
+  const parsed = parseJsonValue(value, [])
+  if (Array.isArray(parsed)) return parsed.map((item, index) => {
+    const variable = item && typeof item === 'object' ? item : { default: item }
+    const key = String(variable.key || variable.name || variable.id || `variable_${index + 1}`)
+    return { ...variable, key, label: String(variable.label || variable.title || variable.name || key), type: String(variable.type || variable.input_type || 'text'), required: variable.required !== false, description: String(variable.description || variable.help || '') }
+  })
+  if (parsed && typeof parsed === 'object') return Object.entries(parsed).map(([key, value]) => {
+    const variable = value && typeof value === 'object' && !Array.isArray(value) ? value : { default: value }
+    return { ...variable, key, label: String(variable.label || variable.title || key), type: String(variable.type || variable.input_type || 'text'), required: variable.required !== false, description: String(variable.description || variable.help || '') }
+  })
+  return []
+}
+const normalizedVariableValue = (variable) => variable.default ?? variable.default_value ?? variable.example ?? ''
+const reuseVersionOptions = computed(() => {
+  const current = Number(reuseDetail.value?.version || 1)
+  const history = parseJsonValue(reuseDetail.value?.version_history, [])
+  const versions = [current, ...(Array.isArray(history) ? history.map((item) => Number(item?.version_number || item?.version)).filter(Number.isFinite) : [])]
+  return [...new Set(versions)].sort((a, b) => b - a)
+})
+const reuseContext = computed(() => {
+  const source = reuseDetail.value || reuseTarget.value || {}
+  const inputVariables = parseJsonValue(source.input_variables, [])
+  const inputValues = { ...reuseVariableValues.value }
+  const resourceIds = [...reuseSelectedResourceIds.value].map((id) => String(id))
+  return {
+    id: source.id || reuseTarget.value?.testCaseId || null,
+    type: normalizeCommunityType(source),
+    title: source.title || '',
+    description: source.description || '',
+    subject: source.subject || '',
+    stage: source.stage || source.grade || '',
+    grade: source.grade || source.stage || '',
+    lesson_type: source.lesson_type || source.lessonType || '',
+    version: Number(source.version || 1),
+    version_history: parseJsonValue(source.version_history, []),
+    license: source.license || '未说明',
+    example_effect: source.example_effect || source.exampleEffect || '',
+    input_variables: reuseVariables.value.length ? reuseVariables.value : inputVariables,
+    input_values: inputValues,
+    content_data: parseJsonValue(source.content_data, source.content_data || ''),
+    resource_ids: resourceIds,
+    resourceIds,
+    bound_materials: resourceIds,
+    bind_materials: resourceIds,
+  }
+})
 
 const normalizeCard = (item) => ({
   id: item.id, type: item.content_type === 'lesson_case' ? '案例' : 'Skill', title: item.title,
@@ -73,30 +146,108 @@ const filteredCards = computed(() => {
 /** 判断精选案例是否仍应展示。 */
 const showFeatured = computed(() => activeTab.value === '精选' && matchesFilters(COMMUNITY_PAGE.featured))
 
-/** 复制社区内容并进入个人创作工作台。 */
-const reuse = async (item) => {
-  if (item.testCaseId) {
-    ElMessage.success('测试案例已载入创作工作台')
-    router.push({
-      path: '/main/workspace',
-      query: {
-        ...(route.query.preview ? { preview: '1' } : {}),
-        testCase: item.testCaseId,
-        templateTitle: item.title,
-      },
-    })
-    return
-  }
-  if (!item.id) {
+/** 打开复用配置：先展示版本、授权、输入变量和个人资源绑定，再创建派生项目。 */
+const openReuse = async (item) => {
+  if (!item?.id && !item?.testCaseId) {
     ElMessage.info('该内容暂时无法创建派生项目')
     return
   }
+  reuseTarget.value = item
+  reuseDetail.value = item.testCaseId ? item : null
+  reuseProjectName.value = `${item.title || '未命名内容'}（副本）`
+  reuseSelectedResourceIds.value = []
+  reuseResources.value = []
+  reuseVisible.value = true
+  reuseLoading.value = Boolean(item.id)
   try {
-    const result = await reuseCommunityItem(item.id, { new_project_name: `${item.title}（副本）` })
-    const projectId = result?.data?.id || result?.id
-    ElMessage.success('已复制到个人空间')
-    router.push({ path: '/main/workspace', query: { ...(route.query.preview ? { preview: '1' } : {}), ...(projectId ? { projectId } : {}) } })
-  } catch { ElMessage.error('无法创建派生项目，请稍后重试') }
+    if (item.id) reuseDetail.value = unwrap(await getCommunityItem(item.id))
+    const source = reuseDetail.value || item
+    reuseVariables.value = normalizeInputVariables(source.input_variables)
+    reuseVariableValues.value = Object.fromEntries(reuseVariables.value.map((variable) => [variable.key, normalizedVariableValue(variable)]))
+    reuseVersion.value = Number(source.version || 1)
+    reuseResourcesLoading.value = true
+    try {
+      const response = unwrap(await listResources({ page: 1, size: 100 }))
+      const records = Array.isArray(response) ? response : response?.records || response?.items || response?.list || response?.resources || []
+      reuseResources.value = records.map(normalizeReuseResource).filter(Boolean)
+    } catch (error) {
+      reuseResources.value = []
+      ElMessage.warning(error?.message || '个人资源加载失败，仍可不绑定素材继续复用')
+    } finally {
+      reuseResourcesLoading.value = false
+    }
+  } catch (error) {
+    reuseVisible.value = false
+    ElMessage.error(error?.message || '社区内容详情加载失败')
+  } finally {
+    reuseLoading.value = false
+  }
+}
+
+/** 复制社区内容并进入个人创作工作台。 */
+const reuse = async (item) => openReuse(item)
+
+const removeReuseResource = (id) => {
+  reuseSelectedResourceIds.value = reuseSelectedResourceIds.value.filter((item) => String(item) !== String(id))
+}
+
+const finishReuse = async () => {
+  const item = reuseTarget.value
+  const source = reuseDetail.value || item
+  if (!source) return
+  reuseLoading.value = true
+  const context = reuseContext.value
+  try {
+    if (item?.testCaseId) {
+      reuseVisible.value = false
+      ElMessage.success('测试案例已载入创作工作台')
+      await router.push({
+        path: '/main/workspace',
+        query: {
+          testCase: item.testCaseId,
+          templateTitle: source.title,
+          communityType: context.type,
+          communityId: context.id || item.testCaseId,
+          resourceIds: JSON.stringify(context.resource_ids),
+          workspaceContext: JSON.stringify({ community: context, resource_ids: context.resource_ids, resourceIds: context.resource_ids }),
+        },
+      })
+      return
+    }
+    const result = await reuseCommunityItem(source.id, {
+      target_version: Number(reuseVersion.value) || Number(source.version) || 1,
+      bind_materials: JSON.stringify(context.resource_ids),
+    })
+    const project = unwrap(result)
+    const projectId = project?.id || project?.project_id
+    if (projectId) {
+      try {
+        await patchProject(projectId, {
+          project_name: reuseProjectName.value.trim() || `${source.title || '未命名内容'}（副本）`,
+          edit_history: JSON.stringify({ workspace_context: context }),
+          current_version: Number(project?.current_version || 1),
+        })
+      } catch (error) {
+        ElMessage.warning(error?.message || '派生项目已创建，但复用上下文暂未同步；进入工作台后仍可重新保存')
+      }
+    }
+    reuseVisible.value = false
+    ElMessage.success('已按所选版本和素材绑定复制到个人空间')
+    await router.push({
+      path: '/main/workspace',
+      query: {
+        ...(projectId ? { projectId } : {}),
+        communityType: context.type,
+        communityId: source.id,
+        resourceIds: JSON.stringify(context.resource_ids),
+        workspaceContext: JSON.stringify(context),
+      },
+    })
+  } catch (error) {
+    ElMessage.error(error?.message || '无法创建派生项目，请稍后重试')
+  } finally {
+    reuseLoading.value = false
+  }
 }
 const toggleFavorite = async (item) => {
   const favoriteKey = item.id || item.testCaseId
@@ -180,7 +331,29 @@ onMounted(loadCommunity)
     <el-dialog v-model="submissionVisible" title="投稿到教师社区" width="min(700px, 92vw)"><el-form label-position="top"><div class="submission-grid"><el-form-item label="标题"><el-input v-model="submission.title" /></el-form-item><el-form-item label="内容类型"><el-select v-model="submission.content_type"><el-option label="教学案例" value="lesson_case" /><el-option label="Skill" value="skill" /></el-select></el-form-item><el-form-item label="学科"><el-input v-model="submission.subject" /></el-form-item><el-form-item label="学段"><el-input v-model="submission.grade" /></el-form-item></div><el-form-item label="简介"><el-input v-model="submission.description" type="textarea" :rows="2" /></el-form-item><el-form-item label="正文 / 结构化内容"><el-input v-model="submission.content_data" type="textarea" :rows="7" /></el-form-item></el-form><div class="draft-list"><span>我的投稿草稿</span><el-button v-for="item in submissions" :key="item.id" text @click="submission = { ...submission, ...item }">{{ item.title }}</el-button></div><template #footer><el-button @click="saveSubmission(false)">保存草稿</el-button><el-button type="primary" @click="saveSubmission(true)">提交审核</el-button></template></el-dialog>
     <el-dialog v-model="collectionVisible" title="我的收藏与最近浏览" width="min(680px, 92vw)"><section class="collection-section"><h3>我的收藏</h3><p v-for="item in favorites" :key="item.id">{{ item.title }}</p><el-empty v-if="!favorites.length" description="暂无收藏" /></section><section class="collection-section"><h3>最近浏览</h3><p v-for="item in recentViews" :key="item.item_id || item.id"><span>{{ item.title || item.item_title || `内容 #${item.item_id}` }}</span><el-button text size="small" @click="removeView(item)">删除</el-button></p><el-empty v-if="!recentViews.length" description="暂无浏览记录" /></section></el-dialog>
     <el-dialog v-model="reportVisible" title="举报与处理进度" width="min(600px, 92vw)"><el-form label-position="top"><el-form-item label="内容 ID"><el-input v-model="reportForm.target_id" inputmode="numeric" /></el-form-item><el-form-item label="举报原因"><el-input v-model="reportForm.reason" /></el-form-item><el-form-item label="补充说明"><el-input v-model="reportForm.comment" type="textarea" :rows="3" /></el-form-item></el-form><el-button type="primary" @click="reportItem">提交举报</el-button><div class="report-list"><p v-for="report in reports" :key="report.id">#{{ report.id }} · {{ report.status || '处理中' }} · {{ report.reason || report.comment }}</p><el-empty v-if="!reports.length" description="暂无举报记录" /></div></el-dialog>
-    <el-dialog v-model="detailVisible" :title="detail?.title || '社区内容详情'" width="min(720px, 92vw)"><p class="detail-meta">{{ detail?.subject }} · {{ detail?.grade }} · {{ detail?.lesson_type }}</p><p>{{ detail?.description }}</p><pre class="detail-content">{{ detail?.content_data || detail?.example_effect }}</pre><template #footer><el-button type="danger" plain @click="reportForm = { target_id: detail?.id, reason: '', comment: '' }; reportVisible = true">举报内容</el-button><el-button type="primary" @click="reuse(detail)">复用此内容</el-button></template></el-dialog>
+    <el-dialog v-model="detailVisible" :title="detail?.title || '社区内容详情'" width="min(720px, 92vw)">
+      <p class="detail-meta">{{ detail?.subject }} · {{ detail?.grade }} · {{ detail?.lesson_type }} · v{{ detail?.version || 1 }}</p>
+      <p>{{ detail?.description }}</p>
+      <div class="detail-context-grid">
+        <span><small>授权</small><strong>{{ detail?.license || '未说明' }}</strong></span>
+        <span><small>示例效果</small><strong>{{ detail?.example_effect || '未提供' }}</strong></span>
+      </div>
+      <section v-if="normalizeInputVariables(detail?.input_variables).length" class="detail-variable-preview"><strong>复用前需填写的输入变量</strong><span v-for="variable in normalizeInputVariables(detail?.input_variables)" :key="variable.key">{{ variable.label }}</span></section>
+      <pre class="detail-content">{{ detail?.content_data || detail?.example_effect || '暂无正文内容' }}</pre>
+      <template #footer><el-button type="danger" plain @click="reportForm = { target_id: detail?.id, reason: '', comment: '' }; reportVisible = true">举报内容</el-button><el-button type="primary" @click="reuse(detail)">配置复用</el-button></template>
+    </el-dialog>
+    <el-dialog v-model="reuseVisible" :title="`配置复用 · ${reuseDetail?.title || reuseTarget?.title || '社区内容'}`" width="min(760px, 94vw)" :close-on-click-modal="false">
+      <div v-loading="reuseLoading" class="reuse-dialog">
+        <p class="reuse-intro">复用会创建个人派生项目，不会修改社区原件。请先确认来源版本、授权条件，并选择要绑定给 AI 的个人资料。</p>
+        <el-form label-position="top">
+          <el-form-item label="派生项目名称"><el-input v-model="reuseProjectName" maxlength="80" show-word-limit /></el-form-item>
+          <div class="reuse-meta-grid"><el-form-item label="来源版本"><el-select v-model="reuseVersion" class="full-width"><el-option v-for="version in reuseVersionOptions" :key="version" :label="`v${version}`" :value="version" /></el-select></el-form-item><div class="reuse-meta-card"><small>授权说明</small><strong>{{ reuseDetail?.license || '未说明' }}</strong></div><div class="reuse-meta-card"><small>示例效果</small><strong>{{ reuseDetail?.example_effect || '未提供' }}</strong></div></div>
+          <section v-if="reuseVariables.length" class="reuse-section"><header><strong>输入变量</strong><span>复用前填写，随项目上下文保存</span></header><div class="reuse-variable-grid"><el-form-item v-for="variable in reuseVariables" :key="variable.key" :label="variable.label" :required="variable.required"><el-input v-model="reuseVariableValues[variable.key]" :type="variable.type === 'textarea' ? 'textarea' : 'text'" :placeholder="variable.description || `请输入${variable.label}`" /><small v-if="variable.description">{{ variable.description }}</small></el-form-item></div></section>
+          <section class="reuse-section"><header><strong>绑定个人资料</strong><span>已选择 {{ reuseSelectedResourceIds.length }} 项，AI 仅在本项目中使用</span></header><el-checkbox-group v-model="reuseSelectedResourceIds" v-loading="reuseResourcesLoading" class="reuse-resource-picker"><el-checkbox v-for="resource in reuseResources" :key="resource.id" :value="resource.id">{{ resource.name }}<small>{{ resource.fileType || '资料' }}</small></el-checkbox><el-empty v-if="!reuseResourcesLoading && !reuseResources.length" description="暂无个人资料，可稍后在工作台补充绑定" /></el-checkbox-group><div v-if="reuseSelectedResourceIds.length" class="reuse-selected-resources"><el-tag v-for="id in reuseSelectedResourceIds" :key="id" closable @close="removeReuseResource(id)">{{ reuseResources.find((resource) => resource.id === String(id))?.name || `资源 ${id}` }}</el-tag></div></section>
+        </el-form>
+      </div>
+      <template #footer><el-button @click="reuseVisible = false">取消</el-button><el-button type="primary" :loading="reuseLoading" @click="finishReuse">确认复用并进入工作台</el-button></template>
+    </el-dialog>
 </template>
 
 <style scoped>
@@ -209,4 +382,5 @@ onMounted(loadCommunity)
 @media (max-width: 980px) { .community-grid { grid-template-columns: repeat(2, 1fr); }.featured-case { grid-template-columns: 1fr; }.feature-visual { min-height: 240px; } }
 @media (max-width: 600px) { .community-search-row { align-items: stretch; flex-direction: column; }.community-search-row :deep(.el-input) { width: 100%; flex-basis: auto; }.community-search-row>.submission-button { width: 100%; margin-left: 0; }.community-toolbar { align-items: stretch; flex-direction: column; }.filters { padding-bottom: 12px; }.community-grid { grid-template-columns: 1fr; } }
 .community-actions{display:flex;justify-content:center;gap:8px;margin-top:24px}.submission-grid{display:grid;grid-template-columns:2fr 1fr 1fr 1fr;gap:10px}.submission-grid :deep(.el-form-item){margin-bottom:0}.draft-list{display:flex;align-items:center;gap:4px;overflow:auto;padding:10px;border-radius:var(--zh-radius8);background:var(--zh-background-light);font-size:12px}.draft-list span{flex:none;color:var(--zh-text-caption)}.collection-section{margin-bottom:20px}.collection-section h3{font-size:14px}.collection-section p{display:flex;justify-content:space-between;padding:8px 0;border-bottom:1px solid var(--zh-line-parting);color:var(--zh-text-secondary);font-size:13px}.report-list{margin-top:16px;padding-top:12px;border-top:1px solid var(--zh-line-border)}.report-list p{padding:8px 0;border-bottom:1px solid var(--zh-line-parting);color:var(--zh-text-secondary);font-size:12px}.detail-meta{color:var(--zh-text-caption);font-size:12px}.detail-content{max-height:360px;overflow:auto;padding:14px;border-radius:var(--zh-radius8);background:var(--zh-background-light);font:12px/1.65 var(--zh-font-code);white-space:pre-wrap}@media(max-width:600px){.submission-grid{grid-template-columns:1fr}.community-actions{flex-wrap:wrap}}
+.detail-context-grid,.reuse-meta-grid{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:8px;margin:14px 0}.detail-context-grid>span,.reuse-meta-card{display:grid;gap:4px;min-width:0;padding:10px 12px;border:1px solid var(--zh-line-border);border-radius:var(--zh-radius8);background:var(--zh-background-light)}.detail-context-grid small,.reuse-meta-card small{color:var(--zh-text-caption);font-size:10px}.detail-context-grid strong,.reuse-meta-card strong{overflow:hidden;color:var(--zh-text-secondary);font-size:12px;line-height:1.45;text-overflow:ellipsis}.detail-variable-preview{display:flex;align-items:center;flex-wrap:wrap;gap:7px;margin:12px 0;color:var(--zh-text-caption);font-size:11px}.detail-variable-preview strong{flex:none;color:var(--zh-text-secondary)}.detail-variable-preview span{padding:4px 8px;border-radius:999px;color:var(--zh-text-theme);background:var(--zh-background-weaken)}.reuse-dialog{display:grid;gap:4px}.reuse-intro{margin:0 0 12px;color:var(--zh-text-secondary);font-size:13px;line-height:1.65}.reuse-meta-grid{align-items:stretch}.reuse-meta-grid :deep(.el-form-item){margin:0}.full-width{width:100%}.reuse-section{margin-top:8px;padding:14px;border:1px solid var(--zh-line-border);border-radius:var(--zh-radius10);background:var(--zh-background-primary)}.reuse-section>header{display:flex;align-items:baseline;justify-content:space-between;gap:10px;margin-bottom:10px}.reuse-section>header strong{font-size:13px}.reuse-section>header span{color:var(--zh-text-caption);font-size:11px}.reuse-variable-grid{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:8px}.reuse-variable-grid :deep(.el-form-item){margin-bottom:0}.reuse-variable-grid small{display:block;margin-top:4px;color:var(--zh-text-caption);font-size:10px;line-height:1.4}.reuse-resource-picker{display:grid;gap:6px;max-height:210px;overflow:auto;padding:10px;border:1px solid var(--zh-line-border);border-radius:var(--zh-radius8);background:var(--zh-background-light)}.reuse-resource-picker :deep(.el-checkbox){display:flex;align-items:flex-start;margin:0}.reuse-resource-picker :deep(.el-checkbox__label){display:flex;align-items:baseline;gap:8px;min-width:0;color:var(--zh-text-secondary);font-size:12px}.reuse-resource-picker small{color:var(--zh-text-caption);font-size:10px}.reuse-selected-resources{display:flex;flex-wrap:wrap;gap:6px;margin-top:9px}@media(max-width:600px){.detail-context-grid,.reuse-meta-grid,.reuse-variable-grid{grid-template-columns:1fr}}
 </style>
