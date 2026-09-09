@@ -121,6 +121,8 @@ const planTask = ref(null)
 const planLoading = ref(false)
 /** 对话框提交中 */
 const planSubmitting = ref(false)
+/** 大纲确认必须以服务端结果为准，避免本地状态先行导致后续生成被拒绝。 */
+const outlineConfirming = ref(false)
 /** 补充/退回说明 */
 const planComment = ref('')
 
@@ -1230,24 +1232,40 @@ function fillGenResource(data) {
 /** 确认教学设计方案：提交确认动作并切换到资源生成卡片阶段 */
 async function confirmOutline() {
   const data = outlineData.value
-  if (!data) return
-  phase.value = 'resource_ready'
-  // 提交确认（非阻塞；失败不阻断进入资源生成，仅提示）
+  if (!data || outlineConfirming.value) return false
+  outlineConfirming.value = true
   try {
-    await confirmAiPlan(props.sessionId, { action: 'confirm', plan_version: planVersion.value })
-  } catch {
-    ElMessage.warning('大纲确认状态同步失败，但可继续生成资源。')
+    const confirmation = await confirmAiPlan(props.sessionId, { action: 'confirm', plan_version: planVersion.value })
+    if (!isOk(confirmation)) throw new Error(confirmation?.message || '大纲确认请求未成功')
+
+    // 不能只相信确认接口的 HTTP 成功响应；回读状态后才允许进入生成阶段。
+    const confirmedPlanResponse = await getAiPlan(props.sessionId)
+    const confirmedPlan = isOk(confirmedPlanResponse) ? confirmedPlanResponse.data : null
+    if (String(confirmedPlan?.plan_confirm_status || '').toLowerCase() !== 'confirmed') {
+      throw new Error(confirmedPlanResponse?.message || '服务端尚未确认教学设计大纲')
+    }
+
+    planTask.value = { ...(planTask.value || {}), ...confirmedPlan, plan_confirm_status: 'confirmed' }
+    const localOutlineDraft = readOutlineDraft(props.sessionId)
+    if (localOutlineDraft) {
+      saveOutlineDraft(props.sessionId, {
+        ...localOutlineDraft,
+        plan_confirm_status: 'confirmed',
+        plan_version: planVersion.value,
+      })
+    }
+    await loadPptTemplates()
+    fillGenResource(data)
+    phase.value = 'resource_ready'
+    return true
+  } catch (error) {
+    // 不允许把浏览器草稿标记为已确认；生成入口只认可服务端确认状态。
+    phase.value = 'outline_ready'
+    ElMessage.error(error?.message || '大纲确认失败，请检查网络后重试；尚未进入课件生成。')
+    return false
+  } finally {
+    outlineConfirming.value = false
   }
-  const localOutlineDraft = readOutlineDraft(props.sessionId)
-  if (localOutlineDraft) {
-    saveOutlineDraft(props.sessionId, {
-      ...localOutlineDraft,
-      plan_confirm_status: 'confirmed',
-      plan_version: planVersion.value,
-    })
-  }
-  await loadPptTemplates()
-  fillGenResource(data)
 }
 
 /** 打开教学设计方案修改模态框 */
@@ -1284,9 +1302,9 @@ async function submitModifyRequirement() {
 }
 
 /** 从模态框确认大纲，功能等同大纲卡片上的"确认大纲"按钮 */
-function confirmOutlineFromDialog() {
-  outlineDialogVisible.value = false
-  confirmOutline()
+async function confirmOutlineFromDialog() {
+  const confirmed = await confirmOutline()
+  if (confirmed) outlineDialogVisible.value = false
 }
 
 // ========== 资源生成 ==========
@@ -1499,7 +1517,8 @@ async function restoreSession() {
       planVersion.value = Number(task?.plan_version) || Number(localOutlineDraft?.plan_version) || Number(planJson.version) || 1
       addMessage('assistant', 'markdown', outlineData.value.markdown, { data: outlineData.value })
       addMessage('assistant', 'outline_actions', '', { outlineId: outlineData.value.outlineId })
-      if (!outlineWasRepaired && (task?.plan_confirm_status === 'confirmed' || localOutlineDraft?.plan_confirm_status === 'confirmed')) {
+      // 恢复时也只信任服务端确认状态，不能让旧的本地草稿绕过确认闸门。
+      if (!outlineWasRepaired && task?.plan_confirm_status === 'confirmed') {
         await loadPptTemplates()
         fillGenResource(outlineData.value)
         phase.value = 'resource_ready'
@@ -1667,7 +1686,8 @@ async function restoreSession() {
                 v-if="phase === 'outline_ready'"
                 type="primary"
                 size="small"
-                :loading="isRequesterLoading"
+                :loading="outlineConfirming || isRequesterLoading"
+                :disabled="outlineConfirming || isRequesterLoading"
                 @click="confirmOutline"
               >
                 {{ DESIGN_ACTION_BAR.confirm }}
@@ -1793,7 +1813,7 @@ async function restoreSession() {
     </div>
     <template #footer>
       <el-button :loading="planSubmitting" :disabled="!planComment.trim()" @click="submitModifyRequirement">修改要求</el-button>
-      <el-button type="primary" @click="confirmOutlineFromDialog">确认大纲</el-button>
+      <el-button type="primary" :loading="outlineConfirming" :disabled="outlineConfirming" @click="confirmOutlineFromDialog">确认大纲</el-button>
     </template>
   </el-dialog>
 

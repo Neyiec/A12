@@ -372,7 +372,7 @@
 | 字段 | 类型 | 必填 | 说明 |
 |---|---|---|---|
 | `project_name` | String | **是** | 项目名称 |
-| `project_type` | String | **是** | 类型: `ppt` / `word` / `h5` / `mixed` |
+| `project_type` | String | **是** | 类型: `ppt`（课件）/ `word`（教案文档）/ `h5`（互动内容）。`mixed` 仅用于读取历史项目，不能新建。 |
 | `status` | String | 否 | 默认 `draft` |
 | `snapshots` | String(JSON) | 否 | 版本快照列表 |
 | `edit_history` | String(JSON) | 否 | 编辑历史 |
@@ -392,7 +392,7 @@
 | 字段 | 类型 | 必填 | 说明 |
 |---|---|---|---|
 | `keyword` | String | 否 | 名称/课程关键字模糊搜索 |
-| `project_type` | String | 否 | 筛选类型: `ppt`/`word`/`h5`/`mixed` |
+| `project_type` | String | 否 | 筛选类型: `ppt`/`word`/`h5`；为兼容历史数据，查询时也可传 `mixed`。 |
 | `status` | String | 否 | 筛选状态: `draft`/`editing`/`confirmed`/`exported` |
 | `user_id` | Integer | 否 | 筛选用户（后端自动设为当前用户） |
 | `page` | int | 否 | 默认1 |
@@ -511,17 +511,16 @@
 
 ---
 
-## API-29 POST /api/v1/projects/{id}/components
+## API-29 POST /api/v1/projects/{id}/pages
 
-**功能**: 插入文本、图片、音视频、表格、H5或学科工具组件
+**功能**: 新建一页课件。文本、图片、音视频、表格、H5 和学科工具等组件保存在该页的 `page_content` / `components` 快照中。
 
 **路径参数**: `id` — 项目ID
 
 **请求体 (JSON)**
 | 字段 | 类型 | 必填 | 说明 |
 |---|---|---|---|
-| `page_id` | int | **是** | 目标页面ID |
-| `page_order` | int | **是** | 页面顺序 |
+| `page_order` | int | 否 | 页面顺序；不传时由服务端按当前页数追加 |
 | `page_type` | String | **是** | 页面类型: `cover`/`toc`/`content`/`summary` |
 | `page_title` | String | 否 | 页面标题 |
 | `page_content` | String(JSON) | 否 | 页面内容 |
@@ -533,21 +532,24 @@
 
 ---
 
-## API-30 PATCH /api/v1/projects/{id}/components/{componentId}
+## API-30 PUT /api/v1/projects/{id}/pages/{pageId}
 
-**功能**: 修改组件内容、位置和样式
+**功能**: 保存一页课件的完整快照，包括页面内容、组件列表、组件位置和样式。
 
-**路径参数**: `id` — 项目ID, `componentId` — 组件ID
+**路径参数**: `id` — 项目ID, `pageId` — 页面ID
 
 **请求体 (JSON)**
 | 字段 | 类型 | 必填 | 说明 |
 |---|---|---|---|
 | `page_content` | String(JSON) | 否 | 更新的页面内容 |
 | `components` | String(JSON) | 否 | 更新的组件列表 |
+| `expected_page_version` | int | 否 | 页面乐观锁版本；推荐由读取接口返回值回传 |
 
 **后端 DTO**: `PageDTO`
 
 **响应 VO**: `Result<PageVO>`
+
+> 兼容说明：`POST /api/v1/projects/{id}/components` 与 `PATCH /api/v1/projects/{id}/components/{componentId}` 为历史兼容路由。后端实际将后者的 `componentId` 当作 `pageId` 查询，二者均不适用于真正的组件级持久化；新客户端不得再调用。
 
 ---
 

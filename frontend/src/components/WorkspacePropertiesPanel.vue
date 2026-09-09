@@ -1,6 +1,8 @@
 <script setup>
 import { computed, ref, watch } from 'vue'
 import { ChatDotRound, Close, CopyDocument, Delete, Plus, RefreshLeft, Upload } from '@element-plus/icons-vue'
+import { normalizeSubjectToolData, normalizeSubjectToolType, subjectToolDefaultRenderHint, subjectToolOptions } from '../utils/subjectTool'
+import { interactiveModuleTypeInfo, normalizeInteractiveModuleType } from '../utils/interactiveModule'
 
 const props = defineProps({
   elements: { type: Array, default: () => [] },
@@ -12,14 +14,23 @@ const props = defineProps({
   layouts: { type: Array, default: () => [] },
   resources: { type: Array, default: () => [] },
   resourcesLoading: { type: Boolean, default: false },
+  subjectValidationPending: { type: Boolean, default: false },
 })
 
 const emit = defineEmits([
   'update-element-style',
   'update-element-position',
+  'arrange-element',
+  'align-element',
+  'distribute-elements',
   'update-element-content',
   'update-element-field',
+  'update-element-render',
+  'update-element-style-map',
+  'update-element-h5-config',
+  'regenerate-h5',
   'update-element-data',
+  'validate-subject-tool',
   'select-element',
   'clear-element',
   'copy-element',
@@ -30,6 +41,8 @@ const emit = defineEmits([
   'update-page-background',
   'clear-page-background',
   'refresh-resources',
+  'bind-element-resource',
+  'upload-element-resource',
   'copy-slide',
   'remove-slide',
 ])
@@ -53,28 +66,38 @@ const pageLabel = computed(() => `页面 ${String(props.pageNumber).padStart(2, 
 const pageBackground = computed(() => props.page?.background || {})
 const pageBackgroundPreview = computed(() => props.page?.backgroundImage || props.page?.background_image || pageBackground.value.src || '')
 const resourcePickerVisible = ref(false)
+const resourcePickerTarget = ref('background')
 const resourceKeyword = ref('')
-const isImageResource = (resource) => {
+const resourceType = (resource) => {
   const type = String(resource?.fileType || resource?.file_type || resource?.mimeType || resource?.mime_type || '').toLowerCase()
   const name = String(resource?.name || resource?.file_name || '')
-  return type.startsWith('image/') || /\.(?:png|jpe?g|gif|webp|svg|bmp|avif)(?:$|\?)/i.test(name)
+  if (type.startsWith('image/') || /\.(?:png|jpe?g|gif|webp|svg|bmp|avif)(?:$|\?)/i.test(name)) return 'image'
+  if (type.startsWith('audio/') || /\.(?:aac|flac|m4a|mp3|ogg|wav|webm)(?:$|\?)/i.test(name)) return 'audio'
+  if (type.startsWith('video/') || /\.(?:avi|m4v|mkv|mov|mp4|ogv|webm)(?:$|\?)/i.test(name)) return 'video'
+  return 'file'
 }
-const imageResources = computed(() => props.resources.filter(isImageResource))
-const filteredImageResources = computed(() => {
+const resourceTargetLabel = computed(() => ({ background: '背景图', image: '图片', audio: '音频', video: '视频' }[resourcePickerTarget.value] || '素材'))
+const selectableResources = computed(() => props.resources.filter((resource) => {
+  const target = resourcePickerTarget.value === 'background' ? 'image' : resourcePickerTarget.value
+  return resourceType(resource) === target
+}))
+const filteredResources = computed(() => {
   const keyword = resourceKeyword.value.trim().toLowerCase()
-  if (!keyword) return imageResources.value
-  return imageResources.value.filter((resource) => String(resource?.name || '').toLowerCase().includes(keyword))
+  if (!keyword) return selectableResources.value
+  return selectableResources.value.filter((resource) => resourceName(resource).toLowerCase().includes(keyword))
 })
 const updatePageField = (key, value) => emit('update-page-field', { key, value })
 const updatePageTheme = (themeId) => emit('update-page-theme', themeId)
 const updatePageLayout = (layout) => emit('update-page-layout', layout)
-const openResourcePicker = () => {
+const openResourcePicker = (target = 'background') => {
+  resourcePickerTarget.value = target
   resourceKeyword.value = ''
   resourcePickerVisible.value = true
   if (!props.resources.length) emit('refresh-resources')
 }
-const selectBackgroundResource = (resource) => {
-  emit('update-page-background', { resourceId: resource?.id, resource })
+const selectResource = (resource) => {
+  if (resourcePickerTarget.value === 'background') emit('update-page-background', { resourceId: resource?.id, resource })
+  else emit('bind-element-resource', { resource, type: resourcePickerTarget.value })
   resourcePickerVisible.value = false
 }
 const resourceName = (resource) => String(resource?.name || resource?.file_name || `图片素材 ${resource?.id || ''}`).trim()
@@ -83,25 +106,67 @@ const elementList = computed(() => props.elements)
 const styleValue = (key, fallback = '') => props.selectedElement?.style?.[key] ?? fallback
 const positionValue = (key, fallback = 0) => props.selectedElement?.position?.[key] ?? fallback
 const positionLimits = computed(() => {
-  const width = Math.min(100, Math.max(4, Number(positionValue('width', 30)) || 4))
-  const height = Math.min(100, Math.max(4, Number(positionValue('height', 20)) || 4))
-  const x = Math.min(100 - width, Math.max(0, Number(positionValue('x')) || 0))
-  const y = Math.min(100 - height, Math.max(0, Number(positionValue('y')) || 0))
-  return { x: 100 - width, y: 100 - height, width: 100 - x, height: 100 - y }
+  // 坐标不再受画布边界限制，允许组件保留负坐标并部分移出画布。
+  // 尺寸仍保留最小值与 100% 的输入保护，避免误填造成不可见组件。
+  return { width: 100, height: 100 }
 })
 const contentValue = computed(() => props.selectedElement?.content || '')
 const currentImageSource = computed(() => props.selectedElement?.type === 'image' ? (props.selectedElement.src || '') : '')
 const currentMediaSource = computed(() => ['audio', 'video'].includes(props.selectedElement?.type)
   ? (props.selectedElement?.url || props.selectedElement?.src || '')
   : '')
-const currentH5Html = computed(() => props.selectedElement?.type === 'h5' ? (props.selectedElement?.html || '') : '')
+const currentH5Config = computed(() => {
+  const value = props.selectedElement?.h5Config ?? props.selectedElement?.h5_config
+  return value && typeof value === 'object' && !Array.isArray(value) ? value : {}
+})
+const currentH5ModuleType = computed(() => normalizeInteractiveModuleType(props.selectedElement?.module_type || props.selectedElement?.moduleType || props.selectedElement?.metadata?.module_type))
+const currentH5ModuleTypeInfo = computed(() => interactiveModuleTypeInfo(currentH5ModuleType.value))
+const currentH5ModuleTypeRaw = computed(() => String(props.selectedElement?.module_type_raw || props.selectedElement?.module_type || props.selectedElement?.moduleType || '').trim() || 'unknown')
+const currentH5ModuleId = computed(() => String(props.selectedElement?.module_id || props.selectedElement?.moduleId || '').trim())
+const currentH5Topic = computed(() => String(props.selectedElement?.topic || props.selectedElement?.metadata?.topic || '').trim())
+const currentH5Metadata = computed(() => {
+  const value = props.selectedElement?.metadata
+  return value && typeof value === 'object' && !Array.isArray(value) ? value : {}
+})
+const currentH5UsageSuggestions = computed(() => {
+  const value = props.selectedElement?.usage_suggestions || props.selectedElement?.usageSuggestions
+  return Array.isArray(value) ? value.filter(Boolean) : []
+})
 const chartData = computed(() => Array.isArray(props.selectedElement?.data) ? props.selectedElement.data : [])
 const tableData = computed(() => {
   if (!Array.isArray(props.selectedElement?.data)) return []
   return props.selectedElement.data.map((row) => Array.isArray(row) ? row.map((cell) => String(cell ?? '')) : [String(row ?? '')])
 })
+const tableRowCount = computed(() => Math.max(1, tableData.value.length))
 const tableColumnCount = computed(() => Math.max(1, ...tableData.value.map((row) => row.length)))
-const subjectData = computed(() => props.selectedElement?.data && typeof props.selectedElement.data === 'object' && !Array.isArray(props.selectedElement.data) ? props.selectedElement.data : {})
+const subjectType = computed(() => normalizeSubjectToolType(props.selectedElement?.subjectType || props.selectedElement?.subject_type || 'geometry'))
+const subjectData = computed(() => normalizeSubjectToolData(props.selectedElement?.data, props.selectedElement?.subjectType || props.selectedElement?.subject_type || subjectType.value))
+const subjectRenderConfig = computed(() => {
+  const explicit = props.selectedElement?.render
+  if (explicit && typeof explicit === 'object' && !Array.isArray(explicit) && Object.keys(explicit).length) return explicit
+  const legacy = props.selectedElement?.subjectRender || props.selectedElement?.subject_render
+  if (legacy && typeof legacy === 'object' && !Array.isArray(legacy) && Object.keys(legacy).length) return legacy
+  return subjectToolDefaultRenderHint(subjectType.value)
+})
+const subjectStyleConfig = computed(() => {
+  const explicit = props.selectedElement?.subjectStyle || props.selectedElement?.subject_style
+  if (explicit && typeof explicit === 'object' && !Array.isArray(explicit) && Object.keys(explicit).length) return explicit
+  const fallback = props.selectedElement?.style
+  return fallback && typeof fallback === 'object' && !Array.isArray(fallback) ? fallback : {}
+})
+const subjectRender = computed(() => {
+  const hint = props.selectedElement?.subjectRenderHint
+    || props.selectedElement?.subject_render_hint
+    || props.selectedElement?.subjectValidation?.render_hint
+    || props.selectedElement?.subjectValidation?.renderHint
+  return hint && typeof hint === 'object' && !Array.isArray(hint) && Object.keys(hint).length
+    ? hint
+    : subjectRenderConfig.value || subjectToolDefaultRenderHint(subjectType.value)
+})
+const subjectValidation = computed(() => {
+  const result = props.selectedElement?.subjectValidation || props.selectedElement?.subject_validation
+  return result && typeof result === 'object' && !Array.isArray(result) ? result : null
+})
 const imageSourceDraft = ref('')
 const imageSourceError = ref('')
 const mediaSourceDraft = ref('')
@@ -111,6 +176,12 @@ const mediaFileInput = ref(null)
 const elementEditorSection = ref('style')
 const chartImportDraft = ref('')
 const chartImportError = ref('')
+const subjectChartOptionDraft = ref('')
+const subjectConfigError = ref('')
+const subjectRenderDraft = ref('')
+const subjectRenderError = ref('')
+const subjectStyleDraft = ref('')
+const subjectStyleError = ref('')
 const elementEditorSections = [
   { id: 'content', label: '内容' },
   { id: 'style', label: '样式' },
@@ -120,6 +191,7 @@ const updateStyle = (key, value) => emit('update-element-style', { key, value })
 const updatePosition = (key, value) => emit('update-element-position', { key, value })
 const updateContent = (value) => emit('update-element-content', value)
 const updateField = (key, value) => emit('update-element-field', { key, value })
+const updateH5Config = (key, value) => emit('update-element-h5-config', { key, value })
 const updateData = (value) => emit('update-element-data', value)
 const selectElement = (id) => emit('select-element', id)
 const clearElement = () => emit('clear-element')
@@ -171,14 +243,9 @@ const handleImageFile = (event) => {
     event.target.value = ''
     return
   }
-  const reader = new FileReader()
-  reader.onload = () => {
-    imageSourceDraft.value = ''
-    imageSourceError.value = ''
-    updateField('src', String(reader.result || ''))
-  }
-  reader.onerror = () => { imageSourceError.value = '读取图片失败，请重新选择' }
-  reader.readAsDataURL(file)
+  imageSourceDraft.value = ''
+  imageSourceError.value = ''
+  emit('upload-element-resource', { type: 'image', file })
   event.target.value = ''
 }
 const openMediaFilePicker = () => mediaFileInput.value?.click()
@@ -209,14 +276,9 @@ const handleMediaFile = (event) => {
     return
   }
 
-  const reader = new FileReader()
-  reader.onload = () => {
-    mediaSourceDraft.value = ''
-    mediaSourceError.value = ''
-    updateField('url', String(reader.result || ''))
-  }
-  reader.onerror = () => { mediaSourceError.value = `读取${mediaKind}失败，请重新选择` }
-  reader.readAsDataURL(file)
+  mediaSourceDraft.value = ''
+  mediaSourceError.value = ''
+  emit('upload-element-resource', { type, file })
   event.target.value = ''
 }
 const applyMediaSource = () => {
@@ -245,29 +307,114 @@ const removeChartItem = (index) => {
   updateData(chartData.value.filter((_, itemIndex) => itemIndex !== index).map((item) => ({ ...item })))
 }
 const updateTableCell = (rowIndex, columnIndex, value) => {
-  const rows = tableData.value.map((row) => [...row])
-  while (rows.length <= rowIndex) rows.push([])
-  while (rows[rowIndex].length <= columnIndex) rows[rowIndex].push('')
+  const rows = normalizedTableGrid(tableData.value, tableRowCount.value, tableColumnCount.value)
   rows[rowIndex][columnIndex] = String(value ?? '')
   updateData(rows)
 }
+const normalizedTableGrid = (sourceRows, rowCount, columnCount) => {
+  const nextRowCount = Math.max(1, Math.min(12, Math.round(Number(rowCount) || 1)))
+  const nextColumnCount = Math.max(1, Math.min(8, Math.round(Number(columnCount) || 1)))
+  const source = Array.isArray(sourceRows) ? sourceRows : []
+  return Array.from({ length: nextRowCount }, (_, rowIndex) => Array.from({ length: nextColumnCount }, (_, columnIndex) => {
+    const existing = Array.isArray(source[rowIndex]) ? source[rowIndex][columnIndex] : undefined
+    if (existing !== undefined) return String(existing ?? '')
+    return rowIndex === 0 ? `列 ${columnIndex + 1}` : `内容 ${columnIndex + 1}`
+  }))
+}
+const updateTableDimensions = (rowCount = tableRowCount.value, columnCount = tableColumnCount.value) => {
+  const rows = normalizedTableGrid(tableData.value, rowCount, columnCount)
+  if (JSON.stringify(rows) !== JSON.stringify(tableData.value)) updateData(rows)
+}
+const updateTableRowCount = (value) => updateTableDimensions(value, tableColumnCount.value)
+const updateTableColumnCount = (value) => updateTableDimensions(tableRowCount.value, value)
 const addTableRow = () => {
-  if (tableData.value.length >= 12) return
-  updateData([...tableData.value.map((row) => [...row]), Array.from({ length: tableColumnCount.value }, (_, index) => `内容${index + 1}`)])
+  if (tableRowCount.value >= 12) return
+  updateTableDimensions(tableRowCount.value + 1, tableColumnCount.value)
 }
 const removeTableRow = (index) => {
-  if (tableData.value.length <= 1) return
-  updateData(tableData.value.filter((_, rowIndex) => rowIndex !== index).map((row) => [...row]))
+  if (tableRowCount.value <= 1) return
+  const rows = tableData.value.filter((_, rowIndex) => rowIndex !== index)
+  updateData(normalizedTableGrid(rows, rows.length, tableColumnCount.value))
 }
 const addTableColumn = () => {
   if (tableColumnCount.value >= 8) return
-  updateData(tableData.value.map((row) => [...row, '']))
+  updateTableDimensions(tableRowCount.value, tableColumnCount.value + 1)
 }
 const removeTableColumn = () => {
   if (tableColumnCount.value <= 1) return
-  updateData(tableData.value.map((row) => row.slice(0, -1)))
+  updateTableDimensions(tableRowCount.value, tableColumnCount.value - 1)
+}
+const updateSubjectType = (value) => {
+  subjectConfigError.value = ''
+  updateField('subjectType', normalizeSubjectToolType(value))
 }
 const updateSubjectField = (key, value) => updateData({ ...subjectData.value, [key]: value })
+const updateSubjectCommands = (value) => updateSubjectField('commands', String(value || '')
+  .split(/\r?\n|[，,;；]/)
+  .map((item) => item.trim())
+  .filter(Boolean))
+const subjectColumnsText = computed(() => Array.isArray(subjectData.value.columns) ? subjectData.value.columns.join('，') : '')
+const subjectRowsText = computed(() => Array.isArray(subjectData.value.rows)
+  ? subjectData.value.rows.map((row) => Array.isArray(row) ? row.join('，') : String(row ?? '')).join('\n')
+  : '')
+const updateSubjectColumns = (value) => updateSubjectField('columns', String(value || '')
+  .split(/[，,]/)
+  .map((item) => item.trim())
+  .filter(Boolean)
+  .slice(0, 8))
+const updateSubjectRows = (value) => updateSubjectField('rows', String(value || '')
+  .split(/\r?\n/)
+  .map((line) => line.split(/[，,\t]/).map((item) => item.trim()).slice(0, 8))
+  .filter((row) => row.some(Boolean))
+  .slice(0, 12))
+const applySubjectChartOption = () => {
+  try {
+    const option = JSON.parse(subjectChartOptionDraft.value || '{}')
+    if (!option || typeof option !== 'object' || Array.isArray(option)) throw new Error('图表配置必须是 JSON 对象')
+    subjectConfigError.value = ''
+    updateSubjectField('option', option)
+  } catch (error) {
+    subjectConfigError.value = error?.message || '图表配置不是合法的 JSON 对象'
+  }
+}
+const formatSubjectJson = (value) => {
+  try { return JSON.stringify(value ?? {}, null, 2) } catch { return '{}' }
+}
+const applySubjectRender = () => {
+  try {
+    const parsed = JSON.parse(subjectRenderDraft.value || '{}')
+    if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) throw new Error('render 必须是 JSON 对象')
+    subjectRenderError.value = ''
+    emit('update-element-render', parsed)
+  } catch (error) {
+    subjectRenderError.value = error?.message || 'render 配置不是合法的 JSON 对象'
+  }
+}
+const applySubjectStyle = () => {
+  try {
+    const parsed = JSON.parse(subjectStyleDraft.value || '{}')
+    if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) throw new Error('style 必须是 JSON 对象')
+    subjectStyleError.value = ''
+    emit('update-element-style-map', parsed)
+  } catch (error) {
+    subjectStyleError.value = error?.message || 'style 配置不是合法的 JSON 对象'
+  }
+}
+watch([
+  () => props.selectedElement?.id,
+  subjectType,
+  () => JSON.stringify(subjectData.value.option ?? {}),
+  () => JSON.stringify(subjectRenderConfig.value),
+  () => JSON.stringify(subjectStyleConfig.value),
+], () => {
+  const option = subjectData.value.option
+  subjectChartOptionDraft.value = typeof option === 'string' ? option : JSON.stringify(option || {}, null, 2)
+  subjectRenderDraft.value = formatSubjectJson(subjectRenderConfig.value)
+  subjectStyleDraft.value = formatSubjectJson(subjectStyleConfig.value)
+  subjectConfigError.value = ''
+  subjectRenderError.value = ''
+  subjectStyleError.value = ''
+}, { immediate: true })
 const importChartData = () => {
   const rows = chartImportDraft.value
     .split(/\r?\n/)
@@ -415,11 +562,13 @@ const typeInitials = {
           </el-input>
           <p v-if="imageSourceError" class="content-error" role="alert">{{ imageSourceError }}</p>
           <div class="image-source-actions">
-            <el-button :icon="Upload" @click="openImageFilePicker">选择本地图片</el-button>
+            <el-button @click="openResourcePicker('image')">从个人资源库选择</el-button>
+            <el-button :icon="Upload" @click="openImageFilePicker">上传并插入</el-button>
             <el-button text @click="resetImageSource">恢复示例图</el-button>
           </div>
           <input ref="imageFileInput" hidden type="file" accept="image/*" @change="handleImageFile" />
-          <p class="content-help">支持 JPG、PNG、WebP、SVG，文件不超过 5MB；图片仅保存在当前课件数据中。</p>
+          <p v-if="selectedElement.resourceId || selectedElement.resource_id" class="content-help">已关联个人资源 #{{ selectedElement.resourceId || selectedElement.resource_id }}，权限与资源库保持一致。</p>
+          <p class="content-help">支持 JPG、PNG、WebP、SVG，文件不超过 5MB；上传后会写入个人资源库并保留资源关联。</p>
         </template>
 
         <template v-else-if="selectedElement.type === 'chart'">
@@ -458,7 +607,8 @@ const typeInitials = {
           </el-input>
           <p v-if="mediaSourceError" class="content-error" role="alert">{{ mediaSourceError }}</p>
           <div class="media-source-actions">
-            <el-button :icon="Upload" @click="openMediaFilePicker">选择本地{{ selectedElement.type === 'audio' ? '音频' : '视频' }}</el-button>
+            <el-button @click="openResourcePicker(selectedElement.type)">从个人资源库选择</el-button>
+            <el-button :icon="Upload" @click="openMediaFilePicker">上传并插入</el-button>
             <el-button text @click="clearMediaSource">清除地址</el-button>
           </div>
           <input
@@ -470,7 +620,8 @@ const typeInitials = {
           />
           <label class="switch-field"><span>自动播放</span><el-switch :model-value="Boolean(selectedElement.autoplay)" @update:model-value="updateField('autoplay', $event)" /></label>
           <label class="switch-field"><span>显示控制条</span><el-switch :model-value="selectedElement.controls !== false" @update:model-value="updateField('controls', $event)" /></label>
-          <p class="content-help">支持选择本地{{ selectedElement.type === 'audio' ? '音频' : '视频' }}；{{ selectedElement.type === 'audio' ? '音频不超过 20MB' : '视频不超过 50MB' }}。文件会随当前课件数据保存。</p>
+          <p v-if="selectedElement.resourceId || selectedElement.resource_id" class="content-help">已关联个人资源 #{{ selectedElement.resourceId || selectedElement.resource_id }}，权限与资源库保持一致。</p>
+          <p class="content-help">{{ selectedElement.type === 'audio' ? '音频不超过 20MB' : '视频不超过 50MB' }}；上传后会写入个人资源库并保留资源关联。</p>
         </template>
 
         <template v-else-if="selectedElement.type === 'table'">
@@ -478,7 +629,11 @@ const typeInitials = {
           <el-input :model-value="contentValue" maxlength="60" show-word-limit @update:model-value="updateContent" />
           <div class="table-editor-heading">
             <label>表格数据</label>
-            <span>{{ tableData.length }} 行 × {{ tableColumnCount }} 列</span>
+            <span>{{ tableRowCount }} 行 × {{ tableColumnCount }} 列</span>
+          </div>
+          <div class="table-dimension-controls" role="group" aria-label="表格行列设置">
+            <label class="table-dimension-field"><span>行数</span><el-input-number :model-value="tableRowCount" :min="1" :max="12" controls-position="right" aria-label="表格行数" @update:model-value="updateTableRowCount" /></label>
+            <label class="table-dimension-field"><span>列数</span><el-input-number :model-value="tableColumnCount" :min="1" :max="8" controls-position="right" aria-label="表格列数" @update:model-value="updateTableColumnCount" /></label>
           </div>
           <div v-if="tableData.length" class="table-data-editor">
             <div v-for="(row, rowIndex) in tableData" :key="`table-row-${rowIndex}`" class="table-data-row">
@@ -492,32 +647,126 @@ const typeInitials = {
             <el-button @click="addTableColumn">添加列</el-button>
             <el-button text type="danger" :disabled="tableColumnCount <= 1" @click="removeTableColumn">删除末列</el-button>
           </div>
-          <el-button class="initialize-table" @click="updateData([['列 1', '列 2'], ['内容 1', '内容 2']])">重置为两列表格</el-button>
-          <p class="content-help">每一行对应一条记录，输入框会即时同步到页面数据。</p>
+          <el-button class="initialize-table" @click="updateData([['列 1', '列 2'], ['内容 1', '内容 2']])">重置为 2 × 2 表格</el-button>
+          <p class="content-help">行、列数量会直接重建表格结构；已有单元格内容会保留在左上区域。</p>
         </template>
 
         <template v-else-if="selectedElement.type === 'h5'">
-          <label>H5 标题</label>
+          <label>显示名称（仅用于图层标识）</label>
           <el-input :model-value="contentValue" maxlength="80" show-word-limit @update:model-value="updateContent" />
-          <label>H5 HTML 内容</label>
-          <el-input :model-value="currentH5Html" type="textarea" :rows="8" maxlength="12000" show-word-limit placeholder="粘贴或编辑可嵌入的 HTML5 内容" @update:model-value="updateField('html', $event)" />
-          <label>模块 ID</label>
-          <el-input :model-value="selectedElement.moduleId || selectedElement.module_id || ''" maxlength="80" placeholder="可选，用于关联互动模块" @update:model-value="updateField('moduleId', $event)" />
-          <label>嵌入方式</label>
-          <el-select :model-value="selectedElement.embedMode || selectedElement.embed_mode || 'standalone'" @update:model-value="updateField('embedMode', $event)"><el-option label="独立运行" value="standalone" /><el-option label="嵌入页面" value="slide_fragment" /></el-select>
-          <p class="content-help">可编辑标题、HTML、模块关联和嵌入方式；已有互动模块仍可从画布按钮预览。</p>
+          <div class="h5-readonly-field">
+            <span>生成类型</span>
+            <div><strong>{{ currentH5ModuleTypeInfo.label }}</strong><code>{{ currentH5ModuleTypeRaw }}</code></div>
+            <small>{{ currentH5ModuleTypeInfo.description }}</small>
+          </div>
+          <div class="h5-readonly-field">
+            <span>知识主题</span>
+            <strong>{{ currentH5Topic || '未返回主题' }}</strong>
+          </div>
+          <div class="h5-readonly-field">
+            <span>模块 ID</span>
+            <code>{{ currentH5ModuleId || '未返回模块 ID' }}</code>
+          </div>
+          <div class="h5-readonly-field">
+            <span>嵌入方式</span>
+            <strong>{{ (selectedElement.embedMode || selectedElement.embed_mode) === 'slide_fragment' ? '嵌入页面' : '独立运行' }}</strong>
+          </div>
+          <div v-if="currentH5Config.question || currentH5Config.answer || currentH5Config.positive_feedback || currentH5Config.negative_feedback" class="h5-readonly-config">
+            <span>运行参数（只读）</span>
+            <p v-if="currentH5Config.question"><b>题干：</b>{{ currentH5Config.question }}</p>
+            <p v-if="currentH5Config.answer"><b>判定：</b>{{ currentH5Config.answer }}</p>
+            <p v-if="currentH5Config.positive_feedback"><b>答对反馈：</b>{{ currentH5Config.positive_feedback }}</p>
+            <p v-if="currentH5Config.negative_feedback"><b>答错反馈：</b>{{ currentH5Config.negative_feedback }}</p>
+          </div>
+          <div v-if="currentH5UsageSuggestions.length" class="h5-readonly-config">
+            <span>使用建议</span>
+            <ul><li v-for="suggestion in currentH5UsageSuggestions" :key="suggestion">{{ suggestion }}</li></ul>
+          </div>
+          <p v-if="currentH5Metadata.model_used === false" class="content-help">当前结果是服务端降级模板，仍属于可运行的 H5；重新生成可获取新的服务端结果。</p>
+          <el-button class="h5-regenerate-button" type="primary" plain @click="emit('regenerate-h5')">重新生成 H5</el-button>
+          <p class="content-help">H5 的 HTML、类型、模块 ID 和运行参数均保持服务端生成结果。画布中的位置、尺寸、层级和样式仍可调整。</p>
         </template>
 
         <template v-else-if="selectedElement.type === 'subject'">
+          <div class="subject-tool-heading"><label>学科工具</label><span>后端组件协议</span></div>
+          <div class="subject-protocol-meta">
+            <span><strong>component_id</strong><code>{{ selectedElement.id }}</code></span>
+            <span><strong>data</strong><code>Object</code></span>
+          </div>
           <label>学科工具名称</label>
           <el-input :model-value="contentValue" maxlength="80" show-word-limit @update:model-value="updateContent" />
-          <label>工具类型</label>
-          <el-select :model-value="selectedElement.subjectType || selectedElement.subject_type || 'geometry'" @update:model-value="updateField('subjectType', $event)"><el-option label="几何绘图" value="geometry" /><el-option label="物理实验" value="physics" /><el-option label="化学结构" value="chemistry" /><el-option label="数据分析" value="data" /><el-option label="通用学科工具" value="general" /></el-select>
-          <label>工具说明</label>
-          <el-input :model-value="subjectData.description || subjectData.instruction || ''" type="textarea" :rows="4" maxlength="240" show-word-limit placeholder="描述工具要帮助学生观察或完成什么" @update:model-value="updateSubjectField('description', $event)" />
-          <label>初始参数</label>
-          <el-input :model-value="subjectData.parameters || subjectData.initial_state || ''" maxlength="240" placeholder="例如：a=3,b=4" @update:model-value="updateSubjectField('parameters', $event)" />
-          <p class="content-help">学科工具的类型、说明和初始参数会保存到组件数据，便于后续重新生成或导出。</p>
+          <label>组件类型</label>
+          <el-select :model-value="subjectType" @update:model-value="updateSubjectType"><el-option v-for="option in subjectToolOptions" :key="option.value" :label="option.label" :value="option.value" /></el-select>
+
+          <template v-if="subjectType === 'math_formula'">
+            <label>LaTeX 公式</label>
+            <el-input :model-value="subjectData.latex || ''" type="textarea" :rows="3" maxlength="2000" show-word-limit placeholder="例如：E=mc^2 或 \\frac{a}{b}" @update:model-value="updateSubjectField('latex', $event)" />
+            <label class="switch-field"><span>块级显示</span><el-switch :model-value="subjectData.display_mode !== false" @update:model-value="updateSubjectField('display_mode', $event)" /></label>
+          </template>
+
+          <template v-else-if="subjectType === 'chemical_formula'">
+            <label>分子式</label>
+            <el-input :model-value="subjectData.formula || ''" maxlength="300" placeholder="例如：H2O、CO2" @update:model-value="updateSubjectField('formula', $event)" />
+            <label>SMILES（可选）</label>
+            <el-input :model-value="subjectData.smiles || ''" maxlength="4000" placeholder="例如：O" @update:model-value="updateSubjectField('smiles', $event)" />
+            <label>Molfile（可选）</label>
+            <el-input :model-value="subjectData.molfile || ''" type="textarea" :rows="3" maxlength="24000" placeholder="粘贴 Molfile 结构数据" @update:model-value="updateSubjectField('molfile', $event)" />
+          </template>
+
+          <template v-else-if="subjectType === 'mermaid_diagram'">
+            <label>Mermaid 描述</label>
+            <el-input :model-value="subjectData.mermaid || ''" type="textarea" :rows="6" maxlength="8000" show-word-limit placeholder="flowchart LR&#10;A[提出问题] --> B[观察与探究]" @update:model-value="updateSubjectField('mermaid', $event)" />
+          </template>
+
+          <template v-else-if="subjectType === 'chart'">
+            <div class="subject-tool-field-heading"><label>图表 option（JSON）</label><span>兼容 ECharts</span></div>
+            <el-input v-model="subjectChartOptionDraft" type="textarea" :rows="7" maxlength="12000" show-word-limit placeholder='{"xAxis":{"data":["A","B"]},"series":[{"type":"bar","data":[60,80]}]}' />
+            <div class="subject-chart-actions"><el-button @click="applySubjectChartOption">应用图表配置</el-button><el-switch :model-value="subjectData.responsive !== false" active-text="响应式" @update:model-value="updateSubjectField('responsive', $event)" /></div>
+            <p v-if="subjectConfigError" class="content-error" role="alert">{{ subjectConfigError }}</p>
+          </template>
+
+          <template v-else-if="subjectType === 'table'">
+            <label>列标题</label>
+            <el-input :model-value="subjectColumnsText" placeholder="用逗号分隔，例如：项目，观察结果" @update:model-value="updateSubjectColumns" />
+            <label>数据行</label>
+            <el-input :model-value="subjectRowsText" type="textarea" :rows="5" placeholder="每行一条记录，单元格用逗号分隔&#10;实验组，叶片变蓝&#10;对照组，叶片不变蓝" @update:model-value="updateSubjectRows" />
+          </template>
+
+          <template v-else>
+            <label>几何构造</label>
+            <el-input :model-value="subjectData.construction || ''" maxlength="400" placeholder="例如：right_triangle" @update:model-value="updateSubjectField('construction', $event)" />
+            <label>构造命令</label>
+            <el-input :model-value="Array.isArray(subjectData.commands) ? subjectData.commands.join('\n') : ''" type="textarea" :rows="4" placeholder="每行一个命令，例如：draw_right_triangle" @update:model-value="updateSubjectCommands" />
+          </template>
+
+          <label>教学说明（可选）</label>
+          <el-input :model-value="subjectData.description || subjectData.instruction || ''" type="textarea" :rows="3" maxlength="240" show-word-limit placeholder="说明学生将观察、操作或得出什么结论" @update:model-value="updateSubjectField('description', $event)" />
+          <details class="subject-api-details">
+            <summary><span>渲染配置（render）</span><small>{{ subjectRenderConfig.engine || '自定义' }}</small></summary>
+            <el-input v-model="subjectRenderDraft" type="textarea" :rows="5" maxlength="4000" show-word-limit aria-label="学科工具 render 配置" />
+            <el-button type="primary" plain @click="applySubjectRender">应用 render 配置</el-button>
+            <p v-if="subjectRenderError" class="content-error" role="alert">{{ subjectRenderError }}</p>
+            <p class="content-help">对应 API 请求体的 render 字段，可配置前端渲染引擎、输入格式和输出格式。</p>
+          </details>
+          <details class="subject-api-details">
+            <summary><span>样式配置（style）</span><small>{{ Object.keys(subjectStyleConfig).length }} 项</small></summary>
+            <el-input v-model="subjectStyleDraft" type="textarea" :rows="5" maxlength="4000" show-word-limit aria-label="学科工具 style 配置" />
+            <el-button plain @click="applySubjectStyle">应用 style 配置</el-button>
+            <p v-if="subjectStyleError" class="content-error" role="alert">{{ subjectStyleError }}</p>
+            <p class="content-help">也可以在“样式”页用颜色、圆角和透明度控件修改同一份 style 数据。</p>
+          </details>
+          <section class="subject-validation-card" :class="{ valid: subjectValidation?.valid === true, invalid: subjectValidation?.valid === false }">
+            <div class="subject-validation-heading"><strong>{{ subjectValidation?.valid === true ? '已通过后端校验' : subjectValidation?.valid === false ? '需要修正配置' : '尚未校验' }}</strong><span v-if="subjectRender.engine">{{ subjectRender.engine }}</span></div>
+            <p v-for="(error, index) in (subjectValidation?.errors || [])" :key="`subject-error-${index}`" class="subject-validation-error">{{ error }}</p>
+            <p v-for="(warning, index) in (subjectValidation?.warnings || [])" :key="`subject-warning-${index}`" class="subject-validation-warning">{{ warning }}</p>
+            <p v-if="!subjectValidation" class="content-help">将调用项目后端校验接口，并把返回的规范化数据与渲染提示应用到画布。</p>
+            <details v-if="subjectValidation?.normalized || subjectValidation?.render_hint" class="subject-validation-details">
+              <summary>查看 API 返回结果</summary>
+              <div v-if="subjectValidation?.render_hint" class="subject-result-block"><span>render_hint</span><pre>{{ formatSubjectJson(subjectValidation.render_hint) }}</pre></div>
+              <div v-if="subjectValidation?.normalized" class="subject-result-block"><span>normalized</span><pre>{{ formatSubjectJson(subjectValidation.normalized) }}</pre></div>
+            </details>
+            <el-button type="primary" :loading="subjectValidationPending" @click="emit('validate-subject-tool')">验证并应用</el-button>
+          </section>
         </template>
 
         <template v-else>
@@ -541,12 +790,36 @@ const typeInitials = {
           <span>百分比坐标 · 可拖拽</span>
         </div>
         <div class="field-grid">
-          <div><label>X 位置</label><el-input-number :model-value="Number(positionValue('x'))" :min="0" :max="positionLimits.x" :step="1" controls-position="right" @update:model-value="updatePosition('x', $event)" /></div>
-          <div><label>Y 位置</label><el-input-number :model-value="Number(positionValue('y'))" :min="0" :max="positionLimits.y" :step="1" controls-position="right" @update:model-value="updatePosition('y', $event)" /></div>
+          <div><label>X 位置</label><el-input-number :model-value="Number(positionValue('x'))" :step="1" controls-position="right" @update:model-value="updatePosition('x', $event)" /></div>
+          <div><label>Y 位置</label><el-input-number :model-value="Number(positionValue('y'))" :step="1" controls-position="right" @update:model-value="updatePosition('y', $event)" /></div>
           <div><label>宽度</label><el-input-number :model-value="Number(positionValue('width', 30))" :min="4" :max="positionLimits.width" :step="1" controls-position="right" @update:model-value="updatePosition('width', $event)" /></div>
           <div><label>高度</label><el-input-number :model-value="Number(positionValue('height', 20))" :min="4" :max="positionLimits.height" :step="1" controls-position="right" @update:model-value="updatePosition('height', $event)" /></div>
           <div><label>旋转角度</label><el-input-number :model-value="Number(positionValue('rotation'))" :min="-180" :max="180" :step="1" controls-position="right" @update:model-value="updatePosition('rotation', $event)" /></div>
           <div><label>层级</label><el-input-number :model-value="Number(positionValue('zIndex', 1))" :min="0" :max="99" :step="1" controls-position="right" @update:model-value="updatePosition('zIndex', $event)" /></div>
+        </div>
+        <div class="arrange-section">
+          <label>图层顺序</label>
+          <div class="arrange-button-grid">
+            <el-button size="small" @click="emit('arrange-element', 'front')">置顶</el-button>
+            <el-button size="small" @click="emit('arrange-element', 'back')">置底</el-button>
+            <el-button size="small" @click="emit('arrange-element', 'up')">上移一层</el-button>
+            <el-button size="small" @click="emit('arrange-element', 'down')">下移一层</el-button>
+          </div>
+          <label>对齐到画布</label>
+          <div class="arrange-button-grid arrange-button-grid-compact">
+            <el-button size="small" @click="emit('align-element', 'left')">左对齐</el-button>
+            <el-button size="small" @click="emit('align-element', 'center')">水平居中</el-button>
+            <el-button size="small" @click="emit('align-element', 'right')">右对齐</el-button>
+            <el-button size="small" @click="emit('align-element', 'top')">顶端对齐</el-button>
+            <el-button size="small" @click="emit('align-element', 'middle')">垂直居中</el-button>
+            <el-button size="small" @click="emit('align-element', 'bottom')">底部对齐</el-button>
+          </div>
+          <label>均匀分布</label>
+          <div class="arrange-button-grid arrange-button-grid-compact">
+            <el-button size="small" @click="emit('distribute-elements', 'horizontal')">横向分布</el-button>
+            <el-button size="small" @click="emit('distribute-elements', 'vertical')">纵向分布</el-button>
+          </div>
+          <p class="content-help">对齐作用于当前选中组件；均匀分布会调整当前页面全部组件的位置。</p>
         </div>
       </section>
 
@@ -731,32 +1004,32 @@ const typeInitials = {
         <el-button :icon="Delete" @click="emit('remove-slide')">删除页面</el-button>
       </section>
 
-      <el-dialog v-model="resourcePickerVisible" title="从个人资源库选择背景图" width="520px" append-to-body>
+      <el-dialog v-model="resourcePickerVisible" :title="`从个人资源库选择${resourceTargetLabel}`" width="520px" append-to-body>
         <div class="resource-picker-toolbar">
-          <el-input v-model="resourceKeyword" clearable placeholder="搜索图片名称" />
+          <el-input v-model="resourceKeyword" clearable :placeholder="`搜索${resourceTargetLabel}名称`" />
           <el-button text @click="emit('refresh-resources')">刷新</el-button>
         </div>
         <div v-if="resourcesLoading" class="resource-picker-loading">正在读取个人资源库…</div>
-        <div v-else-if="filteredImageResources.length" class="resource-picker-list">
+        <div v-else-if="filteredResources.length" class="resource-picker-list">
           <button
-            v-for="resource in filteredImageResources"
+            v-for="resource in filteredResources"
             :key="resource.id"
             type="button"
             class="resource-picker-item"
-            @click="selectBackgroundResource(resource)"
+            @click="selectResource(resource)"
           >
             <span class="resource-picker-thumbnail">
-              <img v-if="resourcePreview(resource)" :src="resourcePreview(resource)" :alt="resourceName(resource)" />
-              <span v-else>IMG</span>
+              <img v-if="resourceType(resource) === 'image' && resourcePreview(resource)" :src="resourcePreview(resource)" :alt="resourceName(resource)" />
+              <span v-else>{{ resourceType(resource).toUpperCase() }}</span>
             </span>
             <span class="resource-picker-copy">
               <strong>{{ resourceName(resource) }}</strong>
-              <small>{{ resource.fileType || resource.file_type || '图片资源' }}</small>
+              <small>{{ resource.fileType || resource.file_type || `${resourceTargetLabel}资源` }}</small>
             </span>
-            <span class="resource-picker-select">使用</span>
+            <span class="resource-picker-select">{{ resourcePickerTarget === 'background' ? '使用' : '插入' }}</span>
           </button>
         </div>
-        <el-empty v-else :image-size="54" description="个人资源库中暂无图片，可先上传一张图片" />
+        <el-empty v-else :image-size="54" :description="`个人资源库中暂无${resourceTargetLabel}，可先上传素材`" />
       </el-dialog>
     </template>
   </aside>
@@ -834,12 +1107,46 @@ const typeInitials = {
 .table-editor-heading { display: flex; align-items: baseline; justify-content: space-between; gap: 8px; margin-top: 16px; }
 .table-editor-heading label { margin: 0; }
 .table-editor-heading span { color: var(--zh-text-caption); font-size: 9px; }
+.table-dimension-controls { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 8px; margin-top: 8px; }
+.properties .table-dimension-field, .properties .table-dimension-field:not(:first-child) { display: grid; gap: 5px; margin: 0; color: var(--zh-text-secondary); font-size: 10px; }
+.table-dimension-field > span { font-weight: 600; }
+.table-dimension-field :deep(.el-input-number) { width: 100%; }
 .table-data-editor { display: grid; gap: 7px; margin-top: 8px; overflow-x: auto; }
 .table-data-row { display: grid; grid-template-columns: repeat(auto-fit, minmax(70px, 1fr)) 28px; align-items: center; gap: 5px; min-width: 300px; }
 .table-data-row :deep(.el-button) { width: 28px; height: 28px; margin: 0; color: var(--zh-text-caption); }
 .table-editor-actions { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 10px; }
 .table-editor-actions :deep(.el-button), .initialize-table { margin: 0; }
 .initialize-table { width: 100%; margin-top: 8px; border-style: dashed; }
+.subject-tool-heading, .subject-tool-field-heading, .subject-validation-heading { display: flex; align-items: baseline; justify-content: space-between; gap: 8px; }
+.subject-tool-heading { margin-bottom: 2px; }
+.subject-tool-heading label, .subject-tool-field-heading label { margin: 0; }
+.subject-tool-heading span, .subject-tool-field-heading span { color: var(--zh-text-caption); font-size: 9px; }
+.subject-protocol-meta { display: flex; flex-wrap: wrap; gap: 5px; margin: 8px 0 12px; }
+.subject-protocol-meta span { display: inline-flex; align-items: center; gap: 5px; padding: 4px 7px; border: 1px solid var(--zh-line-border); border-radius: 5px; color: var(--zh-text-caption); background: var(--zh-background-light); font-size: 9px; }
+.subject-protocol-meta strong { color: var(--zh-text-secondary); font: 700 9px var(--zh-font-number); }
+.subject-protocol-meta code { max-width: 170px; overflow: hidden; color: var(--zh-text-theme); font: 9px var(--zh-font-number); text-overflow: ellipsis; white-space: nowrap; }
+.subject-api-details { display: grid; gap: 8px; margin-top: 14px; padding: 9px 10px; border: 1px solid var(--zh-line-border); border-radius: var(--zh-radius8); background: var(--zh-background-light); }
+.subject-api-details summary, .subject-validation-details summary { display: flex; align-items: center; justify-content: space-between; gap: 8px; color: var(--zh-text-secondary); font-size: 10px; font-weight: 700; cursor: pointer; }
+.subject-api-details summary::marker, .subject-validation-details summary::marker { color: var(--zh-text-theme); }
+.subject-api-details summary small { color: var(--zh-text-theme); font: 9px var(--zh-font-number); }
+.subject-api-details :deep(.el-button) { width: 100%; margin: 0; }
+.subject-api-details .content-help { margin: 0; }
+.subject-validation-details { display: grid; gap: 7px; margin-top: 4px; }
+.subject-result-block { display: grid; gap: 4px; }
+.subject-result-block > span { color: var(--zh-text-caption); font: 9px var(--zh-font-number); }
+.subject-result-block pre { max-height: 150px; margin: 0; padding: 7px; overflow: auto; border: 1px solid var(--zh-line-border); border-radius: 5px; color: var(--zh-text-secondary); background: var(--zh-background-primary); font: 9px/1.45 var(--zh-font-number); white-space: pre-wrap; word-break: break-word; }
+.subject-chart-actions { display: flex; align-items: center; justify-content: space-between; gap: 8px; margin-top: 8px; }
+.subject-chart-actions :deep(.el-button) { margin: 0; }
+.subject-chart-actions :deep(.el-switch__label) { font-size: 10px; }
+.subject-validation-card { display: grid; gap: 7px; margin-top: 16px; padding: 11px; border: 1px solid var(--zh-line-border); border-radius: var(--zh-radius8); background: var(--zh-background-light); }
+.subject-validation-card.valid { border-color: rgb(22 163 74 / 28%); background: rgb(240 253 244 / 72%); }
+.subject-validation-card.invalid { border-color: rgb(220 38 38 / 28%); background: rgb(254 242 242 / 72%); }
+.subject-validation-heading strong { color: var(--zh-text-primary); font-size: 11px; }
+.subject-validation-heading span { color: var(--zh-text-caption); font: 700 9px var(--zh-font-number); }
+.subject-validation-card p { margin: 0; font-size: 10px; line-height: 1.5; }
+.subject-validation-error { color: var(--el-color-danger); }
+.subject-validation-warning { color: var(--el-color-warning); }
+.subject-validation-card :deep(.el-button) { width: 100%; margin: 1px 0 0; }
 .properties label { display: block; margin: 0 0 9px; color: var(--zh-text-secondary); font-size: 11px; font-weight: 600; }
 .properties label:not(:first-child) { margin-top: 16px; }
 .properties :deep(.el-input), .properties :deep(.el-input-number), .properties :deep(.el-select) { width: 100%; }
@@ -887,4 +1194,23 @@ const typeInitials = {
 .resource-picker-loading { padding: 42px 0; color: var(--zh-text-caption); text-align: center; font-size: 11px; }
 .page-actions { display: grid; gap: 8px; }
 .page-actions :deep(.el-button) { justify-content: flex-start; margin: 0; }
+.h5-readonly-field { display: grid; gap: 5px; margin: 10px 0; padding: 9px 10px; border: 1px solid var(--zh-line-border); border-radius: var(--zh-radius8); background: var(--zh-background-light); }
+.h5-readonly-field > span, .h5-readonly-config > span { color: var(--zh-text-caption); font-size: 10px; }
+.h5-readonly-field > div { display: flex; align-items: center; gap: 7px; min-width: 0; }
+.h5-readonly-field strong { overflow: hidden; color: var(--zh-text-primary); font-size: 12px; text-overflow: ellipsis; white-space: nowrap; }
+.h5-readonly-field code { overflow: hidden; color: var(--zh-text-theme); font: 10px var(--zh-font-number); text-overflow: ellipsis; white-space: nowrap; }
+.h5-readonly-field small { color: var(--zh-text-caption); font-size: 9px; line-height: 1.45; }
+.h5-readonly-config { display: grid; gap: 5px; margin: 10px 0; padding: 9px 10px; border-left: 3px solid var(--zh-line-theme); color: var(--zh-text-secondary); background: var(--zh-background-weaken); font-size: 10px; line-height: 1.5; }
+.h5-readonly-config p { margin: 0; }
+.h5-readonly-config ul { display: grid; gap: 3px; margin: 0; padding-left: 16px; }
+.h5-regenerate-button { width: 100%; margin-top: 5px; }
+.arrange-section { display: grid; gap: 8px; margin-top: 16px; padding-top: 14px; border-top: 1px solid var(--zh-line-parting); }
+.arrange-section > label { margin: 0; }
+.arrange-section-heading { display: flex; align-items: baseline; justify-content: space-between; gap: 8px; }
+.arrange-section-heading span { color: var(--zh-text-caption); font-size: 9px; }
+.arrange-button-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 6px; }
+.arrange-button-grid-compact { grid-template-columns: repeat(3, minmax(0, 1fr)); }
+.arrange-button-grid :deep(.el-button) { min-width: 0; margin: 0; padding: 7px 4px; font-size: 10px; }
+.arrange-hint { margin: 0; color: var(--zh-text-caption); font-size: 9px; line-height: 1.5; }
+@media (max-width: 420px) { .h5-feedback-grid { grid-template-columns: 1fr; } }
 </style>
