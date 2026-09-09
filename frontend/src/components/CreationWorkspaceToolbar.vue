@@ -1,28 +1,50 @@
 <script setup>
 import { computed, ref } from 'vue'
-import { Aim, ArrowDown, ArrowLeft, Check, CircleCheck, DataAnalysis, Download, EditPen, FolderOpened, Grid, Headset, Histogram, MagicStick, Picture, SetUp, VideoCamera } from '@element-plus/icons-vue'
+import { Aim, ArrowDown, ArrowLeft, Check, ChatDotRound, CircleCheck, DataAnalysis, DataBoard, Download, EditPen, FolderOpened, Grid, Headset, Histogram, MagicStick, Picture, SetUp, Share, VideoCamera, View } from '@element-plus/icons-vue'
 import WorkspaceToolButton from './WorkspaceToolButton.vue'
 
 const props = defineProps({
   title: { type: String, default: '未命名课件' },
   autosaveState: { type: String, default: '已保存' },
   projectId: { type: [String, Number], default: '' },
+  workspaceMode: { type: String, default: 'ppt' },
+  isLocalDraft: { type: Boolean, default: false },
   modelValue: { type: String, default: '' },
-  htmlMode: { type: Boolean, default: false },
+  onlinePreviewLoading: { type: Boolean, default: false },
+  quickExportLoading: { type: String, default: '' },
+  saving: { type: Boolean, default: false },
 })
 
-const emit = defineEmits(['update:modelValue', 'tool-select', 'back', 'export', 'generate-interactive', 'lesson-plan', 'project-manage'])
+const emit = defineEmits([
+  'save',
+  'update:modelValue',
+  'tool-select',
+  'back',
+  'export',
+  'export-quick',
+  'publish-community',
+
+  'online-preview',
+  'generate-h5',
+  'lesson-plan',
+  'return-ppt',
+  'project-manage',
+  'save-as-project',
+  'toggle-assistant',
+  'toggle-properties',
+  'versions',
+  'permissions',
+])
 
 const tools = [
   { id: 'text', label: '文本', icon: EditPen },
   { id: 'image', label: '图片', icon: Picture },
   { id: 'shape', label: '形状', icon: Grid },
   { id: 'chart', label: '图表', icon: Histogram },
-  { id: 'interactive', label: '互动', icon: MagicStick },
   { id: 'audio', label: '音频', icon: Headset },
   { id: 'video', label: '视频', icon: VideoCamera },
   { id: 'table', label: '表格', icon: DataAnalysis },
-  { id: 'h5', label: 'H5', icon: MagicStick },
+  { id: 'h5', label: 'H5 组件', icon: MagicStick },
   { id: 'subject', label: '学科', icon: Aim || SetUp },
 ]
 const shapeOptions = [
@@ -34,17 +56,18 @@ const shapeOptions = [
 ]
 const selectedShapeKind = ref('rectangle')
 const shapeMenuOpen = ref(false)
+const compactToolsOpen = ref(false)
 const selectedShape = computed(() => shapeOptions.find((item) => item.shapeKind === selectedShapeKind.value) || shapeOptions[0])
-const projectLabel = computed(() => props.projectId || '演示')
-const activeToolLabel = computed(() => {
-  if (props.modelValue === 'shape') return selectedShape.value.label
-  return tools.find((item) => item.id === props.modelValue)?.label || ''
-})
-const toolStatus = computed(() => props.htmlMode ? '点击工具直接插入 HTML 元素' : '选择元素后在画布中放置')
-
+const workspaceModes = [
+  { value: 'ppt', label: 'PPT 课件' },
+  { value: 'document', label: '教学案' },
+]
+const workspaceModeLabel = computed(() => workspaceModes.find((item) => item.value === props.workspaceMode)?.label || 'PPT 课件')
+const projectLabel = computed(() => props.projectId || '本地草稿')
 const selectTool = (tool) => {
-  if (tool.id === 'interactive') {
-    emit('generate-interactive')
+  if (tool.id === 'h5') {
+    emit('update:modelValue', '')
+    emit('generate-h5')
     return
   }
   emit('update:modelValue', tool.id)
@@ -59,9 +82,15 @@ const selectShape = (shapeKind) => {
 }
 
 const goBack = () => emit('back')
+const openOnlinePreview = () => emit('online-preview')
 const exportProject = () => emit('export')
+const handleExportCommand = (command) => emit('export-quick', command)
+const publishCommunity = () => emit('publish-community')
 const openLessonPlan = () => emit('lesson-plan')
+const returnToPpt = () => emit('return-ppt')
 const manageProject = () => emit('project-manage')
+const saveAsProject = () => emit('save-as-project')
+const toggleCompactTools = () => { compactToolsOpen.value = !compactToolsOpen.value }
 </script>
 
 <template>
@@ -71,15 +100,15 @@ const manageProject = () => emit('project-manage')
         <el-icon><ArrowLeft /></el-icon>
       </el-button>
       <div>
-        <strong>{{ title }}教学设计</strong>
+        <strong>{{ title }} · {{ workspaceModeLabel }}</strong>
         <span>
-          <el-icon><CircleCheck /></el-icon>
-          {{ autosaveState }} · 项目 {{ projectLabel }}
+          <el-icon v-if="!autosaveState.includes('失败') && !autosaveState.includes('待保存') && !saving"><CircleCheck /></el-icon>
+          {{ autosaveState }} · {{ isLocalDraft ? '未保存为项目' : `项目 ${projectLabel}` }}
         </span>
       </div>
     </div>
 
-    <div class="editing-tool-area">
+    <div class="editing-tool-area" :class="{ 'is-mobile-open': compactToolsOpen }">
       <nav class="editing-tools" aria-label="页面编辑工具">
         <template v-for="tool in tools" :key="tool.id">
           <el-dropdown v-if="tool.id === 'shape'" trigger="click" @command="selectShape" @visible-change="shapeMenuOpen = $event">
@@ -114,14 +143,47 @@ const manageProject = () => emit('project-manage')
           </el-dropdown>
           <WorkspaceToolButton v-else :icon="tool.icon" :label="tool.label" :active="modelValue === tool.id" @click="selectTool(tool)" />
         </template>
-      </nav>
-      <span class="tool-placement-status" aria-live="polite">{{ activeToolLabel ? (htmlMode ? `正在插入${activeToolLabel}` : `正在放置${activeToolLabel}`) : toolStatus }}</span>
+    </nav>
     </div>
 
     <div class="toolbar-actions">
-      <el-button :icon="FolderOpened" @click="manageProject">项目</el-button>
-      <el-button :icon="SetUp" @click="openLessonPlan">教案</el-button>
-      <el-button type="primary" :icon="Download" @click="exportProject">导出</el-button>
+      <el-button v-if="!isLocalDraft && autosaveState.includes('失败')" class="toolbar-priority" :loading="saving" type="danger" plain @click="emit('save')">重试保存</el-button>
+      <el-button v-if="isLocalDraft" class="toolbar-priority" type="primary" plain @click="saveAsProject">保存为项目</el-button>
+      <el-button class="toolbar-priority" :icon="FolderOpened" @click="manageProject">项目</el-button>
+      <el-button class="toolbar-priority" :icon="Share" @click="publishCommunity">发布社区</el-button>
+      <el-button v-if="workspaceMode === 'document'" class="toolbar-priority workspace-content-mode-button" :icon="DataBoard" aria-label="返回 PPT 课件" @click="returnToPpt">PPT</el-button>
+      <el-button v-else class="toolbar-priority workspace-content-mode-button" :icon="SetUp" @click="openLessonPlan">教案</el-button>
+      <el-button class="toolbar-priority" :icon="View" :loading="onlinePreviewLoading" @click="openOnlinePreview">在线预览</el-button>
+      <el-dropdown class="toolbar-priority" trigger="click" :disabled="Boolean(quickExportLoading)" @command="handleExportCommand">
+        <el-button type="primary" :icon="Download" :loading="Boolean(quickExportLoading)">导出<el-icon v-if="!quickExportLoading" class="toolbar-dropdown-arrow"><ArrowDown /></el-icon></el-button>
+        <template #dropdown>
+          <el-dropdown-menu>
+            <el-dropdown-item command="quick-pptx">快速下载 PPTX</el-dropdown-item>
+            <el-dropdown-item command="quick-word">快速下载 DOCX</el-dropdown-item>
+            <el-dropdown-item command="precheck">导出预检</el-dropdown-item>
+            <el-dropdown-item divided command="advanced">前往导出中心高级导出</el-dropdown-item>
+          </el-dropdown-menu>
+        </template>
+      </el-dropdown>
+      <el-button class="mobile-panel-trigger" :icon="ChatDotRound" aria-label="打开 AI 助手" @click="emit('toggle-assistant')">AI</el-button>
+      <el-button class="mobile-panel-trigger" :icon="SetUp" aria-label="打开属性面板" @click="emit('toggle-properties')">属性</el-button>
+      <el-button class="mobile-panel-trigger" :icon="Grid" aria-label="打开编辑工具" @click="toggleCompactTools">工具</el-button>
+      <el-dropdown class="workspace-more" trigger="click">
+        <el-button aria-label="更多工作台操作">更多<el-icon><ArrowDown /></el-icon></el-button>
+        <template #dropdown><el-dropdown-menu>
+          <el-dropdown-item class="workspace-mobile-action" v-if="isLocalDraft" :disabled="saving" @click="saveAsProject">保存为项目</el-dropdown-item>
+          <el-dropdown-item class="workspace-mobile-action" v-else-if="autosaveState.includes('失败')" :disabled="saving" @click="emit('save')">重试保存</el-dropdown-item>
+          <el-dropdown-item class="workspace-mobile-action" @click="manageProject">项目管理</el-dropdown-item>
+
+
+          <el-dropdown-item class="workspace-mobile-action" @click="workspaceMode === 'document' ? returnToPpt() : openLessonPlan()">{{ workspaceMode === 'document' ? '返回 PPT' : '打开教案' }}</el-dropdown-item>
+          <el-dropdown-item class="workspace-mobile-action" @click="openOnlinePreview">在线预览</el-dropdown-item>
+          <el-dropdown-item class="workspace-mobile-action" :disabled="Boolean(quickExportLoading)" @click="handleExportCommand('quick-pptx')">下载 PPTX</el-dropdown-item>
+          <el-dropdown-item class="workspace-mobile-action" :disabled="Boolean(quickExportLoading)" @click="handleExportCommand('quick-word')">下载 DOCX</el-dropdown-item>
+          <el-dropdown-item class="workspace-mobile-action" @click="exportProject">导出中心</el-dropdown-item>
+          <el-dropdown-item class="workspace-mobile-action" divided @click="publishCommunity">发布社区</el-dropdown-item>
+        </el-dropdown-menu></template>
+      </el-dropdown>
     </div>
   </header>
 </template>
@@ -129,14 +191,21 @@ const manageProject = () => emit('project-manage')
 <style scoped>
 .toolbar {
   display: grid;
-  grid-template-columns: 1fr auto 1fr;
+  grid-template-columns: minmax(0, 1fr) auto;
+  grid-template-rows: 48px 52px;
   align-items: center;
+  column-gap: 16px;
+  row-gap: 0;
+  min-width: 0;
   padding: 0 16px;
   border-bottom: 1px solid var(--zh-line-border);
   background: var(--zh-background-primary);
 }
 
 .project-title {
+  grid-area: 1 / 1;
+  position: relative;
+  z-index: 1;
   display: flex;
   align-items: center;
   gap: 8px;
@@ -181,27 +250,43 @@ const manageProject = () => emit('project-manage')
 }
 
 .editing-tool-area {
+  grid-area: 2 / 1 / 3 / -1;
+  justify-self: center;
+  padding-bottom: 6px;
   display: grid;
   justify-items: center;
   gap: 2px;
-}
-
-.tool-placement-status {
+  min-width: 0;
   max-width: 100%;
   overflow: hidden;
-  color: var(--zh-text-caption);
-  font-size: 10px;
-  line-height: 1.1;
-  text-align: center;
-  text-overflow: ellipsis;
-  white-space: nowrap;
 }
 
+.editing-tools {
+  max-width: 100%;
+  overflow-x: auto;
+  scrollbar-width: none;
+  flex-wrap: nowrap;
+}
+
+.editing-tools::-webkit-scrollbar,
+.toolbar-actions::-webkit-scrollbar { display: none; }
+
 .toolbar-actions {
+  grid-area: 1 / 2;
+  align-items: center;
   display: flex;
+  min-width: 0;
+  max-width: 100%;
+  overflow-x: auto;
   justify-self: end;
   gap: 8px;
+  scrollbar-width: none;
 }
+
+.toolbar-dropdown-arrow { margin-left: 4px; }
+
+.workspace-content-mode-button { flex: 0 0 5rem; inline-size: 5rem; justify-content: center; }
+.mobile-panel-trigger { display: none; }
 
 :global(.shape-picker-option) {
   display: inline-flex;
@@ -242,14 +327,66 @@ const manageProject = () => emit('project-manage')
   overflow: visible;
 }
 
+:global(.workspace-mobile-action) { display: none; }
+
 @media (max-width: 820px) {
+  :global(.workspace-mobile-action) { display: flex; }
   .toolbar {
-    grid-template-columns: 1fr auto;
+    grid-template-columns: minmax(0, 1fr) auto;
+    grid-template-rows: 60px;
+    gap: 8px;
   }
 
   .editing-tool-area {
     display: none;
   }
+
+  .editing-tool-area.is-mobile-open {
+    position: fixed;
+    z-index: 80;
+    top: 60px;
+    right: 8px;
+    left: 8px;
+    display: block;
+    max-height: min(45dvh, 310px);
+    padding: 8px;
+    overflow: auto;
+    border: 1px solid var(--zh-line-border);
+    border-radius: var(--zh-radius10);
+    background: var(--zh-background-primary);
+    box-shadow: var(--zh-shadow2);
+  }
+
+  .editing-tools {
+    flex-wrap: wrap;
+    justify-content: center;
+  }
+
+  .toolbar-actions { gap: 4px; }
+  .toolbar-actions > :not(.mobile-panel-trigger):not(.workspace-more) { display: none; }
+  .mobile-panel-trigger { display: inline-flex; }
+
+  .project-title strong { max-width: 42vw; }
+  .project-title span { max-width: 42vw; }
+}
+
+/* Compact project actions without shifting the centered editing row. */
+@media (min-width: 821px) and (max-width: 1100px) {
+  .toolbar-actions { gap: 4px; }
+  .toolbar-actions :deep(.el-button) { padding-inline: 8px; }
+  .project-title strong, .project-title span { max-width: 26vw; }
+}
+.workspace-more { display: none; flex: none; }
+
+@media (max-width: 820px) { .workspace-more { display: inline-flex; } }
+.toolbar-actions > .el-button + .el-button { margin-left: 0; }
+.toolbar-actions > .el-button, .toolbar-actions > .el-dropdown { flex-shrink: 0; }
+.project-title strong { max-width: 40vw; }
+@media (max-width: 520px) {
+  .mobile-panel-trigger { padding-inline: 7px; }
+  .mobile-panel-trigger :deep(.el-icon) { margin-right: 0; }
+  .project-title strong { max-width: 35vw; }
+  .project-title span { max-width: 35vw; }
 }
 
 </style>

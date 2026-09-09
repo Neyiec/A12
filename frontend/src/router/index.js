@@ -3,18 +3,28 @@ import{
     createWebHashHistory
 } from 'vue-router'
 
-import login from '../components/login.vue'
-import TeacherHome from '../components/TeacherHome.vue'
-import TeacherLayout from '../components/TeacherLayout.vue'
-import ResourceLibrary from '../components/ResourceLibrary.vue'
-import CommunityHub from '../components/CommunityHub.vue'
-import ExportCenter from '../components/ExportCenter.vue'
-import CreationWorkspace from '../components/CreationWorkspace.vue'
-import AccountSettings from '../components/AccountSettings.vue'
 import {getRouters} from'../apis/login.js'
 import {isTokenExpired} from '../utils/JWTParser.js'
 // 全局用户 store — 替代直接操作 localStorage
 import { useUserStore } from '../storage/user.js'
+
+// 所有页面保持按需加载。之前既静态导入页面、又用变量 import 扫描整个
+// components 目录，会把创作工作台及其编辑器依赖一并放入首屏包。
+// 这里仍支持后端菜单返回组件名，但只允许加载构建时已知的同级 Vue 组件。
+const componentLoaders = import.meta.glob('../components/*.vue')
+const getComponentLoader = (componentName) => {
+  const normalizedName = String(componentName || '').replace(/\.vue$/i, '').trim()
+  return componentLoaders[`../components/${normalizedName}.vue`] || null
+}
+
+const login = getComponentLoader('login')
+const TeacherHome = getComponentLoader('TeacherHome')
+const TeacherLayout = getComponentLoader('TeacherLayout')
+const ResourceLibrary = getComponentLoader('ResourceLibrary')
+const CommunityHub = getComponentLoader('CommunityHub')
+const ExportCenter = getComponentLoader('ExportCenter')
+const CreationWorkspace = getComponentLoader('CreationWorkspace')
+const AccountSettings = getComponentLoader('AccountSettings')
 
 const routes = [
   {
@@ -66,12 +76,16 @@ export function addDynamicRoutes(menus) {
     }
     // TODO 这里的父路由名被固定为Main，后期可以改成动态获取
     if (menu.path && menu.component){
-      // 动态导入组件 - 从 components 目录加载
-      const component = () => import(`@/components/${menu.component}.vue`)
-      router.addRoute('M', {
-        path: relativePath,
-        component
-      })
+      const component = getComponentLoader(menu.component)
+      if (component) {
+        router.addRoute('M', {
+          path: relativePath,
+          component
+        })
+      } else {
+        // 菜单数据不能让浏览器尝试加载一个构建产物中不存在的任意路径。
+        console.warn(`[router] 未找到菜单组件：${menu.component}`)
+      }
     }
 
     // 递归处理子菜单

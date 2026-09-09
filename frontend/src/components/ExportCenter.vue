@@ -20,6 +20,8 @@ const isDevelopmentPreview = computed(() => import.meta.env.DEV && route.query.p
 const showFlowTest = computed(() => isDevelopmentPreview.value && route.query.testCase === testCase.id)
 const projectId = computed(() => route.query.projectId ? String(route.query.projectId) : '')
 const autoExportRequested = computed(() => route.query.autoExport === '1')
+const autoExportType = computed(() => ['pptx', 'word', 'package'].includes(String(route.query.exportType || '')) ? String(route.query.exportType) : 'package')
+const autoPrecheckRequested = computed(() => route.query.precheck === '1')
 const autoExportFlowVisible = ref(false)
 const flowDetailVisible = ref(false)
 const showFlowPanel = computed(() => autoExportFlowVisible.value && flowDetailVisible.value)
@@ -52,6 +54,7 @@ const flow = ref({
   step: 0,
   taskId: null,
   progress: 0,
+  exportType: 'package',
   message: '正在准备项目快照和导出配置。',
   error: '',
   precheck: null,
@@ -61,6 +64,7 @@ const flow = ref({
 let taskPollTimer = null
 let activePoll = false
 let autoExportStarted = false
+let autoPrecheckStarted = false
 
 const flowSteps = [
   { title: '项目已保存', detail: '当前工作台内容已写入项目' },
@@ -92,6 +96,17 @@ const isRunning = (row) => runningStatuses.includes(row?.apiStatus)
 const canDownload = (row) => completedStatuses.includes(row?.apiStatus) && row?.fileStatus !== 'expired'
 const safeFilename = (value) => String(value || 'export').replace(/[\\/:*?"<>|]/g, '-').replace(/\s+/g, ' ').trim()
 const exportExtension = (type) => ({ pptx: 'pptx', word: 'docx', package: 'zip' }[String(type)] || 'zip')
+const readTaskFilename = (task) => [task?.file_name, task?.fileName, task?.filename, task?.artifact?.file_name]
+  .map((value) => String(value ?? '').trim())
+  .find(Boolean) || ''
+const resolveTaskFilename = (task, projectName = '') => {
+  const filename = readTaskFilename(task)
+  if (filename) return filename
+  const base = safeFilename(projectName || task?.project_name || '导出成果')
+  const version = safeFilename(task?.snapshot_version ? `v${task.snapshot_version}` : task?.version || 'latest')
+  const taskId = task?.id !== undefined && task?.id !== null && String(task.id).trim() ? `-${safeFilename(task.id)}` : ''
+  return `${base}-${version}${taskId}.${exportExtension(task?.export_type)}`
+}
 const formatDate = (value) => {
   if (!value) return '刚刚'
   const date = new Date(value)
@@ -142,10 +157,13 @@ const normalizeTask = (task, context = {}) => {
   const apiStatus = task?.status || 'queued'
   const projectName = task?.project_name || task?.project?.project_name || context.project_name || (String(task?.project_id) === projectId.value ? testCase.projectName : '')
   const subject = task?.subject || task?.project?.subject || context.subject || (String(task?.project_id) === projectId.value ? testCase.subject : '—')
+  const projectLabel = projectName || '未命名项目'
   return {
     ...task,
     id: task?.id,
-    project: projectName || task?.file_name || '未命名项目',
+    project: projectLabel,
+    projectName: projectLabel,
+    fileName: resolveTaskFilename(task, projectLabel),
     format: ({ pptx: 'PPTX', word: 'Word', package: '成果包' }[String(task?.export_type || '').toLowerCase()] || task?.format || '成果包'),
     version: task?.snapshot_version ? `v${task.snapshot_version}` : task?.version || '—',
     time: formatDate(task?.created_at || task?.time),
@@ -213,7 +231,8 @@ const scheduleTaskPolling = () => {
 }
 
 const pollTask = async (taskId) => {
-  const timeoutAt = Date.now() + 20_000
+  // 真实导出可能等待 Python 文件服务，轮询窗口与创建请求保持一致。
+  const timeoutAt = Date.now() + 210_000
   activePoll = true
   try {
     while (Date.now() < timeoutAt) {
@@ -256,17 +275,25 @@ const saveImmutableSnapshot = async (id, description = '导出前自动固化快
   return version
 }
 
-const runFullFlow = async () => {
+const runFullFlow = async (exportTypeOverride = '') => {
   if (!projectId.value) {
     flow.value.error = '项目尚未保存，无法创建导出任务。'
+    autoExportFlowVisible.value = true
+    flowDetailVisible.value = true
     return
   }
   if (activePoll) return
 
-  flow.value = { ...flow.value, status: 'snapshotting', step: 1, taskId: null, progress: 0, error: '', precheck: null, downloaded: false, message: '正在保存不可变项目快照…' }
+  autoExportFlowVisible.value = true
+  flowDetailVisible.value = true
+  const exportType = showFlowTest.value
+    ? testCase.exportType
+    : ['pptx', 'word', 'package'].includes(String(exportTypeOverride || ''))
+      ? String(exportTypeOverride)
+      : autoExportType.value
+  flow.value = { ...flow.value, status: 'snapshotting', step: 1, taskId: null, progress: 0, exportType, error: '', precheck: null, downloaded: false, message: '正在保存不可变项目快照…' }
   try {
-    const snapshotVersion = await saveImmutableSnapshot(projectId.value, '社区全流程测试案例导出快照')
-    const exportType = showFlowTest.value ? testCase.exportType : 'package'
+    const snapshotVersion = await saveImmutableSnapshot(projectId.value, '导出前自动固化快照')
     const config = buildExportConfig({ source: showFlowTest.value ? 'community-test-case' : 'workspace-export', ...(showFlowTest.value ? { test_case_id: testCase.id } : {}) })
     flow.value.step = 2
     flow.value.status = 'prechecking'
@@ -274,8 +301,6 @@ const runFullFlow = async () => {
     const check = unwrap(await precheckProjectExport(projectId.value, {
       export_type: exportType,
       snapshot_version: snapshotVersion,
-      config,
-      ...(showFlowTest.value ? { test_case_id: testCase.id } : {}),
     }))
     flow.value.precheck = check
     if (!check?.passed) throw new Error(check?.errors?.[0]?.message || '导出预检未通过')
@@ -287,8 +312,6 @@ const runFullFlow = async () => {
       project_id: Number(projectId.value),
       export_type: exportType,
       snapshot_version: snapshotVersion,
-      ...(showFlowTest.value ? { test_case_id: testCase.id } : {}),
-      precheck_confirmed: true,
       config: JSON.stringify(config),
     }))
     if (!created?.id) throw new Error('导出任务接口未返回任务 ID')
@@ -314,7 +337,7 @@ const runFullFlow = async () => {
 const filteredTasks = computed(() => {
   const normalizedKeyword = keyword.value.trim().toLowerCase()
   return tasks.value.filter((task) => {
-    const matchesKeyword = !normalizedKeyword || [task.project, task.format, task.version, task.subject]
+    const matchesKeyword = !normalizedKeyword || [task.fileName, task.project, task.format, task.version, task.subject]
       .some((value) => String(value ?? '').toLowerCase().includes(normalizedKeyword))
     const matchesTab = activeTab.value === '全部任务'
       || activeTab.value === '进行中' && runningStatuses.includes(task.apiStatus)
@@ -343,6 +366,13 @@ const flowTask = computed(() => flow.value.taskId ? tasks.value.find((row) => St
 const activeTaskView = computed(() => tasks.value.find(isRunning) || null)
 const primaryTaskView = computed(() => flowTask.value || activeTaskView.value)
 const latestCompletedTask = computed(() => tasks.value.find((task) => completedStatuses.includes(task.apiStatus)) || null)
+const flowProgressActive = computed(() => ['snapshotting', 'prechecking', 'queued', 'generating', 'checking'].includes(flow.value.status))
+const flowProgressIndeterminate = computed(() => flowProgressActive.value && flow.value.progress <= 0)
+const flowExportTypeLabel = computed(() => ({
+  pptx: 'PowerPoint（PPTX）',
+  word: 'Word 教案（DOCX）',
+  package: '教学成果包（ZIP）',
+}[flow.value.exportType] || '导出成果'))
 const activeTaskLabel = computed(() => flowTask.value ? '本次导出' : primaryTaskView.value?.status || '暂无进行中的任务')
 const activeTaskEstimate = computed(() => primaryTaskView.value ? `当前进度 ${primaryTaskView.value.progress}%` : '可从当前项目或已有项目创建导出任务')
 const flowStatusLabel = computed(() => ({
@@ -361,8 +391,10 @@ const openTaskDetail = async (row) => {
 const taskDetailView = computed(() => {
   const row = taskDetailRow.value || {}
   const raw = taskDetail.value || {}
+  const fileName = readTaskFilename(raw) || row.fileName || resolveTaskFilename(raw, raw.project_name || row.project || '导出成果')
   return {
-    title: raw.project_name || raw.file_name || row.project || '未命名成果',
+    title: fileName,
+    project: raw.project_name || row.project || '未命名项目',
     format: String(raw.export_type || row.format || '成果包').toUpperCase(),
     version: raw.snapshot_version ? `v${raw.snapshot_version}` : row.version || '—',
     status: statusText[raw.status] || row.status || '未知',
@@ -392,8 +424,9 @@ const qualityReportView = computed(() => {
     detail: item?.说明 || item?.detail || item?.message || '',
   }))
   const rawScore = Number(read('总分', 'score', 'total_score'))
+  const reportTitle = read('file_name', 'filename', '成果名称', 'project_name', 'title')
   return {
-    title: read('成果名称', 'project_name', 'title') === '—' ? taskDetailRow.value?.project || '未命名成果' : read('成果名称', 'project_name', 'title'),
+    title: taskDetailRow.value?.fileName || (reportTitle === '—' ? taskDetailRow.value?.project || '未命名成果' : reportTitle),
     marker: read('report_id'),
     conclusion: read('校验结论', 'conclusion', 'status'),
     score: Number.isFinite(rawScore) ? Math.max(0, Math.min(100, rawScore)) : 0,
@@ -451,7 +484,7 @@ const extractDownloadFilename = (disposition, fallback) => {
 const download = async (row) => {
   if (!row?.id) return ElMessage.info('当前任务暂不支持下载')
   if (!canDownload(row)) return ElMessage.info('成果正在生成，请稍候再下载')
-  const fallbackFilename = `${safeFilename(row.project)}-${safeFilename(row.version)}.${exportExtension(row.export_type)}`
+  const fallbackFilename = safeFilename(row.fileName || resolveTaskFilename(row, row.project))
   try {
     const result = unwrap(await downloadExportArtifact(row.id))
     const url = result?.download_url
@@ -547,8 +580,6 @@ const runPrecheck = async () => {
     precheck.value = unwrap(await precheckProjectExport(exportForm.value.project_id, {
       export_type: exportForm.value.export_type,
       snapshot_version: snapshotVersion,
-      config,
-      ...(showFlowTest.value ? { test_case_id: testCase.id } : {}),
     }))
     precheckSignature.value = JSON.stringify({ projectId: exportForm.value.project_id, snapshotVersion, exportType: exportForm.value.export_type, config })
     if (precheck.value?.passed) ElMessage.success(precheck.value.warnings?.length ? '导出预检通过，存在需确认的警告' : '导出预检通过')
@@ -567,12 +598,10 @@ const submitExport = async () => {
       await ElMessageBox.confirm('预检存在警告，继续后将按当前导出配置处理。是否确认创建任务？', '确认导出警告', { type: 'warning', confirmButtonText: '确认继续', cancelButtonText: '返回修改' })
     }
     const created = unwrap(await createExportTask({
-      ...exportForm.value,
       project_id: Number(exportForm.value.project_id),
+      export_type: exportForm.value.export_type,
       snapshot_version: snapshotVersion,
-      precheck_confirmed: true,
       config: JSON.stringify(config),
-      ...(showFlowTest.value ? { test_case_id: testCase.id } : {}),
     }))
     if (!created?.id) throw new Error('导出任务接口未返回任务 ID')
     mergeTask(normalizeTask(created, project.value || {}))
@@ -597,13 +626,34 @@ watch(projectId, async () => {
 })
 
 onMounted(async () => {
+  if (autoExportRequested.value) {
+    autoExportFlowVisible.value = true
+    flowDetailVisible.value = true
+    flow.value.message = '正在准备当前项目的导出流程…'
+  }
   await loadProjectContext()
   await loadTasks()
+  if (autoPrecheckRequested.value && !autoPrecheckStarted) {
+    autoPrecheckStarted = true
+    resetExportForm()
+    exportForm.value.export_type = autoExportType.value
+    exportDialogVisible.value = true
+    await loadProjectOptions()
+    if (projectId.value) {
+      exportForm.value.project_id = projectId.value
+      await loadVersionOptions(projectId.value)
+    }
+    await runPrecheck()
+    const { precheck, exportType, ...query } = route.query
+    await router.replace({ path: route.path, query })
+  }
   if (autoExportRequested.value && !autoExportStarted) {
     autoExportStarted = true
     autoExportFlowVisible.value = true
+    flowDetailVisible.value = true
+    const requestedExportType = autoExportType.value
     // 消费一次性标记，避免刷新导出中心时重复创建任务。
-    const { autoExport, ...query } = route.query
+    const { autoExport, exportType, precheck, ...query } = route.query
     await router.replace({ path: route.path, query })
     if (!projectId.value) {
       flow.value.status = 'failed'
@@ -612,7 +662,7 @@ onMounted(async () => {
       flowDetailVisible.value = true
       return
     }
-    await runFullFlow()
+    await runFullFlow(requestedExportType)
   }
 })
 onBeforeUnmount(() => clearTimeout(taskPollTimer))
@@ -643,8 +693,8 @@ onBeforeUnmount(() => clearTimeout(taskPollTimer))
       <div class="active-task-icon"><Timer v-if="primaryTaskView && isRunning(primaryTaskView)" /><CircleCheck v-else /></div>
       <div class="active-task-copy">
         <p>{{ activeTaskLabel }}</p>
-        <h2>{{ primaryTaskView?.project || '当前没有进行中的导出任务' }}</h2>
-        <span>{{ primaryTaskView ? primaryTaskView.stage : activeTaskEstimate }}</span>
+        <h2 :title="primaryTaskView?.fileName || primaryTaskView?.project">{{ primaryTaskView?.fileName || primaryTaskView?.project || '当前没有进行中的导出任务' }}</h2>
+        <span>{{ primaryTaskView ? `${primaryTaskView.project} · ${primaryTaskView.stage}` : activeTaskEstimate }}</span>
       </div>
       <div v-if="primaryTaskView" class="active-task-progress">
         <div><strong>{{ primaryTaskView.progress }}%</strong><span>{{ activeTaskEstimate }}</span></div>
@@ -671,7 +721,12 @@ onBeforeUnmount(() => clearTimeout(taskPollTimer))
         <span>项目 ID：{{ projectId || '—' }}</span>
         <span>快照：{{ project?.current_version ? `v${project.current_version}` : '等待固化' }}</span>
         <span v-if="flowTask">任务 ID：{{ flowTask.id }}</span>
-        <el-tag size="small" effect="plain">教学成果包</el-tag>
+        <el-tag size="small" effect="plain">{{ flowExportTypeLabel }}</el-tag>
+      </div>
+
+      <div class="flow-progress" aria-label="导出进度">
+        <div class="flow-progress-header"><span><Timer v-if="flowProgressActive" class="flow-progress-spinner" /><CircleCheck v-else-if="flow.status === 'success' || flow.status === 'partial'" />导出进度</span><strong>{{ flow.progress }}%</strong></div>
+        <el-progress :percentage="flow.progress" :indeterminate="flowProgressIndeterminate" :duration="3" :status="flow.status === 'failed' ? 'exception' : flow.status === 'success' || flow.status === 'partial' ? 'success' : undefined" :show-text="false" />
       </div>
 
       <ol class="flow-steps">
@@ -702,7 +757,7 @@ onBeforeUnmount(() => clearTimeout(taskPollTimer))
 
     <section class="quality-card">
       <div class="quality-card-heading">
-        <div class="quality-title"><CircleCheck /><div><strong>最近一次导出质量</strong><span>{{ latestCompletedTask ? `${latestCompletedTask.project} · ${latestCompletedTask.version}` : '完成任务后显示服务端报告' }}</span></div></div>
+        <div class="quality-title"><CircleCheck /><div><strong>最近一次导出质量</strong><span>{{ latestCompletedTask ? `${latestCompletedTask.fileName} · ${latestCompletedTask.version}` : '完成任务后显示服务端报告' }}</span></div></div>
         <el-button text type="primary" :disabled="!latestCompletedTask" @click="openLatestQualityReport">查看完整报告</el-button>
       </div>
       <div v-if="latestCompletedTask" class="quality-meta"><span><CircleCheck /> 任务状态：{{ latestCompletedTask.status }}</span><span><Files /> 文件大小：{{ latestCompletedTask.size }}</span><span><DocumentChecked /> 质量报告：{{ latestCompletedTask.quality }}</span></div>
@@ -712,7 +767,7 @@ onBeforeUnmount(() => clearTimeout(taskPollTimer))
     <section class="history-section" aria-labelledby="history-title">
       <header class="history-header">
         <div><p class="eyebrow">任务记录</p><h2 id="history-title">导出任务</h2><span>查看当前账号的生成进度、质量状态和成果交付记录。</span></div>
-        <div class="history-controls"><el-input v-model="keyword" clearable :prefix-icon="Search" placeholder="搜索项目、格式或版本" /><el-button :icon="Refresh" :loading="loading" @click="loadTasks">刷新</el-button></div>
+        <div class="history-controls"><el-input v-model="keyword" clearable :prefix-icon="Search" placeholder="搜索文件名、项目、格式或版本" /><el-button :icon="Refresh" :loading="loading" @click="loadTasks">刷新</el-button></div>
       </header>
       <el-tabs v-model="activeTab" class="history-tabs">
         <el-tab-pane v-for="tab in tabs" :key="tab" :label="tab" :name="tab" />
@@ -720,8 +775,8 @@ onBeforeUnmount(() => clearTimeout(taskPollTimer))
 
       <div v-if="pageError" class="inline-error history-error" role="alert"><Warning /><span>{{ pageError }}</span><el-button text type="primary" @click="loadTasks">重试</el-button></div>
       <el-table v-loading="loading" :data="filteredTasks" data-testid="export-task-list" class="task-table" row-key="id">
-        <el-table-column label="项目与版本" min-width="270">
-          <template #default="{ row }"><div class="project-cell"><strong>{{ row.project }}</strong><span>{{ row.subject }} · {{ row.version }} · {{ row.time }}</span></div></template>
+        <el-table-column label="文件与项目" min-width="300">
+          <template #default="{ row }"><div class="project-cell"><strong :title="row.fileName">{{ row.fileName || row.project }}</strong><span :title="row.project">{{ row.project }} · {{ row.subject }} · {{ row.version }} · {{ row.time }}</span></div></template>
         </el-table-column>
         <el-table-column label="格式" width="110"><template #default="{ row }"><span class="format-label">{{ row.format }}</span></template></el-table-column>
         <el-table-column label="生成进度" min-width="190"><template #default="{ row }"><div class="progress-cell"><el-progress :percentage="row.progress" :status="row.apiStatus === 'failed' ? 'exception' : undefined" :show-text="false" /><span>{{ row.progress }}%</span></div></template></el-table-column>
@@ -775,7 +830,7 @@ onBeforeUnmount(() => clearTimeout(taskPollTimer))
     </el-dialog>
 
     <el-dialog v-model="taskDetailVisible" title="任务详情" width="520px" class="detail-dialog">
-      <div class="detail-grid"><div><span>成果名称</span><strong>{{ taskDetailView.title }}</strong></div><div><span>状态</span><el-tag :type="statusTagType(taskDetailView.status)" effect="plain">{{ taskDetailView.status }}</el-tag></div><div><span>格式 / 版本</span><strong>{{ taskDetailView.format }} · {{ taskDetailView.version }}</strong></div><div><span>生成进度</span><strong>{{ taskDetailView.progress }}%</strong></div><div><span>任务创建</span><strong>{{ taskDetailView.createdAt }}</strong></div><div><span>任务完成</span><strong>{{ taskDetailView.completedAt }}</strong></div><div><span>项目 ID</span><strong>{{ taskDetailView.projectId }}</strong></div><div><span>数据来源</span><strong>{{ taskDetailView.source }}</strong></div></div><div class="detail-stage"><Timer /><span>{{ taskDetailView.stage }}</span></div>
+      <div class="detail-grid"><div><span>文件名</span><strong :title="taskDetailView.title">{{ taskDetailView.title }}</strong></div><div><span>项目</span><strong :title="taskDetailView.project">{{ taskDetailView.project }}</strong></div><div><span>状态</span><el-tag :type="statusTagType(taskDetailView.status)" effect="plain">{{ taskDetailView.status }}</el-tag></div><div><span>格式 / 版本</span><strong>{{ taskDetailView.format }} · {{ taskDetailView.version }}</strong></div><div><span>生成进度</span><strong>{{ taskDetailView.progress }}%</strong></div><div><span>任务创建</span><strong>{{ taskDetailView.createdAt }}</strong></div><div><span>任务完成</span><strong>{{ taskDetailView.completedAt }}</strong></div><div><span>项目 ID</span><strong>{{ taskDetailView.projectId }}</strong></div><div><span>数据来源</span><strong>{{ taskDetailView.source }}</strong></div></div><div class="detail-stage"><Timer /><span>{{ taskDetailView.stage }}</span></div>
       <template #footer><el-button @click="taskDetailVisible = false">关闭</el-button><el-button type="primary" :disabled="!canDownload(taskDetailRow)" @click="download(taskDetailRow)">下载成果</el-button></template>
     </el-dialog>
 
@@ -784,7 +839,7 @@ onBeforeUnmount(() => clearTimeout(taskPollTimer))
       <div class="report-items"><div v-for="item in qualityReportView.items" :key="item.name" class="report-item"><CircleCheck v-if="reportPassed(item.result)" /><CircleClose v-else /><div><strong>{{ item.name }}</strong><span>{{ item.detail || item.result }}</span></div><el-tag size="small" :type="reportPassed(item.result) ? 'success' : 'warning'" effect="plain">{{ item.result }}</el-tag></div><el-empty v-if="qualityReportView.items.length === 0" :image-size="48" description="服务端暂未返回检查明细" /></div>
     </el-dialog>
 
-    <el-dialog v-model="previewVisible" :title="`${taskDetailRow?.project || '成果'} · 在线预览`" width="860px" class="preview-dialog" destroy-on-close>
+    <el-dialog v-model="previewVisible" :title="`${taskDetailRow?.fileName || taskDetailRow?.project || '成果'} · 在线预览`" width="860px" class="preview-dialog" destroy-on-close>
       <iframe v-if="previewUrl" :src="previewUrl" title="导出成果预览" class="preview-frame" />
       <el-empty v-else description="没有可用的预览地址" />
     </el-dialog>
@@ -807,6 +862,14 @@ onBeforeUnmount(() => clearTimeout(taskPollTimer))
 .flow-context { display: flex; flex-wrap: wrap; align-items: center; gap: 18px; margin-top: 20px; padding: 11px 14px; border: 1px solid var(--zh-line-border); border-radius: var(--zh-radius8); color: var(--zh-text-secondary); background: var(--zh-background-capsule); font-size: 12px; }
 .flow-context span { display: inline-flex; align-items: center; gap: 5px; }
 .flow-context svg { width: 14px; color: var(--zh-text-theme); }
+.flow-progress { margin-top: 16px; padding: 14px 15px; border: 1px solid var(--zh-line-border); border-radius: var(--zh-radius10); background: var(--zh-background-capsule); }
+.flow-progress-header { display: flex; align-items: center; justify-content: space-between; gap: 12px; margin-bottom: 9px; color: var(--zh-text-secondary); font-size: 12px; }
+.flow-progress-header span { display: inline-flex; align-items: center; gap: 6px; }
+.flow-progress-header svg { width: 15px; color: var(--zh-text-theme); }
+.flow-progress-header strong { color: var(--zh-text-primary); font: 600 16px var(--zh-font-number); font-variant-numeric: tabular-nums; }
+.flow-progress-spinner { animation: export-progress-spin 1s linear infinite; }
+.flow-progress :deep(.el-progress-bar__outer) { background: var(--zh-background-light-grey); }
+@keyframes export-progress-spin { to { transform: rotate(360deg); } }
 .flow-steps { display: grid; grid-template-columns: repeat(5, 1fr); gap: 10px; margin: 22px 0 0; padding: 0; list-style: none; }
 .flow-steps li { position: relative; display: flex; gap: 10px; min-width: 0; padding: 14px 12px; border: 1px solid var(--zh-line-border); border-radius: var(--zh-radius10); background: var(--zh-background-capsule); transition: border-color 200ms ease, background 200ms ease, transform 200ms ease; }
 .flow-steps li.current { border-color: var(--zh-line-theme); background: var(--zh-background-option-on); transform: translateY(-2px); }

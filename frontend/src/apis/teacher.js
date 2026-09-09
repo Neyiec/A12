@@ -28,7 +28,11 @@ export const uploadResource = async (file, onProgress) => {
     object_key: uploadToken.object_key,
     file_name: file.name,
     file_size: file.size,
-    file_type: file.type || undefined,
+    // API-37 accepts the type as an optional business category.  The MIME
+    // value is only needed when signing the OSS PUT request above; sending it
+    // here would persist values such as `image/png` instead of the documented
+    // `image`/`ppt`/`word` categories.  Leaving it out lets Java detect the
+    // category from the filename.
   })
   if (confirmResult?.code && confirmResult.code !== 200 && confirmResult.code !== 0) {
     throw new Error(confirmResult.message || '素材入库失败')
@@ -81,9 +85,11 @@ export const getCommunityReport = (id) => get(`/api/v1/community/reports/${id}`)
 
 export const listExportTasks = (params) => get('/api/v1/export-tasks', params)
 export const getExportTask = (id) => get(`/api/v1/export-tasks/${id}`)
-export const retryExportTask = (id) => post(`/api/v1/export-tasks/${id}/retry`)
+// 导出接口会等待文件生成服务返回成果，单独放宽超时，避免大课件被默认 10 秒超时误判失败。
+const EXPORT_TASK_TIMEOUT = 210000
+export const retryExportTask = (id) => apiRequest({ url: `/api/v1/export-tasks/${id}/retry`, method: 'post', timeout: EXPORT_TASK_TIMEOUT })
 export const downloadExportArtifact = (id) => post(`/api/v1/export-artifacts/${id}/download-url`)
-export const createExportTask = (data) => post('/api/v1/export-tasks', data)
+export const createExportTask = (data) => apiRequest({ url: '/api/v1/export-tasks', method: 'post', data, timeout: EXPORT_TASK_TIMEOUT })
 export const precheckProjectExport = (id, data) => post(`/api/v1/projects/${id}/export-prechecks`, data)
 export const cancelExportTask = (id) => post(`/api/v1/export-tasks/${id}/cancel`)
 export const getExportQualityReport = (id) => get(`/api/v1/export-tasks/${id}/quality-report`)
@@ -142,7 +148,7 @@ export const getAiRun = (runId) => get(`/api/v1/ai/runs/${runId}`)
 /**
  * 正式业务意图识别接口（API-13B）。
  * 工作台的“讨论 / 页面修改 / 生成 / 导出 / 打开项目”分流必须先经过 Java
- * 业务网关，不能把开发环境的 /api/dev/llm/chat 当作意图接口。
+ * 业务网关，不依赖前端开发服务器注入的模型中间件。
  */
 export const recognizeIntent = (data, options = {}) => apiRequest({
   url: '/api/v1/ai/intent/recognize',
@@ -191,13 +197,10 @@ export function streamOutlineChat(body) {
   )
 }
 
-/**
- * 普通主对话直连本地开发代理，由代理使用已配置的 DeepSeek/OpenAI-compatible API。
- * 浏览器端不读取或保存大模型 API Key。
- */
+/** 正式工作台聊天/分类流，经 Java 网关转发 Python 服务；浏览器不持有模型密钥。 */
 export function streamGeneralChat(body, options = {}) {
   const userStore = useUserStore()
-  return fetch('/api/dev/llm/chat', {
+  return fetch(`${import.meta.env.VITE_API_BASE_URL || ''}/api/v1/python/workspace/chat/stream`, {
     method: 'POST',
     headers: {
       'Content-Type': 'application/json',
@@ -227,9 +230,15 @@ export const saveProjectVersion = (id, data) => post(`/api/v1/projects/${id}/ver
 export const listProjectVersions = (id, params) => get(`/api/v1/projects/${id}/versions`, params)
 export const restoreProjectVersion = (id, versionId) => post(`/api/v1/projects/${id}/versions/${versionId}/restore`)
 export const addProjectComponent = (id, data) => post(`/api/v1/projects/${id}/components`, data)
+/**
+ * @deprecated 旧服务将 componentId 当作 pageId 处理。新代码请使用
+ * createProjectPage / saveProjectPage，页面中的组件随 page_content 一并保存。
+ */
 export const updateProjectComponent = (id, componentId, data) => apiRequest({ url: `/api/v1/projects/${id}/components/${componentId}`, method: 'patch', data })
 export const getProjectVersionDiff = (id, versionId, compareVersionId) => get(`/api/v1/projects/${id}/versions/${versionId}/diff`, compareVersionId ? { compare_version_id: compareVersionId } : undefined)
 export const addProjectPermission = (id, data) => post(`/api/v1/projects/${id}/permissions`, data)
+export const findUserByUsername = (username) => get('/api/v1/users/by-username', { username })
+export const findUserByEmail = (email) => get('/api/v1/users/by-email', { email })
 
 /**
  * 获取当前教师个人偏好设置
@@ -246,15 +255,18 @@ export const transcribeAudio = (formData) => apiRequest({ url: '/api/v1/python/a
 
 /**
  * 生成可独立运行或嵌入课件页面的互动模块。
- * 真实模型需要输出完整 HTML，不能沿用全局 10 秒请求上限。
+ * 服务端最多尝试模型生成 35 秒，超时后会返回可运行的降级模板；客户端
+ * 保留少量网络余量，避免“生成中”无限等待。
  * @param {Object} data - API-144 InteractiveModuleGenerateRequest
  * @returns {Promise} 后端返回 { module_id, html, usage_suggestions, metadata, ... }
  */
+const INTERACTIVE_MODULE_GENERATION_TIMEOUT = 50000
+
 export const generateInteractiveModule = (data) => apiRequest({
   url: '/api/v1/python/interactive-modules/generate',
   method: 'post',
   data,
-  timeout: 600000,
+  timeout: INTERACTIVE_MODULE_GENERATION_TIMEOUT,
 })
 
 /**
@@ -278,6 +290,15 @@ export const generateLessonPlan = (data) => apiRequest({
   url: '/api/v1/python/lesson-plans/generate',
   method: 'post',
   data,
+  timeout: PYTHON_PPT_REQUEST_TIMEOUT,
+})
+
+/** 直接导出当前 HTML PPT 为 PPTX/ZIP（API-141）。 */
+export const exportPresentationPptx = (data) => apiRequest({
+  url: '/api/v1/python/presentations/export/pptx',
+  method: 'post',
+  data,
+  responseType: 'blob',
   timeout: PYTHON_PPT_REQUEST_TIMEOUT,
 })
 

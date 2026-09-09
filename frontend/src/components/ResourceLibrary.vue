@@ -453,7 +453,9 @@ const submitBatchAction = async () => {
   if (batchForm.value.action !== 'delete' && !batchForm.value.target.trim()) return ElMessage.warning('请输入目标分类或目录')
   saving.value = true
   try {
-    await batchResourceAction({ idempotent_key: crypto.randomUUID?.() || `${Date.now()}-${Math.random()}`, action: batchForm.value.action, resource_ids: JSON.stringify(selectedRows.value.map((row) => row.id)), target: batchForm.value.target.trim() || undefined })
+    // API-42 的 Java DTO 将 resource_ids 定义为 String，内容可传 JSON 数组字符串。
+    // 保持数字 ID，避免把表格行对象或显示文本带入请求体。
+    await batchResourceAction({ idempotent_key: crypto.randomUUID?.() || `${Date.now()}-${Math.random()}`, action: batchForm.value.action, resource_ids: JSON.stringify(selectedRows.value.map((row) => Number(row.id)).filter(Number.isFinite)), target: batchForm.value.target.trim() || undefined })
     batchDialogVisible.value = false
     selectedRows.value = []
     await loadResources()
