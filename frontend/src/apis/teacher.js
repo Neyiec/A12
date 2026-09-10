@@ -55,7 +55,14 @@ export const updateResourceCategory = (id, data) => apiRequest({ url: `/api/v1/r
 export const deleteResourceCategory = (id) => del(`/api/v1/resources/categories/${id}`)
 
 export const syncResourceIndex = (data) => post('/api/v1/python/resources/index/sync', data)
-export const bootstrapResourceIndex = (data) => post('/api/v1/python/resources/index/bootstrap', data)
+// 资源索引 bootstrap 需要处理全量素材，后端耗时较长，单独放宽超时，避免被默认 10 秒超时误判失败。
+const RESOURCE_INDEX_BOOTSTRAP_TIMEOUT = 210000
+export const bootstrapResourceIndex = (data) => apiRequest({
+  url: '/api/v1/python/resources/index/bootstrap',
+  method: 'post',
+  data,
+  timeout: RESOURCE_INDEX_BOOTSTRAP_TIMEOUT,
+})
 export const updateResourceIndexMetadata = (data) => apiRequest({ url: '/api/v1/python/resources/index/metadata', method: 'patch', data })
 export const getResourceIndexOverview = () => get('/api/v1/python/resources/index/overview')
 export const listResourceIndexResources = (params) => get('/api/v1/python/resources/index/resources', params)
@@ -236,7 +243,14 @@ export const addProjectComponent = (id, data) => post(`/api/v1/projects/${id}/co
  */
 export const updateProjectComponent = (id, componentId, data) => apiRequest({ url: `/api/v1/projects/${id}/components/${componentId}`, method: 'patch', data })
 export const getProjectVersionDiff = (id, versionId, compareVersionId) => get(`/api/v1/projects/${id}/versions/${versionId}/diff`, compareVersionId ? { compare_version_id: compareVersionId } : undefined)
-export const addProjectPermission = (id, data) => post(`/api/v1/projects/${id}/permissions`, data)
+// 项目授权接口放宽超时：后端虽为轻量 DB 操作，但网络抖动或 DB 压力下仍可能超时，避免被默认 10 秒超时误判失败。
+const PROJECT_PERMISSION_TIMEOUT = 210000
+export const addProjectPermission = (id, data) => apiRequest({
+  url: `/api/v1/projects/${id}/permissions`,
+  method: 'post',
+  data,
+  timeout: PROJECT_PERMISSION_TIMEOUT,
+})
 export const findUserByUsername = (username) => get('/api/v1/users/by-username', { username })
 export const findUserByEmail = (email) => get('/api/v1/users/by-email', { email })
 

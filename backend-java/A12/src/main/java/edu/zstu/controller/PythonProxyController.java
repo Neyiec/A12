@@ -1,6 +1,8 @@
 package edu.zstu.controller;
 
 import edu.zstu.service.PythonPptClient;
+import edu.zstu.utils.CurrentHolder;
+import edu.zstu.utils.OssUtil;
 import org.springframework.http.ContentDisposition;
 import org.springframework.http.HttpHeaders;
 import org.springframework.http.MediaType;
@@ -25,9 +27,11 @@ import java.util.concurrent.CompletableFuture;
 @RequestMapping("/api/v1/python")
 public class PythonProxyController {
     private final PythonPptClient pythonPptClient;
+    private final OssUtil ossUtil;
 
-    public PythonProxyController(PythonPptClient pythonPptClient) {
+    public PythonProxyController(PythonPptClient pythonPptClient, OssUtil ossUtil) {
         this.pythonPptClient = pythonPptClient;
+        this.ossUtil = ossUtil;
     }
 
     @GetMapping("/health")
@@ -53,14 +57,19 @@ public class PythonProxyController {
 
     @PostMapping("/resources/index/sync")
     public Map<String, Object> syncResourceIndex(@RequestBody Map<String, Object> payload) {
+        signPayloadFileUrl(payload);
         return callJson(() -> pythonPptClient.syncResourceIndex(payload));
     }
 
     @PostMapping("/resources/index/bootstrap")
     @SuppressWarnings("unchecked")
     public Map<String, Object> bootstrapResourceIndex(@RequestBody Map<String, Object> payload) {
+        java.util.List<Map<String, Object>> resources =
+                new java.util.ArrayList<>((java.util.List<Map<String, Object>>) payload.getOrDefault("resources", java.util.List.of()));
+        // 前端直发的 bootstrap 载荷里是裸 OSS 地址，逐条补签临时下载 URL
+        resources.forEach(this::signPayloadFileUrl);
         return callJson(() -> pythonPptClient.bootstrapResourceIndex(
-                (java.util.List<Map<String, Object>>) payload.getOrDefault("resources", java.util.List.of()),
+                resources,
                 Boolean.TRUE.equals(payload.get("force_reparse"))));
     }
 
@@ -215,6 +224,27 @@ public class PythonProxyController {
             error.put("message", e.getMessage());
             error.put("data", null);
             return error;
+        }
+    }
+
+    /**
+     * 为索引同步载荷补签临时下载 URL（60 分钟有效）
+     * 归属校验：仅允许签名本人 uploads/{userId}/ 前缀的素材与 public/ 前缀的公共资源，
+     * 防止接口被当作任意对象的签名预言机；其余地址原样透传
+     */
+    private void signPayloadFileUrl(Map<String, Object> payload) {
+        if (payload == null || !(payload.get("file_url") instanceof String fileUrl) || fileUrl.isBlank()) {
+            return;
+        }
+        String objectKey = ossUtil.tryExtractObjectKey(fileUrl);
+        if (objectKey == null) {
+            return;
+        }
+        Integer userId = CurrentHolder.getCurrentId();
+        boolean ownMaterial = userId != null && objectKey.startsWith("uploads/" + userId + "/");
+        boolean publicResource = objectKey.startsWith("public/");
+        if (ownMaterial || publicResource) {
+            payload.put("file_url", ossUtil.resolveDownloadUrl(fileUrl, 60));
         }
     }
 

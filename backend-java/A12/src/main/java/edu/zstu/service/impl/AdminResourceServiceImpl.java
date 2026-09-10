@@ -248,7 +248,8 @@ public class AdminResourceServiceImpl implements AdminResourceService {
         payload.put("source_type", "public");
         payload.put("resource_id", String.valueOf(resource.getId()));
         payload.put("title", resource.getTitle());
-        payload.put("file_url", resource.getFile_url());
+        // Python 侧需要实时下载文件做解析，必须传带签名的临时下载 URL（裸 URL 在私有读 bucket 下会 403）
+        payload.put("file_url", ossUtil.resolveDownloadUrl(resource.getFile_url(), 60));
         payload.put("file_type", fileType);
         payload.put("file_size", resource.getFile_size());
         payload.put("uploaded_by", String.valueOf(resource.getUploaded_by()));
@@ -336,7 +337,8 @@ public class AdminResourceServiceImpl implements AdminResourceService {
         payload.put("source_type", "personal");
         payload.put("resource_id", String.valueOf(material.getId()));
         payload.put("title", material.getFile_name());
-        payload.put("file_url", material.getFile_url());
+        // Python 侧需要实时下载文件做解析，必须传带签名的临时下载 URL（裸 URL 在私有读 bucket 下会 403）
+        payload.put("file_url", ossUtil.resolveDownloadUrl(material.getFile_url(), 60));
         payload.put("file_type", material.getFile_type());
         payload.put("file_size", material.getFile_size());
         payload.put("uploaded_by", String.valueOf(material.getUser_id()));
