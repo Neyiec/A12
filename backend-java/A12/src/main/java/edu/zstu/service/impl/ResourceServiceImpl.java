@@ -52,15 +52,18 @@ public class ResourceServiceImpl implements ResourceService {
     private final OssUtil ossUtil;
     private final BusinessLogService businessLogService;
     private final PythonPptClient pythonPptClient;
+    private final ResourceIndexSyncService resourceIndexSyncService;
 
     public ResourceServiceImpl(ResMaterialMapper materialMapper, ResMetadataDictionaryMapper dictionaryMapper, OssUtil ossUtil,
                                BusinessLogService businessLogService,
-                               PythonPptClient pythonPptClient) {
+                               PythonPptClient pythonPptClient,
+                               ResourceIndexSyncService resourceIndexSyncService) {
         this.materialMapper = materialMapper;
         this.dictionaryMapper = dictionaryMapper;
         this.ossUtil = ossUtil;
         this.businessLogService = businessLogService;
         this.pythonPptClient = pythonPptClient;
+        this.resourceIndexSyncService = resourceIndexSyncService;
     }
 
     @Override
@@ -100,7 +103,7 @@ public class ResourceServiceImpl implements ResourceService {
         }
 
         String fileType = dto.getFile_type();
-        if (fileType == null || fileType.isBlank()) {
+        if (fileType == null || fileType.isBlank() || fileType.contains("/")) {
             fileType = detectFileType(dto.getFile_name());
         }
 
@@ -164,7 +167,7 @@ public class ResourceServiceImpl implements ResourceService {
         ensureDictionariesFromMaterial(updated);
         log.info("updateResource success userId={}, materialId={}", userId, id);
         businessLogService.record("operation", "resource", "update", "material", id);
-        syncOrUpdatePersonalIndex(updated);
+        dispatchIndexSync(updated);
         return toMaterialVO(updated);
     }
 
@@ -200,26 +203,26 @@ public class ResourceServiceImpl implements ResourceService {
                 case "allow_ai" -> {
                     m.setAllow_ai(1);
                     materialMapper.update(m);
-                    syncPersonalResourceIndex(materialMapper.findById(id));
+                    dispatchIndexSync(materialMapper.findById(id));
                 }
                 case "deny_ai" -> {
                     m.setAllow_ai(0);
                     materialMapper.update(m);
-                    updatePersonalResourceAvailability(materialMapper.findById(id));
+                    dispatchIndexSync(materialMapper.findById(id));
                 }
                 case "categorize" -> {
                     m.setCategories(normalizeTargetArray(dto.getTarget(), "target"));
                     materialMapper.update(m);
                     Res_Material updated = materialMapper.findById(id);
                     ensureDictionariesFromMaterial(updated);
-                    syncOrUpdatePersonalIndex(updated);
+                    dispatchIndexSync(updated);
                 }
                 case "tag" -> {
                     m.setTags(normalizeTargetArray(dto.getTarget(), "target"));
                     materialMapper.update(m);
                     Res_Material updated = materialMapper.findById(id);
                     ensureDictionariesFromMaterial(updated);
-                    syncOrUpdatePersonalIndex(updated);
+                    dispatchIndexSync(updated);
                 }
                 default -> throw new RuntimeException("不支持的批量操作: " + dto.getAction());
             }
@@ -233,20 +236,28 @@ public class ResourceServiceImpl implements ResourceService {
     @Transactional
     public MaterialVO setPermission(Integer id, MaterialDTO dto, Integer userId) {
         log.info("setPermission userId={}, materialId={}, accessType={}, allowAi={}", userId, id, dto.getAccess_type(), dto.getAllow_ai());
+        // 获取对应的条目
         Res_Material m = materialMapper.findById(id);
+        // 校验
         if (m == null || m.getStatus() != 1) throw new RuntimeException("资源不存在");
         if (!Objects.equals(m.getUser_id(), userId)) throw new RuntimeException("无权操作该资源");
+        //校验参数
         validatePermissionMetadata(dto);
         if (dto.getAccess_type() != null) m.setAccess_type(dto.getAccess_type());
         if (dto.getAuthorized_users() != null) m.setAuthorized_users(dto.getAuthorized_users());
         if (dto.getAllow_ai() != null) {
             m.setAllow_ai(dto.getAllow_ai());
         }
+        // 更新落库
         materialMapper.update(m);
-        syncOrUpdatePersonalIndex(materialMapper.findById(id));
+
+        // python端把相应的个人资源文件存储到向量数据库
+        dispatchIndexSync(materialMapper.findById(id));
+
         log.info("setPermission success userId={}, materialId={}, accessType={}, allowAi={}", userId, id, m.getAccess_type(), m.getAllow_ai());
         businessLogService.record("operation", "resource", "set_permission", "material", id,
                 Map.of("access_type", m.getAccess_type(), "allow_ai", m.getAllow_ai()));
+
         return toMaterialVO(materialMapper.findById(id));
     }
 
@@ -314,53 +325,24 @@ public class ResourceServiceImpl implements ResourceService {
         deleteDictionary(id, userId, "category");
     }
 
-    private void syncOrUpdatePersonalIndex(Res_Material material) {
-        if (material.getStatus() == 1 && material.getAllow_ai() == 1) {
-            syncPersonalResourceIndex(material);
-        } else {
-            updatePersonalResourceAvailability(material);
-        }
-    }
-
-    private void syncPersonalResourceIndex(Res_Material material) {
-        if (material == null || material.getFile_url() == null || material.getFile_url().isBlank()) {
-            return;
-        }
-        try {
-            materialMapper.updateAiIndexStatus(material.getId(), "indexing", null);
-            Map<String, Object> response = pythonPptClient.syncResourceIndex(personalResourcePayload(material, false));
-            Object data = response.get("data");
-            String status = extractPythonStatus(data);
-            if ("failed".equals(status)) {
-                materialMapper.updateAiIndexStatus(material.getId(), "failed", extractPythonError(data));
-            } else {
-                materialMapper.updateAiIndexStatus(material.getId(), "completed", null);
-            }
-        } catch (Exception e) {
-            log.warn("sync personal resource index failed, materialId={}", material.getId(), e);
-            materialMapper.updateAiIndexStatus(material.getId(), "failed", e.getMessage());
-        }
-    }
-
-    private void updatePersonalResourceAvailability(Res_Material material) {
+    /**
+     * 分发个人素材 AI 索引同步任务（异步，不阻塞当前事务方法）。
+     * 启用 AI 引用：同步线程池内标记 indexing 后立即返回，由 ResourceIndexSyncService
+     * 异步执行 Python 下载/解析/向量化并回写最终状态，保证前端请求快速响应。
+     * 关闭 AI 引用：MySQL 直接置 disabled（索引内容保留，仅检索侧不可见），
+     * Python 元数据由异步任务尽力通知。
+     */
+    private void dispatchIndexSync(Res_Material material) {
         if (material == null) return;
-        try {
-            boolean available = material.getStatus() == 1 && material.getAllow_ai() == 1;
-            Map<String, Object> payload = new LinkedHashMap<>();
-            payload.put("source_type", "personal");
-            payload.put("resource_id", String.valueOf(material.getId()));
-            payload.put("available", available);
-            payload.put("allow_ai", material.getAllow_ai() == 1);
-            payload.put("metadata", Map.of(
-                    "owner_user_id", String.valueOf(material.getUser_id()),
-                    "uploaded_by", String.valueOf(material.getUser_id()),
-                    "available", available,
-                    "allow_ai", material.getAllow_ai() == 1
-            ));
-            pythonPptClient.updateResourceIndexMetadata(payload);
-            materialMapper.updateAiIndexStatus(material.getId(), available ? "completed" : "disabled", null);
-        } catch (Exception e) {
-            log.warn("update personal resource index metadata failed, materialId={}", material.getId(), e);
+
+        if (material.getStatus() == 1 && material.getAllow_ai() == 1) {
+            // 允许AI检索
+            materialMapper.updateAiIndexStatus(material.getId(), "indexing", null);
+            resourceIndexSyncService.syncPersonalResourceIndex(material);
+        } else {
+            // 不允许AI检索
+            materialMapper.updateAiIndexStatus(material.getId(), "disabled", null);
+            resourceIndexSyncService.updatePersonalResourceAvailability(material);
         }
     }
 
@@ -370,46 +352,6 @@ public class ResourceServiceImpl implements ResourceService {
         } catch (Exception e) {
             log.warn("delete personal resource index failed, materialId={}", id, e);
         }
-    }
-
-    private Map<String, Object> personalResourcePayload(Res_Material material, boolean forceReparse) {
-        Map<String, Object> metadata = new LinkedHashMap<>();
-        metadata.put("description", material.getDescription());
-        metadata.put("categories", material.getCategories());
-        metadata.put("tags", material.getTags());
-        metadata.put("access_type", material.getAccess_type());
-        metadata.put("authorized_users", material.getAuthorized_users());
-
-        Map<String, Object> payload = new LinkedHashMap<>();
-        payload.put("source_type", "personal");
-        payload.put("resource_id", String.valueOf(material.getId()));
-        payload.put("title", material.getFile_name());
-        payload.put("file_url", material.getFile_url());
-        payload.put("file_type", material.getFile_type());
-        payload.put("file_size", material.getFile_size());
-        payload.put("uploaded_by", String.valueOf(material.getUser_id()));
-        payload.put("owner_user_id", String.valueOf(material.getUser_id()));
-        payload.put("available", material.getStatus() == 1 && material.getAllow_ai() == 1);
-        payload.put("allow_ai", material.getAllow_ai() == 1);
-        payload.put("metadata", metadata);
-        payload.put("force_reparse", forceReparse);
-        return payload;
-    }
-
-    private String extractPythonStatus(Object data) {
-        if (data instanceof Map<?, ?> map) {
-            Object status = map.get("status");
-            return status == null ? "" : String.valueOf(status);
-        }
-        return "";
-    }
-
-    private String extractPythonError(Object data) {
-        if (data instanceof Map<?, ?> map) {
-            Object error = map.get("error_message");
-            return error == null ? "" : String.valueOf(error);
-        }
-        return "";
     }
 
     private void normalizeQuery(MaterialQueryDTO dto) {

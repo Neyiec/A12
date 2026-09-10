@@ -58,6 +58,29 @@ public class OssUtil {
         ossClient.deleteObject(ossConfig.getBucketName(), objectKey);
     }
 
+    /**
+     * 为索引同步等服务间调用生成临时下载 URL（默认 60 分钟有效）
+     * 规则：剥离已有签名参数后，若为本 bucket 的 OSS 地址则重签 GET URL；
+     * 非 OSS 地址原样返回，避免误签外部链接
+     */
+    public String resolveDownloadUrl(String fileUrl, long expiresMinutes) {
+        String objectKey = tryExtractObjectKey(fileUrl);
+        if (objectKey == null) {
+            return fileUrl;
+        }
+        return generateDownloadUrl(objectKey, expiresMinutes).toString();
+    }
+
+    /** 判断是否本 bucket 的 OSS 地址并提取 objectKey（自动剥离签名参数），非本 bucket 地址返回 null */
+    public String tryExtractObjectKey(String fileUrl) {
+        if (fileUrl == null || fileUrl.isBlank()) {
+            return null;
+        }
+        String plainUrl = fileUrl.split("\\?", 2)[0];
+        String prefix = "https://" + ossConfig.getBucketName() + "." + ossConfig.getEndpoint() + "/";
+        return plainUrl.startsWith(prefix) ? plainUrl.substring(prefix.length()) : null;
+    }
+
     /** 从完整 OSS URL 中提取 objectKey */
     public String extractObjectKey(String ossUrl) {
         String prefix = "https://" + ossConfig.getBucketName() + "." + ossConfig.getEndpoint() + "/";

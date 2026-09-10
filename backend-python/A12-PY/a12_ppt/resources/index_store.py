@@ -647,7 +647,8 @@ class ResourceIndexStore:
             "owner_user_id": request.owner_user_id,
             "available": request.available,
             "allow_ai": request.allow_ai,
-            "file_url": request.file_url,
+            # 只存剥离签名参数的稳定地址；带签名的 URL 60 分钟后就失效，存进去会导致后续同步拿到过期地址
+            "file_url": (request.file_url or "").split("?", 1)[0],
             "file_type": request.file_type,
             "file_size": request.file_size,
             "title": request.title,

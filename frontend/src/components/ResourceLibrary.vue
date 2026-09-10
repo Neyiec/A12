@@ -122,7 +122,8 @@ const normalizeRealResource = (item) => ({
   size: formatFileSize(item.file_size),
   fileSize: Number(item.file_size) || 0,
   date: formatUpdatedAt(item.updated_at || item.created_at),
-  status: item.allow_ai === 1 ? '已启用' : '未启用',
+  // AI 索引状态：异步同步期间展示「索引中」过程态，完成后按 allow_ai 显示启用态
+  status: item.ai_index_status === 'indexing' ? '索引中' : (item.allow_ai === 1 ? '已启用' : '未启用'),
   private: item.access_type !== 'shared',
   description: item.description || '',
   raw: item,

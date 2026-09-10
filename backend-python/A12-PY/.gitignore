@@ -2,3 +2,6 @@
 __pycache__/
 *.py[cod]
 data/
+.idea/
+
+AGENTS.md

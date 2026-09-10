@@ -25,10 +25,10 @@ import piniaPluginPersistedstate from 'pinia-plugin-persistedstate'
  */
 async function bootstrap() {
   // 开发模式下启动 MSW Mock Service Worker，拦截 API 请求
-  if (import.meta.env.DEV) {
-    const { startMockWorker } = await import('./mock/browser.ts')
-    await startMockWorker()
-  }
+  // if (import.meta.env.DEV) {
+  //   const { startMockWorker } = await import('./mock/browser.ts')
+  //   await startMockWorker()
+  // }
 
   const app = createApp(App)
   const pinia = createPinia()
