@@ -183,11 +183,10 @@ watch(latestSessionPush, (session) => {
 
     <header v-if="!isWorkspace" class="teacher-topbar">
       <button type="button" class="brand" aria-label="返回教学助手" @click="handleMenuSelect('home')">
-        <div class="brand-mark" aria-hidden="true">智</div>
-        <div class="brand-copy">
-          <strong>{{ TEACHER_HOME.brand.name }}</strong>
-          <span>{{ TEACHER_HOME.brand.subtitle }}</span>
-        </div>
+        <span class="app-brand-icon" aria-hidden="true">
+          <img src="/branding/logo-intro.png" alt="" />
+        </span>
+        <strong class="app-brand-name">智核</strong>
       </button>
 
       <nav class="top-navigation" aria-label="教师端主导航">
@@ -303,7 +302,9 @@ watch(latestSessionPush, (session) => {
 .teacher-shell.workspace-mode { display: block; }
 .teacher-sidebar { grid-area: sidebar; position: sticky; top: 68px; height: calc(100dvh - 68px); display: flex; flex-direction: column; padding: 18px 14px 14px; background: var(--zh-background-pc-sidebar); border-right: 1px solid var(--zh-line-parting); }
 .brand { display: flex; align-items: center; gap: 10px; padding: 0; border: 0; color: var(--zh-text-primary); background: transparent; font: inherit; text-align: left; cursor: pointer; }
-.brand-mark { width: 38px; height: 38px; display: grid; place-items: center; border-radius: var(--zh-radius10); color: white; background: var(--zh-gradient-blue); box-shadow: 0 8px 18px -8px rgb(37 99 235 / 55%); font-size: 18px; font-weight: 700; }
+.app-brand-icon { position: relative; width: 40px; height: 40px; display: block; flex: 0 0 auto; overflow: hidden; border-radius: var(--zh-radius10); background: white; box-shadow: 0 8px 18px -8px rgb(37 99 235 / 40%); }
+.app-brand-icon img { position: absolute; top: 50%; left: 50%; width: 71px; height: 71px; max-width: none; object-fit: cover; transform: translate(-50%, -50%); }
+.app-brand-name { color: var(--zh-text-primary); font-size: 18px; font-weight: 750; letter-spacing: var(--zh-tracking-wide); white-space: nowrap; }
 .brand-copy, .profile-copy { min-width: 0; display: flex; flex-direction: column; }
 .brand-copy strong { font-size: 18px; letter-spacing: var(--zh-tracking-wide); }
 .brand-copy span, .profile-copy span { margin-top: 2px; color: var(--zh-text-caption); font-size: 12px; }
@@ -372,6 +373,8 @@ watch(latestSessionPush, (session) => {
   .teacher-sidebar { padding-inline: 10px; }
   .teacher-topbar { grid-template-columns: auto 1fr auto; gap: 12px; padding-inline: 16px; }
   .brand-copy span, .history, .profile-copy, .new-chat-button :deep(span), .status-dot { display: none; }
+  .app-brand-icon { width: 38px; height: 38px; }
+  .app-brand-icon img { width: 68px; height: 68px; }
   .new-chat-button { width: 44px; margin-inline: auto; padding: 0; }
   .top-navigation { justify-self: center; }
   .top-nav-item { padding: 0 11px; }
@@ -383,7 +386,9 @@ watch(latestSessionPush, (session) => {
   .teacher-shell, .teacher-shell.assistant-mode { display: grid; grid-template-columns: 1fr; grid-template-rows: auto minmax(0, 1fr); grid-template-areas: "topbar" "main"; }
   .teacher-sidebar { display: none; }
   .teacher-topbar { height: auto; min-height: 108px; grid-template-columns: 1fr auto; grid-template-rows: 52px 48px; gap: 0 10px; padding: 4px 14px; }
-  .brand-mark { width: 34px; height: 34px; font-size: 16px; }
+  .app-brand-icon { width: 34px; height: 34px; }
+  .app-brand-icon img { width: 61px; height: 61px; }
+  .app-brand-name { font-size: 16px; }
   .brand-copy strong { font-size: 16px; }
   .top-navigation { grid-column: 1 / -1; grid-row: 2; width: 100%; justify-content: stretch; overflow-x: auto; }
   .top-nav-item { min-width: 42px; flex: 1; padding: 0 8px; justify-content: center; }

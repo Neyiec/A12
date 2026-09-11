@@ -42,7 +42,9 @@ const enterProgram = async () => {
   <div class="landing-page">
     <header class="site-header">
       <a class="brand" href="#top" aria-label="智核首页">
-        <span class="brand-mark">智</span>
+        <span class="brand-logo-frame" aria-hidden="true">
+          <img class="brand-logo-image" src="/branding/logo-intro.png" alt="" />
+        </span>
         <span>智核</span>
       </a>
 
@@ -218,7 +220,12 @@ const enterProgram = async () => {
     </main>
 
     <footer class="site-footer">
-      <a class="brand footer-brand" href="#top"><span class="brand-mark">智</span><span>智核</span></a>
+      <a class="brand footer-brand" href="#top">
+        <span class="brand-logo-frame" aria-hidden="true">
+          <img class="brand-logo-image" src="/branding/logo-intro.png" alt="" />
+        </span>
+        <span>智核</span>
+      </a>
       <p>多模态 AI 互动式教学智能体</p>
       <span>让每一次备课都有清晰的开始</span>
     </footer>
@@ -258,16 +265,27 @@ const enterProgram = async () => {
   text-decoration: none;
 }
 
-.brand-mark {
-  display: grid;
+.brand-logo-frame {
+  position: relative;
+  display: block;
+  flex: 0 0 auto;
+  overflow: hidden;
   width: 38px;
   height: 38px;
-  place-items: center;
   border-radius: 12px;
-  color: white;
-  font-size: 18px;
-  background: linear-gradient(145deg, #1d4ed8, #3b82f6 58%, #60a5fa);
+  background: white;
   box-shadow: 0 8px 20px rgb(37 99 235 / 24%);
+}
+
+.brand-logo-image {
+  position: absolute;
+  top: 50%;
+  left: 50%;
+  width: 68px;
+  height: 68px;
+  max-width: none;
+  object-fit: cover;
+  transform: translate(-50%, -50%);
 }
 
 .site-nav {
@@ -633,7 +651,8 @@ h1 span {
 .final-cta h2 { max-width: 820px; }
 .cta-action { margin-top: 32px; }
 .site-footer { display: grid; grid-template-columns: 1fr auto 1fr; align-items: center; gap: 24px; width: min(1180px, calc(100% - 48px)); min-height: 118px; margin: 0 auto; border-top: 1px solid #e8ecf2; color: #8a95a7; font-size: 13px; }
-.footer-brand .brand-mark { width: 32px; height: 32px; border-radius: 10px; font-size: 14px; }
+.footer-brand .brand-logo-frame { width: 32px; height: 32px; border-radius: 10px; }
+.footer-brand .brand-logo-image { width: 57px; height: 57px; }
 .site-footer p { margin: 0; }
 .site-footer > span { justify-self: end; }
 
