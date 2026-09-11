@@ -1,0 +1,23 @@
+{
+  "name": "frontend-app",
+  "private": true,
+  "version": "0.0.0",
+  "type": "module",
+  "description": "A12 教师端 App 原生壳（Capacitor）：不存放 Web 代码，webDir 直接引用 ../frontend/dist 构建产物",
+  "scripts": {
+    "web:build": "npm --prefix ../frontend run build",
+    "sync": "npm run web:build && cap sync",
+    "sync:android": "npm run web:build && cap sync android",
+    "open:android": "cap open android",
+    "run:android": "cap run android",
+    "run:android:livereload": "cap run android -l --external --host=localhost"
+  },
+  "dependencies": {
+    "@capacitor/android": "^8.5.1",
+    "@capacitor/cli": "^8.5.1",
+    "@capacitor/core": "^8.5.1"
+  },
+  "devDependencies": {
+    "typescript": "^7.0.2"
+  }
+}
