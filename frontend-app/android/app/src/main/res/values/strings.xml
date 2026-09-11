@@ -1,0 +1,7 @@
+<?xml version='1.0' encoding='utf-8'?>
+<resources>
+    <string name="app_name">A12</string>
+    <string name="title_activity_main">A12</string>
+    <string name="package_name">com.a12.teacher</string>
+    <string name="custom_url_scheme">com.a12.teacher</string>
+</resources>
