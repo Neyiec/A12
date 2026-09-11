@@ -37,6 +37,9 @@ export const useUserStore = defineStore('user', () => {
   /** 会话令牌（JWT） */
   const token = ref('')
 
+  /** 本次登录建立会话的时间，用于兼容不含 exp 的旧令牌 */
+  const loginAt = ref(0)
+
   /** 当前登录用户的基本信息 */
   const userInfo = ref<UserInfo | null>(null)
 
@@ -51,6 +54,7 @@ export const useUserStore = defineStore('user', () => {
    */
   const setToken = (t: string) => {
     token.value = t
+    loginAt.value = t ? Date.now() : 0
   }
 
   /**
@@ -95,17 +99,18 @@ export const useUserStore = defineStore('user', () => {
    */
   const clearUser = () => {
     token.value = ''
+    loginAt.value = 0
     userInfo.value = null
     menus.value = []
   }
 
-  return { token, userInfo, menus, setToken, setUserInfo, setMenus, clearUser }
+  return { token, loginAt, userInfo, menus, setToken, setUserInfo, setMenus, clearUser }
 }, {
   // 开启持久化 — 自动将指定字段同步到 localStorage
   persist: {
     key: 'zh-user-store',
     storage: localStorage,
     // 指定需要持久化的字段
-    pick: ['token', 'userInfo', 'menus'],
+    pick: ['token', 'loginAt', 'userInfo', 'menus'],
   },
 })

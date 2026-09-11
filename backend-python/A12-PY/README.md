@@ -19,16 +19,19 @@ uvicorn main:app --host 0.0.0.0 --port 8001 --reload
 OPENAI_API_KEY=你的模型服务 Key
 OPENAI_BASE_URL=https://api.openai.com/v1
 OPENAI_MODEL=gpt-4o-mini
-EMBEDDING_API_KEY=不填则复用 OPENAI_API_KEY
-EMBEDDING_BASE_URL=不填则复用 OPENAI_BASE_URL
-EMBEDDING_MODEL=text-embedding-3-small
-EMBEDDING_DIMENSIONS=
+EMBEDDING_API_KEY=你的百炼 API Key
+EMBEDDING_BASE_URL=https://dashscope.aliyuncs.com/compatible-mode/v1
+EMBEDDING_MODEL=text-embedding-v4
+EMBEDDING_DIMENSIONS=1024
 REQUEST_TIMEOUT_SECONDS=90
 MAX_SLIDE_CONCURRENCY=8
 MAX_HTML_RETRIES=1
 ENABLE_QUALITY_PIPELINE=true
 QUALITY_PRESET=fast
 ```
+
+百炼的 OpenAI 兼容 Embeddings 请求地址为
+`https://dashscope.aliyuncs.com/compatible-mode/v1/embeddings`。API Key 必须与所选地域和计费方案的 Base URL 匹配。
 
 速度建议：
 

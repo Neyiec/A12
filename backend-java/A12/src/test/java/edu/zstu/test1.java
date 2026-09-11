@@ -22,7 +22,6 @@ public class test1 {
     public void func2() {
         String code= RandomUtil.randomNumbers(6);
         SimpleMailMessage message = new SimpleMailMessage();
-        message.setFrom("3276142066@qq.com");
         message.setTo("whn3276142066@163.com");
         message.setSubject("A12 教学平台 - 注册验证码");
         message.setText("您的验证码为："+ code+"\n有效期 60 秒，请勿泄露给他人。");

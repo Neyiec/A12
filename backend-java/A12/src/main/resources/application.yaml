@@ -21,15 +21,21 @@ spring:
 
   mail:
     host: smtp.qq.com
-    port: 587
+    port: 465
     username: 3276142066@qq.com
-    password: rsaoqxavtsnedcah
+    password: lpaizjmdsjebciii
     properties:
       mail:
         smtp:
           auth: true
-          starttls:
+          ssl:
             enable: true
+            trust: smtp.qq.com
+          starttls:
+            enable: false
+          connectiontimeout: 5000
+          timeout: 5000
+          writetimeout: 5000
 
   jpa:
     hibernate:
