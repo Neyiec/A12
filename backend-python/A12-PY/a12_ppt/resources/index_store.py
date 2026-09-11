@@ -891,6 +891,8 @@ class ResourceIndexStore:
 
     def _default_embedding_dimensions(self) -> int:
         model = (self.settings.embedding_model or "").lower()
+        if "text-embedding-v4" in model:
+            return 1024
         if "3-large" in model:
             return 3072
         return 1536

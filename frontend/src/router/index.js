@@ -4,7 +4,7 @@ import{
 } from 'vue-router'
 
 import {getRouters} from'../apis/login.js'
-import {isTokenExpired} from '../utils/JWTParser.js'
+import {isSessionExpired} from '../utils/JWTParser.js'
 // 全局用户 store — 替代直接操作 localStorage
 import { useUserStore } from '../storage/user.js'
 
@@ -18,6 +18,7 @@ const getComponentLoader = (componentName) => {
 }
 
 const login = getComponentLoader('login')
+const LandingPage = getComponentLoader('LandingPage')
 const TeacherHome = getComponentLoader('TeacherHome')
 const TeacherLayout = getComponentLoader('TeacherLayout')
 const ResourceLibrary = getComponentLoader('ResourceLibrary')
@@ -29,7 +30,8 @@ const AccountSettings = getComponentLoader('AccountSettings')
 const routes = [
   {
     path: '/',
-    redirect: '/main',
+    component: LandingPage,
+    meta: { publicPage: true },
   },
   {
     path: '/login',
@@ -113,14 +115,15 @@ router.beforeEach((to, from, next) => {
   // 从 Pinia store 获取 token（自动从持久化的 localStorage 恢复）
   const userStore = useUserStore()
   const token = userStore.token
+  const sessionExpired = !token || isSessionExpired(token, userStore.loginAt)
 
-  if (to.path !== '/login' && (!token || isTokenExpired(token))) {
+  if (!to.meta.publicPage && to.path !== '/login' && sessionExpired) {
     next('/login')
     return
   }
 
   // 清除过期或缺失 token 的用户状态
-  if (!token || isTokenExpired(token)) {
+  if (sessionExpired) {
     userStore.clearUser()
     menusLoaded = false
   }

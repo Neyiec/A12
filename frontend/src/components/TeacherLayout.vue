@@ -1,7 +1,7 @@
 <!--
   [数据交互说明]
   - 导入: 教师端导航配置、Vue Router、Element Plus 图标、`listAiSessions`（GET /api/v1/ai/sessions）会话历史、`latestSessionPush`（ChatView 推送的最新会话）
-  - 输出: 教师端所有独立页面共用的侧栏与顶栏布局
+  - 输出: 教师端所有独立页面共用的顶部导航；教学助手独享会话侧栏
 -->
 <script setup>
 import { computed, onMounted, ref, watch } from 'vue'
@@ -35,6 +35,7 @@ const routeMap = {
 }
 const activeMenu = computed(() => route.meta.menu || 'home')
 const isWorkspace = computed(() => route.path === '/main/workspace')
+const isTeachingAssistant = computed(() => route.path === '/main')
 const avatarText = computed(() => (userStore.userInfo?.real_name || userStore.userInfo?.username || TEACHER_HOME.teacher.name).slice(0, 1))
 const avatarUrl = computed(() => userStore.userInfo?.avatar || undefined)
 const isSettings = computed(() => route.path === '/main/settings')
@@ -177,29 +178,61 @@ watch(latestSessionPush, (session) => {
 </script>
 
 <template>
-  <div :class="['teacher-shell', { 'workspace-mode': isWorkspace }]">
+  <div :class="['teacher-shell', { 'workspace-mode': isWorkspace, 'assistant-mode': isTeachingAssistant }]">
     <a class="skip-link" href="#main-content">跳到主要内容</a>
-    <aside v-if="!isWorkspace" class="teacher-sidebar" aria-label="教师端主导航">
-      <header class="brand">
+
+    <header v-if="!isWorkspace" class="teacher-topbar">
+      <button type="button" class="brand" aria-label="返回教学助手" @click="handleMenuSelect('home')">
         <div class="brand-mark" aria-hidden="true">智</div>
         <div class="brand-copy">
           <strong>{{ TEACHER_HOME.brand.name }}</strong>
           <span>{{ TEACHER_HOME.brand.subtitle }}</span>
         </div>
-      </header>
+      </button>
+
+      <nav class="top-navigation" aria-label="教师端主导航">
+        <button
+          v-for="item in TEACHER_HOME.navigation"
+          :key="item.index"
+          type="button"
+          :class="['top-nav-item', { 'is-active': activeMenu === item.index }]"
+          :aria-current="activeMenu === item.index ? 'page' : undefined"
+          @click="handleMenuSelect(item.index)"
+        >
+          <el-icon><component :is="iconMap[item.icon]" /></el-icon>
+          <span>{{ item.label }}</span>
+        </button>
+      </nav>
+
+      <div class="topbar-actions">
+        <span v-if="isTeachingAssistant" class="status-dot"><i></i> 智能体在线</span>
+        <el-button
+          text
+          circle
+          class="icon-action theme-toggle"
+          aria-label="切换主题"
+          :aria-pressed="isDark"
+          @click="toggleTheme"
+        >
+          <span :class="['theme-orbit', { 'is-dark': isDark }]" aria-hidden="true">
+            <span class="theme-orbit-track">
+              <el-icon class="theme-orbit-moon"><Moon /></el-icon>
+              <el-icon class="theme-orbit-sun"><Sunny /></el-icon>
+            </span>
+          </span>
+        </el-button>
+        <el-button text circle class="icon-action notification-button" aria-label="通知"><el-icon><Bell /></el-icon></el-button>
+        <button type="button" class="avatar-button" :aria-label="settingsActionLabel" @click="toggleSettings">
+          <el-avatar :size="34" :src="avatarUrl">{{ avatarText }}</el-avatar>
+        </button>
+      </div>
+    </header>
+
+    <aside v-if="isTeachingAssistant && !isWorkspace" class="teacher-sidebar" aria-label="教学助手对话记录">
 
       <el-button type="primary" class="new-chat-button" :icon="Plus" @click="handleNewChat">
         {{ TEACHER_HOME.actions.newChat }}
       </el-button>
-
-      <nav class="primary-nav">
-        <el-menu :key="activeMenu" :default-active="activeMenu" @select="handleMenuSelect">
-          <el-menu-item v-for="item in TEACHER_HOME.navigation" :key="item.index" :index="item.index">
-            <el-icon><component :is="iconMap[item.icon]" /></el-icon>
-            <span>{{ item.label }}</span>
-          </el-menu-item>
-        </el-menu>
-      </nav>
 
       <section class="history" aria-labelledby="history-title">
         <!-- 标题行固定在顶部，不随历史条目滚动；仅下方条目区域可滚动 -->
@@ -250,34 +283,6 @@ watch(latestSessionPush, (session) => {
     </aside>
 
     <main id="main-content" class="teacher-main">
-      <header v-if="!isWorkspace" class="teacher-topbar">
-        <div>
-          <span class="workspace-label">{{ route.meta.title || '个人工作空间' }}</span>
-          <span class="status-dot"><i></i> 智能体在线</span>
-        </div>
-        <div class="topbar-actions">
-          <el-button
-            text
-            circle
-            class="icon-action theme-toggle"
-            aria-label="切换主题"
-            :aria-pressed="isDark"
-            @click="toggleTheme"
-          >
-            <span :class="['theme-orbit', { 'is-dark': isDark }]" aria-hidden="true">
-              <span class="theme-orbit-track">
-                <el-icon class="theme-orbit-moon"><Moon /></el-icon>
-                <el-icon class="theme-orbit-sun"><Sunny /></el-icon>
-              </span>
-            </span>
-          </el-button>
-          <el-button text circle class="icon-action notification-button" aria-label="通知"><el-icon><Bell /></el-icon></el-button>
-          <button type="button" class="avatar-button" :aria-label="settingsActionLabel" @click="toggleSettings">
-            <el-avatar :size="34" :src="avatarUrl">{{ avatarText }}</el-avatar>
-          </button>
-        </div>
-      </header>
-      
       <router-view v-slot="{ Component, route: viewRoute }">
         <Transition :name="viewTransitionName" mode="out-in" appear>
           <div
@@ -293,10 +298,11 @@ watch(latestSessionPush, (session) => {
 </template>
 
 <style scoped>
-.teacher-shell { min-height: 100dvh; display: grid; grid-template-columns: 260px minmax(0, 1fr); background: var(--zh-background-primary); color: var(--zh-text-primary); }
+.teacher-shell { min-height: 100dvh; display: grid; grid-template-rows: 68px minmax(0, 1fr); grid-template-areas: "topbar" "main"; background: var(--zh-background-primary); color: var(--zh-text-primary); }
+.teacher-shell.assistant-mode { grid-template-columns: 260px minmax(0, 1fr); grid-template-areas: "topbar topbar" "sidebar main"; }
 .teacher-shell.workspace-mode { display: block; }
-.teacher-sidebar { position: sticky; top: 0; height: 100dvh; display: flex; flex-direction: column; padding: 20px 14px 14px; background: var(--zh-background-pc-sidebar); border-right: 1px solid var(--zh-line-parting); }
-.brand { display: flex; align-items: center; gap: 10px; padding: 0 8px 22px; }
+.teacher-sidebar { grid-area: sidebar; position: sticky; top: 68px; height: calc(100dvh - 68px); display: flex; flex-direction: column; padding: 18px 14px 14px; background: var(--zh-background-pc-sidebar); border-right: 1px solid var(--zh-line-parting); }
+.brand { display: flex; align-items: center; gap: 10px; padding: 0; border: 0; color: var(--zh-text-primary); background: transparent; font: inherit; text-align: left; cursor: pointer; }
 .brand-mark { width: 38px; height: 38px; display: grid; place-items: center; border-radius: var(--zh-radius10); color: white; background: var(--zh-gradient-blue); box-shadow: 0 8px 18px -8px rgb(37 99 235 / 55%); font-size: 18px; font-weight: 700; }
 .brand-copy, .profile-copy { min-width: 0; display: flex; flex-direction: column; }
 .brand-copy strong { font-size: 18px; letter-spacing: var(--zh-tracking-wide); }
@@ -307,13 +313,7 @@ watch(latestSessionPush, (session) => {
 .new-chat-button :deep(.el-icon) { transition: transform 200ms cubic-bezier(0.4, 0, 0.2, 1); }
 .new-chat-button:hover :deep(.el-icon) { transform: rotate(90deg); }
 .new-chat-button:active :deep(.el-icon) { transform: rotate(90deg) scale(.92); transition-duration: 150ms; }
-.primary-nav :deep(.el-menu) { border-right: 0; background: transparent; }
-.primary-nav :deep(.el-menu-item) { height: 44px; margin: 3px 0; border-radius: var(--zh-radius8); color: var(--zh-text-secondary); }
-.primary-nav :deep(.el-menu-item .el-icon) { transition: transform 200ms cubic-bezier(0.4, 0, 0.2, 1); }
-.primary-nav :deep(.el-menu-item:hover) { background: var(--zh-background-option); color: var(--zh-text-primary); }
-.primary-nav :deep(.el-menu-item:hover .el-icon) { transform: translateX(2px) scale(1.04); }
-.primary-nav :deep(.el-menu-item.is-active) { color: var(--zh-text-theme); background: var(--zh-background-option-on); font-weight: 600; }
-.history { min-height: 0; margin-top: 20px; display: flex; flex-direction: column; }
+.history { min-height: 0; margin-top: 18px; display: flex; flex: 1; flex-direction: column; }
 .history-scroll { min-height: 0; flex: 1; overflow-y: auto; }
 .section-label-row { display: flex; align-items: center; justify-content: space-between; flex-shrink: 0; padding: 0 8px 5px; color: var(--zh-text-caption); font-size: 12px; }
 .history-item { width: 100%; display: flex; align-items: center; gap: 4px; padding: 4px 6px 4px 8px; border-radius: var(--zh-radius8); transition: background-color 200ms cubic-bezier(0.4, 0, 0.2, 1); }
@@ -334,12 +334,16 @@ watch(latestSessionPush, (session) => {
 .avatar-button:hover, .avatar-button:focus-visible { transform: translateY(-1px) scale(1.04); }
 .avatar-button:active { transform: scale(.96); transition-duration: 150ms; }
 .profile-copy strong { overflow: hidden; font-size: 13px; text-overflow: ellipsis; white-space: nowrap; }
-.teacher-main { min-width: 0; min-height: 100dvh; background: radial-gradient(circle at 50% 18%, rgb(37 99 235 / 5%), transparent 32%), var(--zh-background-primary); }
-.teacher-topbar { position: sticky; z-index: 100; top: 0; height: 68px; display: flex; align-items: center; justify-content: space-between; padding: 0 28px; border-bottom: 1px solid var(--zh-line-parting); background: color-mix(in srgb, var(--zh-background-primary) 88%, transparent); backdrop-filter: blur(12px); }
-.workspace-label { color: var(--zh-text-secondary); font-size: 13px; font-weight: 500; }
-.status-dot { margin-left: 16px; color: var(--zh-text-caption); font-size: 12px; }
+.teacher-main { grid-area: main; min-width: 0; min-height: calc(100dvh - 68px); background: radial-gradient(circle at 50% 18%, rgb(37 99 235 / 5%), transparent 32%), var(--zh-background-primary); }
+.teacher-topbar { grid-area: topbar; position: sticky; z-index: 100; top: 0; height: 68px; display: grid; grid-template-columns: minmax(160px, 1fr) auto minmax(160px, 1fr); align-items: center; gap: 24px; padding: 0 24px; border-bottom: 1px solid var(--zh-line-parting); background: color-mix(in srgb, var(--zh-background-primary) 90%, transparent); backdrop-filter: blur(14px); }
+.top-navigation { display: flex; align-items: center; justify-content: center; gap: 4px; padding: 4px; border: 1px solid var(--zh-line-parting); border-radius: 14px; background: var(--zh-background-light); }
+.top-nav-item { min-height: 40px; display: inline-flex; align-items: center; gap: 7px; padding: 0 16px; border: 0; border-radius: 10px; color: var(--zh-text-secondary); background: transparent; font: inherit; font-size: 14px; white-space: nowrap; cursor: pointer; transition: color 180ms ease, background-color 180ms ease, box-shadow 180ms ease, transform 180ms ease; }
+.top-nav-item:hover, .top-nav-item:focus-visible { color: var(--zh-text-primary); background: var(--zh-background-primary); transform: translateY(-1px); }
+.top-nav-item.is-active { color: var(--zh-text-theme); background: var(--zh-background-primary); box-shadow: var(--zh-shadow1); font-weight: 650; }
+.top-nav-item .el-icon { font-size: 16px; }
+.status-dot { margin-right: 4px; color: var(--zh-text-caption); font-size: 12px; white-space: nowrap; }
 .status-dot i { width: 7px; height: 7px; display: inline-block; margin-right: 5px; border-radius: 50%; background: var(--zh-green); animation: pulse 200ms cubic-bezier(0.4, 0, 0.2, 1) both; }
-.topbar-actions { display: flex; align-items: center; gap: 8px; }
+.topbar-actions { display: flex; align-items: center; justify-self: end; gap: 8px; }
 .topbar-actions .icon-action, .topbar-actions > .avatar-button { width: 36px; height: 36px; flex: 0 0 36px; margin: 0; }
 .topbar-actions :deep(.el-button .el-icon), .teacher-profile :deep(.el-button .el-icon) { font-size: 18px; }
 .icon-action { transition: background-color 200ms cubic-bezier(0.4, 0, 0.2, 1), transform 200ms cubic-bezier(0.4, 0, 0.2, 1); }
@@ -364,20 +368,27 @@ watch(latestSessionPush, (session) => {
 .teacher-view-enter-to { opacity: 1; transform: translateY(0); }
 
 @media (max-width: 900px) {
-  .teacher-shell { grid-template-columns: 76px minmax(0, 1fr); }
+  .teacher-shell.assistant-mode { grid-template-columns: 76px minmax(0, 1fr); }
   .teacher-sidebar { padding-inline: 10px; }
-  .brand { justify-content: center; padding-inline: 0; }
-  .brand-copy, .history, .profile-copy, .primary-nav :deep(.el-menu-item span), .new-chat-button :deep(span) { display: none; }
+  .teacher-topbar { grid-template-columns: auto 1fr auto; gap: 12px; padding-inline: 16px; }
+  .brand-copy span, .history, .profile-copy, .new-chat-button :deep(span), .status-dot { display: none; }
   .new-chat-button { width: 44px; margin-inline: auto; padding: 0; }
-  .primary-nav :deep(.el-menu-item) { justify-content: center; padding: 0 !important; }
+  .top-navigation { justify-self: center; }
+  .top-nav-item { padding: 0 11px; }
+  .top-nav-item span { display: none; }
   .teacher-profile { display: flex; justify-content: center; padding-inline: 0; }
   .teacher-profile > :last-child { display: none; }
 }
 @media (max-width: 680px) {
-  .teacher-shell { display: block; }
+  .teacher-shell, .teacher-shell.assistant-mode { display: grid; grid-template-columns: 1fr; grid-template-rows: auto minmax(0, 1fr); grid-template-areas: "topbar" "main"; }
   .teacher-sidebar { display: none; }
-  .teacher-topbar { height: 60px; padding-inline: 16px; }
-  .status-dot { display: none; }
+  .teacher-topbar { height: auto; min-height: 108px; grid-template-columns: 1fr auto; grid-template-rows: 52px 48px; gap: 0 10px; padding: 4px 14px; }
+  .brand-mark { width: 34px; height: 34px; font-size: 16px; }
+  .brand-copy strong { font-size: 16px; }
+  .top-navigation { grid-column: 1 / -1; grid-row: 2; width: 100%; justify-content: stretch; overflow-x: auto; }
+  .top-nav-item { min-width: 42px; flex: 1; padding: 0 8px; justify-content: center; }
+  .topbar-actions { grid-column: 2; grid-row: 1; }
+  .teacher-main { min-height: calc(100dvh - 108px); }
 }
 
 @keyframes pulse {

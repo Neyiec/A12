@@ -14,15 +14,12 @@ import org.springframework.util.AntPathMatcher;
 import lombok.extern.slf4j.Slf4j;
 
 import java.io.IOException;
-import java.util.concurrent.TimeUnit;
-
 /**
  * JWT 认证过滤器
  * 拦截非 /api/v1/auth/** 的请求：
  * ① 校验 JWT 签名
  * ② 检查 Redis 中是否存在该令牌
- * ③ 续期 Redis TTL → 7 天
- * ④ 将 userId 放入请求属性，供 Controller 使用
+ * ③ 将 userId 放入请求属性，供 Controller 使用
  */
 @Slf4j
 @Component
@@ -84,9 +81,6 @@ public class JwtAuthenticationFilter implements Filter {
             writeUnauthorized(res, "令牌已过期或已被替换");
             return;
         }
-
-        // 续期 → 7 天
-        redisTemplate.expire(redisKey, 7, TimeUnit.DAYS);
 
         CurrentHolder.setCurrentId(userId);
         log.debug("jwt auth success userId={}, path={}, method={}", userId, req.getRequestURI(), req.getMethod());

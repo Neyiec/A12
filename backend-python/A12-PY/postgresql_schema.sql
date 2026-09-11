@@ -3,8 +3,8 @@
 -- Recommended database/account: postgres
 -- Default DSN example: postgresql://postgres:postgres@127.0.0.1:5432/postgres
 -- pgvector is required for real RAG vector similarity retrieval.
--- Default embedding dimension is 1536 for text-embedding-3-small. If you use
--- text-embedding-3-large, set EMBEDDING_DIMENSIONS=3072 and adjust vector(1536).
+-- Default embedding model is Alibaba Cloud Model Studio text-embedding-v4,
+-- using its default 1024-dimensional output.
 -- =============================================
 
 CREATE EXTENSION IF NOT EXISTS vector;
@@ -185,7 +185,7 @@ CREATE TABLE a12_resource_index_chunk (
   resource_id TEXT NOT NULL,
   chunk_index INTEGER NOT NULL,
   content TEXT NOT NULL,
-  embedding_vector vector(1536) DEFAULT NULL,
+  embedding_vector vector(1024) DEFAULT NULL,
   metadata JSONB NOT NULL DEFAULT '{}'::jsonb,
   created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
 );

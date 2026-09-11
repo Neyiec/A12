@@ -22,6 +22,7 @@ import io.jsonwebtoken.Claims;
 import org.springframework.data.redis.core.StringRedisTemplate;
 import org.springframework.mail.SimpleMailMessage;
 import org.springframework.mail.javamail.JavaMailSender;
+import org.springframework.beans.factory.annotation.Value;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 import org.springframework.web.context.request.RequestContextHolder;
@@ -40,6 +41,10 @@ public class AuthServiceImpl implements AuthService {
 
     /** 新注册用户的默认角色编码 */
     private static final String DEFAULT_ROLE_CODE = "teacher";
+
+    /** SMTP 发件人必须与认证用户保持一致。 */
+    @Value("${spring.mail.username}")
+    private String mailUsername;
 
     private final SysUserMapper userMapper;
     private final SysRoleMapper roleMapper;
@@ -149,7 +154,7 @@ public class AuthServiceImpl implements AuthService {
         Map<String, Object> claims = new HashMap<>();
         claims.put("user_id", user.getId());
         String token = jwtUtil.generateToken(claims);
-        redisTemplate.opsForValue().set("token:user:" + user.getId(), token, 7, TimeUnit.DAYS);
+        redisTemplate.opsForValue().set("token:user:" + user.getId(), token, JwtUtil.TOKEN_VALIDITY_HOURS, TimeUnit.HOURS);
         userMapper.updateLastLogin(user.getId(), loginIp);
         user.setLast_login_at(java.time.LocalDateTime.now());
         user.setLast_login_ip(loginIp);
@@ -198,6 +203,7 @@ public class AuthServiceImpl implements AuthService {
         redisTemplate.opsForValue().set("verify:code:" + dto.getScene() + ":" + email, code, 60, TimeUnit.SECONDS);
 
         SimpleMailMessage message = new SimpleMailMessage();
+        message.setFrom(mailUsername);
         message.setTo(email);
         message.setSubject("A12 教学平台 - " + ("register".equals(dto.getScene()) ? "注册" : "密码重置") + "验证码");
         message.setText("您的验证码为：" + code + "\n有效期 60 秒，请勿泄露给他人。");
@@ -254,7 +260,7 @@ public class AuthServiceImpl implements AuthService {
         vo.setUser_id(user.getId());
         fillRoleFields(vo);
         String newToken = jwtUtil.generateToken(Map.of("user_id", user.getId()));
-        redisTemplate.opsForValue().set("token:user:" + user.getId(), newToken, 7, TimeUnit.DAYS);
+        redisTemplate.opsForValue().set("token:user:" + user.getId(), newToken, JwtUtil.TOKEN_VALIDITY_HOURS, TimeUnit.HOURS);
         vo.setToken(newToken);
         vo.setLast_login_at(user.getLast_login_at());
         log.info("initialPasswordChange success userId={}", user.getId());

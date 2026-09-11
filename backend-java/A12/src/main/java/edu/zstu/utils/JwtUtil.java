@@ -22,10 +22,12 @@ import java.util.UUID;
  * 生成和解析登录令牌，密钥存储在 sys_config 表
  * (config_group = security, config_key = jwt.secret)
  * 首次启动自动生成 32 字节随机密钥并持久化
- * 令牌有效期由 Redis 管理，JWT 本身不做期限校验
+ * JWT 与 Redis 会话均使用固定 12 小时有效期
  */
 @Component
 public class JwtUtil {
+
+    public static final long TOKEN_VALIDITY_HOURS = 12;
 
     private static final String CONFIG_GROUP = "security";
     private static final String CONFIG_KEY = "jwt.secret";
@@ -60,13 +62,14 @@ public class JwtUtil {
     }
 
     /**
-     * 生成 JWT 令牌，不含 exp 有效期，有效期由 Redis 管理
+     * 生成带固定 12 小时 exp 的 JWT 令牌
      */
     public String generateToken(Map<String, Object> claims) {
         var builder = Jwts.builder();
         claims.forEach(builder::claim);
         builder.id(UUID.randomUUID().toString());
         builder.issuedAt(new Date());
+        builder.expiration(new Date(System.currentTimeMillis() + TOKEN_VALIDITY_HOURS * 60 * 60 * 1000));
         return builder.signWith(secretKey).compact();
     }
 
