@@ -6,10 +6,11 @@ from pathlib import Path
 
 from .common import ParsedResource, merge_text_blocks
 from .vision_parser import describe_image
+from ...asr.service import transcribe_audio
 
 
 async def parse_video(path: Path, max_frames: int = 6) -> ParsedResource:
-    frame_paths = _extract_keyframes(path, max_frames)
+    frame_paths = await asyncio.to_thread(_extract_keyframes, path, max_frames)
     try:
         summaries = await asyncio.gather(*[
             describe_image(frame, f"这是教学参考视频的第 {index + 1} 个关键帧。请提取画面文字、场景、知识点和可用于课件生成的信息。")
@@ -20,18 +21,49 @@ async def parse_video(path: Path, max_frames: int = 6) -> ParsedResource:
             for index, summary in enumerate(summaries)
             if summary
         ]
+        visual_summary_count = len(blocks)
+        audio = await _transcribe_video_audio(path)
+        if audio.get("text"):
+            blocks.append("视频音轨转写:\n" + audio["text"])
         return ParsedResource(
             text=merge_text_blocks(blocks),
             metadata={
                 "modality": "video",
-                "parser": "opencv/ffmpeg+vision",
+                "parser": "opencv/ffmpeg+vision+asr",
                 "keyframe_count": len(frame_paths),
-                "vision_summary_count": len(blocks),
+                "vision_summary_count": visual_summary_count,
+                "audio_status": audio.get("status"),
+                "audio_error": audio.get("error_message"),
+                "transcript_available": bool(audio.get("text")),
             },
         )
     finally:
         for frame in frame_paths:
             frame.unlink(missing_ok=True)
+            if frame.parent.name.startswith("a12_video_frames_"):
+                try:
+                    frame.parent.rmdir()
+                except OSError:
+                    pass
+
+
+async def _transcribe_video_audio(path: Path) -> dict:
+    if not shutil.which("ffmpeg"):
+        return {"status": "unavailable", "error_message": "视频音轨分析需要安装 FFmpeg"}
+    with tempfile.TemporaryDirectory(prefix="a12_video_audio_") as directory:
+        audio_path = Path(directory) / "audio.mp3"
+        try:
+            result = await asyncio.to_thread(subprocess.run, [
+                "ffmpeg", "-hide_banner", "-loglevel", "error", "-y", "-i", str(path),
+                "-vn", "-ac", "1", "-ar", "16000", "-b:a", "48k", str(audio_path),
+            ], capture_output=True, timeout=180, check=False)
+            if result.returncode or not audio_path.exists():
+                return {"status": "unavailable", "error_message": "未能提取音轨，视频可能无音轨或格式不受支持"}
+            if audio_path.stat().st_size > 24 * 1024 * 1024:
+                return {"status": "failed", "error_message": "视频音轨超过 24MB，请分段上传"}
+            return await transcribe_audio(audio_path)
+        except (OSError, subprocess.TimeoutExpired):
+            return {"status": "failed", "error_message": "视频音轨提取失败或超时"}
 
 
 def _extract_keyframes(path: Path, max_frames: int) -> list[Path]:

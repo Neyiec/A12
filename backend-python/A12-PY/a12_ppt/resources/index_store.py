@@ -10,7 +10,7 @@ from ..llm import EmbeddingClient
 from ..models import ResourceIndexMetadataRequest, ResourceIndexSyncRequest
 from .chunks import chunk_text
 from .downloader import download_and_parse_resource
-from .identity import resource_fingerprint, resource_key
+from .identity import resource_key
 from .records import IndexedChunk
 from .similarity import cosine_similarity, embedding_to_pgvector, keyword_score
 
@@ -126,8 +126,14 @@ class ResourceIndexStore:
     async def sync_resource(self, request: ResourceIndexSyncRequest) -> dict[str, Any]:
         metadata = self._build_metadata(request)
         key = resource_key(request.source_type, request.resource_id)
-        fingerprint = resource_fingerprint(request)
+        fingerprint = ""
         existing = self._load_resource_meta(key)
+        try:
+            previous_digest = existing.get("file_fingerprint") if existing and existing.get("parse_status") == "completed" else None
+            parsed = await download_and_parse_resource(request, previous_digest=previous_digest)
+            fingerprint = parsed.metadata["content_sha256"]
+        except Exception as exc:
+            return {"resource_key": key, "status": "failed", "error_message": str(exc)}
         should_parse = (
             request.force_reparse
             or not existing
@@ -150,9 +156,10 @@ class ResourceIndexStore:
             }
 
         try:
-            parsed = await download_and_parse_resource(request)
             metadata["parse"] = parsed.metadata
             text = parsed.text
+            if not text.strip():
+                raise ValueError("资料未解析出有效文本，请检查格式、OCR、视觉模型或语音转写服务")
             chunks = chunk_text(text, metadata=metadata)
             try:
                 embeddings = await self.embedding_client.embed_documents(chunks)

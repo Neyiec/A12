@@ -88,8 +88,8 @@ class PostgresOutlineMemoryStore:
         extracted_style: dict[str, Any],
         score: float,
         reason: str,
-    ) -> None:
-        self._execute(
+    ) -> bool:
+        memory_saved = self._execute(
             """
             INSERT INTO a12_teacher_style_memory
               (user_id, session_id, source_message, extracted_style, necessity_score, reason)
@@ -97,7 +97,7 @@ class PostgresOutlineMemoryStore:
             """,
             (user_id, session_id, source_message, json.dumps(extracted_style, ensure_ascii=False), score, reason),
         )
-        self._execute(
+        profile_saved = self._execute(
             """
             INSERT INTO a12_teacher_style_profile
               (user_id, style_summary, profile, evidence_count, confidence)
@@ -120,6 +120,7 @@ class PostgresOutlineMemoryStore:
                 score,
             ),
         )
+        return memory_saved and profile_saved
 
     def list_sessions(self, user_id: str, limit: int = 20) -> list[dict[str, Any]]:
         try:
@@ -259,7 +260,7 @@ class PostgresOutlineMemoryStore:
             self.available = False
             return None
 
-    def _execute(self, sql: str, params: tuple[Any, ...]) -> None:
+    def _execute(self, sql: str, params: tuple[Any, ...]) -> bool:
         try:
             import psycopg
 
@@ -267,8 +268,10 @@ class PostgresOutlineMemoryStore:
                 with conn.cursor() as cur:
                     cur.execute(sql, params)
                 conn.commit()
+            return True
         except Exception:
             self.available = False
+            return False
 
 
 postgres_memory_store = PostgresOutlineMemoryStore()

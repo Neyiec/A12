@@ -701,44 +701,42 @@ JSON 格式:
 
     def _outline_prompt(self, req: OutlineGenerateRequest, slide_count: int) -> str:
         return f"""
-Generate a teaching PPT outline. Return strict JSON only, no Markdown.
+生成一份可直接用于课堂教学的 PPT 大纲。只返回严格 JSON，不要 Markdown。
 
-Required top-level fields:
-- title
-- summary
-- teaching_design_chain
-- slides
-- interactive_assets
-- diagram_assets
+顶层必须包含 title、summary、teaching_design_chain、slides、interactive_assets、diagram_assets。
+teaching_design_chain 必须包含 teaching_goals、learner_analysis、key_points、difficult_points、
+teaching_sequence、activity_design、assessment_design、differentiated_support、engagement_strategy、homework。
 
-teaching_design_chain is for frontend display and must not replace slides. It must contain:
-- teaching_goals: list[str]
-- learner_analysis: string
-- key_points: list[str]
-- difficult_points: list[str]
-- teaching_sequence: list[str]
-- activity_design: list[str]
-- assessment_design: list[str]
-- homework: list[str]
+slides 约 {slide_count} 页，必须覆盖封面、学习路径、内容讲解、活动或练习、总结与出口检测。
+每页必须包含 slide_no、title、slide_type、content_points(list)、teaching_intent、visual_suggestion、
+engagement_hook、student_task、teacher_prompt、understanding_check、estimated_minutes、
+interactive_asset_ids(list)、external_resource_notes。
 
-slides must contain about {slide_count} pages and include cover, agenda, content pages, activity or practice page, and summary page.
-Each slide must contain: slide_no, title, slide_type, content_points(list), teaching_intent, visual_suggestion, interactive_asset_ids(list), external_resource_notes.
-interactive_assets items must contain: asset_id, title, type(animation|game|simulation), target_slide_no, preferred_format(html5|gif|mp4), integration(ppt_video|static_link), description.
-If diagram context is provided, add diagram_assets items with asset_id, title, type, format, mermaid, usage.
+课堂编排规则：
+1. 开场前 3 分钟用冲突、真实问题、预测或投票建立注意力，不以大段定义开场。
+2. 连续讲解不超过 8 分钟；每 2 至 3 个内容页插入一次学生可观察的任务或检测。
+3. student_task 必须写清学生“做什么、产出什么、用多久”，不能只写“思考一下”。
+4. understanding_check 必须能让教师当场判断是否理解，并给出继续讲解或补救的依据。
+5. 同时提供基础支架与进阶挑战，优先使用与年级、学情和额外需求匹配的案例。
+6. 末页包含知识回忆、迁移问题和出口条，避免只有结论罗列。
 
-Course title: {req.title}
-Subject: {req.subject}
-Grade: {req.grade}
-Duration minutes: {req.duration_minutes or ""}
-Expected slide count: {slide_count}
-Teaching goals: {req.teaching_goals or ""}
-Knowledge points: {", ".join(req.knowledge_points)}
-Extra requirements: {req.requirements or ""}
-Web enabled: {req.enable_web}
-RAG enabled: {req.enable_rag}
-Regenerate instruction: {req.regenerate_instruction or ""}
-Interactive policy: {json.dumps(req.interactive_policy or {}, ensure_ascii=False)}
-Reference material and RAG context:
+interactive_assets 每项包含 asset_id、title、type(animation|game|simulation)、target_slide_no、
+preferred_format(html5|gif|mp4)、integration(ppt_video|static_link)、description。
+若上下文包含图示，diagram_assets 每项包含 asset_id、title、type、format、mermaid、usage。
+
+课程标题：{req.title}
+学科：{req.subject}
+年级：{req.grade}
+课时分钟：{req.duration_minutes or ""}
+期望页数：{slide_count}
+教学目标：{req.teaching_goals or ""}
+知识点：{", ".join(req.knowledge_points)}
+额外要求与班级学情：{req.requirements or ""}
+允许联网：{req.enable_web}
+启用知识库：{req.enable_rag}
+重生成要求：{req.regenerate_instruction or ""}
+互动策略：{json.dumps(req.interactive_policy or {}, ensure_ascii=False)}
+参考资料与知识库上下文：
 {(req.reference_text or "")[:12000]}
 """.strip()
 
@@ -899,13 +897,16 @@ Reference material and RAG context:
         slides = []
         for idx in range(slide_count):
             base = titles[idx] if idx < len(titles) else f"重点解析 {idx}"
+            is_activity = idx > 1 and idx < slide_count - 1 and idx % 3 == 0
+            slide_type = "cover" if idx == 0 else ("summary" if idx == slide_count - 1 else ("activity" if is_activity else "content"))
             slides.append({
                 "slide_no": idx + 1,
-                "slide_type": "cover" if idx == 0 else ("summary" if idx == slide_count - 1 else "content"),
+                "slide_type": slide_type,
                 "title": req.title if idx == 0 else base,
                 "content_points": [f"明确{base}的核心概念", "结合案例建立理解", "通过提问或活动完成课堂迁移"],
                 "teaching_intent": "帮助学生建立清晰认知并完成课堂迁移。",
                 "visual_suggestion": "使用层级卡片、流程线或重点数字强化理解。",
+                **self._default_engagement_fields(slide_type, idx + 1, req),
             })
         interactive_assets = self._fallback_interactive_assets(req, slide_count)
         for asset in interactive_assets:
@@ -974,6 +975,8 @@ Reference material and RAG context:
             "teaching_sequence": self._as_list(chain.get("teaching_sequence")) or fallback["teaching_sequence"],
             "activity_design": self._as_list(chain.get("activity_design")) or fallback["activity_design"],
             "assessment_design": self._as_list(chain.get("assessment_design")) or fallback["assessment_design"],
+            "differentiated_support": self._as_list(chain.get("differentiated_support")) or fallback["differentiated_support"],
+            "engagement_strategy": self._as_list(chain.get("engagement_strategy")) or fallback["engagement_strategy"],
             "homework": self._as_list(chain.get("homework")) or fallback["homework"],
         }
         outline["teaching_design_chain"] = normalized
@@ -982,33 +985,41 @@ Reference material and RAG context:
     def _fallback_teaching_design_chain(self, req: OutlineGenerateRequest, outline: dict[str, Any]) -> dict[str, Any]:
         knowledge_points = req.knowledge_points or self._slide_titles(outline) or self._split_points(req.teaching_goals or req.requirements or req.title)
         goals = self._split_points(req.teaching_goals or "") if req.teaching_goals else [
-            f"Understand the core concepts of {req.title}.",
-            f"Explain key ideas using examples from {req.subject}.",
-            "Apply the knowledge through classroom activity or practice.",
+            f"理解《{req.title}》的核心概念。",
+            f"能用{req.subject}学科案例解释关键知识。",
+            "能通过课堂活动或练习迁移所学知识。",
         ]
         return {
             "teaching_goals": goals,
-            "learner_analysis": f"Learners are {req.grade} students. The outline should connect prior experience with {req.title} and reduce abstract cognitive load.",
+            "learner_analysis": f"学习者为{req.grade}学生，应结合其已有经验理解《{req.title}》，并通过图示、案例和分步支架降低抽象认知负荷。",
             "key_points": knowledge_points[:6],
             "difficult_points": (knowledge_points[:2] or [req.title]),
             "teaching_sequence": [
-                "Create a problem situation and activate prior knowledge.",
-                "Clarify learning goals and the lesson structure.",
-                "Explain core concepts from easy to difficult.",
-                "Use examples, visual prompts, and interaction to consolidate understanding.",
-                "Summarize key takeaways and assign transfer practice.",
+                "用真实问题或认知冲突激活已有经验。",
+                "明确学习目标与课堂路径。",
+                "由浅入深讲解核心概念。",
+                "用案例、视觉提示和互动任务巩固理解。",
+                "通过出口检测收束并布置迁移练习。",
             ],
             "activity_design": [
-                "Use questioning or a mini task before the main explanation.",
-                "Arrange one classroom interaction around the key difficult point.",
+                "核心讲解前先安排预测、投票或一分钟任务。",
+                "围绕重难点安排小组解释、判断或操作活动。",
             ],
             "assessment_design": [
-                "Check understanding through quick questions during the lesson.",
-                "Use a short exit ticket or practice task after the summary.",
+                "每 2 至 3 个内容页用快问、手势或小练习检查理解。",
+                "总结后用出口条或迁移题判断是否达标。",
+            ],
+            "differentiated_support": [
+                "为基础薄弱学生提供关键词、步骤卡或半成品示例。",
+                "为掌握较快的学生提供解释理由、变式或开放挑战。",
+            ],
+            "engagement_strategy": [
+                "每 6 至 8 分钟切换一次学习行为，减少连续被动听讲。",
+                "让学生先作答或产出，再由教师讲解和纠偏。",
             ],
             "homework": [
-                f"Review the core concepts of {req.title}.",
-                "Complete one application or reflection task based on the lesson.",
+                f"复习《{req.title}》的核心概念。",
+                "完成一道应用题或一项课后反思任务。",
             ],
         }
 
@@ -1042,7 +1053,14 @@ Reference material and RAG context:
         if slides:
             slides[-1]["slide_type"] = "summary"
             if not slides[-1].get("title"):
-                slides[-1]["title"] = "Summary and Extension"
+                slides[-1]["title"] = "总结与迁移"
+        if len(slides) >= 5 and not any(
+            str(slide.get("slide_type") or "").lower() in {"activity", "practice", "quiz", "discussion"}
+            for slide in slides
+        ):
+            activity_index = min(len(slides) - 2, max(2, len(slides) // 2))
+            slides[activity_index]["slide_type"] = "activity"
+            slides[activity_index].setdefault("title", "课堂任务")
 
         normalized = []
         for index, slide in enumerate(slides[:slide_count], 1):
@@ -1052,7 +1070,16 @@ Reference material and RAG context:
             item["title"] = str(item.get("title") or f"Slide {index}")
             item["content_points"] = self._as_list(item.get("content_points") or item.get("points")) or [item["title"]]
             item["teaching_intent"] = str(item.get("teaching_intent") or self._default_teaching_intent(item, index))
-            item["visual_suggestion"] = str(item.get("visual_suggestion") or "Use clear hierarchy, visual grouping, and concise classroom prompts.")
+            item["visual_suggestion"] = str(item.get("visual_suggestion") or "使用清晰层级、视觉分组和简洁的课堂提示语。")
+            defaults = self._default_engagement_fields(item["slide_type"], index, req)
+            item["engagement_hook"] = str(item.get("engagement_hook") or defaults["engagement_hook"])
+            item["student_task"] = str(item.get("student_task") or defaults["student_task"])
+            item["teacher_prompt"] = str(item.get("teacher_prompt") or defaults["teacher_prompt"])
+            item["understanding_check"] = str(item.get("understanding_check") or defaults["understanding_check"])
+            try:
+                item["estimated_minutes"] = max(1, int(item.get("estimated_minutes") or defaults["estimated_minutes"]))
+            except (TypeError, ValueError):
+                item["estimated_minutes"] = defaults["estimated_minutes"]
             item["interactive_asset_ids"] = list(item.get("interactive_asset_ids") or [])
             item["external_resource_notes"] = str(item.get("external_resource_notes") or "")
             normalized.append(item)
@@ -1074,6 +1101,10 @@ Reference material and RAG context:
             "slide_count_close": abs(len(slides) - expected_count) <= 1,
             "all_slides_have_teaching_intent": all(bool(slide.get("teaching_intent")) for slide in slides if isinstance(slide, dict)),
             "all_slides_have_visual_suggestion": all(bool(slide.get("visual_suggestion")) for slide in slides if isinstance(slide, dict)),
+            "all_slides_have_student_task": all(bool(slide.get("student_task")) for slide in slides if isinstance(slide, dict)),
+            "all_slides_have_understanding_check": all(bool(slide.get("understanding_check")) for slide in slides if isinstance(slide, dict)),
+            "has_opening_engagement_hook": bool(slides and slides[0].get("engagement_hook")),
+            "has_activity_or_practice": bool(slide_types & {"activity", "practice", "quiz", "discussion"}),
             "knowledge_points_covered": not missing_knowledge_points,
         }
         return {
@@ -1090,7 +1121,7 @@ Reference material and RAG context:
         if sequence:
             return sequence[:5]
         points = req.knowledge_points or self._slide_titles(outline)
-        return points[:5] or ["Learning goals", "Core concepts", "Classroom activity", "Summary"]
+        return points[:5] or ["学习目标", "核心概念", "课堂活动", "总结迁移"]
 
     def _slide_titles(self, outline: dict[str, Any]) -> list[str]:
         return [str(slide.get("title")) for slide in outline.get("slides") or [] if isinstance(slide, dict) and slide.get("title")]
@@ -1098,12 +1129,46 @@ Reference material and RAG context:
     def _default_teaching_intent(self, slide: dict[str, Any], index: int) -> str:
         slide_type = str(slide.get("slide_type") or "").lower()
         if slide_type == "cover":
-            return "Introduce the topic and create an initial learning expectation."
+            return "引出主题并建立初步学习期待。"
         if slide_type in {"agenda", "toc", "directory"}:
-            return "Clarify the lesson structure and learning path."
+            return "明确课堂结构和学习路径。"
         if slide_type == "summary":
-            return "Consolidate key conclusions and guide transfer after class."
-        return "Support understanding of this knowledge point through explanation, examples, and guided interaction."
+            return "巩固核心结论并引导课后迁移。"
+        return "通过讲解、案例和引导式互动帮助学生理解并运用知识点。"
+
+    def _default_engagement_fields(self, slide_type: str, index: int, req: OutlineGenerateRequest) -> dict[str, Any]:
+        normalized_type = str(slide_type or "content").lower()
+        if normalized_type == "cover":
+            return {
+                "engagement_hook": f"用一个与{req.grade}生活经验相关的真实问题引出《{req.title}》，请学生先预测答案。",
+                "student_task": "独立作出预测并用一个关键词说明理由，限时 1 分钟。",
+                "teacher_prompt": "先收集两种不同观点，不立即公布答案，把分歧留到后续验证。",
+                "understanding_check": "统计预测选项并记录典型理由，作为课末回看依据。",
+                "estimated_minutes": 3,
+            }
+        if normalized_type in {"activity", "practice", "quiz", "discussion"}:
+            return {
+                "engagement_hook": "用刚学知识解决一个有明确结果的短任务。",
+                "student_task": "先独立完成，再与同伴比较答案并提交一条共同结论，限时 4 分钟。",
+                "teacher_prompt": "追问依据和易错点，邀请不同答案进行对比。",
+                "understanding_check": "依据学生答案正确率决定进入下一环节或补充一个支架示例。",
+                "estimated_minutes": 6,
+            }
+        if normalized_type == "summary":
+            return {
+                "engagement_hook": "回看开场预测，判断观点是否发生变化。",
+                "student_task": "不看笔记写出三条关键收获，并完成一道迁移出口题，限时 3 分钟。",
+                "teacher_prompt": "请学生用自己的话解释最难的一点，并说明可迁移到什么情境。",
+                "understanding_check": "收集出口条，按已掌握、需巩固、需个别支持三类安排后续教学。",
+                "estimated_minutes": 5,
+            }
+        return {
+            "engagement_hook": "先展示一个例子、反例或局部信息，让学生判断并说明依据。",
+            "student_task": "记录一个判断和一个疑问，在讲解后自行修正，限时 2 分钟。",
+            "teacher_prompt": "先问学生看到了什么、依据是什么，再补充概念和方法。",
+            "understanding_check": "用一道即时判断或变式题检查理解，错误较多时回到示例分步讲解。",
+            "estimated_minutes": 5,
+        }
 
     def _as_list(self, value: Any) -> list[str]:
         if value is None:
@@ -1127,6 +1192,11 @@ Reference material and RAG context:
                     "content_points": item.get("content_points") or item.get("points") or [],
                     "teaching_intent": str(item.get("teaching_intent") or ""),
                     "visual_suggestion": str(item.get("visual_suggestion") or ""),
+                    "engagement_hook": str(item.get("engagement_hook") or ""),
+                    "student_task": str(item.get("student_task") or ""),
+                    "teacher_prompt": str(item.get("teacher_prompt") or ""),
+                    "understanding_check": str(item.get("understanding_check") or ""),
+                    "estimated_minutes": item.get("estimated_minutes"),
                     "interactive_asset_ids": list(item.get("interactive_asset_ids") or []),
                     "external_resource_notes": str(item.get("external_resource_notes") or ""),
                 })

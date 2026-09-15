@@ -24,7 +24,8 @@ import java.util.Map;
 import java.util.concurrent.CompletableFuture;
 
 @RestController
-@RequestMapping("/api/v1/python")
+// 新前端统一使用 Java AI 网关；旧路径保留兼容已有调用。
+@RequestMapping({"/api/v1/ai/engine", "/api/v1/python"})
 public class PythonProxyController {
     private final PythonPptClient pythonPptClient;
     private final OssUtil ossUtil;
@@ -127,48 +128,65 @@ public class PythonProxyController {
 
     @PostMapping("/intent/recognize")
     public Map<String, Object> recognizeIntent(@RequestBody Map<String, Object> payload) {
+        bindCurrentUser(payload);
         return callJson(() -> pythonPptClient.recognizeIntent(payload));
     }
 
-    @PostMapping(value = "/outlines/chat/stream", produces = MediaType.TEXT_EVENT_STREAM_VALUE)
+    @PostMapping(value = "/outlines/chat/stream", produces = "text/event-stream;charset=UTF-8")
     public SseEmitter streamOutlineChat(@RequestBody Map<String, Object> payload) {
-        SseEmitter emitter = new SseEmitter(0L);
+        bindCurrentUser(payload);
+        SseEmitter emitter = newGatewayEmitter();
         CompletableFuture.runAsync(() -> pythonPptClient.streamOutlineChatToEmitter(payload, emitter));
         return emitter;
     }
 
+    /** 通用聊天、动作分类和大纲修复的网关入口；上游异常以 error 事件返回。 */
+    @PostMapping(value = "/workspace/chat/stream", produces = "text/event-stream;charset=UTF-8")
+    public SseEmitter streamWorkspaceChat(@RequestBody Map<String, Object> payload) {
+        bindCurrentUser(payload);
+        SseEmitter emitter = newGatewayEmitter();
+        CompletableFuture.runAsync(() -> pythonPptClient.streamWorkspaceChatToEmitter(payload, emitter));
+        return emitter;
+    }
+
     @GetMapping("/outlines/chat/sessions")
-    public Map<String, Object> listOutlineChatSessions(@RequestParam("user_id") String userId,
+    public Map<String, Object> listOutlineChatSessions(@RequestParam(value = "user_id", required = false) String ignoredUserId,
                                                        @RequestParam(required = false) Integer limit) {
+        String userId = currentUserId();
         return callJson(() -> pythonPptClient.listOutlineChatSessions(userId, limit));
     }
 
     @PostMapping("/outlines/chat/sessions")
     public Map<String, Object> createOutlineChatSession(@RequestBody Map<String, Object> payload) {
+        bindCurrentUser(payload);
         return callJson(() -> pythonPptClient.createOutlineChatSession(payload));
     }
 
     @GetMapping("/outlines/chat/sessions/{sessionId}")
     public Map<String, Object> getOutlineChatSession(@PathVariable String sessionId,
-                                                     @RequestParam("user_id") String userId) {
+                                                     @RequestParam(value = "user_id", required = false) String ignoredUserId) {
+        String userId = currentUserId();
         return callJson(() -> pythonPptClient.getOutlineChatSession(userId, sessionId));
     }
 
     @PatchMapping("/outlines/chat/sessions/{sessionId}")
     public Map<String, Object> updateOutlineChatSession(@PathVariable String sessionId,
-                                                        @RequestParam("user_id") String userId,
+                                                        @RequestParam(value = "user_id", required = false) String ignoredUserId,
                                                         @RequestBody Map<String, Object> payload) {
+        String userId = currentUserId();
         return callJson(() -> pythonPptClient.updateOutlineChatSession(userId, sessionId, payload));
     }
 
     @DeleteMapping("/outlines/chat/sessions/{sessionId}")
     public Map<String, Object> deleteOutlineChatSession(@PathVariable String sessionId,
-                                                        @RequestParam("user_id") String userId) {
+                                                        @RequestParam(value = "user_id", required = false) String ignoredUserId) {
+        String userId = currentUserId();
         return callJson(() -> pythonPptClient.deleteOutlineChatSession(userId, sessionId));
     }
 
     @GetMapping("/teacher-style/profile")
-    public Map<String, Object> teacherStyleProfile(@RequestParam("user_id") String userId) {
+    public Map<String, Object> teacherStyleProfile(@RequestParam(value = "user_id", required = false) String ignoredUserId) {
+        String userId = currentUserId();
         return callJson(() -> pythonPptClient.teacherStyleProfile(userId));
     }
 
@@ -213,6 +231,31 @@ public class PythonProxyController {
     @PostMapping("/interactive-modules/generate")
     public Map<String, Object> generateInteractiveModule(@RequestBody Map<String, Object> payload) {
         return callJson(() -> pythonPptClient.generateInteractiveModule(payload));
+    }
+
+    private SseEmitter newGatewayEmitter() {
+        return new SseEmitter(620_000L) {
+            @Override
+            protected void extendResponse(org.springframework.http.server.ServerHttpResponse response) {
+                super.extendResponse(response);
+                response.getHeaders().setContentType(new MediaType("text", "event-stream", StandardCharsets.UTF_8));
+                response.getHeaders().setCacheControl("no-cache");
+                response.getHeaders().set("X-Accel-Buffering", "no");
+            }
+        };
+    }
+
+    private String currentUserId() {
+        Integer userId = CurrentHolder.getCurrentId();
+        if (userId == null) {
+            throw new org.springframework.web.server.ResponseStatusException(org.springframework.http.HttpStatus.UNAUTHORIZED, "请先登录");
+        }
+        return String.valueOf(userId);
+    }
+
+    private void bindCurrentUser(Map<String, Object> payload) {
+        // 在请求线程读取身份；异步 SSE 线程没有 CurrentHolder 的 ThreadLocal。
+        payload.put("user_id", currentUserId());
     }
 
     private Map<String, Object> callJson(JsonCall call) {

@@ -1,5 +1,4 @@
 from fastapi import FastAPI, File, Form, HTTPException, Query, UploadFile
-from fastapi.middleware.cors import CORSMiddleware
 import json
 import tempfile
 from pathlib import Path
@@ -8,6 +7,7 @@ from urllib.parse import quote
 from fastapi.responses import FileResponse, Response, StreamingResponse
 
 from a12_ppt.config import get_settings
+from a12_ppt.workspace import WorkspaceChatRequest, stream_workspace_chat
 from a12_ppt.asr import transcribe_audio
 from a12_ppt.interactive import InteractiveModuleGenerator
 from a12_ppt.lesson_plan import LessonPlanGenerator, export_lesson_plan_to_docx
@@ -52,17 +52,16 @@ from a12_ppt.outline_chat.session_store import outline_session_store
 
 settings = get_settings()
 app = FastAPI(title=settings.app_name, version=settings.app_version)
-app.add_middleware(
-    CORSMiddleware,
-    allow_origins=["*"],
-    allow_credentials=True,
-    allow_methods=["*"],
-    allow_headers=["*"],
-)
 generator = PPTGenerator()
 interactive_generator = InteractiveModuleGenerator()
 lesson_plan_generator = LessonPlanGenerator()
 outline_chat_workflow = OutlineChatWorkflow(generator)
+
+
+@app.post("/api/v1/python/workspace/chat/stream")
+async def workspace_chat(request: WorkspaceChatRequest):
+    return StreamingResponse(stream_workspace_chat(request), media_type="text/event-stream",
+                             headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"})
 
 
 @app.get("/api/v1/python/health")

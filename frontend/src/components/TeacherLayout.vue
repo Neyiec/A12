@@ -59,6 +59,16 @@ const handleNewChat = () => {
   requestNewChat.value = true
 }
 
+/** 移动端没有常驻侧栏，通过顶部菜单访问新建对话和最近会话。 */
+const handleMobileHistoryCommand = (command) => {
+  if (command === 'new') {
+    handleNewChat()
+    return
+  }
+  const item = history.value.find((entry) => String(entry.id) === String(command))
+  if (item) openHistorySession(item)
+}
+
 /** 切换全局亮暗主题。 */
 const toggleTheme = () => {
   isDark.value = !isDark.value
@@ -205,6 +215,28 @@ watch(latestSessionPush, (session) => {
 
       <div class="topbar-actions">
         <span v-if="isTeachingAssistant" class="status-dot"><i></i> 智能体在线</span>
+        <el-dropdown
+          v-if="isTeachingAssistant"
+          class="mobile-history-menu"
+          trigger="click"
+          placement="bottom-end"
+          @command="handleMobileHistoryCommand"
+        >
+          <el-button text circle class="icon-action" aria-label="打开最近对话"><el-icon><ChatDotRound /></el-icon></el-button>
+          <template #dropdown>
+            <el-dropdown-menu>
+              <el-dropdown-item command="new"><el-icon><Plus /></el-icon>新建对话</el-dropdown-item>
+              <el-dropdown-item
+                v-for="item in history.slice(0, 10)"
+                :key="item.id"
+                :command="String(item.id)"
+                divided
+              >
+                {{ item.title }} · {{ item.time }}
+              </el-dropdown-item>
+            </el-dropdown-menu>
+          </template>
+        </el-dropdown>
         <el-button
           text
           circle
@@ -345,6 +377,7 @@ watch(latestSessionPush, (session) => {
 .status-dot { margin-right: 4px; color: var(--zh-text-caption); font-size: 12px; white-space: nowrap; }
 .status-dot i { width: 7px; height: 7px; display: inline-block; margin-right: 5px; border-radius: 50%; background: var(--zh-green); animation: pulse 200ms cubic-bezier(0.4, 0, 0.2, 1) both; }
 .topbar-actions { display: flex; align-items: center; justify-self: end; gap: 8px; }
+.mobile-history-menu { display: none; }
 .topbar-actions .icon-action, .topbar-actions > .avatar-button { width: 36px; height: 36px; flex: 0 0 36px; margin: 0; }
 .topbar-actions :deep(.el-button .el-icon), .teacher-profile :deep(.el-button .el-icon) { font-size: 18px; }
 .icon-action { transition: background-color 200ms cubic-bezier(0.4, 0, 0.2, 1), transform 200ms cubic-bezier(0.4, 0, 0.2, 1); }
@@ -383,17 +416,21 @@ watch(latestSessionPush, (session) => {
   .teacher-profile > :last-child { display: none; }
 }
 @media (max-width: 680px) {
-  .teacher-shell, .teacher-shell.assistant-mode { display: grid; grid-template-columns: 1fr; grid-template-rows: auto minmax(0, 1fr); grid-template-areas: "topbar" "main"; }
+  .teacher-shell, .teacher-shell.assistant-mode { display: grid; grid-template-columns: 1fr; grid-template-rows: 56px minmax(0, 1fr); grid-template-areas: "topbar" "main"; }
   .teacher-sidebar { display: none; }
-  .teacher-topbar { height: auto; min-height: 108px; grid-template-columns: 1fr auto; grid-template-rows: 52px 48px; gap: 0 10px; padding: 4px 14px; }
+  .teacher-topbar { height: 56px; min-height: 56px; grid-template-columns: 1fr auto; gap: 10px; padding: 4px 12px; }
   .app-brand-icon { width: 34px; height: 34px; }
   .app-brand-icon img { width: 61px; height: 61px; }
   .app-brand-name { font-size: 16px; }
   .brand-copy strong { font-size: 16px; }
-  .top-navigation { grid-column: 1 / -1; grid-row: 2; width: 100%; justify-content: stretch; overflow-x: auto; }
-  .top-nav-item { min-width: 42px; flex: 1; padding: 0 8px; justify-content: center; }
-  .topbar-actions { grid-column: 2; grid-row: 1; }
-  .teacher-main { min-height: calc(100dvh - 108px); }
+  .top-navigation { position: fixed; z-index: 120; right: 8px; bottom: max(8px, env(safe-area-inset-bottom)); left: 8px; width: auto; min-height: 56px; justify-content: stretch; overflow-x: visible; border-radius: 16px; box-shadow: 0 12px 32px rgb(15 23 42 / 18%); }
+  .top-nav-item { min-width: 0; flex: 1; flex-direction: column; gap: 2px; padding: 5px 3px; justify-content: center; font-size: 10px; line-height: 1.1; }
+  .top-nav-item span { display: inline; }
+  .top-nav-item .el-icon { font-size: 18px; }
+  .topbar-actions { grid-column: 2; }
+  .mobile-history-menu { display: inline-flex; }
+  .notification-button { display: none; }
+  .teacher-main { min-height: calc(100dvh - 56px); padding-bottom: calc(76px + env(safe-area-inset-bottom)); }
 }
 
 @keyframes pulse {
