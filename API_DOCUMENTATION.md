@@ -2025,6 +2025,46 @@ Python requirements were pinned for the outline workflow stack: `langchain-core>
 
 ---
 
+## API-89-2 GET /api/v1/admin/public-resources/ai-index/overview
+**功能**: 知识索引总览统计（KPI 数据源）。透传 Python `GET /resources/index/overview`，实时聚合 PostgreSQL `a12_resource_index`。
+**权限**: `resources:view`
+**响应 VO**: `Result<{postgres_available, embedding_dimensions, resource_count, chunk_count, retrieval_log_count, groups: [{source_type, parse_status, available, allow_ai, resource_count, chunk_count}]}>`
+
+---
+
+## API-89-3 GET /api/v1/admin/public-resources/ai-index/tasks
+**功能**: 分页查询知识索引任务列表（public + personal 双域）。透传 Python `GET /resources/index/resources`，随后 Java 对当页 items 按域各一次批量查询 MySQL `ai_index_status`，合成 `effective_status`（indexing 覆盖 PG 终态 parse_status）。
+**权限**: `resources:view`
+**查询参数**: source_type(public/personal，否), parse_status(completed/failed，否), keyword(否，title/resource_id ILIKE), page(默认1), size(默认10，上限200)
+**响应 VO**: `Result<{total, limit, offset, items: [{resource_key, source_type, resource_id, title, available, allow_ai, parse_status, error_message, text_length, chunk_count, metadata, indexed_at, updated_at, effective_status}]}>`
+
+---
+
+## API-89-4 GET /api/v1/admin/public-resources/ai-index/resources/{sourceType}/{resourceId}
+**功能**: 单资源索引明细（含真实分块）。透传 Python `GET /resources/index/resources/{source_type}/{resource_id}`；资源无 PG 行时返回 400「该资源尚未建立索引或索引已被移除」。
+**权限**: `resources:view`
+**路径参数**: sourceType(public/personal), resourceId(数字ID)
+**查询参数**: chunk_limit(默认50，0-200)
+**响应 VO**: `Result<{resource_key, ..., chunks: [{chunk_id, chunk_index, content(≤1500字符), metadata}]}>`
+
+---
+
+## API-89-5 POST /api/v1/admin/public-resources/ai-index/search
+**功能**: 知识条目真实向量检索（pgvector 余弦召回 + 混合重排），与大纲工作流 RAG 共用 `search_context` 链路，命中写入 `a12_retrieval_log`。
+**权限**: `resources:view`
+**请求体 (JSON)**: query(String) **是**；source_type(String，否，public/personal)；top_k(int，否，1-30，默认10)
+**响应 VO**: `Result<{query, matches: [{resource_id("public:3"), chunk_id, chunk_index, content, metadata(含 title), score(0-1), rank, match_type}], search_mode, latency_ms}>`
+
+---
+
+## API-89-6 POST /api/v1/admin/public-resources/ai-index/{sourceType}/{resourceId}/reparse
+**功能**: 单资源强制重解析（双域统一入口，异步）。public 复用 `/{id}/reparse` 链路（adm_resource 校验 status=1 → 标 indexing → PublicResourceIndexSyncService @Async）；personal 校验 res_material allow_ai=1 → 标 indexing → ResourceIndexSyncService @Async（force_reparse=true）。两者均立即返回，前端轮询任务行 parse_status 获取终态。
+**权限**: `resources:edit`
+**路径参数**: sourceType(public/personal), resourceId(数字ID)
+**响应 VO**: `Result<{source_type, resource_id, status}>`（status 固定 'indexing'）
+
+---
+
 # 十、后台 — 内容审核与举报处理
 
 ## API-90 GET /api/v1/admin/moderation/tasks
@@ -2743,6 +2783,8 @@ Python requirements were pinned for the outline workflow stack: `langchain-core>
 | `available` | Boolean | 否 | 是否可检索 |
 | `limit` | int | 否 | 默认 50，最大 200 |
 | `offset` | int | 否 | 默认 0 |
+| `parse_status` | String | 否 | `completed` 或 `failed`（2026-09-15 新增，服务端状态过滤） |
+| `keyword` | String | 否 | 按 `title` / `resource_id` 模糊匹配（ILIKE，`%_\` 已转义；2026-09-15 新增） |
 
 **响应字段**: `total`、`limit`、`offset`、`items[]`。`items[]` 包含 `resource_key/source_type/resource_id/title/available/allow_ai/parse_status/text_length/chunk_count/metadata/indexed_at/updated_at`。
 
@@ -2770,11 +2812,12 @@ Python requirements were pinned for the outline workflow stack: `langchain-core>
   "query": "初中生物 光合作用 实验设计",
   "resource_ids": [],
   "limit": 12000,
-  "top_k": 8
+  "top_k": 8,
+  "source_type": null
 }
 ```
 
-**说明**: `resource_ids` 为空时搜索全部可用知识库资源；传 `public:12` / `personal:8` 时限定搜索范围。上传参考材料仍只用于 query enrichment，不作为 RAG 范围。
+**说明**: `resource_ids` 为空时搜索全部可用知识库资源；传 `public:12` / `personal:8` 时限定搜索范围。`source_type` 为可选域过滤（`public`/`personal`，在 pgvector SQL 追加 `AND source_type = %s`；2026-09-15 新增，管理端知识检索面板使用）。上传参考材料仍只用于 query enrichment，不作为 RAG 范围。
 
 **响应字段**: `query`、`context`、`matches[]`、`search_mode`、`latency_ms`。`matches[]` 包含 `resource_id/chunk_id/content/metadata/base_score/rerank_score/score/rank/match_type`。
 

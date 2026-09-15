@@ -87,8 +87,10 @@ public class PythonProxyController {
     public Map<String, Object> listResourceIndexResources(@RequestParam(required = false) String source_type,
                                                           @RequestParam(required = false) Boolean available,
                                                           @RequestParam(required = false) Integer limit,
-                                                          @RequestParam(required = false) Integer offset) {
-        return callJson(() -> pythonPptClient.listResourceIndexResources(source_type, available, limit, offset));
+                                                          @RequestParam(required = false) Integer offset,
+                                                          @RequestParam(required = false) String parse_status,
+                                                          @RequestParam(required = false) String keyword) {
+        return callJson(() -> pythonPptClient.listResourceIndexResources(source_type, available, limit, offset, parse_status, keyword));
     }
 
     @GetMapping("/resources/index/resources/{sourceType}/{resourceId}")

@@ -16,6 +16,10 @@
     </resultMap>
     <sql id="Base_Columns">id, user_id, file_name, file_type, file_url, file_size, thumbnail, description, categories, tags, access_type, authorized_users, allow_ai, status, ai_index_status, ai_indexed_at, ai_index_error, created_at, updated_at</sql>
     <select id="findById" resultMap="BaseResultMap">SELECT <include refid="Base_Columns"/> FROM res_material WHERE id = #{id}</select>
+    <select id="findByIds" resultMap="BaseResultMap">
+        SELECT <include refid="Base_Columns"/> FROM res_material WHERE id IN
+        <foreach collection="ids" item="id" open="(" separator="," close=")">#{id}</foreach>
+    </select>
     <select id="findByUserId" resultMap="BaseResultMap">SELECT <include refid="Base_Columns"/> FROM res_material WHERE user_id = #{userId} AND status = 1</select>
     <select id="findAll" resultMap="BaseResultMap">SELECT <include refid="Base_Columns"/> FROM res_material WHERE status = 1 ORDER BY created_at DESC</select>
     <select id="findAiAvailable" resultMap="BaseResultMap">SELECT <include refid="Base_Columns"/> FROM res_material WHERE status = 1 AND allow_ai = 1 ORDER BY updated_at DESC</select>
