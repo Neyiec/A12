@@ -194,3 +194,4 @@ class ResourceIndexSearchRequest(BaseModel):
     resource_ids: list[str] = Field(default_factory=list)
     limit: int = Field(default=12000, ge=1000, le=30000)
     top_k: int = Field(default=8, ge=1, le=30)
+    source_type: Literal["public", "personal"] | None = None

@@ -376,12 +376,15 @@ public class PythonPptClient {
         return getJson("/api/v1/python/resources/index/overview", Map.of());
     }
 
-    public Map<String, Object> listResourceIndexResources(String sourceType, Boolean available, Integer limit, Integer offset) {
+    public Map<String, Object> listResourceIndexResources(String sourceType, Boolean available, Integer limit, Integer offset,
+                                                          String parseStatus, String keyword) {
         Map<String, Object> query = new LinkedHashMap<>();
         if (sourceType != null && !sourceType.isBlank()) query.put("source_type", sourceType);
         if (available != null) query.put("available", available);
         if (limit != null) query.put("limit", limit);
         if (offset != null) query.put("offset", offset);
+        if (parseStatus != null && !parseStatus.isBlank()) query.put("parse_status", parseStatus);
+        if (keyword != null && !keyword.isBlank()) query.put("keyword", keyword);
         return getJson("/api/v1/python/resources/index/resources", query);
     }
 

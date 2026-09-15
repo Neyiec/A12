@@ -1,4 +1,6 @@
+import asyncio
 import json
+import logging
 import time
 from dataclasses import asdict
 from datetime import datetime, timezone
@@ -13,6 +15,9 @@ from .downloader import download_and_parse_resource
 from .identity import resource_fingerprint, resource_key
 from .records import IndexedChunk
 from .similarity import cosine_similarity, embedding_to_pgvector, keyword_score
+
+# 统一日志约定：[%(levelname)s] %(filename)s: %(message)s（main.py 启动时 basicConfig）
+logger = logging.getLogger("a12_ppt.resources.index_store")
 
 
 INDEX_DIR = Path(__file__).resolve().parents[2] / "data" / "resource_index"
@@ -108,6 +113,8 @@ class ResourceIndexStore:
             self._ensure_vector_index()
         except Exception:
             self.available = False
+            # PG 不可用会静默降级为本地 JSON 文件存储，RAG 检索将无法命中——必须把原因打进日志
+            logger.error("PostgreSQL 初始化失败，资源索引降级为本地文件存储（RAG 将无法命中）", exc_info=True)
 
     def _ensure_vector_index(self) -> None:
         try:
@@ -121,13 +128,16 @@ class ResourceIndexStore:
                         """
                     )
         except Exception:
-            pass
+            logger.warning("创建 HNSW 向量索引失败（不影响写入，仅影响检索性能）", exc_info=True)
 
     async def sync_resource(self, request: ResourceIndexSyncRequest) -> dict[str, Any]:
+        started_at = time.perf_counter()
         metadata = self._build_metadata(request)
         key = resource_key(request.source_type, request.resource_id)
         fingerprint = resource_fingerprint(request)
         existing = self._load_resource_meta(key)
+        if not self.available:
+            logger.warning("sync_resource 于降级模式执行（PG 不可用，仅写本地文件） resource_key=%s", key)
         should_parse = (
             request.force_reparse
             or not existing
@@ -150,22 +160,46 @@ class ResourceIndexStore:
             }
 
         try:
-            parsed = await download_and_parse_resource(request)
+            # 下载+解析整体限时：大文件解析卡死时按超时转为 failed，而不是无限挂起拖垮调用方
+            parsed = await asyncio.wait_for(
+                download_and_parse_resource(request),
+                timeout=self.settings.index_parse_timeout_seconds,
+            )
             metadata["parse"] = parsed.metadata
             text = parsed.text
             chunks = chunk_text(text, metadata=metadata)
+            # 向量化失败必须显式 failed：静默返回空向量会产生「假 indexed」（有分块无向量，RAG 永远查不到）
             try:
                 embeddings = await self.embedding_client.embed_documents(chunks)
-            except Exception:
-                embeddings = []
+            except Exception as exc:
+                logger.error("向量化失败 resource_key=%s chunks=%d: %s", key, len(chunks), exc)
+                message = f"向量化失败: {exc}"
+                self._record_failure(request, metadata, fingerprint, message)
+                return {
+                    "resource_key": key,
+                    "status": "failed",
+                    "error_message": message,
+                }
             self._replace_index(request, metadata, fingerprint, text, chunks, embeddings)
+            elapsed = round((time.perf_counter() - started_at) * 1000)
+            logger.info(
+                "sync_resource 完成 resource_key=%s status=indexed text_length=%d chunks=%d embeddings=%d 耗时=%dms",
+                key, len(text), len(chunks), len(embeddings), elapsed,
+            )
             return {
                 "resource_key": key,
                 "status": "indexed",
                 "text_length": len(text),
                 "chunk_count": len(chunks),
             }
+        except asyncio.TimeoutError:
+            elapsed = round((time.perf_counter() - started_at) * 1000)
+            message = f"下载/解析超时（>{self.settings.index_parse_timeout_seconds:.0f}s，实际 {elapsed}ms）"
+            logger.error("sync_resource 超时 resource_key=%s: %s", key, message)
+            self._record_failure(request, metadata, fingerprint, message)
+            return {"resource_key": key, "status": "failed", "error_message": message}
         except Exception as exc:
+            logger.error("sync_resource 失败 resource_key=%s: %s", key, exc, exc_info=True)
             self._record_failure(request, metadata, fingerprint, str(exc))
             return {
                 "resource_key": key,
@@ -240,7 +274,14 @@ class ResourceIndexStore:
             self._write_fallback(data)
         return {"resource_key": key, "status": "deleted"}
 
-    async def search_context(self, resource_ids: list[str], query: str, limit: int = 12000, top_k: int = 8) -> dict[str, Any]:
+    async def search_context(
+        self,
+        resource_ids: list[str],
+        query: str,
+        limit: int = 12000,
+        top_k: int = 8,
+        source_type: str | None = None,
+    ) -> dict[str, Any]:
         started_at = time.perf_counter()
         search_mode = "empty"
         matches: list[dict[str, Any]] = []
@@ -250,7 +291,7 @@ class ResourceIndexStore:
             query_embedding = []
         if self.available and len(query_embedding) == self.embedding_dimensions:
             try:
-                vector_result = self._search_pgvector(resource_ids, query, query_embedding, limit, max(top_k * 4, top_k))
+                vector_result = self._search_pgvector(resource_ids, query, query_embedding, limit, max(top_k * 4, top_k), source_type)
             except Exception:
                 vector_result = {"context": "", "matches": []}
             if vector_result.get("matches"):
@@ -265,6 +306,8 @@ class ResourceIndexStore:
                 return result
 
         chunks = self._load_chunks(resource_ids)
+        if source_type:
+            chunks = [chunk for chunk in chunks if chunk.source_type == source_type]
         if not chunks:
             latency_ms = self._elapsed_ms(started_at)
             self._record_retrieval_log(query, resource_ids, [], "no_match", latency_ms, {
@@ -313,17 +356,20 @@ class ResourceIndexStore:
         query_embedding: list[float],
         limit: int,
         top_k: int,
+        source_type: str | None = None,
     ) -> dict[str, Any]:
         keys = [resource_id for resource_id in resource_ids if ":" in resource_id]
         query_vector = embedding_to_pgvector(query_embedding)
         if not query_vector:
             return {"context": "", "matches": []}
         key_filter = "AND resource_key = ANY(%s)" if keys else ""
-        params: tuple[Any, ...]
+        source_filter = "AND source_type = %s" if source_type else ""
+        params: list[Any] = [query_vector]
         if keys:
-            params = (query_vector, keys, query_vector, top_k)
-        else:
-            params = (query_vector, query_vector, top_k)
+            params.append(keys)
+        if source_type:
+            params.append(source_type)
+        params.extend([query_vector, top_k])
         with self._connect() as conn:
             with conn.cursor() as cur:
                 cur.execute(
@@ -333,12 +379,13 @@ class ResourceIndexStore:
                     FROM a12_resource_index_chunk
                     WHERE embedding_vector IS NOT NULL
                       {key_filter}
+                      {source_filter}
                       AND COALESCE((metadata->>'available')::boolean, TRUE) IS TRUE
                       AND COALESCE((metadata->>'allow_ai')::boolean, TRUE) IS TRUE
                     ORDER BY embedding_vector <=> %s::vector
                     LIMIT %s
                     """,
-                    params,
+                    tuple(params),
                 )
                 rows = cur.fetchall()
         matches = [
@@ -410,6 +457,8 @@ class ResourceIndexStore:
         available: bool | None = None,
         limit: int = 50,
         offset: int = 0,
+        parse_status: str | None = None,
+        keyword: str | None = None,
     ) -> dict[str, Any]:
         limit = max(1, min(limit, 200))
         offset = max(0, offset)
@@ -422,6 +471,13 @@ class ResourceIndexStore:
             if available is not None:
                 filters.append("available = %s")
                 params.append(available)
+            if parse_status:
+                filters.append("parse_status = %s")
+                params.append(parse_status)
+            if keyword:
+                escaped = keyword.replace("\\", "\\\\").replace("%", "\\%").replace("_", "\\_")
+                filters.append("(title ILIKE %s ESCAPE '\\' OR resource_id ILIKE %s ESCAPE '\\')")
+                params.extend([f"%{escaped}%", f"%{escaped}%"])
             where = ("WHERE " + " AND ".join(filters)) if filters else ""
             with self._connect() as conn:
                 with conn.cursor() as cur:
@@ -446,6 +502,14 @@ class ResourceIndexStore:
             resources = [item for item in resources if item.get("source_type") == source_type]
         if available is not None:
             resources = [item for item in resources if bool(item.get("available", True)) is available]
+        if parse_status:
+            resources = [item for item in resources if item.get("parse_status") == parse_status]
+        if keyword:
+            kw = keyword.lower()
+            resources = [
+                item for item in resources
+                if kw in str(item.get("title", "")).lower() or kw in str(item.get("resource_id", "")).lower()
+            ]
         total = len(resources)
         items = resources[offset:offset + limit]
         return {"total": total, "limit": limit, "offset": offset, "items": items}

@@ -1,6 +1,7 @@
 from fastapi import FastAPI, File, Form, HTTPException, Query, UploadFile
 from fastapi.middleware.cors import CORSMiddleware
 import json
+import logging
 import tempfile
 from pathlib import Path
 from urllib.parse import quote
@@ -51,6 +52,11 @@ from a12_ppt.outline_chat.session_store import outline_session_store
 
 
 settings = get_settings()
+
+# 统一日志约定：[%(levelname)s] %(filename)s: %(message)s
+# 服务内模块（index_store 等）的 logger 依赖 root 处理器输出，uvicorn 不配置 root，必须在此 basicConfig
+logging.basicConfig(level=logging.INFO, format="[%(levelname)s] %(filename)s: %(message)s")
+
 app = FastAPI(title=settings.app_name, version=settings.app_version)
 app.add_middleware(
     CORSMiddleware,
@@ -140,8 +146,10 @@ async def list_resource_index_resources(
     available: bool | None = Query(default=None),
     limit: int = Query(50, ge=1, le=200),
     offset: int = Query(0, ge=0),
+    parse_status: str | None = Query(default=None),
+    keyword: str | None = Query(default=None),
 ) -> Result:
-    return Result(data=resource_index_store.list_resources(source_type, available, limit, offset))
+    return Result(data=resource_index_store.list_resources(source_type, available, limit, offset, parse_status, keyword))
 
 
 @app.get("/api/v1/python/resources/index/resources/{source_type}/{resource_id}")
@@ -171,6 +179,7 @@ async def search_resource_index(request: ResourceIndexSearchRequest) -> Result:
         request.query,
         request.limit,
         request.top_k,
+        request.source_type,
     ))
 
 
