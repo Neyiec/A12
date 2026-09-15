@@ -1,16 +1,23 @@
 <!--
   [数据交互说明]
   - 导入:
-    - ElementPlus 组件: ElCard、ElTag、ElButton、ElAvatar、ElRadioGroup、ElRadioButton
-    - ElementPlus Icons: 用于 KPI 卡片图标和快捷操作按钮图标
+    - ElementPlus 组件: ElCard、ElTag、ElButton、ElAvatar、ElRadioGroup、ElRadioButton、ElMessage、ElEmpty（全局注册）
+    - ElementPlus Icons: 用于 KPI 卡片图标、趋势箭头和快捷操作按钮图标
+    - `@/apis/config`: getDashboard（API-107 看板聚合）、listAlerts（API-108 派生式告警）
+    - `@/apis/moderation`: getModerationTasks（API-90 审核队列，与 ContentAudit 同源封装）
+    - `vue-router`: useRouter（快捷操作跳转 / 队列跳转审核页）
   - 依赖:
-    - 无外部 API 调用，当前使用静态示例数据（后续替换为后端 API）
-  - 输入: 无 props，数据在组件内部 mock
-  - 输出: 渲染系统配置与数据看板首页视图（KPI 指标区 + 审核队列 + 快捷操作 + 系统告警）
+    - 三区数据并行拉取，Promise.allSettled 分区降级（看板跨 dashboard:view 与 audit:view 两个权限域）
+    - （预留）acknowledgeAlert / resolveAlert 已在 apis/config.js 封装，供后续告警处置交互接入
+  - 输入: 无 props；AdminHeader 刷新按钮广播的 admin-refresh 全局事件触发重拉
+  - 输出: 四区视图（KPI 卡片 / 审核队列 / 快捷操作 / 需要关注）；
+    快捷操作路由跳转（/main/users、/main/resources、/main/settings），队列跳转 /main/audit
   - 监听: `admin-refresh` 自定义事件（从 AdminHeader 刷新按钮发出），触发数据重新加载
 -->
 <script setup>
-import { ref, reactive, onMounted, onBeforeUnmount } from 'vue'
+import { ref, computed, onMounted, onBeforeUnmount } from 'vue'
+import { useRouter } from 'vue-router'
+import { ElMessage } from 'element-plus'
 import {
   Checked,
   UserFilled,
@@ -23,121 +30,57 @@ import {
   ArrowUp,
   ArrowDown,
 } from '@element-plus/icons-vue'
+import { getDashboard, listAlerts } from '@/apis/config'
+import { getModerationTasks } from '@/apis/moderation'
+
+// ========== 路由 ==========
+
+const router = useRouter()
+
+// ========== 配置常量 ==========
+
+/** 内容类型 → 显示标签（com_content.content_type：skill/lesson_case，兼容历史 case 值） */
+const CONTENT_TYPE_LABEL_MAP = { skill: 'Skill', lesson_case: '教学案例', case: '教学案例' }
+
+/** 队列时间范围 → 向前追溯天数（前端本地过滤，API-90 无时间参数） */
+const TIME_RANGE_DAYS = { today: 1, week: 7, month: 30 }
+
+/** 告警 level → 颜色变量映射 */
+const ALERT_COLOR_MAP = {
+  danger: 'var(--zh-red)',
+  warning: 'var(--zh-orange)',
+  info: 'var(--zh-cyan)',
+}
 
 // ========== 响应式数据 ==========
 
-/** 数据加载状态 */
+/** 数据加载状态（骨架屏） */
 const isLoading = ref(true)
 
-/** 当前时间筛选范围（审核队列） */
+/** 当前时间筛选范围（审核队列，前端本地过滤） */
 const timeRange = ref('today')
 
-/** KPI 指标卡片数据 */
-const kpiCards = reactive([
-  {
-    id: 1,
-    title: '待审核内容',
-    icon: Checked,
-    mainValue: '1,284',
-    trendLabel: '12.5%',
-    trendUp: true,          // true=上升(红色，需关注积压), false=下降
-    trendColor: 'var(--zh-red)',
-    subText: '较昨日增长 128 条待审内容',
-    breakdown: 'Skill 856 条 · 案例 428 条',
-  },
-  {
-    id: 2,
-    title: '活跃教师数',
-    icon: UserFilled,
-    mainValue: '3,842',
-    trendLabel: '+3.2%',
-    trendUp: true,
-    trendColor: 'var(--zh-green)',
-    subText: '较昨日 +3.2%',
-    breakdown: '今日新增注册 +56',
-    hasStatusDot: true,
-    statusColor: 'var(--zh-green)',
-    statusLabel: '128 实时在线',
-  },
-  {
-    id: 3,
-    title: '知识库条目',
-    icon: FolderOpened,
-    mainValue: '15,630',
-    trendLabel: '+238',
-    trendUp: true,
-    trendColor: 'var(--zh-green)',
-    subText: '本周新增 238 条',
-    breakdown: '覆盖 12 学科 · 1,280 知识点',
-  },
-  {
-    id: 4,
-    title: '系统健康度',
-    icon: Monitor,
-    mainValue: '99.7%',
-    trendLabel: '正常',
-    trendUp: true,
-    trendColor: 'var(--zh-green)',
-    subText: 'CPU 42% / 内存 68%',
-    breakdown: '磁盘使用 31%',
-    hasStatusDot: true,
-    statusColor: 'var(--zh-green)',
-    statusLabel: '运行正常',
-  },
-])
+/** 看板聚合 payload —— API-107（totals 字段平铺在 payload 根级） */
+const dashboardTotals = ref({})
+const dashboardToday = ref({})
+const dashboardTrend = ref([])
+const dashboardQuality = ref({})
 
-/** 审核队列列表数据 */
-const auditQueue = ref([
-  {
-    id: 1,
-    thumbnail: '',
-    thumbnailType: 'doc',
-    title: '勾股定理互动教学案例',
-    type: '教学案例',
-    submitter: { name: '张老师', avatar: '' },
-    time: '2 分钟前',
-    status: 'warning',
-    statusLabel: '待审',
-  },
-  {
-    id: 2,
-    thumbnail: '',
-    thumbnailType: 'image',
-    title: '细胞分裂动画课件',
-    type: 'H5 课件',
-    submitter: { name: '李老师', avatar: '' },
-    time: '5 分钟前',
-    status: 'danger',
-    statusLabel: '违规',
-  },
-  {
-    id: 3,
-    thumbnail: '',
-    thumbnailType: 'video',
-    title: '串联电路实验案例',
-    type: '教学案例',
-    submitter: { name: '王老师', avatar: '' },
-    time: '12 分钟前',
-    status: 'warning',
-    statusLabel: '待审',
-  },
-  {
-    id: 4,
-    thumbnail: '',
-    thumbnailType: 'doc',
-    title: '背影 - 公开课教案 Skill',
-    type: 'Skill',
-    submitter: { name: '赵老师', avatar: '' },
-    time: '28 分钟前',
-    status: 'warning',
-    statusLabel: '待审',
-  },
-])
+/** 各分区加载成功标记（Promise.allSettled 分区降级：单区失败不影响其余区渲染） */
+const dashboardLoaded = ref(false)
+const queueLoaded = ref(false)
+const alertsLoaded = ref(false)
 
-/** 总待审核数 */
-const totalPending = ref(28)
+/** 审核队列原始行（AuditVO 富化字段：content_title / submitter_name / created_at） */
+const auditQueue = ref([])
 
-/** 快捷操作按钮列表 */
+/** 审核队列接口 total（看板聚合加载成功后被同源 moderation_pending_count 覆盖） */
+const queueTotal = ref(0)
+
+/** 系统告警列表（API-108 派生式告警，恒为 open 状态） */
+const alerts = ref([])
+
+/** 快捷操作按钮列表：三个可跳转页 + 两个占位（无端点/页面） */
 const quickActions = [
   { label: '发布平台公告', icon: EditPen, action: 'announcement' },
   { label: '添加管理员', icon: UserFilled, action: 'addAdmin' },
@@ -146,60 +89,241 @@ const quickActions = [
   { label: '系统参数配置', icon: Setting, action: 'systemConfig' },
 ]
 
-/** 系统告警列表 */
-const alerts = ref([
-  {
-    id: 1,
-    severity: 'danger',
-    severityColor: 'var(--zh-red)',
-    title: 'AI 服务调用异常',
-    detail: '近 30 分钟失败 12 次，错误率 4.7%',
-    time: '10 分钟前',
-  },
-  {
-    id: 2,
-    severity: 'warning',
-    severityColor: 'var(--zh-orange)',
-    title: '导出任务队列积压',
-    detail: '等待处理导出任务 47 项，最长等待 28 分钟',
-    time: '25 分钟前',
-  },
-  {
-    id: 3,
-    severity: 'info',
-    severityColor: 'var(--zh-cyan)',
-    title: '知识库向量化完成',
-    detail: '「2026 版数学教材」解析完成，入库 2.3 万条',
-    time: '1 小时前',
-  },
-  {
-    id: 4,
-    severity: 'warning',
-    severityColor: 'var(--zh-orange)',
-    title: '存储空间使用预警',
-    detail: '已用 82%（2.1TB / 2.56TB），建议扩容',
-    time: '3 小时前',
-  },
-])
+// ========== 计算属性 ==========
+
+/**
+ * KPI 四卡数据 —— 由看板聚合 payload 逐卡映射（每卡独立构建函数，见 3② 字段对照）
+ */
+const kpiCards = computed(() => {
+  const totals = dashboardTotals.value
+  return [
+    buildModerationCard(totals),
+    buildUserCard(totals, dashboardToday.value),
+    buildResourceCard(totals, dashboardTrend.value),
+    buildHealthCard(dashboardQuality.value),
+  ]
+})
+
+/**
+ * 总待审核数：优先取看板聚合的 moderation_pending_count（同源免二次请求），回退队列接口 total
+ */
+const totalPending = computed(() => {
+  const count = dashboardTotals.value.moderation_pending_count
+  if (dashboardLoaded.value && count != null) return count
+  return queueTotal.value
+})
+
+/**
+ * 审核队列按时间范围本地过滤
+ * API-90 无时间参数（已知缺口）；pending 积压超过所选时段时滤空，展示空态提示
+ */
+const filteredAuditQueue = computed(() => {
+  const days = TIME_RANGE_DAYS[timeRange.value] ?? 1
+  const start = Date.now() - days * 24 * 60 * 60 * 1000
+  return auditQueue.value.filter((item) => {
+    const t = item.createdAt ? new Date(item.createdAt).getTime() : 0
+    return t >= start
+  })
+})
 
 // ========== 方法 ==========
 
 /**
- * 模拟数据加载
- * 页面首次渲染时展示骨架屏 0.8s 后显示真实数据
+ * 卡 1 待审核内容：总量 = moderation_pending_count，明细 = 审核/举报 pending 拆分
+ * 无昨日积压对比数据源（today 桶无 new_audit_count），趋势箭头隐藏
  */
-const loadData = () => {
-  isLoading.value = true
-  setTimeout(() => {
-    isLoading.value = false
-  }, 800)
+const buildModerationCard = (totals) => ({
+  id: 1,
+  title: '待审核内容',
+  icon: Checked,
+  mainValue: String(totals.moderation_pending_count ?? 0),
+  showArrow: false,
+  trendLabel: '',
+  trendColor: 'var(--zh-red)',
+  subText: `内容审核 ${totals.review_pending_count ?? 0} 条 · 举报 ${totals.report_pending_count ?? 0} 条`,
+  breakdown: '点击「查看全部」前往审核页处置',
+})
+
+/**
+ * 卡 2 活跃教师数：总量 = user_count（有效用户），趋势 = 今日新增注册
+ * mock 的「实时在线」无会话数据源，已按设计移除
+ */
+const buildUserCard = (totals, today) => ({
+  id: 2,
+  title: '活跃教师数',
+  icon: UserFilled,
+  mainValue: String(totals.user_count ?? 0),
+  showArrow: true,
+  trendUp: true,
+  trendLabel: `+${today.new_user_count ?? 0}`,
+  trendColor: 'var(--zh-green)',
+  subText: '较昨日新增注册',
+  breakdown: `有效用户共 ${totals.user_count ?? 0} 人`,
+})
+
+/**
+ * 卡 3 知识库条目：总量 = resource_count（个人素材 + 平台资源），
+ * 趋势 = 近 7 日末两天差值，明细 = 7 日累计新增
+ */
+const buildResourceCard = (totals, trend) => {
+  const last = trend[trend.length - 1] || {}
+  const prev = trend[trend.length - 2] || {}
+  const delta = (last.new_resources ?? 0) - (prev.new_resources ?? 0)
+  const weekNew = trend.reduce((sum, row) => sum + (row.new_resources ?? 0), 0)
+  return {
+    id: 3,
+    title: '知识库条目',
+    icon: FolderOpened,
+    mainValue: String(totals.resource_count ?? 0),
+    showArrow: true,
+    trendUp: delta >= 0,
+    trendLabel: delta > 0 ? `+${delta}` : delta < 0 ? String(delta) : '持平',
+    trendColor: delta >= 0 ? 'var(--zh-green)' : 'var(--zh-red)',
+    subText: `个人素材 ${totals.personal_resource_count ?? 0} · 平台资源 ${totals.platform_resource_count ?? 0}`,
+    breakdown: `近 7 日新增 ${weekNew} 条`,
+  }
 }
 
 /**
- * 处理刷新 — 由 Header 的刷新按钮触发
+ * 卡 4 系统健康度：主值 = AI 任务成功率，状态灯由 AI/导出失败数推导
+ * mock 的 CPU/内存/磁盘无采集端点，已按设计移除
+ */
+const buildHealthCard = (quality) => {
+  const aiRate = Number(quality.ai_task_success_rate ?? 0)
+  const exportRate = Number(quality.export_success_rate ?? 0)
+  const aiFailed = Number(quality.ai_task_failed_count ?? 0)
+  const exportFailed = Number(quality.export_failed_count ?? 0)
+  const healthy = aiFailed === 0 && exportFailed === 0
+  return {
+    id: 4,
+    title: '系统健康度',
+    icon: Monitor,
+    mainValue: `${aiRate}%`,
+    showArrow: false,
+    trendLabel: healthy ? '正常' : '存在失败',
+    trendColor: healthy ? 'var(--zh-green)' : 'var(--zh-red)',
+    subText: `AI 任务成功率 ${aiRate}% · 导出成功率 ${exportRate}%`,
+    breakdown: `AI 失败 ${aiFailed} 项 · 导出失败 ${exportFailed} 项`,
+    hasStatusDot: true,
+    statusColor: healthy ? 'var(--zh-green)' : 'var(--zh-red)',
+    statusLabel: healthy ? '运行正常' : '需要关注',
+  }
+}
+
+/**
+ * 拉取看板聚合数据（API-107）并拆分到各响应式状态
+ */
+const loadDashboard = async () => {
+  const res = await getDashboard()
+  const data = res?.data || {}
+  dashboardTotals.value = data
+  dashboardToday.value = data.today || {}
+  dashboardTrend.value = data.trend_7d || []
+  dashboardQuality.value = data.quality || {}
+}
+
+/**
+ * 拉取近期审核队列（API-90 复用 moderation.js 封装）并映射为队列行
+ * AuditVO 富化字段缺失（关联内容已删除）时回退显示裸 target_id
+ */
+const loadModerationQueue = async () => {
+  const res = await getModerationTasks({ status: 'pending', page: 1, size: 5 })
+  const records = res?.data?.records || []
+  queueTotal.value = res?.data?.total ?? records.length
+  auditQueue.value = records.map((row) => ({
+    id: row.id,
+    thumbnailType: 'doc',
+    title: row.content_title || `待审内容 #${row.target_id}`,
+    type: CONTENT_TYPE_LABEL_MAP[row.target_type] || row.target_type || '内容',
+    submitter: { name: row.submitter_name || '未知用户', avatar: '' },
+    time: formatRelativeTime(row.created_at),
+    createdAt: row.created_at,
+    status: 'warning',
+    statusLabel: '待审',
+  }))
+}
+
+/**
+ * 拉取派生式告警（API-108，status 仅支持 open）
+ */
+const loadAlerts = async () => {
+  const res = await listAlerts({ status: 'open', page: 1, size: 4 })
+  const records = res?.data?.records || []
+  alerts.value = records.map((row) => ({
+    id: row.id,
+    severity: row.level,
+    severityColor: ALERT_COLOR_MAP[row.level] || 'var(--zh-cyan)',
+    title: row.title,
+    detail: row.detail,
+    time: formatRelativeTime(row.created_at),
+  }))
+}
+
+/**
+ * 全量加载数据 —— 三区并行 + Promise.allSettled 分区降级
+ * 看板横跨 dashboard:view 与 audit:view 两个权限域，单区 403/失败不影响其余区渲染
+ */
+const loadData = async () => {
+  isLoading.value = true
+  const [dashRes, queueRes, alertRes] = await Promise.allSettled([
+    loadDashboard(),
+    loadModerationQueue(),
+    loadAlerts(),
+  ])
+  dashboardLoaded.value = dashRes.status === 'fulfilled'
+  queueLoaded.value = queueRes.status === 'fulfilled'
+  alertsLoaded.value = alertRes.status === 'fulfilled'
+  if (!dashboardLoaded.value) ElMessage.error('看板数据加载失败，请稍后重试')
+  if (!queueLoaded.value) ElMessage.warning('审核队列加载失败（可能缺少 audit:view 权限）')
+  if (!alertsLoaded.value) ElMessage.warning('告警加载失败（可能缺少 dashboard:view 权限）')
+  isLoading.value = false
+}
+
+/**
+ * 处理刷新 — 由 Header 的刷新按钮触发（admin-refresh 全局事件）
  */
 const handleRefresh = () => {
   loadData()
+}
+
+/**
+ * 快捷操作分流：三个可跳转页 + 两个占位（提示文案明示，不静默失效）
+ * 与用户端「生成 PPT」按钮同构：看板只做页面级跳转，不代目标页拉数据
+ */
+const handleQuickAction = (action) => {
+  const routeTargets = {
+    addAdmin: '/main/users',
+    uploadResource: '/main/resources',
+    systemConfig: '/main/settings',
+  }
+  const path = routeTargets[action]
+  if (path) {
+    router.push(path)
+    return
+  }
+  ElMessage.info(action === 'exportReport' ? '「导出运营报表」功能建设中，敬请期待' : '「发布平台公告」功能建设中，敬请期待')
+}
+
+/**
+ * 跳转内容审核页（队列行「审核」按钮 / 底部「查看全部」共用）
+ */
+const goAuditPage = () => {
+  router.push('/main/audit')
+}
+
+/**
+ * 相对时间格式化（created_at ISO 字符串 → 「N 分钟前」样式）
+ */
+const formatRelativeTime = (value) => {
+  if (!value) return ''
+  const diff = Date.now() - new Date(value).getTime()
+  if (Number.isNaN(diff)) return ''
+  const minutes = Math.floor(diff / 60000)
+  if (minutes < 1) return '刚刚'
+  if (minutes < 60) return `${minutes} 分钟前`
+  const hours = Math.floor(minutes / 60)
+  if (hours < 24) return `${hours} 小时前`
+  return `${Math.floor(hours / 24)} 天前`
 }
 
 /**
@@ -210,16 +334,6 @@ const handleRefresh = () => {
 const getThumbnailIcon = (type) => {
   const map = { doc: '📄', image: '🖼', video: '🎬' }
   return map[type] || '📄'
-}
-
-/**
- * 获取状态标签类型映射
- * @param {'warning' | 'danger' | 'success' | 'info'} status - 状态标识
- * @returns {string} ElementPlus Tag type
- */
-const getTagType = (status) => {
-  const map = { warning: 'warning', danger: 'danger', success: 'success', info: 'info' }
-  return map[status] || 'info'
 }
 
 // ========== 生命周期 ==========
@@ -245,7 +359,7 @@ onBeforeUnmount(() => {
         v-for="card in kpiCards"
         :key="card.id"
         shadow="never"
-        class="kpi-card cursor-pointer"
+        class="kpi-card"
         :class="{ 'skeleton-pulse': isLoading }"
         :style="{
           background: 'var(--zh-background-capsule)',
@@ -289,18 +403,28 @@ onBeforeUnmount(() => {
             >
               {{ card.mainValue }}
             </span>
+            <!-- 趋势箭头（仅有方向数据源的卡片显示） -->
             <span
+              v-if="card.showArrow"
               class="flex items-center gap-0.5 text-xs font-medium"
               :style="{ color: card.trendColor }"
             >
               <component :is="card.trendUp ? ArrowUp : ArrowDown" class="w-3.5 h-3.5" />
               {{ card.trendLabel }}
             </span>
+            <!-- 无方向趋势时仅显示文字标签（如「正常」「持平」） -->
+            <span
+              v-else-if="card.trendLabel"
+              class="text-xs font-medium"
+              :style="{ color: card.trendColor }"
+            >
+              {{ card.trendLabel }}
+            </span>
           </div>
 
           <!-- 辅助说明行 -->
           <div class="flex items-center gap-2">
-            <!-- 状态指示灯（卡片 2 和 4） -->
+            <!-- 状态指示灯（系统健康度卡） -->
             <span
               v-if="card.hasStatusDot"
               class="inline-block w-2 h-2 rounded-full animate-pulse"
@@ -358,7 +482,7 @@ onBeforeUnmount(() => {
               >
                 近期内容审核队列
               </span>
-              <!-- 时间范围筛选 -->
+              <!-- 时间范围筛选（前端本地过滤） -->
               <el-radio-group
                 v-model="timeRange"
                 size="small"
@@ -389,12 +513,12 @@ onBeforeUnmount(() => {
           </template>
 
           <template v-else>
-            <!-- 审核列表项 -->
+            <!-- 审核列表项（timeRange 本地过滤后） -->
             <div
-              v-for="(item, index) in auditQueue"
+              v-for="(item, index) in filteredAuditQueue"
               :key="item.id"
               class="flex items-center gap-3 py-3 transition-colors duration-150 audit-list-item"
-              :class="{ 'border-b': index < auditQueue.length - 1 }"
+              :class="{ 'border-b': index < filteredAuditQueue.length - 1 }"
               :style="{
                 borderColor: 'var(--zh-line-parting)',
               }"
@@ -449,25 +573,33 @@ onBeforeUnmount(() => {
                 </div>
               </div>
 
-              <!-- 状态标签 -->
+              <!-- 状态标签（队列恒为 pending → 待审） -->
               <el-tag
-                :type="getTagType(item.status)"
+                type="warning"
                 size="small"
                 class="flex-shrink-0"
               >
                 {{ item.statusLabel }}
               </el-tag>
 
-              <!-- 操作按钮 -->
+              <!-- 操作按钮：跳转审核页处置 -->
               <el-button
                 type="primary"
                 link
                 size="small"
                 class="flex-shrink-0"
+                @click="goAuditPage"
               >
                 审核
               </el-button>
             </div>
+
+            <!-- 空态：时段内无待审内容，或队列分区加载失败（权限/网络） -->
+            <el-empty
+              v-if="filteredAuditQueue.length === 0"
+              :description="queueLoaded ? '暂无该时段待审内容' : '审核队列加载失败（可能缺少 audit:view 权限）'"
+              :image-size="60"
+            />
           </template>
 
           <!-- 底部状态栏 -->
@@ -486,6 +618,7 @@ onBeforeUnmount(() => {
               href="javascript:void(0)"
               class="text-xs font-medium hover:underline"
               style="color: var(--zh-text-link);"
+              @click="goAuditPage"
             >
               查看全部 →
             </a>
@@ -532,6 +665,7 @@ onBeforeUnmount(() => {
                 :style="{
                   borderRadius: 'var(--zh-radius8)',
                 }"
+                @click="handleQuickAction(action.action)"
               >
                 <component :is="action.icon" class="w-4 h-4 mr-2" />
                 {{ action.label }}
@@ -540,7 +674,7 @@ onBeforeUnmount(() => {
           </template>
         </el-card>
 
-        <!-- 模块 2：需要关注（系统告警） -->
+        <!-- 模块 2：需要关注（系统告警，派生式） -->
         <el-card
           shadow="never"
           :style="{
@@ -584,7 +718,7 @@ onBeforeUnmount(() => {
             <div
               v-for="(alert, index) in alerts"
               :key="alert.id"
-              class="flex items-start gap-2 py-2 cursor-pointer transition-colors duration-150 alert-item"
+              class="flex items-start gap-2 py-2 transition-colors duration-150 alert-item"
               :class="{ 'border-b': index < alerts.length - 1 }"
               :style="{ borderColor: 'var(--zh-line-parting)' }"
             >
@@ -616,6 +750,13 @@ onBeforeUnmount(() => {
                 </span>
               </div>
             </div>
+
+            <!-- 空态：无待处理告警，或告警分区加载失败 -->
+            <el-empty
+              v-if="alerts.length === 0"
+              :description="alertsLoaded ? '暂无待处理告警' : '告警加载失败（可能缺少 dashboard:view 权限）'"
+              :image-size="60"
+            />
           </template>
         </el-card>
 
