@@ -21,7 +21,7 @@ import {
 import { TEACHER_HOME } from '../config/teacherHome.config.js'
 import { INFO_FORM_DEFAULTS, isPlanningPrompt, requestNewChat, openChatSession } from '../config/teacherChat.config.js'
 import ChatView from './ChatView.vue'
-import { archiveProject, copyProject, createAiSession, createProject, deleteProject, listProjects, listResources, restoreProject, transcribeAudio, uploadResource } from '../apis/teacher'
+import { archiveProject, copyProject, createAiSession, createProject, deleteProject, listProjects, listResources, transcribeAudio, uploadResource } from '../apis/teacher'
 
 const router = useRouter()
 const route = useRoute()
@@ -53,9 +53,6 @@ let voiceMediaStream = null
 let voiceRecorder = null
 let voiceChunks = []
 let voiceTimer = null
-const archivedVisible = ref(false)
-const archivedProjects = ref([])
-const archivedLoading = ref(false)
 const projectManagerVisible = ref(false)
 const managedProjects = ref([])
 const projectManagerLoading = ref(false)
@@ -500,15 +497,6 @@ const dropResourceFiles = async (event) => {
   if (supported.length !== files.length) ElMessage.warning('已忽略不支持的文件格式')
   await uploadLocalFiles(supported)
 }
-const openArchivedProjects = async () => {
-  archivedVisible.value = true; archivedLoading.value = true
-  try { const result = await listProjects({ page: 1, size: 30, status: 'archived' }); archivedProjects.value = result?.data?.records || result?.data?.list || result?.data?.items || [] }
-  catch (error) { ElMessage.error(error?.message || '归档项目加载失败') } finally { archivedLoading.value = false }
-}
-const restoreArchivedProject = async (project) => {
-  try { await restoreProject(project.id); archivedProjects.value = archivedProjects.value.filter((item) => item.id !== project.id); await loadProjects(); ElMessage.success('项目已恢复到草稿') }
-  catch (error) { ElMessage.error(error?.message || '项目恢复失败') }
-}
 const openProjectManager = async () => {
   projectManagerVisible.value = true; projectManagerLoading.value = true
   try { const result = await listProjects({ page: 1, size: 50 }); managedProjects.value = result?.data?.records || result?.data?.list || result?.data?.items || [] }
@@ -548,6 +536,7 @@ onMounted(loadProjects)
   <section class="home-welcome" :class="{ 'is-chat-mode': viewMode === 'chat' }">
     <!-- 欢迎视图 -->
     <template v-if="viewMode === 'welcome'">
+    <div class="welcome-scroll">
     <div class="welcome-copy motion-stage motion-stage-1">
       <p class="eyebrow">{{ TEACHER_HOME.greeting.eyebrow }}</p>
       <h1>{{ TEACHER_HOME.greeting.title }}</h1>
@@ -598,6 +587,7 @@ onMounted(loadProjects)
         <p>{{ suggestion.description }}</p>
         <el-icon class="card-arrow"><Promotion /></el-icon>
       </el-card>
+    </div>
     </div>
 
     <section class="composer motion-stage motion-stage-4" aria-label="AI 教学任务输入">
@@ -710,15 +700,11 @@ onMounted(loadProjects)
 
   </section>
 
-  <div class="archive-entry"><el-button text size="small" @click="openArchivedProjects">归档项目管理</el-button></div>
-
   <el-dialog v-model="projectManagerVisible" title="项目管理" width="min(720px, 92vw)">
     <div v-loading="projectManagerLoading" class="managed-project-list">
       <article v-for="project in managedProjects" :key="project.id"><div><strong>{{ project.project_name }}</strong><span>{{ project.project_type || '教学项目' }} · {{ project.status }}</span></div><div class="managed-project-actions"><el-button text size="small" @click="openProject(project)">打开</el-button><template v-if="!isMobile"><el-button text size="small" @click="copyManagedProject(project)">复制</el-button><el-button v-if="project.status !== 'archived'" text size="small" @click="archiveManagedProject(project)">归档</el-button><el-button type="danger" text size="small" @click="deleteManagedProject(project)">删除</el-button></template><el-dropdown v-else trigger="click" popper-class="managed-project-dropdown" @command="handleManagedProjectCommand"><el-button text size="small" :icon="More">更多</el-button><template #dropdown><el-dropdown-menu><el-dropdown-item :command="{ action: 'copy', project }">复制</el-dropdown-item><el-dropdown-item v-if="project.status !== 'archived'" :command="{ action: 'archive', project }">归档</el-dropdown-item><el-dropdown-item :command="{ action: 'delete', project }" class="managed-project-danger">删除</el-dropdown-item></el-dropdown-menu></template></el-dropdown></div></article><el-empty v-if="!projectManagerLoading && !managedProjects.length" description="暂无项目" />
     </div>
   </el-dialog>
-  
-  <el-dialog v-model="archivedVisible" title="归档项目" width="min(620px, 92vw)"><div v-loading="archivedLoading" class="archived-list"><article v-for="project in archivedProjects" :key="project.id"><div><strong>{{ project.project_name }}</strong><span>{{ project.project_type || '教学项目' }}</span></div><el-button type="primary" plain size="small" @click="restoreArchivedProject(project)">恢复</el-button></article><el-empty v-if="!archivedLoading && !archivedProjects.length" description="暂无归档项目" /></div><template #footer><el-button @click="archivedVisible = false">关闭</el-button></template></el-dialog>
 </template>
 
 <style scoped>
@@ -727,6 +713,24 @@ onMounted(loadProjects)
   margin: 0 auto;
   padding: clamp(70px, 10vh, 124px) 0 42px;
 }
+/* 欢迎视图固定布局：内容区独立滚动，composer 固定底部（不随页面滚动） */
+.home-welcome:not(.is-chat-mode) {
+  display: flex;
+  flex-direction: column;
+  height: calc(100dvh - 68px); /* 桌面/平板/中屏顶栏 68px */
+  padding: 0 0 14px;
+  overflow: hidden;
+}
+.welcome-scroll {
+  flex: 1;
+  min-height: 0;
+  overflow-y: auto;
+  padding-top: clamp(48px, 7vh, 96px);
+  scrollbar-gutter: stable;
+}
+.welcome-scroll::-webkit-scrollbar { width: 4px; }
+.welcome-scroll::-webkit-scrollbar-track { background: transparent; }
+.welcome-scroll::-webkit-scrollbar-thumb { border-radius: var(--zh-radius4); background: var(--zh-line-border); }
 /* 聊天模式下移除欢迎页内边距，让 ChatView 撑满可用空间 */
 .home-welcome.is-chat-mode {
   width: 100%;
@@ -785,7 +789,13 @@ h1 { margin: 0; font-size: clamp(36px, 4vw, 48px); line-height: 1.15; letter-spa
 @keyframes waveMove{0%,100%{transform:scaleY(.35)}50%{transform:scaleY(1)}}
 
 @media (max-width: 767.98px) {
-  .home-welcome { width: min(100% - 28px, 540px); padding-top: 54px; }
+  .home-welcome:not(.is-chat-mode) {
+    /* 手机档顶栏 48px+safe-top，底部 TabBar 56px+safe-bottom */
+    height: calc(100dvh - 48px - var(--zh-safe-top) - var(--zh-tabbar-h) - var(--zh-safe-bottom));
+  }
+  .home-welcome:not(.is-chat-mode),
+  .welcome-scroll { width: min(100% - 28px, 540px); }
+  .welcome-scroll { padding-top: 32px; }
   .suggestion-grid, .project-grid { grid-template-columns: 1fr; }
   .suggestion-card :deep(.el-card__body) { min-height: 118px; }
   .suggestion-icon { margin-bottom: 16px; }
@@ -799,7 +809,7 @@ h1 { margin: 0; font-size: clamp(36px, 4vw, 48px); line-height: 1.15; letter-spa
   .suggestion-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 12px; }
   .knowledge-picker-header { grid-template-columns:1fr; }
 }
-.archive-entry{display:flex;justify-content:center;margin-top:10px}.archived-list{display:grid;gap:10px}.archived-list article{display:flex;align-items:center;justify-content:space-between;padding:12px;border:1px solid var(--zh-line-border);border-radius:var(--zh-radius8);background:var(--zh-background-light)}.archived-list article div{display:flex;flex-direction:column;gap:4px}.archived-list strong{font-size:13px}.archived-list span{color:var(--zh-text-caption);font-size:11px}
+
 .managed-project-list{display:grid;gap:10px}.managed-project-list article{display:flex;align-items:center;justify-content:space-between;gap:16px;padding:12px;border:1px solid var(--zh-line-border);border-radius:var(--zh-radius8);background:var(--zh-background-light)}.managed-project-list article>div:first-child{display:grid;gap:4px;min-width:0}.managed-project-list strong{overflow:hidden;text-overflow:ellipsis;white-space:nowrap;font-size:14px}.managed-project-list span{color:var(--zh-text-caption);font-size:12px}.managed-project-actions{display:flex;flex-wrap:wrap;justify-content:flex-end;gap:2px}
 /* 手机档「更多」下拉渲染在弹窗 popper（teleport 到 body），危险项配色需全局命中 */
 :global(.managed-project-dropdown .managed-project-danger) { color: var(--zh-red); }

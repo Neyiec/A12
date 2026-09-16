@@ -2327,23 +2327,14 @@ async function restoreSession() {
 @media (max-width: 767.98px) {
   .chat-container {
     padding: 0 12px;
-    /* 手机档由容器自身滚动：软键盘弹起时 100dvh 收缩容器可滚，composer sticky bottom 常驻可见 */
-    overflow-y: auto;
     /* 手机档顶栏 48px+safe-top、底部 TabBar 56px+safe-bottom（TeacherLayout） */
     height: calc(100dvh - 48px - var(--zh-safe-top) - var(--zh-tabbar-h) - var(--zh-safe-bottom));
   }
-  .chat-messages {
-    /* 取消内部独立滚动，消息与 composer 处于同一滚动上下文 */
-    overflow-y: visible;
+  .chat-composer {
+    padding-bottom: calc(16px + var(--zh-safe-bottom));
   }
   .user-bubble {
     max-width: 92%;
-  }
-  .chat-composer {
-    position: sticky;
-    bottom: 0;
-    z-index: 5;
-    padding-bottom: calc(16px + var(--zh-safe-bottom));
   }
   .outline-actions-bar {
     flex-direction: column;
