@@ -8,8 +8,8 @@ import { computed, onMounted, ref, watch } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { ElMessageBox } from 'element-plus'
 import {
-  ArrowDown, Bell, ChatDotRound, Delete, Download, EditPen, FolderOpened, Grid,
-  Moon, MoreFilled, Plus, Setting, Sunny,
+  ArrowDown, Bell, ChatDotRound, Delete, Download, EditPen, Expand, Fold,
+  FolderOpened, Grid, Moon, MoreFilled, Plus, Setting, Sunny,
 } from '@element-plus/icons-vue'
 import BottomTabBar from './BottomTabBar.vue'
 import { TEACHER_HOME } from '../config/teacherHome.config.js'
@@ -44,6 +44,29 @@ const settingsActionLabel = computed(() => isSettings.value ? '返回之前页�
 const viewTransitionName = computed(() => route.path === '/main' ? 'teacher-home-view' : 'teacher-view')
 /** 手机档（<768px）会话历史抽屉开关：侧栏移除后由顶栏标题呼出 */
 const mobileHistoryOpen = ref(false)
+
+/**
+ * 折叠栏式侧栏：折叠/展开状态。
+ * 初始值优先读 localStorage 用户偏好；无偏好时平板中间态（<1024px）默认收起，
+ * 桌面档默认展开。切换后持久化，刷新后保持。
+ */
+const SIDEBAR_COLLAPSED_KEY = TEACHER_HOME.sidebar.collapsedStorageKey
+const DESKTOP_MIN_WIDTH = TEACHER_HOME.sidebar.desktopMinWidth
+const readInitialSidebarCollapsed = () => {
+  try {
+    const stored = window.localStorage.getItem(SIDEBAR_COLLAPSED_KEY)
+    if (stored === '1') return true
+    if (stored === '0') return false
+  } catch { /* 隐私模式等场景忽略读取失败 */ }
+  return window.innerWidth < DESKTOP_MIN_WIDTH
+}
+const sidebarCollapsed = ref(readInitialSidebarCollapsed())
+watch(sidebarCollapsed, (collapsed) => {
+  try { window.localStorage.setItem(SIDEBAR_COLLAPSED_KEY, collapsed ? '1' : '0') } catch { /* 忽略写入失败 */ }
+})
+
+/** 切换侧栏折叠/展开。 */
+const toggleSidebar = () => { sidebarCollapsed.value = !sidebarCollapsed.value }
 
 /** 跳转到教师端目标功能模块。 */
 const handleMenuSelect = (index) => {
@@ -196,7 +219,7 @@ watch(latestSessionPush, (session) => {
 </script>
 
 <template>
-  <div :class="['teacher-shell', { 'workspace-mode': isWorkspace, 'assistant-mode': isTeachingAssistant }]">
+  <div :class="['teacher-shell', { 'workspace-mode': isWorkspace, 'assistant-mode': isTeachingAssistant, 'sidebar-collapsed': isTeachingAssistant && sidebarCollapsed }]">
     <a class="skip-link" href="#main-content">跳到主要内容</a>
 
     <header v-if="!isWorkspace" class="teacher-topbar">
@@ -272,9 +295,30 @@ watch(latestSessionPush, (session) => {
 
     <aside v-if="isTeachingAssistant && !isWorkspace" class="teacher-sidebar" aria-label="教学助手对话记录">
 
-      <el-button type="primary" class="new-chat-button" :icon="Plus" @click="handleNewChat">
-        {{ TEACHER_HOME.actions.newChat }}
-      </el-button>
+      <!-- 折叠栏开关：展开态靠右，折叠态居中（由样式控制），千问式折叠栏 -->
+      <div class="sidebar-header">
+        <el-tooltip
+          :content="sidebarCollapsed ? TEACHER_HOME.actions.expand : TEACHER_HOME.actions.collapse"
+          placement="bottom"
+          :hide-after="0"
+        >
+          <button
+            type="button"
+            class="collapse-toggle"
+            :aria-label="sidebarCollapsed ? TEACHER_HOME.actions.expand : TEACHER_HOME.actions.collapse"
+            :aria-expanded="String(!sidebarCollapsed)"
+            @click="toggleSidebar"
+          >
+            <el-icon><component :is="sidebarCollapsed ? Expand : Fold" /></el-icon>
+          </button>
+        </el-tooltip>
+      </div>
+
+      <el-tooltip :content="TEACHER_HOME.actions.newChat" placement="right" :disabled="!sidebarCollapsed" :hide-after="0">
+        <el-button type="primary" class="new-chat-button" :icon="Plus" @click="handleNewChat">
+          {{ TEACHER_HOME.actions.newChat }}
+        </el-button>
+      </el-tooltip>
 
       <section class="history" aria-labelledby="history-title">
         <!-- 标题行固定在顶部，不随历史条目滚动；仅下方条目区域可滚动 -->
@@ -396,8 +440,22 @@ watch(latestSessionPush, (session) => {
 
 <style scoped>
 .teacher-shell { min-height: 100dvh; display: grid; grid-template-rows: 68px minmax(0, 1fr); grid-template-areas: "topbar" "main"; background: var(--zh-background-primary); color: var(--zh-text-primary); }
-.teacher-shell.assistant-mode { grid-template-columns: 260px minmax(0, 1fr); grid-template-areas: "topbar topbar" "sidebar main"; }
+.teacher-shell.assistant-mode { grid-template-columns: 260px minmax(0, 1fr); grid-template-areas: "topbar topbar" "sidebar main"; transition: grid-template-columns 240ms cubic-bezier(0.4, 0, 0.2, 1); }
 .teacher-shell.workspace-mode { display: block; }
+/* 折叠态（折叠栏式侧栏）：收窄为图标栏，仅保留展开开关、新建对话与头像入口 */
+.teacher-shell.assistant-mode.sidebar-collapsed { grid-template-columns: 76px minmax(0, 1fr); }
+.sidebar-collapsed .teacher-sidebar { padding-inline: 10px; }
+.sidebar-collapsed .sidebar-header { justify-content: center; }
+.sidebar-collapsed .teacher-sidebar .history,
+.sidebar-collapsed .profile-copy,
+.sidebar-collapsed .teacher-sidebar .new-chat-button :deep(span) { display: none; }
+.sidebar-collapsed .teacher-sidebar .new-chat-button { width: 44px; margin-inline: auto; padding: 0; }
+.sidebar-collapsed .teacher-profile { display: flex; justify-content: center; padding-inline: 0; }
+.sidebar-collapsed .teacher-profile > :last-child { display: none; }
+.sidebar-header { display: flex; flex-shrink: 0; justify-content: flex-end; margin-bottom: 10px; }
+.collapse-toggle { width: 32px; height: 32px; display: grid; place-items: center; padding: 0; border: 0; border-radius: var(--zh-radius8); color: var(--zh-text-secondary); background: transparent; cursor: pointer; transition: background-color 200ms cubic-bezier(0.4, 0, 0.2, 1), color 200ms cubic-bezier(0.4, 0, 0.2, 1), transform 200ms cubic-bezier(0.4, 0, 0.2, 1); }
+.collapse-toggle:hover, .collapse-toggle:focus-visible { color: var(--zh-text-primary); background: var(--zh-background-option); }
+.collapse-toggle:active { transform: scale(.94); }
 .teacher-sidebar { grid-area: sidebar; position: sticky; top: 68px; height: calc(100dvh - 68px); display: flex; flex-direction: column; padding: 18px 14px 14px; background: var(--zh-background-pc-sidebar); border-right: 1px solid var(--zh-line-parting); }
 .brand { display: flex; align-items: center; gap: 10px; padding: 0; border: 0; color: var(--zh-text-primary); background: transparent; font: inherit; text-align: left; cursor: pointer; }
 .app-brand-icon { position: relative; width: 40px; height: 40px; display: block; flex: 0 0 auto; overflow: hidden; border-radius: var(--zh-radius10); background: white; box-shadow: 0 8px 18px -8px rgb(37 99 235 / 40%); }
@@ -474,19 +532,15 @@ watch(latestSessionPush, (session) => {
 .teacher-view-enter-to { opacity: 1; transform: translateY(0); }
 
 @media (max-width: 1023.98px) {
-  .teacher-shell.assistant-mode { grid-template-columns: 76px minmax(0, 1fr); }
-  .teacher-sidebar { padding-inline: 10px; }
+  /* 中间态不再强制收窄侧栏：折叠宽度由 .sidebar-collapsed 控制，展开后可查看完整历史对话 */
   .teacher-topbar { grid-template-columns: auto 1fr auto; gap: 12px; padding-inline: 16px; }
   /* 仅限侧栏内隐藏，避免波及手机档会话历史抽屉中的同 class 元素 */
-  .brand-copy span, .teacher-sidebar .history, .profile-copy, .teacher-sidebar .new-chat-button :deep(span), .status-dot { display: none; }
+  .brand-copy span, .status-dot { display: none; }
   .app-brand-icon { width: 38px; height: 38px; }
   .app-brand-icon img { width: 68px; height: 68px; }
-  .teacher-sidebar .new-chat-button { width: 44px; margin-inline: auto; padding: 0; }
   .top-navigation { justify-self: center; }
   .top-nav-item { padding: 0 11px; }
   .top-nav-item span { display: none; }
-  .teacher-profile { display: flex; justify-content: center; padding-inline: 0; }
-  .teacher-profile > :last-child { display: none; }
 }
 @media (max-width: 767.98px) {
   .teacher-shell, .teacher-shell.assistant-mode { display: grid; grid-template-columns: 1fr; grid-template-rows: auto minmax(0, 1fr); grid-template-areas: "topbar" "main"; }

@@ -63,5 +63,12 @@ export const TEACHER_HOME = {
     theme: '切换主题',
     settings: '设置',
     collapse: '收起侧栏',
+    expand: '展开侧栏',
+  },
+  /** 折叠栏式侧栏：折叠状态持久化与响应式默认值 */
+  sidebar: {
+    collapsedStorageKey: 'a12_sidebar_collapsed',
+    /** 小于该视口宽度（平板中间态）默认收起侧栏 */
+    desktopMinWidth: 1024,
   },
 }
