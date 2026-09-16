@@ -35,6 +35,10 @@ import {
   CopyDocument,
   InfoFilled,
   Loading,
+  Film,
+  Notebook,
+  StarFilled,
+  Star,
 } from '@element-plus/icons-vue'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import { getExportTemplates, createExportTemplate, replaceExportTemplate, deleteExportTemplate, downloadExportTemplate } from '@/apis/export'
@@ -922,11 +926,12 @@ const handleTemplateUpload = async () => {
 }
 
 /**
- * 获取模板类型 emoji 图标
+ * 获取模板类型图标（Element Plus 图标组件）
+ * pptx 课件 → Film（放映胶片）；docx 教案 → Notebook（教案本）
  * @param {string} type - 模板类型
- * @returns {string} emoji 图标字符
+ * @returns {Component} Element Plus 图标组件
  */
-const getTemplateIcon = (type) => (type === 'pptx' ? '📙' : '📘')
+const getTemplateIcon = (type) => (type === 'pptx' ? Film : Notebook)
 
 /**
  * 获取模板类型 Tag 类型
@@ -1176,7 +1181,7 @@ onBeforeUnmount(() => {
           <template #header>
             <div class="flex items-center justify-between">
               <div class="flex items-center gap-2">
-                <Cpu :size="18" :style="{ color: 'var(--zh-text-theme)' }" />
+                <el-icon :size="18" :style="{ color: 'var(--zh-text-theme)' }"><Cpu /></el-icon>
                 <span :style="{ fontSize: 'var(--zh-font-size15)', fontWeight: 600, color: 'var(--zh-text-primary)' }">
                   模型基础参数
                 </span>
@@ -1244,7 +1249,7 @@ onBeforeUnmount(() => {
           <template #header>
             <div class="flex items-center justify-between">
               <div class="flex items-center gap-2">
-                <MagicStick :size="18" :style="{ color: 'var(--zh-text-theme)' }" />
+                <el-icon :size="18" :style="{ color: 'var(--zh-text-theme)' }"><MagicStick /></el-icon>
                 <span :style="{ fontSize: 'var(--zh-font-size15)', fontWeight: 600, color: 'var(--zh-text-primary)' }">
                   生成策略参数
                 </span>
@@ -1318,7 +1323,7 @@ onBeforeUnmount(() => {
           <template #header>
             <div class="flex items-center justify-between">
               <div class="flex items-center gap-2">
-                <Edit :size="18" :style="{ color: 'var(--zh-text-theme)' }" />
+                <el-icon :size="18" :style="{ color: 'var(--zh-text-theme)' }"><Edit /></el-icon>
                 <span :style="{ fontSize: 'var(--zh-font-size15)', fontWeight: 600, color: 'var(--zh-text-primary)' }">
                   系统提示词模板
                 </span>
@@ -1418,8 +1423,11 @@ onBeforeUnmount(() => {
             <el-table-column prop="name" label="模板名称" min-width="200">
               <template #default="{ row }">
                 <div class="flex items-center gap-3">
-                  <div class="w-10 h-10 rounded-md flex items-center justify-center shrink-0 text-lg" :style="{ background: 'var(--zh-background-light-gray)' }">
-                    {{ getTemplateIcon(row.type) }}
+                  <!-- 模板类型图标：主题色底 + 白色描线（与角色管理图标规范一致） -->
+                  <div class="w-10 h-10 rounded-md flex items-center justify-center shrink-0" :style="{ background: 'var(--zh-gradient-blue)' }">
+                    <el-icon style="color: #ffffff; font-size: 20px;">
+                      <component :is="getTemplateIcon(row.type)" />
+                    </el-icon>
                   </div>
                   <div class="min-w-0">
                     <el-tooltip :content="row.name" placement="top" effect="dark" :disabled="row.name.length <= 18">
@@ -1474,9 +1482,11 @@ onBeforeUnmount(() => {
             <!-- 列：是否默认 -->
             <el-table-column prop="isDefault" label="默认" width="70" align="center">
               <template #default="{ row }">
-                <span :style="{ color: row.isDefault ? 'var(--zh-yellow)' : 'var(--zh-text-disabled)', fontSize: 'var(--zh-font-size16)' }">
-                  {{ row.isDefault ? '★' : '☆' }}
-                </span>
+                <el-icon
+                  :style="{ color: row.isDefault ? 'var(--zh-yellow)' : 'var(--zh-text-disabled)', fontSize: 'var(--zh-font-size16)' }"
+                >
+                  <component :is="row.isDefault ? StarFilled : Star" />
+                </el-icon>
               </template>
             </el-table-column>
 
@@ -2062,7 +2072,7 @@ onBeforeUnmount(() => {
   min-width: 0;
   overflow: hidden;
   color: var(--zh-text-primary);
-  font-size: 13px;
+  font-size: 14px;
   font-weight: 500;
   text-overflow: ellipsis;
   white-space: nowrap;
@@ -2073,7 +2083,7 @@ onBeforeUnmount(() => {
 .upload-file-status.is-success { color: var(--zh-green); }
 .upload-file-status.is-error,
 .upload-error { color: var(--zh-red); }
-.upload-error { display: block; margin-top: 4px; overflow: hidden; font-size: 11px; text-overflow: ellipsis; white-space: nowrap; }
+.upload-error { display: block; margin-top: 4px; overflow: hidden; font-size: 12px; text-overflow: ellipsis; white-space: nowrap; }
 
 .visually-hidden { position: absolute; width: 1px; height: 1px; overflow: hidden; clip: rect(0 0 0 0); white-space: nowrap; }
 

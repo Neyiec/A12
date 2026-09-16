@@ -4,7 +4,7 @@
     - ElementPlus 组件: ElCard, ElTable, ElTableColumn, ElTag, ElButton, ElInput, ElSelect, ElOption,
       ElPagination, ElDialog, ElDrawer, ElForm, ElFormItem, ElSkeleton, ElEmpty, ElMessageBox, ElMessage,
       ElTooltip, ElCheckbox, ElRadioGroup, ElRadio
-    - ElementPlus Icons: Search, Plus, Edit, Delete, Refresh, Lock, UserFilled
+    - ElementPlus Icons: Search, Plus, Edit, Delete, Refresh, Lock, Key, Setting, View, EditPen, Collection, User
     - `ref`, `reactive`, `computed`, `onMounted`, `onBeforeUnmount`, `nextTick` from Vue
   - 依赖:
     - `getAdminRoles`: 来自 `../apis/user.js`（API-80 查询角色列表，含权限矩阵/描述/成员数/状态）
@@ -28,7 +28,12 @@ import {
   Delete,
   Refresh,
   Lock,
-  UserFilled,
+  Key,
+  Setting,
+  View,
+  EditPen,
+  Collection,
+  User,
 } from '@element-plus/icons-vue'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import { getAdminRoles, createAdminRole, updateAdminRole, deleteAdminRole, updateRolePermissions } from '@/apis/user.js'
@@ -39,14 +44,17 @@ const router = useRouter()
 // 配置常量 — 所有下拉选项、表格列、分页参数、权限模块集中管理
 // ===================================================================
 
-/** 角色图标预设 — 6 种渐变色 + emoji 组合，便于快速区分角色 */
+/** 角色图标统一背景色 — 品牌主题渐变（与侧边栏头像等品牌色块一致） */
+const ROLE_ICON_BG = 'var(--zh-gradient-blue)'
+
+/** 角色图标预设 — Element Plus 图标组合，便于快速区分角色 */
 const ROLE_ICON_OPTIONS = [
-  { key: 'shield', emoji: '🛡', gradient: 'linear-gradient(135deg, #4F46E5, #7C3AED)' },
-  { key: 'edit',   emoji: '📝', gradient: 'linear-gradient(135deg, #2563EB, #29BECC)' },
-  { key: 'book',   emoji: '📚', gradient: 'linear-gradient(135deg, #1F993F, #60A5FA)' },
-  { key: 'gear',   emoji: '⚙',  gradient: 'linear-gradient(135deg, #6B7280, #9CA3AF)' },
-  { key: 'search', emoji: '🔍', gradient: 'linear-gradient(135deg, #FF6B3F, #F59E0B)' },
-  { key: 'user',   emoji: '👤', gradient: 'var(--zh-gradient-blue)' },
+  { key: 'shield', icon: Key },
+  { key: 'edit',   icon: EditPen },
+  { key: 'book',   icon: Collection },
+  { key: 'gear',   icon: Setting },
+  { key: 'search', icon: View },
+  { key: 'user',   icon: User },
 ]
 
 /** 状态筛选项 */
@@ -399,7 +407,7 @@ const handleSizeChange = (size) => {
 /**
  * 获取图标预设对象
  * @param {string} key - 图标 key
- * @returns {Object} { key, emoji, gradient }
+ * @returns {Object} { key, icon }
  */
 const getIconOption = (key) => ROLE_ICON_OPTIONS.find((o) => o.key === key) || ROLE_ICON_OPTIONS[5]
 
@@ -986,12 +994,14 @@ onBeforeUnmount(() => {
           >
             <template #default="{ row }">
               <div class="flex items-center gap-2.5">
-                <!-- 角色图标色块 -->
+                <!-- 角色图标色块（Element Plus 图标，主题色底 + 白色描线居中） -->
                 <div
-                  class="w-8 h-8 rounded-lg flex items-center justify-center shrink-0 text-base"
-                  :style="{ background: getIconOption(row.icon).gradient }"
+                  class="w-8 h-8 rounded-lg flex items-center justify-center shrink-0"
+                  :style="{ background: ROLE_ICON_BG }"
                 >
-                  {{ getIconOption(row.icon).emoji }}
+                  <el-icon style="color: #ffffff; font-size: 16px;">
+                    <component :is="getIconOption(row.icon).icon" />
+                  </el-icon>
                 </div>
                 <span
                   class="font-medium truncate"
@@ -1239,17 +1249,19 @@ onBeforeUnmount(() => {
             <div
               v-for="opt in ROLE_ICON_OPTIONS"
               :key="opt.key"
-              class="w-9 h-9 rounded-lg flex items-center justify-center cursor-pointer text-lg shrink-0 icon-option"
+              class="w-9 h-9 rounded-lg flex items-center justify-center cursor-pointer shrink-0 icon-option"
               :class="{ 'icon-selected': dialogForm.icon === opt.key }"
               :style="{
-                background: opt.gradient,
+                background: ROLE_ICON_BG,
                 border: dialogForm.icon === opt.key
                   ? '2px solid var(--zh-text-theme)'
                   : '2px solid transparent',
               }"
               @click="dialogForm.icon = opt.key"
             >
-              {{ opt.emoji }}
+              <el-icon style="color: #ffffff; font-size: 18px;">
+                <component :is="opt.icon" />
+              </el-icon>
             </div>
           </div>
         </el-form-item>

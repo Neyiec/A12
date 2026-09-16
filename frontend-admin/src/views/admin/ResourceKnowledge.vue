@@ -39,6 +39,8 @@ import {
   ArrowDown,
   ArrowUp,
   Top,
+  Film,
+  Grid,
 } from '@element-plus/icons-vue'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import {
@@ -96,21 +98,21 @@ const RESOURCE_TYPE_TAG_MAP = {
   document: 'info',
 }
 
-/** 资源类型 → 缩略图图标映射（用于无缩略图时的 emoji 占位） */
+/** 资源类型 → 缩略图图标映射（Element Plus 图标组件，用于无缩略图时的占位） */
 const RESOURCE_TYPE_ICON_MAP = {
-  pdf: '📕',
-  docx: '📘',
-  pptx: '📙',
-  xlsx: '📊',
-  mp4: '🎬',
-  avi: '🎬',
-  mov: '🎬',
-  jpg: '🖼',
-  png: '🖼',
-  gif: '🖼',
-  mp3: '🎵',
-  wav: '🎵',
-  other: '📄',
+  pdf: Document,
+  docx: Document,
+  pptx: Film,
+  xlsx: Grid,
+  mp4: VideoCamera,
+  avi: VideoCamera,
+  mov: VideoCamera,
+  jpg: PictureFilled,
+  png: PictureFilled,
+  gif: PictureFilled,
+  mp3: Headset,
+  wav: Headset,
+  other: Document,
 }
 
 /** 资源类型 → 副类型映射（用于显示中文标签） */
@@ -469,22 +471,22 @@ const mapResourceRow = (vo) => {
 // 数据映射 — Tab 2：知识索引任务行（Python list_resources item → 前端行对象）
 // ===================================================================
 
-/** 短文件类型 → 图标映射（metadata.file_type 存 short 标识） */
+/** 短文件类型 → 图标映射（Element Plus 图标组件，metadata.file_type 存 short 标识） */
 const KNOWLEDGE_FILE_TYPE_ICON_MAP = {
-  word: '📘',
-  pdf: '📕',
-  ppt: '📙',
-  txt: '📄',
-  image: '🖼',
-  audio: '🎵',
-  video: '🎬',
-  other: '📄',
+  word: Document,
+  pdf: Document,
+  ppt: Film,
+  txt: Document,
+  image: PictureFilled,
+  audio: Headset,
+  video: VideoCamera,
+  other: Document,
 }
 
 /**
  * 获取知识索引任务行的文件图标（兼容 short 类型标识与扩展名）
  * @param {string} fileType - 文件类型（word/pdf/ppt 或 docx/mp4 等扩展名）
- * @returns {string} emoji 占位字符
+ * @returns {Component} Element Plus 图标组件
  */
 const getKnowledgeFileIcon = (fileType) => {
   return KNOWLEDGE_FILE_TYPE_ICON_MAP[fileType] || RESOURCE_TYPE_ICON_MAP[fileType] || RESOURCE_TYPE_ICON_MAP.other
@@ -763,9 +765,9 @@ const handleKnowledgeSizeChange = (size) => {
 // ===================================================================
 
 /**
- * 获取文件格式对应的缩略图图标字符
+ * 获取文件格式对应的缩略图图标（Element Plus 图标组件）
  * @param {string} format - 文件扩展名
- * @returns {string} emoji 占位字符
+ * @returns {Component} Element Plus 图标组件
  */
 const getFileIcon = (format) => {
   return RESOURCE_TYPE_ICON_MAP[format] || RESOURCE_TYPE_ICON_MAP.other
@@ -1476,12 +1478,14 @@ onBeforeUnmount(() => {
             <el-table-column prop="name" label="资源名称" min-width="240">
               <template #default="{ row }">
                 <div class="flex items-center gap-3">
-                  <!-- 缩略图占位 -->
+                  <!-- 缩略图占位：主题色底 + 白色描线 -->
                   <div
-                    class="w-10 h-10 rounded-md flex items-center justify-center shrink-0 text-lg"
-                    :style="{ background: 'var(--zh-background-light-gray)' }"
+                    class="w-10 h-10 rounded-md flex items-center justify-center shrink-0"
+                    :style="{ background: 'var(--zh-gradient-blue)' }"
                   >
-                    {{ getFileIcon(row.format) }}
+                    <el-icon style="color: #ffffff; font-size: 20px;">
+                      <component :is="getFileIcon(row.format)" />
+                    </el-icon>
                   </div>
                   <div class="min-w-0">
                     <el-tooltip
@@ -1680,7 +1684,7 @@ onBeforeUnmount(() => {
           <template v-else>
             <div class="flex items-center justify-between mb-3">
               <span :style="{ fontSize: 'var(--zh-font-size13)', color: 'var(--zh-text-caption)' }">知识条目总数</span>
-              <FolderOpened class="w-6 h-6" :style="{ color: 'var(--zh-text-caption)' }" />
+              <el-icon :size="24" :style="{ color: 'var(--zh-text-caption)' }"><FolderOpened /></el-icon>
             </div>
             <div class="flex items-baseline gap-2 mb-2">
               <span :style="{ fontFamily: 'var(--zh-font-number)', fontSize: 'var(--zh-font-size30)', fontWeight: 700, color: 'var(--zh-text-primary)', lineHeight: 1.2 }">
@@ -1709,7 +1713,7 @@ onBeforeUnmount(() => {
           <template v-else>
             <div class="flex items-center justify-between mb-3">
               <span :style="{ fontSize: 'var(--zh-font-size13)', color: 'var(--zh-text-caption)' }">已向量化</span>
-              <CircleCheckFilled class="w-6 h-6" :style="{ color: 'var(--zh-green)' }" />
+              <el-icon :size="24" :style="{ color: 'var(--zh-green)' }"><CircleCheckFilled /></el-icon>
             </div>
             <div class="flex items-baseline gap-2 mb-2">
               <span :style="{ fontFamily: 'var(--zh-font-number)', fontSize: 'var(--zh-font-size30)', fontWeight: 700, color: 'var(--zh-text-primary)', lineHeight: 1.2 }">
@@ -1741,7 +1745,7 @@ onBeforeUnmount(() => {
           <template v-else>
             <div class="flex items-center justify-between mb-3">
               <span :style="{ fontSize: 'var(--zh-font-size13)', color: 'var(--zh-text-caption)' }">解析失败</span>
-              <WarningFilled class="w-6 h-6" :style="{ color: pendingVectorCount > 0 ? 'var(--zh-orange)' : 'var(--zh-text-caption)' }" />
+              <el-icon :size="24" :style="{ color: pendingVectorCount > 0 ? 'var(--zh-orange)' : 'var(--zh-text-caption)' }"><WarningFilled /></el-icon>
             </div>
             <div class="flex items-baseline gap-2 mb-2">
               <span :style="{ fontFamily: 'var(--zh-font-number)', fontSize: 'var(--zh-font-size30)', fontWeight: 700, color: pendingVectorCount > 0 ? 'var(--zh-orange)' : 'var(--zh-text-primary)', lineHeight: 1.2 }">
@@ -1770,7 +1774,7 @@ onBeforeUnmount(() => {
           <template v-else>
             <div class="flex items-center justify-between mb-3">
               <span :style="{ fontSize: 'var(--zh-font-size13)', color: 'var(--zh-text-caption)' }">索引分块总数</span>
-              <Files class="w-6 h-6" :style="{ color: 'var(--zh-text-caption)' }" />
+              <el-icon :size="24" :style="{ color: 'var(--zh-text-caption)' }"><Files /></el-icon>
             </div>
             <div class="flex items-baseline gap-2 mb-2">
               <span :style="{ fontFamily: 'var(--zh-font-number)', fontSize: 'var(--zh-font-size30)', fontWeight: 700, color: 'var(--zh-text-primary)', lineHeight: 1.2 }">
@@ -1882,10 +1886,12 @@ onBeforeUnmount(() => {
               <template #default="{ row }">
                 <div class="flex items-center gap-3">
                   <div
-                    class="w-10 h-10 rounded-md flex items-center justify-center shrink-0 text-lg"
-                    :style="{ background: 'var(--zh-background-light-gray)' }"
+                    class="w-10 h-10 rounded-md flex items-center justify-center shrink-0"
+                    :style="{ background: 'var(--zh-gradient-blue)' }"
                   >
-                    {{ getKnowledgeFileIcon(row.resourceFormat) }}
+                    <el-icon style="color: #ffffff; font-size: 20px;">
+                      <component :is="getKnowledgeFileIcon(row.resourceFormat)" />
+                    </el-icon>
                   </div>
                   <el-tooltip
                     :content="row.resourceName"
@@ -2308,7 +2314,7 @@ onBeforeUnmount(() => {
             class="upload-file-row flex items-center gap-3 px-4 py-2.5 border-b last:border-0"
             :style="{ borderColor: 'var(--zh-line-parting)' }"
           >
-            <span class="text-lg">{{ getFileIcon(file.format) }}</span>
+            <el-icon style="font-size: 18px; color: var(--zh-text-theme);"><component :is="getFileIcon(file.format)" /></el-icon>
             <div class="upload-file-main min-w-0 flex-1">
               <div class="flex items-center gap-1.5 min-w-0">
                 <template v-if="renamingUploadUid === file.uid">
@@ -2445,7 +2451,7 @@ onBeforeUnmount(() => {
           }"
         >
           <div class="text-center">
-            <span class="text-5xl">{{ getFileIcon(currentResource.format) }}</span>
+            <el-icon style="font-size: 48px; color: var(--zh-text-theme);"><component :is="getFileIcon(currentResource.format)" /></el-icon>
             <p :style="{ fontSize: 'var(--zh-font-size13)', color: 'var(--zh-text-caption)', marginTop: '8px' }">
               [此处需填写：文件预览/封面缩略图 — 建议尺寸 480×270px]
             </p>
@@ -2559,7 +2565,7 @@ onBeforeUnmount(() => {
             class="flex items-start gap-2 mt-2 p-2 rounded"
             :style="{ background: 'var(--zh-yellow-light)', borderLeft: '3px solid var(--zh-orange)' }"
           >
-            <WarningFilled :size="14" :style="{ color: 'var(--zh-orange)', marginTop: '1px', flexShrink: 0 }" />
+            <el-icon :size="14" :style="{ color: 'var(--zh-orange)', marginTop: '1px', flexShrink: 0 }"><WarningFilled /></el-icon>
             <span :style="{ fontSize: 'var(--zh-font-size12)', color: 'var(--zh-text-secondary)' }">
               {{ currentResource.failReason }}
             </span>
