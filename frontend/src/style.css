@@ -69,6 +69,7 @@
   --zh-shadow3: 0 12px 36px rgb(0 0 0 / 10%);
   --zh-font-text-windows-zh: "Microsoft YaHei", "Segoe UI", system-ui, Roboto, "Noto Sans SC", Arial, sans-serif;
   --zh-font-number: "PlusJakartaSans", system-ui, "Segoe UI", Roboto, Arial, sans-serif;
+  --zh-font-size10: 10px;
   --zh-font-size11: 11px;
   --zh-font-size12: 12px;
   --zh-font-size13: 13px;
@@ -226,5 +227,52 @@ textarea {
     transition-duration: 0.01ms !important;
     animation-duration: 0.01ms !important;
     animation-iteration-count: 1 !important;
+  }
+}
+
+/* ============================================================
+   响应式断点基线（design.md §9.3 镜像）
+   手机 <768px ｜ 平板 768–1023px ｜ 中屏 1024–1279px ｜ 桌面 ≥1280px
+   ============================================================ */
+:root {
+  --zh-bp-md: 768px;
+  --zh-bp-lg: 1024px;
+  --zh-bp-xl: 1280px;
+  /* 安全区（Capacitor viewport-fit=cover） */
+  --zh-safe-top: env(safe-area-inset-top, 0px);
+  --zh-safe-bottom: env(safe-area-inset-bottom, 0px);
+  --zh-safe-left: env(safe-area-inset-left, 0px);
+  --zh-safe-right: env(safe-area-inset-right, 0px);
+  /* 底部 TabBar（TeacherLayout 手机档） */
+  --zh-tabbar-h: 56px;
+}
+
+html,
+body {
+  overflow-x: hidden;
+}
+
+/* 触屏设备：依赖 hover 才显示的操作按钮常显（各组件按钮加 data-hover-reveal） */
+@media (hover: none) and (pointer: coarse) {
+  [data-hover-reveal] {
+    opacity: 1 !important;
+    pointer-events: auto !important;
+  }
+
+  /* 装饰性 hover 位移降级为按压反馈（各组件卡片加 data-hover-lift） */
+  [data-hover-lift]:active {
+    transform: scale(0.98);
+  }
+
+  /* 触控目标兜底：可点击元素 ≥44px（行内链接除外，避免撑破文本流） */
+  button,
+  [role="button"],
+  .el-button {
+    min-height: 44px;
+    min-width: 44px;
+  }
+
+  a {
+    -webkit-tap-highlight-color: transparent;
   }
 }

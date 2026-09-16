@@ -219,6 +219,7 @@ onMounted(() => {
               :key="style.value"
               type="button"
               class="pref-card"
+              data-hover-lift
               :class="{ selected: preferences.teachingStyle === style.value }"
               @click="preferences.teachingStyle = style.value"
             >
@@ -243,6 +244,7 @@ onMounted(() => {
               :key="tpl.value"
               type="button"
               class="pref-card pref-card--template"
+              data-hover-lift
               :class="{ selected: preferences.templateStyle === tpl.value }"
               @click="preferences.templateStyle = tpl.value"
             >
@@ -432,16 +434,16 @@ onMounted(() => {
   padding-top: 8px;
 }
 
-/* 响应式 */
-@media(max-width:860px){
+/* 响应式（断点已按 design.md §9.3 收敛：平板 1023.98 / 手机 767.98） */
+@media(max-width:1023.98px){
   .pref-option-grid--5{grid-template-columns:repeat(3,minmax(0,1fr))}
   .pref-option-grid--4{grid-template-columns:repeat(2,minmax(0,1fr))}
 }
-@media(max-width:580px){
+@media(max-width:767.98px){
   .pref-option-grid--5{grid-template-columns:repeat(2,minmax(0,1fr))}
   .pref-option-grid--4{grid-template-columns:1fr}
   .pref-card{padding:10px 12px}
 }
 
-@media(max-width:760px){.settings-page{padding:28px 16px}.settings-grid{grid-template-columns:1fr}.danger-zone :deep(.el-card__body){align-items:flex-start;flex-direction:column}}
+@media(max-width:1023.98px){.settings-page{padding:28px 16px}.settings-grid{grid-template-columns:1fr}.danger-zone :deep(.el-card__body){align-items:flex-start;flex-direction:column}}
 </style>

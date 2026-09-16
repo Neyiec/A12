@@ -8,7 +8,7 @@
 import { computed, onBeforeUnmount, onMounted, ref, watch } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { ElMessage, ElMessageBox } from 'element-plus'
-import { CircleCheck, CircleClose, DocumentChecked, Download, Files, FolderOpened, Refresh, Search, Timer, View, Warning } from '@element-plus/icons-vue'
+import { CircleCheck, CircleClose, DocumentChecked, Download, Files, FolderOpened, MoreFilled, Refresh, Search, Timer, View, Warning } from '@element-plus/icons-vue'
 import { EXPORT_PAGE } from '../config/teacherPages.config.js'
 import { useUserStore } from '../storage/user.js'
 import { cancelExportTask, createExportPreviewUrl, createExportTask, downloadExportArtifact, getExportArtifact, getExportQualityReport, getExportTask, getProject, listExportTasks, listProjects, listProjectVersions, precheckProjectExport, retryExportTask, saveProjectVersion } from '../apis/teacher'
@@ -48,6 +48,10 @@ const projectOptions = ref([])
 const versionOptions = ref([])
 const projectOptionsLoading = ref(false)
 const versionOptionsLoading = ref(false)
+
+const MOBILE_MEDIA_QUERY = '(max-width: 767.98px)'
+const isMobile = ref(window.matchMedia(MOBILE_MEDIA_QUERY).matches)
+const updateIsMobile = () => { isMobile.value = window.matchMedia(MOBILE_MEDIA_QUERY).matches }
 
 const flow = ref({
   status: 'idle',
@@ -612,6 +616,12 @@ const submitExport = async () => {
 }
 
 const handleCreateTask = () => openExportDialog()
+const handleTaskCommand = (command, row) => {
+  if (command === 'preview') openPreview(row)
+  else if (command === 'report') openQualityReport(row)
+  else if (command === 'cancel') cancel(row)
+  else if (command === 'retry') retry(row)
+}
 const handleActiveTaskDetail = () => {
   if (flowTask.value && autoExportFlowVisible.value) {
     flowDetailVisible.value = !flowDetailVisible.value
@@ -626,6 +636,7 @@ watch(projectId, async () => {
 })
 
 onMounted(async () => {
+  window.addEventListener('resize', updateIsMobile)
   if (autoExportRequested.value) {
     autoExportFlowVisible.value = true
     flowDetailVisible.value = true
@@ -665,7 +676,10 @@ onMounted(async () => {
     await runFullFlow(requestedExportType)
   }
 })
-onBeforeUnmount(() => clearTimeout(taskPollTimer))
+onBeforeUnmount(() => {
+  window.removeEventListener('resize', updateIsMobile)
+  clearTimeout(taskPollTimer)
+})
 </script>
 
 <template>
@@ -774,7 +788,7 @@ onBeforeUnmount(() => clearTimeout(taskPollTimer))
       </el-tabs>
 
       <div v-if="pageError" class="inline-error history-error" role="alert"><Warning /><span>{{ pageError }}</span><el-button text type="primary" @click="loadTasks">重试</el-button></div>
-      <el-table v-loading="loading" :data="filteredTasks" data-testid="export-task-list" class="task-table" row-key="id">
+      <el-table v-if="!isMobile" v-loading="loading" :data="filteredTasks" data-testid="export-task-list" class="task-table" row-key="id">
         <el-table-column label="文件与项目" min-width="300">
           <template #default="{ row }"><div class="project-cell"><strong :title="row.fileName">{{ row.fileName || row.project }}</strong><span :title="row.project">{{ row.project }} · {{ row.subject }} · {{ row.version }} · {{ row.time }}</span></div></template>
         </el-table-column>
@@ -795,10 +809,44 @@ onBeforeUnmount(() => clearTimeout(taskPollTimer))
           </template>
         </el-table-column>
       </el-table>
+      <div v-else v-loading="loading" data-testid="export-task-list" class="task-cards">
+        <article v-for="row in filteredTasks" :key="row.id" class="task-card">
+          <header class="task-card-top">
+            <div class="task-card-title">
+              <strong :title="row.fileName">{{ row.fileName || row.project }}</strong>
+              <span :title="row.project">{{ row.project }} · {{ row.version }} · {{ row.time }}</span>
+            </div>
+            <el-tag :type="statusTagType(row.status)" effect="plain">{{ row.status }}</el-tag>
+          </header>
+          <div class="task-card-meta">
+            <span class="format-label">{{ row.format }}</span>
+            <span class="quality-label">{{ row.quality }}</span>
+          </div>
+          <div class="task-card-progress">
+            <el-progress :percentage="row.progress" :status="row.apiStatus === 'failed' ? 'exception' : undefined" :show-text="false" />
+            <span>{{ row.progress }}%</span>
+          </div>
+          <footer class="task-card-actions">
+            <el-button text type="primary" @click="openTaskDetail(row)">详情</el-button>
+            <el-button text type="primary" :disabled="!canDownload(row)" @click="download(row)">下载</el-button>
+            <el-dropdown class="task-card-more" trigger="click" @command="(command) => handleTaskCommand(command, row)">
+              <el-button text type="primary" :icon="MoreFilled">更多</el-button>
+              <template #dropdown>
+                <el-dropdown-menu>
+                  <el-dropdown-item command="preview" :disabled="!canDownload(row)">在线预览</el-dropdown-item>
+                  <el-dropdown-item command="report" :disabled="!canDownload(row)">质量报告</el-dropdown-item>
+                  <el-dropdown-item v-if="isRunning(row)" command="cancel" divided>取消任务</el-dropdown-item>
+                  <el-dropdown-item v-else-if="row.apiStatus === 'failed'" command="retry" divided>重试任务</el-dropdown-item>
+                </el-dropdown-menu>
+              </template>
+            </el-dropdown>
+          </footer>
+        </article>
+      </div>
       <el-empty v-if="!loading && !pageError && filteredTasks.length === 0" :image-size="64" description="还没有符合条件的导出任务" />
     </section>
 
-    <el-dialog v-model="exportDialogVisible" title="创建导出任务" width="520px" class="export-dialog">
+    <el-dialog v-model="exportDialogVisible" title="创建导出任务" width="min(520px, 92vw)" align-center class="export-dialog">
       <el-form label-position="top">
         <el-form-item label="选择项目">
           <el-select v-model="exportForm.project_id" filterable :loading="projectOptionsLoading" placeholder="选择需要导出的教学项目" style="width: 100%" @change="handleProjectSelection">
@@ -829,17 +877,17 @@ onBeforeUnmount(() => clearTimeout(taskPollTimer))
       <template #footer><el-button @click="runPrecheck">运行预检</el-button><el-button type="primary" @click="submitExport">创建导出</el-button></template>
     </el-dialog>
 
-    <el-dialog v-model="taskDetailVisible" title="任务详情" width="520px" class="detail-dialog">
+    <el-dialog v-model="taskDetailVisible" title="任务详情" width="min(520px, 92vw)" align-center class="detail-dialog">
       <div class="detail-grid"><div><span>文件名</span><strong :title="taskDetailView.title">{{ taskDetailView.title }}</strong></div><div><span>项目</span><strong :title="taskDetailView.project">{{ taskDetailView.project }}</strong></div><div><span>状态</span><el-tag :type="statusTagType(taskDetailView.status)" effect="plain">{{ taskDetailView.status }}</el-tag></div><div><span>格式 / 版本</span><strong>{{ taskDetailView.format }} · {{ taskDetailView.version }}</strong></div><div><span>生成进度</span><strong>{{ taskDetailView.progress }}%</strong></div><div><span>任务创建</span><strong>{{ taskDetailView.createdAt }}</strong></div><div><span>任务完成</span><strong>{{ taskDetailView.completedAt }}</strong></div><div><span>项目 ID</span><strong>{{ taskDetailView.projectId }}</strong></div><div><span>数据来源</span><strong>{{ taskDetailView.source }}</strong></div></div><div class="detail-stage"><Timer /><span>{{ taskDetailView.stage }}</span></div>
       <template #footer><el-button @click="taskDetailVisible = false">关闭</el-button><el-button type="primary" :disabled="!canDownload(taskDetailRow)" @click="download(taskDetailRow)">下载成果</el-button></template>
     </el-dialog>
 
-    <el-dialog v-model="reportVisible" title="导出质量报告" width="620px" class="quality-dialog">
+    <el-dialog v-model="reportVisible" title="导出质量报告" width="min(620px, 92vw)" align-center class="quality-dialog">
       <div class="report-summary"><div><span>成果</span><strong>{{ qualityReportView.title }}</strong><small>{{ qualityReportView.marker }}</small></div><div class="report-score"><el-progress type="circle" :percentage="qualityReportView.score" :status="qualityScoreStatus" :width="72" /><el-tag :type="qualityTagType" effect="plain">{{ qualityReportView.conclusion }}</el-tag></div></div>
       <div class="report-items"><div v-for="item in qualityReportView.items" :key="item.name" class="report-item"><CircleCheck v-if="reportPassed(item.result)" /><CircleClose v-else /><div><strong>{{ item.name }}</strong><span>{{ item.detail || item.result }}</span></div><el-tag size="small" :type="reportPassed(item.result) ? 'success' : 'warning'" effect="plain">{{ item.result }}</el-tag></div><el-empty v-if="qualityReportView.items.length === 0" :image-size="48" description="服务端暂未返回检查明细" /></div>
     </el-dialog>
 
-    <el-dialog v-model="previewVisible" :title="`${taskDetailRow?.fileName || taskDetailRow?.project || '成果'} · 在线预览`" width="860px" class="preview-dialog" destroy-on-close>
+    <el-dialog v-model="previewVisible" :title="`${taskDetailRow?.fileName || taskDetailRow?.project || '成果'} · 在线预览`" width="min(860px, 94vw)" align-center class="preview-dialog" destroy-on-close>
       <iframe v-if="previewUrl" :src="previewUrl" title="导出成果预览" class="preview-frame" />
       <el-empty v-else description="没有可用的预览地址" />
     </el-dialog>
@@ -950,6 +998,20 @@ onBeforeUnmount(() => clearTimeout(taskPollTimer))
 .progress-cell span { text-align: right; font-family: var(--zh-font-number); }
 .table-actions { justify-content: flex-start; gap: 2px; }
 .table-actions :deep(.el-button) { padding: 5px 4px; font-size: 12px; }
+.task-cards { display: grid; gap: 10px; }
+.task-card { display: grid; gap: 10px; padding: 14px; border: 1px solid var(--zh-line-border); border-radius: var(--zh-radius12); background: var(--zh-background-capsule); }
+.task-card-top { display: flex; align-items: flex-start; justify-content: space-between; gap: 12px; }
+.task-card-title { display: grid; gap: 3px; min-width: 0; }
+.task-card-title strong { overflow: hidden; color: var(--zh-text-primary); font-size: 13px; font-weight: 600; text-overflow: ellipsis; white-space: nowrap; }
+.task-card-title span { overflow: hidden; color: var(--zh-text-caption); font-size: 11px; text-overflow: ellipsis; white-space: nowrap; }
+.task-card-meta { display: flex; flex-wrap: wrap; align-items: center; gap: 12px; }
+.task-card-progress { display: grid; grid-template-columns: minmax(0, 1fr) 40px; align-items: center; gap: 8px; }
+.task-card-progress :deep(.el-progress-bar__outer) { background: var(--zh-background-light-grey); }
+.task-card-progress span { text-align: right; color: var(--zh-text-caption); font-family: var(--zh-font-number); font-size: 11px; }
+.task-card-actions { display: flex; align-items: center; gap: 2px; padding-top: 10px; border-top: 1px solid var(--zh-line-parting); }
+.task-card-actions :deep(.el-button) { padding: 5px 8px; font-size: 12px; }
+.task-card-actions .el-button + .el-button { margin-left: 0; }
+.task-card-more { margin-left: auto; }
 .history-section > :deep(.el-empty) { padding: 42px 0; border: 1px dashed var(--zh-line-heavier); border-top: 0; border-radius: 0 0 var(--zh-radius12) var(--zh-radius12); }
 .form-field-hint { display: block; margin-top: 7px; color: var(--zh-text-caption); font-size: 11px; line-height: 1.5; }
 .project-select-option, .version-select-option { display: flex; min-width: 0; align-items: center; justify-content: space-between; gap: 20px; }
@@ -981,13 +1043,15 @@ onBeforeUnmount(() => clearTimeout(taskPollTimer))
 .export-page :deep(.el-button) { transition: background 200ms cubic-bezier(.4, 0, .2, 1), border-color 200ms ease, color 200ms ease, transform 150ms ease; }
 .export-page :deep(.el-button:active) { transform: scale(.98); }
 
-@media (max-width: 960px) {
+@media (max-width: 1023.98px) {
+  .export-stats { grid-template-columns: repeat(2, 1fr); }
   .flow-steps { grid-template-columns: repeat(3, 1fr); }
   .active-task { grid-template-columns: auto 1fr; }
   .active-task-progress { grid-column: 2; }
   .active-task > .el-button { grid-column: 2; justify-self: start; }
+  .task-table { overflow-x: auto; }
 }
-@media (max-width: 680px) {
+@media (max-width: 767.98px) {
   .export-page { width: min(100% - 28px, 1220px); padding-top: 26px; }
   .export-heading, .flow-console-header, .history-header, .quality-card-heading { align-items: stretch; flex-direction: column; }
   .heading-actions, .history-controls { justify-content: space-between; }
@@ -1005,6 +1069,6 @@ onBeforeUnmount(() => clearTimeout(taskPollTimer))
   .flow-task-actions { align-items: stretch; flex-wrap: wrap; justify-content: flex-start; }
   .flow-delivery-strip { align-items: stretch; flex-direction: column; }
   .detail-grid { grid-template-columns: 1fr; }
-  .task-table { overflow-x: auto; }
+  .preview-frame { height: calc(100dvh - 140px); }
 }
 </style>

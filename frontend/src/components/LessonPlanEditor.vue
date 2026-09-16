@@ -1,7 +1,7 @@
 <script setup>
-import { computed, onBeforeUnmount, ref, watch } from 'vue'
+import { computed, onBeforeUnmount, onMounted, ref, watch } from 'vue'
 import { ElMessage } from 'element-plus'
-import { Delete, Plus, Refresh } from '@element-plus/icons-vue'
+import { Delete, Edit, Plus, Refresh } from '@element-plus/icons-vue'
 import { exportLessonPlanDocx, generateLessonPlan } from '../apis/teacher'
 
 const props = defineProps({
@@ -14,6 +14,11 @@ const props = defineProps({
 })
 
 const emit = defineEmits(['save', 'autosave'])
+
+// 手机档（<768px）切换教学过程行为卡片堆叠；与全局断点 767.98px 对齐。
+const isMobile = ref(false)
+let mobileMediaQuery = null
+const handleMobileMediaChange = (event) => { isMobile.value = event.matches }
 
 const loading = ref(false)
 const exporting = ref(false)
@@ -251,7 +256,20 @@ const addProcessStep = () => {
     content: '',
   })
 }
-const removeProcessStep = (index) => lessonPlan.value?.lesson_process.splice(index, 1)
+// 手机档卡片默认收起详情，「编辑详情」展开；删除后同步平移已展开的步骤标记。
+const expandedProcessSteps = ref([])
+const isProcessStepExpanded = (index) => expandedProcessSteps.value.includes(index)
+const toggleProcessStep = (index) => {
+  const position = expandedProcessSteps.value.indexOf(index)
+  if (position >= 0) expandedProcessSteps.value.splice(position, 1)
+  else expandedProcessSteps.value.push(index)
+}
+const removeProcessStep = (index) => {
+  lessonPlan.value?.lesson_process.splice(index, 1)
+  expandedProcessSteps.value = expandedProcessSteps.value
+    .filter((item) => item !== index)
+    .map((item) => (item > index ? item - 1 : item))
+}
 const addActivity = () => {
   if (!lessonPlan.value) return
   lessonPlan.value.classroom_activities.push({ name: '新课堂活动', duration: 10, description: '' })
@@ -330,7 +348,15 @@ watch(lessonPlan, (value) => {
   }, 800)
 }, { deep: true })
 
-onBeforeUnmount(() => clearTimeout(autosaveTimer))
+onMounted(() => {
+  mobileMediaQuery = window.matchMedia('(max-width: 767.98px)')
+  isMobile.value = mobileMediaQuery.matches
+  mobileMediaQuery.addEventListener('change', handleMobileMediaChange)
+})
+onBeforeUnmount(() => {
+  mobileMediaQuery?.removeEventListener('change', handleMobileMediaChange)
+  clearTimeout(autosaveTimer)
+})
 
 defineExpose({
   getLessonPlan: () => hasGeneratedPlan.value && lessonPlan.value ? deepClone(lessonPlan.value) : null,
@@ -385,18 +411,37 @@ defineExpose({
       <section class="lesson-plan-section">
         <div class="lesson-plan-section-heading"><strong>教学过程</strong><el-button text size="small" :icon="Plus" @click="addProcessStep">添加环节</el-button></div>
         <div class="lesson-plan-process-list">
-          <article v-for="(step, index) in lessonPlan.lesson_process" :key="`step-${index}`" class="lesson-plan-process-row">
-            <span class="lesson-plan-index">{{ String(index + 1).padStart(2, '0') }}</span>
-            <el-input v-model="step.stage" placeholder="环节名称" />
-            <el-input-number v-model="step.duration_minutes" :min="1" :max="120" controls-position="right" />
-            <div class="lesson-plan-process-details">
-              <label><span>教师活动</span><el-input v-model="step.teacher_activity" type="textarea" :rows="2" placeholder="教师讲解、提问、示范或组织方式" /></label>
-              <label><span>学生活动</span><el-input v-model="step.student_activity" type="textarea" :rows="2" placeholder="学生观察、讨论、操作或产出" /></label>
-              <label><span>设计意图</span><el-input v-model="step.design_intent" placeholder="本环节要达成的学习目标" /></label>
-              <label><span>PPT 对应</span><el-input v-model="step.ppt_reference" placeholder="例如：第 2—3 页" /></label>
-            </div>
-            <el-button text type="danger" :icon="Delete" aria-label="删除教学环节" @click="removeProcessStep(index)" />
-          </article>
+          <template v-for="(step, index) in lessonPlan.lesson_process" :key="`step-${index}`">
+            <article v-if="!isMobile" class="lesson-plan-process-row">
+              <span class="lesson-plan-index">{{ String(index + 1).padStart(2, '0') }}</span>
+              <el-input v-model="step.stage" placeholder="环节名称" />
+              <el-input-number v-model="step.duration_minutes" :min="1" :max="120" controls-position="right" />
+              <div class="lesson-plan-process-details">
+                <label><span>教师活动</span><el-input v-model="step.teacher_activity" type="textarea" :rows="2" placeholder="教师讲解、提问、示范或组织方式" /></label>
+                <label><span>学生活动</span><el-input v-model="step.student_activity" type="textarea" :rows="2" placeholder="学生观察、讨论、操作或产出" /></label>
+                <label><span>设计意图</span><el-input v-model="step.design_intent" placeholder="本环节要达成的学习目标" /></label>
+                <label><span>PPT 对应</span><el-input v-model="step.ppt_reference" placeholder="例如：第 2—3 页" /></label>
+              </div>
+              <el-button text type="danger" :icon="Delete" aria-label="删除教学环节" @click="removeProcessStep(index)" />
+            </article>
+            <article v-else class="lesson-plan-process-card">
+              <header class="lesson-plan-process-card-head">
+                <span class="lesson-plan-index">{{ String(index + 1).padStart(2, '0') }}</span>
+                <el-input v-model="step.stage" placeholder="环节名称" />
+              </header>
+              <label>时长（分钟）<el-input-number v-model="step.duration_minutes" :min="1" :max="120" controls-position="right" /></label>
+              <div v-show="isProcessStepExpanded(index)" class="lesson-plan-process-details">
+                <label><span>教师活动</span><el-input v-model="step.teacher_activity" type="textarea" :rows="2" placeholder="教师讲解、提问、示范或组织方式" /></label>
+                <label><span>学生活动</span><el-input v-model="step.student_activity" type="textarea" :rows="2" placeholder="学生观察、讨论、操作或产出" /></label>
+                <label><span>设计意图</span><el-input v-model="step.design_intent" placeholder="本环节要达成的学习目标" /></label>
+                <label><span>PPT 对应</span><el-input v-model="step.ppt_reference" placeholder="例如：第 2—3 页" /></label>
+              </div>
+              <div class="lesson-plan-process-card-actions">
+                <el-button text :icon="Edit" :aria-expanded="isProcessStepExpanded(index)" @click="toggleProcessStep(index)">{{ isProcessStepExpanded(index) ? '收起详情' : '编辑详情' }}</el-button>
+                <el-button text type="danger" :icon="Delete" aria-label="删除教学环节" @click="removeProcessStep(index)">删除</el-button>
+              </div>
+            </article>
+          </template>
         </div>
         <el-empty v-if="!lessonPlan.lesson_process.length" :image-size="40" description="暂无教学环节" />
       </section>
@@ -454,7 +499,10 @@ defineExpose({
 .lesson-plan-process-row :deep(.el-button), .lesson-plan-inline-fields :deep(.el-button) { width: 28px; margin: 0; }
 .lesson-plan-activity-list article { display: grid; gap: 7px; padding: 10px; border-radius: 8px; background: var(--zh-background-light); }
 .lesson-plan-inline-fields { display: grid; grid-template-columns: minmax(0, 1fr) 92px 28px; align-items: center; gap: 7px; }
-@media (max-width: 860px) { .lesson-plan-editor-toolbar { align-items: flex-start; flex-direction: column; } .lesson-plan-editor-actions { justify-content: flex-start; } }
-@media (max-width: 760px) { .lesson-plan-field-grid, .lesson-plan-two-columns, .lesson-plan-process-details { grid-template-columns: 1fr 1fr; } .lesson-plan-process-row { grid-template-columns: 28px 1fr 82px 28px; } .lesson-plan-process-details { grid-column: 2 / -1; } .lesson-plan-process-row > :is(.lesson-plan-index, .el-input, .el-input-number, .el-button) { margin-top: 0; } }
-@media (max-width: 520px) { .lesson-plan-editor-toolbar, .lesson-plan-request, .lesson-plan-section { padding: 14px; } .lesson-plan-editor-actions { width: 100%; } .lesson-plan-page-count { margin-right: auto; } .lesson-plan-request-heading { align-items: flex-start; flex-direction: column; gap: 4px; } .lesson-plan-process-details { grid-template-columns: 1fr; } }
+.lesson-plan-process-card { display: grid; gap: 8px; padding: 12px; border-radius: 8px; background: var(--zh-background-light); }
+.lesson-plan-process-card-head { display: grid; grid-template-columns: 28px minmax(0, 1fr); align-items: center; gap: 8px; }
+.lesson-plan-process-card-actions { display: flex; justify-content: flex-end; gap: 8px; padding-top: 8px; border-top: 1px solid var(--zh-line-parting); }
+.lesson-plan-process-card-actions :deep(.el-button) { min-width: 44px; min-height: 44px; margin: 0; }
+@media (max-width: 1023.98px) { .lesson-plan-editor-toolbar { align-items: flex-start; flex-direction: column; } .lesson-plan-editor-actions { justify-content: flex-start; } .lesson-plan-field-grid, .lesson-plan-two-columns, .lesson-plan-process-details { grid-template-columns: 1fr 1fr; } .lesson-plan-process-row { grid-template-columns: 28px 1fr 82px 28px; } .lesson-plan-process-details { grid-column: 2 / -1; } .lesson-plan-process-row > :is(.lesson-plan-index, .el-input, .el-input-number, .el-button) { margin-top: 0; } }
+@media (max-width: 767.98px) { .lesson-plan-editor-toolbar, .lesson-plan-request, .lesson-plan-section { padding: 14px; } .lesson-plan-editor-actions { width: 100%; } .lesson-plan-page-count { margin-right: auto; } .lesson-plan-request-heading { align-items: flex-start; flex-direction: column; gap: 4px; } .lesson-plan-field-grid, .lesson-plan-two-columns, .lesson-plan-process-details { grid-template-columns: 1fr; } .lesson-plan-process-details { grid-column: auto; } .lesson-plan-inline-fields { grid-template-columns: minmax(0, 1fr) 92px 44px; } .lesson-plan-inline-fields :deep(.el-button) { width: 44px; min-height: 44px; } }
 </style>

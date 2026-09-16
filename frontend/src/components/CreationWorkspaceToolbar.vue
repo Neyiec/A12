@@ -329,7 +329,7 @@ const toggleCompactTools = () => { compactToolsOpen.value = !compactToolsOpen.va
 
 :global(.workspace-mobile-action) { display: none; }
 
-@media (max-width: 820px) {
+@media (max-width: 767.98px) {
   :global(.workspace-mobile-action) { display: flex; }
   .toolbar {
     grid-template-columns: minmax(0, 1fr) auto;
@@ -371,18 +371,18 @@ const toggleCompactTools = () => { compactToolsOpen.value = !compactToolsOpen.va
 }
 
 /* Compact project actions without shifting the centered editing row. */
-@media (min-width: 821px) and (max-width: 1100px) {
+@media (min-width: 768px) and (max-width: 1023.98px) {
   .toolbar-actions { gap: 4px; }
   .toolbar-actions :deep(.el-button) { padding-inline: 8px; }
   .project-title strong, .project-title span { max-width: 26vw; }
 }
 .workspace-more { display: none; flex: none; }
 
-@media (max-width: 820px) { .workspace-more { display: inline-flex; } }
+@media (max-width: 767.98px) { .workspace-more { display: inline-flex; } }
 .toolbar-actions > .el-button + .el-button { margin-left: 0; }
 .toolbar-actions > .el-button, .toolbar-actions > .el-dropdown { flex-shrink: 0; }
 .project-title strong { max-width: 40vw; }
-@media (max-width: 520px) {
+@media (max-width: 767.98px) {
   .mobile-panel-trigger { padding-inline: 7px; }
   .mobile-panel-trigger :deep(.el-icon) { margin-right: 0; }
   .project-title strong { max-width: 35vw; }

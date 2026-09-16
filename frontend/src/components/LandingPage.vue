@@ -2,7 +2,7 @@
 import { ref } from 'vue'
 import { useRouter } from 'vue-router'
 import { ElMessage } from 'element-plus'
-import { ArrowRight, ChatDotRound, Check, Download, EditPen, Files, MagicStick } from '@element-plus/icons-vue'
+import { ArrowRight, ChatDotRound, Check, Download, EditPen, Files, MagicStick, Menu } from '@element-plus/icons-vue'
 import { getCurrentUser } from '../apis/login.js'
 import { useUserStore } from '../storage/user.js'
 import { isSessionExpired } from '../utils/JWTParser.js'
@@ -10,6 +10,15 @@ import { isSessionExpired } from '../utils/JWTParser.js'
 const router = useRouter()
 const userStore = useUserStore()
 const entering = ref(false)
+
+/** 移动端锚点菜单：平滑滚动到对应区块 */
+const scrollToSection = (command) => {
+  const target = document.querySelector(command)
+  if (target) {
+    target.scrollIntoView({ behavior: 'smooth', block: 'start' })
+  }
+}
+
 
 /** 先确认 12 小时本地会话，再由后端确认令牌没有被异地登录替换。 */
 const enterProgram = async () => {
@@ -53,6 +62,24 @@ const enterProgram = async () => {
         <a href="#workflow">使用流程</a>
         <a href="#results">教学成果</a>
       </nav>
+
+      <!-- 移动端/平板锚点导航（<1024px 显示，替代被隐藏的 site-nav） -->
+      <el-dropdown
+        class="site-nav-mobile"
+        trigger="click"
+        @command="scrollToSection"
+      >
+        <button class="header-action site-nav-mobile-trigger" type="button" aria-label="打开导航菜单">
+          <el-icon><Menu /></el-icon>
+        </button>
+        <template #dropdown>
+          <el-dropdown-menu>
+            <el-dropdown-item command="#features">核心能力</el-dropdown-item>
+            <el-dropdown-item command="#workflow">使用流程</el-dropdown-item>
+            <el-dropdown-item command="#results">教学成果</el-dropdown-item>
+          </el-dropdown-menu>
+        </template>
+      </el-dropdown>
 
       <button class="header-action" type="button" :disabled="entering" @click="enterProgram">
         {{ entering ? '正在进入' : '进入程序' }}
@@ -656,9 +683,23 @@ h1 span {
 .site-footer p { margin: 0; }
 .site-footer > span { justify-self: end; }
 
-@media (max-width: 980px) {
+/* 移动端锚点菜单触发按钮：默认隐藏，<1024px 显示 */
+.site-nav-mobile { display: none; }
+
+@media (max-width: 1023.98px) {
   .site-header { grid-template-columns: 1fr auto; }
   .site-nav { display: none; }
+  .site-nav-mobile {
+    display: inline-flex;
+    justify-self: end;
+    margin-right: 10px;
+  }
+  .site-nav-mobile-trigger {
+    min-width: 44px;
+    min-height: 44px;
+    padding: 0;
+    justify-content: center;
+  }
   .hero-section { grid-template-columns: 1fr; padding-top: 72px; }
   .hero-copy { max-width: 720px; text-align: center; margin: 0 auto; }
   .hero-description { margin-right: auto; margin-left: auto; }
@@ -670,7 +711,7 @@ h1 span {
   .result-types { justify-content: flex-start; }
 }
 
-@media (max-width: 620px) {
+@media (max-width: 767.98px) {
   .site-header, .hero-section { width: min(100% - 32px, 1180px); }
   .site-header { min-height: 70px; }
   .header-action { min-height: 40px; padding: 0 15px; }

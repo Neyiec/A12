@@ -431,18 +431,34 @@ const submitInitialPasswordChange = async () => {
 }
 // ========== 生命周期 ==========
 
-/** 组件卸载前清理倒计时定时器，防止内存泄漏 */
+/** 手机视口（<768px）检测 — el-steps 手机档自动切换 simple 模式 */
+const isMobileViewport = ref(false)
+let stepsMediaQuery = null
+const handleStepsMediaChange = (e) => {
+  isMobileViewport.value = e.matches
+}
+if (typeof window !== 'undefined' && typeof window.matchMedia === 'function') {
+  stepsMediaQuery = window.matchMedia('(max-width: 767.98px)')
+  isMobileViewport.value = stepsMediaQuery.matches
+  stepsMediaQuery.addEventListener('change', handleStepsMediaChange)
+}
+
+/** 组件卸载前清理倒计时定时器与视口监听，防止内存泄漏 */
 onBeforeUnmount(() => {
   if (cooldownTimer) {
     clearInterval(cooldownTimer)
     cooldownTimer = null
+  }
+  if (stepsMediaQuery) {
+    stepsMediaQuery.removeEventListener('change', handleStepsMediaChange)
+    stepsMediaQuery = null
   }
 })
 </script>
 
 <template>
   <!-- 全屏容器：左右分栏 -->
-  <div class="flex h-screen overflow-hidden bg-(--zh-background-primary)">
+  <div class="flex min-h-dvh overflow-y-auto overflow-x-hidden bg-(--zh-background-primary)">
 
     <!-- ========== 左侧：品牌展示区 (lg:w-8/12) ========== -->
     <aside class="hidden lg:flex lg:w-8/12 relative overflow-hidden">
@@ -591,7 +607,7 @@ onBeforeUnmount(() => {
               @keyup.enter="currentStep < 2 ? handleNext() : handleRegister()"
             >
               <!-- 步骤指示器 — 已完成步骤可点击回退 -->
-              <el-steps :active="currentStep" align-center class="mb-8">
+              <el-steps :active="currentStep" align-center :simple="isMobileViewport" class="mb-8">
                 <el-step
                   v-for="(title, i) in LOGIN_TEXT.steps.titles"
                   :key="i"
@@ -642,7 +658,7 @@ onBeforeUnmount(() => {
                 <div v-else-if="currentStep === 1" key="step2">
                   <!-- 邮箱 + 发送验证码按钮（同一行） -->
                   <el-form-item :label="LOGIN_TEXT.label.email" prop="email">
-                    <div class="flex gap-2">
+                    <div class="flex gap-2 max-md:flex-col">
                       <el-input
                         v-model="registerForm.email"
                         :placeholder="LOGIN_TEXT.placeholder.email"
@@ -653,7 +669,7 @@ onBeforeUnmount(() => {
                       />
                       <el-button
                         size="large"
-                        class="min-w-[128px] send-code-btn"
+                        class="min-w-[128px] send-code-btn max-md:w-full max-md:min-w-0"
                         :disabled="sendCodeCooldown > 0"
                         :loading="sendCodeLoading"
                         @click="handleSendCode"
@@ -711,12 +727,12 @@ onBeforeUnmount(() => {
               </Transition>
 
               <!-- 步骤导航按钮 -->
-              <div class="flex justify-between mt-4">
+              <div class="flex justify-between gap-3 mt-4">
                 <el-button
                   v-if="currentStep > 0"
                   size="large"
                   round
-                  class="w-[120px]"
+                  class="w-[120px] max-md:w-auto max-md:flex-1"
                   @click="handlePrev"
                 >
                   {{ LOGIN_TEXT.steps.prev }}
@@ -728,7 +744,7 @@ onBeforeUnmount(() => {
                   type="primary"
                   size="large"
                   round
-                  class="w-[120px]"
+                  class="w-[120px] max-md:w-auto max-md:flex-1"
                   @click="handleNext"
                 >
                   {{ LOGIN_TEXT.steps.next }}
@@ -738,7 +754,7 @@ onBeforeUnmount(() => {
                   type="primary"
                   size="large"
                   round
-                  class="w-[120px]"
+                  class="w-[120px] max-md:w-auto max-md:flex-1"
                   :loading="registerLoading"
                   @click="handleRegister"
                 >
@@ -763,18 +779,18 @@ onBeforeUnmount(() => {
       </div>
     </main>
 
-    <el-dialog v-model="resetVisible" title="重置密码" width="420px" :close-on-click-modal="false">
+    <el-dialog v-model="resetVisible" title="重置密码" width="min(420px, 92vw)" align-center :close-on-click-modal="false">
       <p class="reset-tip">验证码将发送至该账号绑定的邮箱。</p>
       <el-form label-position="top" @submit.prevent="submitReset">
-        <el-form-item label="登录账号"><el-input v-model="resetForm.username" :prefix-icon="User" autocomplete="username" /></el-form-item>
-        <el-form-item label="邮箱验证码"><div class="code-row"><el-input v-model="resetForm.code" :prefix-icon="Key" maxlength="6" /><el-button :loading="resetCodeLoading" @click="sendResetCode">发送验证码</el-button></div></el-form-item>
-        <el-form-item label="新密码"><el-input v-model="resetForm.new_password" :prefix-icon="Lock" type="password" show-password autocomplete="new-password" /></el-form-item>
-        <el-form-item label="确认新密码"><el-input v-model="resetForm.confirmPassword" :prefix-icon="Lock" type="password" show-password autocomplete="new-password" @keyup.enter="submitReset" /></el-form-item>
+        <el-form-item label="登录账号"><el-input v-model="resetForm.username" :prefix-icon="User" size="large" autocomplete="username" /></el-form-item>
+        <el-form-item label="邮箱验证码"><div class="code-row"><el-input v-model="resetForm.code" :prefix-icon="Key" size="large" maxlength="6" /><el-button size="large" class="send-code-btn" :loading="resetCodeLoading" @click="sendResetCode">发送验证码</el-button></div></el-form-item>
+        <el-form-item label="新密码"><el-input v-model="resetForm.new_password" :prefix-icon="Lock" size="large" type="password" show-password autocomplete="new-password" /></el-form-item>
+        <el-form-item label="确认新密码"><el-input v-model="resetForm.confirmPassword" :prefix-icon="Lock" size="large" type="password" show-password autocomplete="new-password" @keyup.enter="submitReset" /></el-form-item>
       </el-form>
       <template #footer><el-button @click="resetVisible = false">取消</el-button><el-button type="primary" :loading="resetLoading" @click="submitReset">确认重置</el-button></template>
     </el-dialog>
   </div>
-    <el-dialog v-model="initialPasswordVisible" title="首次登录，请修改初始密码" width="420px" :close-on-click-modal="false" :close-on-press-escape="false" :show-close="false"><el-form label-position="top"><el-form-item label="登录账号"><el-input v-model="initialPasswordForm.username" disabled /></el-form-item><el-form-item label="初始密码"><el-input v-model="initialPasswordForm.initial_password" type="password" show-password /></el-form-item><el-form-item label="新密码"><el-input v-model="initialPasswordForm.new_password" type="password" show-password /></el-form-item><el-form-item label="确认新密码"><el-input v-model="initialPasswordForm.confirmPassword" type="password" show-password @keyup.enter="submitInitialPasswordChange" /></el-form-item></el-form><template #footer><el-button type="primary" :loading="initialPasswordLoading" @click="submitInitialPasswordChange">确认修改</el-button></template></el-dialog>
+    <el-dialog v-model="initialPasswordVisible" title="首次登录，请修改初始密码" width="min(420px, 92vw)" align-center :close-on-click-modal="false" :close-on-press-escape="false" :show-close="false"><el-form label-position="top"><el-form-item label="登录账号"><el-input v-model="initialPasswordForm.username" size="large" disabled /></el-form-item><el-form-item label="初始密码"><el-input v-model="initialPasswordForm.initial_password" size="large" type="password" show-password /></el-form-item><el-form-item label="新密码"><el-input v-model="initialPasswordForm.new_password" size="large" type="password" show-password /></el-form-item><el-form-item label="确认新密码"><el-input v-model="initialPasswordForm.confirmPassword" size="large" type="password" show-password @keyup.enter="submitInitialPasswordChange" /></el-form-item></el-form><template #footer><el-button type="primary" :loading="initialPasswordLoading" @click="submitInitialPasswordChange">确认修改</el-button></template></el-dialog>
 </template>
 
 <style scoped>
@@ -790,7 +806,7 @@ onBeforeUnmount(() => {
   object-fit: contain;
 }
 
-@media (max-width: 1023px) {
+@media (max-width: 1023.98px) {
   .login-brand-logo-wrap { margin: -16px 0 -12px; }
   .login-brand-logo { width: 170px; }
 }
