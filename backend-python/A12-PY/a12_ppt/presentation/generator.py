@@ -121,8 +121,12 @@ class PPTGenerator:
 RAG 资料：
 {rag_context[:12000]}
 
-JSON 字段：title, summary, slides。
-slides 每项字段：slide_no, title, slide_type, content_points(list), teaching_intent, visual_suggestion。
+JSON 字段：title, summary, teaching_design_chain, slides。
+slides 每项字段：slide_no, title, slide_type, content_points(list), teaching_intent, visual_suggestion,
+engagement_hook, student_task, teacher_prompt, understanding_check, estimated_minutes,
+learning_phase, learning_theories(list), student_action_mode, learner_question, cognitive_load,
+scaffolding, feedback_strategy。
+修订后仍须保持“问题与关联→预测前测→分段新知→分步样例→学生尝试→即时反馈→提取与迁移”的学习路径。
 """.strip()
         try:
             raw = await self.llm.complete("你是资深教学设计专家，只输出可解析 JSON。", prompt, 0.35)
@@ -181,6 +185,13 @@ slides 每项字段：slide_no, title, slide_type, content_points(list), teachin
                         "quality_pipeline": self.llm.available and self.settings.enable_quality_pipeline,
                         "quality_preset": self.settings.quality_preset,
                         "interactive_assets": slide.get("interactive_assets", []),
+                        "learning_phase": slide.get("learning_phase"),
+                        "learning_theories": slide.get("learning_theories", []),
+                        "student_action_mode": slide.get("student_action_mode"),
+                        "learner_question": slide.get("learner_question"),
+                        "cognitive_load": slide.get("cognitive_load"),
+                        "scaffolding": slide.get("scaffolding"),
+                        "feedback_strategy": slide.get("feedback_strategy"),
                     },
                 }
 
@@ -705,11 +716,14 @@ JSON 格式:
 
 顶层必须包含 title、summary、teaching_design_chain、slides、interactive_assets、diagram_assets。
 teaching_design_chain 必须包含 teaching_goals、learner_analysis、key_points、difficult_points、
-teaching_sequence、activity_design、assessment_design、differentiated_support、engagement_strategy、homework。
+teaching_sequence、activity_design、assessment_design、differentiated_support、engagement_strategy、
+learning_science_strategy、homework。
 
 slides 约 {slide_count} 页，必须覆盖封面、学习路径、内容讲解、活动或练习、总结与出口检测。
 每页必须包含 slide_no、title、slide_type、content_points(list)、teaching_intent、visual_suggestion、
 engagement_hook、student_task、teacher_prompt、understanding_check、estimated_minutes、
+learning_phase、learning_theories(list)、student_action_mode、learner_question、cognitive_load、
+scaffolding、feedback_strategy、
 interactive_asset_ids(list)、external_resource_notes。
 
 课堂编排规则：
@@ -719,6 +733,11 @@ interactive_asset_ids(list)、external_resource_notes。
 4. understanding_check 必须能让教师当场判断是否理解，并给出继续讲解或补救的依据。
 5. 同时提供基础支架与进阶挑战，优先使用与年级、学情和额外需求匹配的案例。
 6. 末页包含知识回忆、迁移问题和出口条，避免只有结论罗列。
+7. 按“问题→关联→预测→新知→样例→学生尝试→反馈→提取与迁移”组织认知过程，不能照搬教材目录。
+8. 使用 BOPPPS 串联 learning_phase；使用 ARCS 说明动机设计；使用 ICAP 标注学生参与层级。
+9. 每页只承担一个核心认知任务，content_points 建议不超过 3 项；复杂内容分段呈现并使用视觉信号。
+10. 初学内容至少安排一页 worked_example/example，展示步骤及理由；随后安排撤去支架的变式练习。
+11. 学生作答后必须有即时 feedback_strategy；总结页使用不看答案的提取练习，而不是“谢谢观看”。
 
 interactive_assets 每项包含 asset_id、title、type(animation|game|simulation)、target_slide_no、
 preferred_format(html5|gif|mp4)、integration(ppt_video|static_link)、description。
@@ -977,6 +996,7 @@ preferred_format(html5|gif|mp4)、integration(ppt_video|static_link)、descripti
             "assessment_design": self._as_list(chain.get("assessment_design")) or fallback["assessment_design"],
             "differentiated_support": self._as_list(chain.get("differentiated_support")) or fallback["differentiated_support"],
             "engagement_strategy": self._as_list(chain.get("engagement_strategy")) or fallback["engagement_strategy"],
+            "learning_science_strategy": self._normalize_learning_science_strategy(chain.get("learning_science_strategy"), fallback["learning_science_strategy"]),
             "homework": self._as_list(chain.get("homework")) or fallback["homework"],
         }
         outline["teaching_design_chain"] = normalized
@@ -1017,6 +1037,14 @@ preferred_format(html5|gif|mp4)、integration(ppt_video|static_link)、descripti
                 "每 6 至 8 分钟切换一次学习行为，减少连续被动听讲。",
                 "让学生先作答或产出，再由教师讲解和纠偏。",
             ],
+            "learning_science_strategy": {
+                "arcs": ["用真实问题吸引注意", "连接学生经验与真实用途", "从低门槛任务建立信心", "用即时反馈形成满足感"],
+                "boppps": ["导入", "目标", "前测", "参与式学习", "后测", "总结"],
+                "icap": ["减少连续被动接收", "安排主动操作", "要求学生生成解释", "组织同伴讨论与共同建构"],
+                "cognitive_load": ["一页一个核心认知任务", "复杂过程分段呈现", "删除与教学目标无关的装饰信息"],
+                "worked_example": ["先提供带理由的分步样例", "再逐步撤去提示并安排变式练习"],
+                "retrieval_practice": ["每 5 至 10 分钟安排短回忆", "课末通过出口条检查保持与迁移"],
+            },
             "homework": [
                 f"复习《{req.title}》的核心概念。",
                 "完成一道应用题或一项课后反思任务。",
@@ -1076,6 +1104,16 @@ preferred_format(html5|gif|mp4)、integration(ppt_video|static_link)、descripti
             item["student_task"] = str(item.get("student_task") or defaults["student_task"])
             item["teacher_prompt"] = str(item.get("teacher_prompt") or defaults["teacher_prompt"])
             item["understanding_check"] = str(item.get("understanding_check") or defaults["understanding_check"])
+            learning_defaults = self._learning_science_defaults(item["slide_type"], index, min(len(slides), slide_count), req)
+            item["learning_phase"] = str(item.get("learning_phase") or learning_defaults["learning_phase"])
+            item["learning_theories"] = self._as_list(item.get("learning_theories")) or learning_defaults["learning_theories"]
+            action_mode = str(item.get("student_action_mode") or learning_defaults["student_action_mode"]).lower()
+            item["student_action_mode"] = action_mode if action_mode in {"passive", "active", "constructive", "interactive"} else learning_defaults["student_action_mode"]
+            item["learner_question"] = str(item.get("learner_question") or learning_defaults["learner_question"])
+            cognitive_load = str(item.get("cognitive_load") or learning_defaults["cognitive_load"]).lower()
+            item["cognitive_load"] = cognitive_load if cognitive_load in {"low", "medium", "high"} else learning_defaults["cognitive_load"]
+            item["scaffolding"] = str(item.get("scaffolding") or learning_defaults["scaffolding"])
+            item["feedback_strategy"] = str(item.get("feedback_strategy") or learning_defaults["feedback_strategy"])
             try:
                 item["estimated_minutes"] = max(1, int(item.get("estimated_minutes") or defaults["estimated_minutes"]))
             except (TypeError, ValueError):
@@ -1083,6 +1121,17 @@ preferred_format(html5|gif|mp4)、integration(ppt_video|static_link)、descripti
             item["interactive_asset_ids"] = list(item.get("interactive_asset_ids") or [])
             item["external_resource_notes"] = str(item.get("external_resource_notes") or "")
             normalized.append(item)
+        if len(normalized) >= 7 and not any(item.get("learning_phase") == "worked_example" for item in normalized):
+            candidates = [
+                item for item in normalized[3:-2]
+                if item.get("slide_type") not in {"activity", "practice", "quiz", "discussion"}
+            ]
+            if candidates:
+                item = candidates[len(candidates) // 2]
+                item["slide_type"] = "worked_example"
+                defaults = self._learning_science_defaults("worked_example", int(item["slide_no"]), len(normalized), req)
+                for key in ["learning_phase", "learning_theories", "student_action_mode", "learner_question", "cognitive_load", "scaffolding", "feedback_strategy"]:
+                    item[key] = defaults[key]
         outline["slides"] = normalized
         outline["quality_report"] = self._outline_quality_report(outline, req, slide_count)
         return outline
@@ -1096,7 +1145,7 @@ preferred_format(html5|gif|mp4)、integration(ppt_video|static_link)、descripti
         checks = {
             "has_teaching_design_chain": isinstance(outline.get("teaching_design_chain"), dict),
             "has_cover": "cover" in slide_types,
-            "has_agenda": bool(slide_types & {"agenda", "toc", "directory"}),
+            "has_agenda": expected_count < 4 or bool(slide_types & {"agenda", "toc", "directory"}),
             "has_summary": "summary" in slide_types,
             "slide_count_close": abs(len(slides) - expected_count) <= 1,
             "all_slides_have_teaching_intent": all(bool(slide.get("teaching_intent")) for slide in slides if isinstance(slide, dict)),
@@ -1104,7 +1153,13 @@ preferred_format(html5|gif|mp4)、integration(ppt_video|static_link)、descripti
             "all_slides_have_student_task": all(bool(slide.get("student_task")) for slide in slides if isinstance(slide, dict)),
             "all_slides_have_understanding_check": all(bool(slide.get("understanding_check")) for slide in slides if isinstance(slide, dict)),
             "has_opening_engagement_hook": bool(slides and slides[0].get("engagement_hook")),
-            "has_activity_or_practice": bool(slide_types & {"activity", "practice", "quiz", "discussion"}),
+            "has_activity_or_practice": expected_count < 5 or bool(slide_types & {"activity", "practice", "quiz", "discussion"}),
+            "has_pre_assessment": expected_count < 6 or any(str(slide.get("learning_phase") or "").lower() == "pre_assessment" for slide in slides if isinstance(slide, dict)),
+            "has_worked_example": expected_count < 7 or any(str(slide.get("learning_phase") or "").lower() == "worked_example" or str(slide.get("slide_type") or "").lower() in {"worked_example", "example"} for slide in slides if isinstance(slide, dict)),
+            "has_constructive_or_interactive_task": any(str(slide.get("student_action_mode") or "").lower() in {"constructive", "interactive"} for slide in slides if isinstance(slide, dict)),
+            "has_retrieval_and_transfer": any(str(slide.get("learning_phase") or "").lower() in {"post_assessment", "summary"} and "迁移" in (str(slide.get("student_task") or "") + str(slide.get("understanding_check") or "")) for slide in slides if isinstance(slide, dict)),
+            "all_slides_have_learning_science_metadata": all(bool(slide.get("learning_phase")) and bool(slide.get("learning_theories")) and bool(slide.get("learner_question")) and bool(slide.get("feedback_strategy")) for slide in slides if isinstance(slide, dict)),
+            "content_density_controlled": all(len(self._as_list(slide.get("content_points"))) <= 4 for slide in slides if isinstance(slide, dict)),
             "knowledge_points_covered": not missing_knowledge_points,
         }
         return {
@@ -1170,6 +1225,106 @@ preferred_format(html5|gif|mp4)、integration(ppt_video|static_link)、descripti
             "estimated_minutes": 5,
         }
 
+    def _learning_science_defaults(self, slide_type: str, index: int, total: int, req: OutlineGenerateRequest) -> dict[str, Any]:
+        normalized_type = str(slide_type or "content").lower()
+        worked_example_index = max(4, total // 2 + 1)
+        if normalized_type == "cover" or index == 1:
+            return {
+                "learning_phase": "bridge_in",
+                "learning_theories": ["ARCS.Attention", "ARCS.Relevance", "BOPPPS.Bridge-in"],
+                "student_action_mode": "active",
+                "learner_question": f"《{req.title}》能帮助我解决什么真实问题？",
+                "cognitive_load": "low",
+                "scaffolding": "提供熟悉情境和二选一预测，降低参与门槛。",
+                "feedback_strategy": "暂不公布答案，呈现不同观点并在课末回看。",
+            }
+        if normalized_type in {"agenda", "toc", "directory"} or index == 2:
+            return {
+                "learning_phase": "objective",
+                "learning_theories": ["ARCS.Relevance", "ARCS.Confidence", "BOPPPS.Objective"],
+                "student_action_mode": "active",
+                "learner_question": "学完以后，我具体能解释、判断或完成什么？",
+                "cognitive_load": "low",
+                "scaffolding": "把目标改写成学生可完成的课堂挑战。",
+                "feedback_strategy": "让学生复述目标并确认成功标准。",
+            }
+        if index == 3 and total >= 6:
+            return {
+                "learning_phase": "pre_assessment",
+                "learning_theories": ["BOPPPS.Pre-assessment", "ICAP.Active", "Retrieval Practice"],
+                "student_action_mode": "constructive",
+                "learner_question": "根据已有知识，我现在会怎样解释或预测？",
+                "cognitive_load": "low",
+                "scaffolding": "提供一个短问题、预测选项或半成品图示。",
+                "feedback_strategy": "快速统计答案，依据错误类型调整后续讲解。",
+            }
+        if normalized_type in {"worked_example", "example"}:
+            return {
+                "learning_phase": "worked_example",
+                "learning_theories": ["Worked Example", "Cognitive Load.Segmenting", "Multimedia.Signaling"],
+                "student_action_mode": "active",
+                "learner_question": "这个问题应分成哪几步，每一步为什么成立？",
+                "cognitive_load": "medium",
+                "scaffolding": "提供带理由的分步样例，并逐步撤去提示。",
+                "feedback_strategy": "每一步先让学生预测，再揭示方法与理由。",
+            }
+        if normalized_type in {"activity", "practice", "quiz", "discussion"}:
+            return {
+                "learning_phase": "participatory_learning",
+                "learning_theories": ["ICAP.Interactive", "BOPPPS.Participatory-learning", "ARCS.Satisfaction"],
+                "student_action_mode": "interactive",
+                "learner_question": "我们能否用刚学的方法共同解释并完成任务？",
+                "cognitive_load": "medium",
+                "scaffolding": "先独立作答，再提供同伴讨论句式和基础/进阶两档任务。",
+                "feedback_strategy": "展示典型答案，比较依据并针对误区即时纠偏。",
+            }
+        if index == worked_example_index and total >= 7:
+            return {
+                "learning_phase": "worked_example",
+                "learning_theories": ["Worked Example", "Cognitive Load.Segmenting", "Multimedia.Signaling"],
+                "student_action_mode": "active",
+                "learner_question": "这个问题应分成哪几步，每一步为什么成立？",
+                "cognitive_load": "medium",
+                "scaffolding": "提供带理由的分步样例，并逐步撤去提示。",
+                "feedback_strategy": "每一步先让学生预测，再揭示方法与理由。",
+            }
+        if index == total - 1 and total >= 5:
+            return {
+                "learning_phase": "post_assessment",
+                "learning_theories": ["BOPPPS.Post-assessment", "Retrieval Practice", "Transfer"],
+                "student_action_mode": "constructive",
+                "learner_question": "换一个新情境，我还能独立使用这个知识吗？",
+                "cognitive_load": "medium",
+                "scaffolding": "只保留成功标准，不直接提供完整步骤。",
+                "feedback_strategy": "依据答案分为已掌握、需支架和需再教，并给出对应反馈。",
+            }
+        if normalized_type == "summary" or index == total:
+            return {
+                "learning_phase": "summary",
+                "learning_theories": ["BOPPPS.Summary", "Retrieval Practice", "ARCS.Satisfaction"],
+                "student_action_mode": "constructive",
+                "learner_question": "不看前页，我能回忆什么，又能迁移到哪里？",
+                "cognitive_load": "low",
+                "scaffolding": "使用三句总结、关键词提示和一题迁移出口条。",
+                "feedback_strategy": "收集出口条并给出下一步复习或挑战建议。",
+            }
+        return {
+            "learning_phase": "participatory_learning",
+            "learning_theories": ["Cognitive Load.Segmenting", "Multimedia.Signaling", "ICAP.Constructive"],
+            "student_action_mode": "constructive",
+            "learner_question": f"我如何用自己的话解释“{req.title}”中的本页关键问题？",
+            "cognitive_load": "medium",
+            "scaffolding": "一次只呈现一个关键关系，使用图示、关键词和基础/进阶提示。",
+            "feedback_strategy": "用即时判断或变式题反馈，并解释错误选项为什么不成立。",
+        }
+
+    def _normalize_learning_science_strategy(self, value: Any, fallback: dict[str, list[str]]) -> dict[str, list[str]]:
+        source = value if isinstance(value, dict) else {}
+        return {
+            key: self._as_list(source.get(key)) or list(items)
+            for key, items in fallback.items()
+        }
+
     def _as_list(self, value: Any) -> list[str]:
         if value is None:
             return []
@@ -1197,6 +1352,13 @@ preferred_format(html5|gif|mp4)、integration(ppt_video|static_link)、descripti
                     "teacher_prompt": str(item.get("teacher_prompt") or ""),
                     "understanding_check": str(item.get("understanding_check") or ""),
                     "estimated_minutes": item.get("estimated_minutes"),
+                    "learning_phase": str(item.get("learning_phase") or ""),
+                    "learning_theories": self._as_list(item.get("learning_theories")),
+                    "student_action_mode": str(item.get("student_action_mode") or ""),
+                    "learner_question": str(item.get("learner_question") or ""),
+                    "cognitive_load": str(item.get("cognitive_load") or ""),
+                    "scaffolding": str(item.get("scaffolding") or ""),
+                    "feedback_strategy": str(item.get("feedback_strategy") or ""),
                     "interactive_asset_ids": list(item.get("interactive_asset_ids") or []),
                     "external_resource_notes": str(item.get("external_resource_notes") or ""),
                 })
@@ -1358,11 +1520,21 @@ preferred_format(html5|gif|mp4)、integration(ppt_video|static_link)、descripti
         if isinstance(points, str):
             points = self._split_points(points)
         palette = self._palette(theme)
-        cards = "".join(f"<article><b>{i:02d}</b><p>{html.escape(str(point))}</p></article>" for i, point in enumerate(points[:5], 1))
+        cards = "".join(f"<article><b>{i:02d}</b><p>{html.escape(str(point))}</p></article>" for i, point in enumerate(points[:3], 1))
+        learner_question = html.escape(str(slide.get("learner_question") or slide.get("engagement_hook") or ""))
+        student_task = html.escape(str(slide.get("student_task") or ""))
         if slide_no == 1:
-            main = f'<div class="cover"><div class="kicker">{html.escape(deck_title)}</div><h1>{title}</h1><p>{html.escape(str(points[0])) if points else "A12 智能备课生成"}</p></div>'
+            guiding_question = learner_question or (html.escape(str(points[0])) if points else "这节课能帮助我们解决什么问题？")
+            main = f'<div class="cover"><div class="kicker">{html.escape(deck_title)}</div><h1>{title}</h1><p>{guiding_question}</p></div>'
         else:
-            side_text = html.escape(str(slide.get("teaching_intent") or slide.get("visual_suggestion") or "围绕本页主题组织课堂讲解。"))
+            side_parts = []
+            if learner_question:
+                side_parts.append(f"<b>本页问题</b><br>{learner_question}")
+            if student_task:
+                duration = html.escape(str(slide.get("estimated_minutes") or ""))
+                time_badge = f" · {duration} 分钟" if duration else ""
+                side_parts.append(f"<b>学生任务{time_badge}</b><br>{student_task}")
+            side_text = "<br><br>".join(side_parts) or html.escape(str(slide.get("teaching_intent") or slide.get("visual_suggestion") or "围绕本页主题组织课堂讲解。"))
             if slide.get("external_resource_notes"):
                 side_text = f"{side_text}<br><br><b>互动资源</b><br>{html.escape(str(slide.get('external_resource_notes') or ''))}"
             main = f'<header><div><div class="kicker">{html.escape(deck_title)}</div><h1>{title}</h1></div><div class="count">{slide_no:02d} / {total:02d}</div></header><main><section>{cards or "<p>围绕本页主题展开核心内容。</p>"}</section><aside>{side_text}</aside></main><footer><span>A12 智能备课</span><span>{html.escape(theme)}</span></footer>'
@@ -1409,7 +1581,23 @@ aside{background:__PANEL__;border:1px solid __LINE__;padding:28px;font-size:22px
         return f"""<!DOCTYPE html><html lang="zh-CN"><head><meta charset="UTF-8"><title>{html.escape(title)}</title><style>body{{margin:0;background:#050816;color:white;font-family:Arial,"Microsoft YaHei",sans-serif;overflow:hidden}}.stage{{width:100vw;height:100vh;display:flex;align-items:center;justify-content:center}}.slide{{width:min(100vw,177.78vh);height:min(56.25vw,100vh)}}iframe{{width:100%;height:100%;border:0;background:white}}.nav{{position:fixed;left:50%;bottom:18px;transform:translateX(-50%);background:rgba(0,0,0,.55);padding:8px 14px;border-radius:999px;display:flex;gap:10px;align-items:center}}button{{border:0;border-radius:999px;padding:8px 12px;cursor:pointer}}</style></head><body><main class="stage">{''.join(frames)}</main><div class="nav"><button onclick="prev()">上一页</button><span id="counter">1 / {len(slides)}</span><button onclick="next()">下一页</button></div><script>let i=0,n={len(slides)};function show(x){{document.querySelectorAll('.slide').forEach((s,k)=>s.style.display=k===x?'block':'none');document.getElementById('counter').textContent=(x+1)+' / '+n}}function next(){{if(i<n-1)show(++i)}}function prev(){{if(i>0)show(--i)}}document.addEventListener('keydown',e=>{{if(e.key==='ArrowRight')next();if(e.key==='ArrowLeft')prev();}});</script></body></html>"""
 
     def _speaker_notes(self, slide: dict[str, Any]) -> str:
-        return "；".join(str(point) for point in (slide.get("content_points") or [])[:4])
+        sections = []
+        points = "；".join(str(point) for point in (slide.get("content_points") or [])[:4])
+        if points:
+            sections.append(f"内容要点：{points}")
+        for label, key in [
+            ("学生任务", "student_task"),
+            ("教师引导", "teacher_prompt"),
+            ("支架", "scaffolding"),
+            ("理解检测", "understanding_check"),
+            ("反馈策略", "feedback_strategy"),
+        ]:
+            value = str(slide.get(key) or "").strip()
+            if value:
+                sections.append(f"{label}：{value}")
+        if slide.get("estimated_minutes"):
+            sections.append(f"建议用时：{slide['estimated_minutes']} 分钟")
+        return "\n".join(sections)
 
     def _split_points(self, text: str) -> list[str]:
         parts = re.split(r"[，。；、\n,.；;]", text or "")

@@ -2932,12 +2932,13 @@ Java 任务模式支持的导出配置键：`slides`、`lesson_plan`、`outline`
 | `assessment_design` | List<String> | 课堂评价/检测设计 |
 | `differentiated_support` | List<String> | 面向基础薄弱与进阶学生的分层支架 |
 | `engagement_strategy` | List<String> | 学习行为切换、先学后教和课堂参与策略 |
+| `learning_science_strategy` | Object(JSON) | ARCS、BOPPPS、ICAP、认知负荷、样例学习和提取练习的整课落地策略 |
 | `homework` | List<String> | 课后作业或迁移任务 |
 
 | quality_report 字段 | 类型 | 说明 |
 |---|---|---|
 | `passed` | Boolean | 是否通过后端自动质量检查 |
-| `checks` | Object(JSON) | 是否包含教学设计链、封面、目录、活动、总结页、页数接近期望值、每页学生任务/理解检测、开场吸引点和知识点覆盖等检查项 |
+| `checks` | Object(JSON) | 是否包含教学设计链、封面、目录、活动、总结页、前测、分步样例、建构/互动任务、提取迁移、单页密度控制和知识点覆盖等检查项 |
 | `expected_slide_count` | int | 期望页数 |
 | `actual_slide_count` | int | 实际页数 |
 | `missing_knowledge_points` | List<String> | 未在大纲页内容中显式覆盖的知识点 |
@@ -2972,6 +2973,13 @@ Java 任务模式支持的导出配置键：`slides`、`lesson_plan`、`outline`
 | `teacher_prompt` | String | 教师提问、追问或纠偏提示 |
 | `understanding_check` | String | 当场判断是否理解及决定继续/补救的方法 |
 | `estimated_minutes` | int | 本页建议课堂用时（分钟） |
+| `learning_phase` | String | BOPPPS/学习路径阶段，如 `bridge_in`、`objective`、`pre_assessment`、`participatory_learning`、`worked_example`、`post_assessment`、`summary` |
+| `learning_theories` | List<String> | 本页采用的学习科学依据，如 ARCS、ICAP、认知负荷、多媒体信号或提取练习 |
+| `student_action_mode` | String | ICAP 参与层级：`passive`、`active`、`constructive`、`interactive` |
+| `learner_question` | String | 从学生视角提出的本页核心问题 |
+| `cognitive_load` | String | 本页认知负荷等级：`low`、`medium`、`high` |
+| `scaffolding` | String | 面向当前学情的提示、步骤卡、半成品样例或分层支持 |
+| `feedback_strategy` | String | 学生作答后的即时反馈、错误解释和补救/进阶分流方式 |
 
 ---
 
@@ -3553,7 +3561,7 @@ while (true) {
 2. **视频分析**：资源索引同时分析关键帧和音轨，画面走 OCR/视觉理解，音轨经 FFmpeg 提取后走配置的 ASR；两路文本合并进入 RAG。
 3. **语音交互**：前端录音统一提交 Java `/api/v1/ai/engine/audio/asr` 或业务接口 `/api/v1/ai/sessions/{id}/audio-messages`，转写后继续意图识别和会话。
 4. **移动端**：教师端使用响应式布局；窄屏下四个主功能变为带文字的底部导航，教学助手最近对话通过顶部按钮打开，聊天和录音入口保持可用。
-5. **课堂参与度**：每页大纲增加 `engagement_hook/student_task/teacher_prompt/understanding_check/estimated_minutes`，规则要求每 2 至 3 个内容页安排一次任务或检测，并以出口条结束；质量报告会检查这些字段和活动页是否存在。
+5. **以学生为中心的课件内容**：课件按“真实问题与关联→预测前测→分段新知→带理由的分步样例→学生尝试→即时反馈→提取与迁移”组织，而不是照搬教材目录。每页除参与度字段外，还返回 `learning_phase/learning_theories/student_action_mode/learner_question/cognitive_load/scaffolding/feedback_strategy`；质量报告检查 ARCS 动机、BOPPPS 流程、ICAP 建构/互动、单页认知负荷、样例学习和提取练习是否真正落地。
 
 ---
 

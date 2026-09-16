@@ -365,15 +365,19 @@ class OutlineChatWorkflow:
 要求：
 1. 输出可编辑结构化大纲，供后续 HTML PPT 生成使用。
 2. 每页包含 slide_no、title、slide_type、content_points、teaching_intent、visual_suggestion、
-   engagement_hook、student_task、teacher_prompt、understanding_check、estimated_minutes。
+   engagement_hook、student_task、teacher_prompt、understanding_check、estimated_minutes、learning_phase、
+   learning_theories、student_action_mode、learner_question、cognitive_load、scaffolding、feedback_strategy。
 3. 上传资料用于版式、语气、案例和个性化适配；RAG 命中内容作为本地权威知识补充。
 4. 教师长期画像决定稳定教学风格，本轮 requirements、class_level 等特定需求始终优先。
 5. teaching_design_chain 需包含教学目标、学情、重难点、教学顺序、活动、评价、分层支持、
    参与度策略与作业。
 6. 包含封面、学习路径、内容、活动或练习、总结；每 2 至 3 个内容页安排一次学生任务或即时检测。
 7. 开场使用真实问题/预测/投票，结尾使用回忆、迁移题和出口条，避免整节课连续被动听讲。
-8. 若图示工具返回 Mermaid，加入顶层 diagram_assets，并在相关页说明用途。
-9. 若 interactive_policy.needs_interactive_assets=true，加入顶层 interactive_assets；每项包含
+8. 课件按学生认知过程组织：问题与关联→预测前测→分段新知→分步样例→学生尝试→即时反馈→提取与迁移；不能照搬教材目录。
+9. learning_science_strategy 要明确 ARCS、BOPPPS、ICAP、认知负荷、多媒体信号、样例学习和提取练习如何落地。
+10. 每页只承担一个核心认知任务，正文建议不超过 3 个信息组；至少包含一页 worked_example 和一页撤去支架的新情境练习。
+11. 若图示工具返回 Mermaid，加入顶层 diagram_assets，并在相关页说明用途。
+12. 若 interactive_policy.needs_interactive_assets=true，加入顶层 interactive_assets；每项包含
    asset_id、title、type、target_slide_no、preferred_format、integration 和 description。
 """.strip()
         return {"final_prompt": prompt}
@@ -546,6 +550,7 @@ class OutlineChatWorkflow:
             "请修订大纲并解决以下质量问题："
             + "；".join(str(issue) for issue in issues)
             + "。保持用户意图和页数，保留完整教学设计链，并确保封面、学习路径、课堂活动、总结及每页的教学意图、视觉建议、学生任务和理解检测齐全。"
+            + "同时补齐学习阶段、理论依据、ICAP参与层级、认知负荷、支架和反馈策略，确保包含前测、分步样例、变式练习、提取练习与迁移出口条。"
         )
 
     def _after_parse(self, state: OutlineChatState) -> Literal["clarify", "continue"]:

@@ -170,6 +170,13 @@ def slide_html_prompt(
 - 内容必须来自当前页数据和大纲，不要胡编事实。
 - 中文排版要精致，文字不能超出容器；必要时减少字数。
 - CSS 写在 `<style>` 中，不能依赖外部 CDN。
+- 以学生的认知过程而不是教材目录组织页面：优先突出 learner_question，再呈现完成本页任务所需的信息。
+- 严格服从 cognitive_load：每页只承担一个核心认知任务，正文最多 3 个信息组；复杂过程必须分段、编号或逐步呈现。
+- 使用视觉信号突出当前步骤、关键词和因果关系；装饰图片不得挤占教学信息，图示必须帮助理解。
+- 当 student_action_mode 为 active/constructive/interactive 时，必须把 student_task、限时和可交付结果做成学生可见的任务区。
+- 当 slide_type 为 worked_example/example 时，必须展示“问题→分步方法→为什么→变式”，不能只给题目和答案。
+- 当 learning_phase 为 pre_assessment/post_assessment/summary 时，必须先要求学生回忆、预测或作答，再显示提示；不得把答案直接作为页面视觉中心。
+- teacher_prompt、scaffolding 和 feedback_strategy 属于教师实施信息，不要整段放到学生主画面，只在页面角落保留必要提示。
 
 模板 HTML 参考：
 {compact_template_html(template_html)}
