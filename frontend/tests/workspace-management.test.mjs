@@ -5,7 +5,9 @@ import vm from 'node:vm'
 import { parse, babelParse } from '@vue/compiler-sfc'
 
 // Execute the actual SFC handlers with isolated API dependencies; no live project is changed.
-const source = parse(readFileSync(new URL('../src/components/CreationWorkspace.vue', import.meta.url), 'utf8')).descriptor.scriptSetup.content
+const descriptor = parse(readFileSync(new URL('../src/components/CreationWorkspace.vue', import.meta.url), 'utf8')).descriptor
+const source = descriptor.scriptSetup.content
+const template = descriptor.template.content
 const declarations = babelParse(source, { sourceType: 'module' }).program.body
 function handler(name, state) {
   const node = declarations.find(node => node.type === 'VariableDeclaration' && node.declarations.some(item => item.id.name === name))
@@ -13,6 +15,58 @@ function handler(name, state) {
   return vm.runInNewContext(source.slice(node.start, node.end) + ';' + name, state)
 }
 const ref = value => ({ value })
+test('audio player starts element dragging without cancelling its native controls', () => {
+  const element = { id: 'audio-1', type: 'audio', position: { x: 8, y: 48 } }
+  const canvas = { getBoundingClientRect: () => ({ width: 780, height: 438 }) }
+  let prevented = false
+  let capturedPointer = null
+  const state = {
+    placementMode: ref(false), elementById: id => id === element.id ? element : null,
+    dragState: ref(null), draggingElementId: ref(null), current: ref({ elements: [element] }),
+    selectElement() {}, handleElementDrag() {}, stopElementDrag() {},
+    window: { addEventListener() {} },
+  }
+  const startDrag = handler('startElementDrag', state)
+  startDrag(element.id, {
+    button: 0, pointerId: 7, clientX: 120, clientY: 80,
+    currentTarget: {
+      closest: selector => selector === '.slide-canvas' ? canvas : null,
+      classList: { contains: name => name === 'workspace-media-player' },
+      setPointerCapture: pointerId => { capturedPointer = pointerId },
+    },
+    preventDefault: () => { prevented = true },
+  })
+  assert.equal(state.draggingElementId.value, element.id)
+  assert.equal(state.dragState.value.captureTarget.classList.contains('workspace-media-player'), true)
+  assert.equal(capturedPointer, 7)
+  assert.equal(prevented, false)
+  assert.match(template, /<audio[^>]*@pointerdown\.stop="startElementDrag\(element\.id, \$event\)"/)
+})
+test('workspace keyboard shortcuts copy, paste and delete only selected canvas elements', () => {
+  const calls = []
+  const state = {
+    presentationMode: ref(false), workspaceSelectedElementId: ref('chart-1'),
+    saveWorkspaceNow() { calls.push('save') }, cancelCanvasPlacement() { calls.push('cancel-placement') },
+    clearElementSelection() { calls.push('clear-selection') },
+    copyElementToClipboard: id => { calls.push(`copy:${id}`); return true },
+    pasteElementFromClipboard: () => { calls.push('paste'); return true },
+    removeElement: id => calls.push(`remove:${id}`), copyElement: id => calls.push(`duplicate:${id}`),
+  }
+  const keydown = handler('handleWorkspaceKeydown', state)
+  const press = (key, { ctrlKey = false, target = {} } = {}) => {
+    let prevented = false
+    keydown({ key, ctrlKey, metaKey: false, target, preventDefault: () => { prevented = true } })
+    return prevented
+  }
+  assert.equal(press('c', { ctrlKey: true }), true)
+  assert.equal(press('v', { ctrlKey: true }), true)
+  assert.equal(press('Delete'), true)
+  assert.equal(press('d', { ctrlKey: true }), true)
+  assert.equal(press('c', { ctrlKey: true, target: { tagName: 'INPUT' } }), false)
+  assert.deepEqual(calls, ['copy:chart-1', 'paste', 'remove:chart-1', 'duplicate:chart-1'])
+  assert.match(source, /copyToClipboard: \(id\)/)
+  assert.match(source, /pasteFromClipboard: pasteClipboard/)
+})
 test('remounting the PPT canvas uses the edited HTML without reloading during live edits', () => {
   const slide = { html: '<p>original</p>' }
   const state = {

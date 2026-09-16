@@ -329,6 +329,9 @@ const extendedElementPresets = [
 ]
 const allElementPresets = [...elementPresets, ...extendedElementPresets]
 let elementSequence = 1
+// 工作台内元素剪贴板：仅保存当前会话中的可编辑元素，不写入系统剪贴板。
+// 这样可避免将课件的内部 HTML、资源地址暴露到其他应用，同时仍支持 Ctrl/Cmd+C、V。
+let workspaceElementClipboard = null
 const cloneElementListData = (data) => Array.isArray(data)
   ? data.map((item) => Array.isArray(item) ? [...item] : (item && typeof item === 'object' ? { ...item } : item))
   : data
@@ -2097,7 +2100,7 @@ const attachHtmlDragEditor = (iframe, { structuredMode = false, onCommit = null 
     refreshElements()
     commitDocument()
   }
-  const copySelected = () => {
+  const cloneSelectedForClipboard = () => {
     if (!selected) return
     const clone = selected.cloneNode(true)
     clone.removeAttribute('data-a12-drag-selected')
@@ -2105,13 +2108,40 @@ const attachHtmlDragEditor = (iframe, { structuredMode = false, onCommit = null 
     clone.removeAttribute('contenteditable')
     clone.removeAttribute('spellcheck')
     clone.removeAttribute('id')
+    return clone
+  }
+  const copySelectedToClipboard = () => {
+    const clone = cloneSelectedForClipboard()
+    if (!clone) return false
+    workspaceElementClipboard = { kind: 'html', markup: clone.outerHTML }
+    return true
+  }
+  const pasteClipboard = () => {
+    if (workspaceElementClipboard?.kind !== 'html' || !workspaceElementClipboard.markup) return false
+    const template = document.createElement('template')
+    template.innerHTML = workspaceElementClipboard.markup
+    const clone = template.content.firstElementChild
+    if (!clone) return false
+    clone.removeAttribute('data-a12-drag-selected')
+    clone.removeAttribute('data-a12-html-editing')
+    clone.removeAttribute('contenteditable')
+    clone.removeAttribute('spellcheck')
+    clone.removeAttribute('id')
     clone.setAttribute('data-ppt-element', `copy-${Date.now()}`)
-    const origin = parseCssTranslate(frameWindow.getComputedStyle(selected).translate)
+    const origin = selected?.isConnected
+      ? parseCssTranslate(frameWindow.getComputedStyle(selected).translate)
+      : parseCssTranslate(clone.style.translate)
     clone.style.translate = `${origin.x + 18}px ${origin.y + 18}px`
-    selected.after(clone)
+    if (selected?.isConnected) selected.after(clone)
+    else (document.querySelector('.slide') || document.body).appendChild(clone)
     refreshElements()
     select(clone)
     commitDocument()
+    return true
+  }
+  const copySelected = () => {
+    if (!copySelectedToClipboard()) return false
+    return pasteClipboard()
   }
   const runHistoryAction = (action) => {
     if (selected?.isConnected) htmlSelectionRestoreKey.value = elementPanelKey.get(selected) || ''
@@ -2153,6 +2183,15 @@ const attachHtmlDragEditor = (iframe, { structuredMode = false, onCommit = null 
     if (editing && modifier && event.key === 'Enter') {
       event.preventDefault()
       finishTextEditing(true)
+      return
+    }
+    if (!editing && modifier && event.key.toLowerCase() === 'c' && selected) {
+      event.preventDefault()
+      copySelectedToClipboard()
+      return
+    }
+    if (!editing && modifier && event.key.toLowerCase() === 'v') {
+      if (pasteClipboard()) event.preventDefault()
       return
     }
     if (!editing && selected && ['Delete', 'Backspace'].includes(event.key)) {
@@ -2540,6 +2579,8 @@ const attachHtmlDragEditor = (iframe, { structuredMode = false, onCommit = null 
     insertElement,
     insertInteractive,
     copySelected: (id) => { const element = findElement(id); if (element) { select(element); copySelected() } },
+    copyToClipboard: (id) => { const element = findElement(id); if (element) { select(element); return copySelectedToClipboard() } return false },
+    pasteFromClipboard: pasteClipboard,
     deleteSelected: (id) => { const element = findElement(id); if (element) { select(element); deleteSelected() } },
   }
   const cleanup = () => {
@@ -3499,7 +3540,10 @@ const startElementDrag = (id, event) => {
   window.addEventListener('pointerup', stopElementDrag, { once: true })
   window.addEventListener('pointercancel', stopElementDrag, { once: true })
   event.currentTarget.setPointerCapture?.(event.pointerId)
-  event.preventDefault()
+  // 音视频播放器覆盖了整个组件。允许播放器的 pointerdown 启动拖动，但不
+  // 阻止它的默认点击行为，这样点击播放/暂停等原生控件仍然可用。
+  const isNativeMediaPlayer = event.currentTarget?.classList?.contains('workspace-media-player')
+  if (!isNativeMediaPlayer) event.preventDefault()
 }
 const handleElementDrag = (event) => {
   const state = dragState.value
@@ -4395,6 +4439,49 @@ const copyElement = (id = selectedElementId.value) => {
   selectedElementId.value = copy.id
   markSlideComponentDirty(current.value, copy.id)
   WorkspaceMessage.success('元素已复制')
+}
+const copyElementToClipboard = (id = workspaceSelectedElementId.value) => {
+  if (workspaceUsesHtmlEditor.value) {
+    const targetId = id || htmlSelectedElementId.value
+    if (!targetId) return false
+    const copied = activeHtmlController()?.copyToClipboard?.(targetId) || false
+    if (copied) WorkspaceMessage.success('元素已复制，可使用 Ctrl+V 粘贴')
+    return copied
+  }
+  const source = elementById(id)
+  if (!source) return false
+  workspaceElementClipboard = {
+    kind: 'structured',
+    // 标题、说明等绑定字段复制后可能粘贴到另一页，因此此处固化当前展示内容。
+    element: { ...cloneElementData(source), content: elementContent(source) },
+  }
+  WorkspaceMessage.success('元素已复制，可使用 Ctrl+V 粘贴')
+  return true
+}
+const pasteElementFromClipboard = () => {
+  if (!current.value) return false
+  if (workspaceUsesHtmlEditor.value) {
+    const pasted = activeHtmlController()?.pasteFromClipboard?.() || false
+    if (pasted) WorkspaceMessage.success('元素已粘贴')
+    return pasted
+  }
+  if (workspaceElementClipboard?.kind !== 'structured' || !workspaceElementClipboard.element) return false
+  const source = cloneElementData(workspaceElementClipboard.element)
+  const copy = cloneElementData(source)
+  copy.id = `${source.type}-${Date.now()}-${elementSequence++}`
+  copy.name = `${source.name || elementTypeLabels[source.type] || '元素'} 副本`
+  copy.target = null
+  copy.content = source.content
+  copy.position = {
+    ...copy.position,
+    x: Math.min(82, Number(copy.position?.x || 0) + 4),
+    y: Math.min(78, Number(copy.position?.y || 0) + 4),
+  }
+  current.value.elements.push(copy)
+  selectedElementId.value = copy.id
+  markSlideComponentDirty(current.value, copy.id)
+  WorkspaceMessage.success('元素已粘贴')
+  return true
 }
 const clarificationFieldMeta = {
   title: { label: '课程/PPT主题', text: '你希望这次备课围绕什么课程主题展开？', options: [], placeholder: '例如：勾股定理与生活测量' },
@@ -6337,7 +6424,8 @@ const initializeSessionFlow = async () => {
 }
 const handleWorkspaceKeydown = (event) => {
   if (presentationMode.value) return
-  if ((event.ctrlKey || event.metaKey) && event.key.toLowerCase() === 's') {
+  const modifier = event.ctrlKey || event.metaKey
+  if (modifier && event.key.toLowerCase() === 's') {
     event.preventDefault()
     void saveWorkspaceNow()
     return
@@ -6348,14 +6436,26 @@ const handleWorkspaceKeydown = (event) => {
     cancelCanvasPlacement()
     return clearElementSelection()
   }
-  if (isEditingField || !selectedElementId.value) return
+  if (isEditingField) return
+  if (modifier && event.key.toLowerCase() === 'v') {
+    if (pasteElementFromClipboard()) event.preventDefault()
+    return
+  }
+  const selectedId = workspaceSelectedElementId.value
+  if (!selectedId) return
   if (event.key === 'Delete' || event.key === 'Backspace') {
     event.preventDefault()
-    removeElement()
+    removeElement(selectedId)
+    return
   }
-  if ((event.ctrlKey || event.metaKey) && event.key.toLowerCase() === 'd') {
+  if (modifier && event.key.toLowerCase() === 'c') {
     event.preventDefault()
-    copyElement()
+    copyElementToClipboard(selectedId)
+    return
+  }
+  if (modifier && event.key.toLowerCase() === 'd') {
+    event.preventDefault()
+    copyElement(selectedId)
   }
 }
 const restoreLocalWorkspaceDraft = () => {
@@ -7634,11 +7734,11 @@ const selectSlide = (index) => { selectedSlide.value = index; selectedElementId.
               </div>
               <div v-else-if="['audio', 'video', 'h5', 'subject'].includes(element.type)" :data-element-id="element.id" class="workspace-widget" :class="[`widget-${element.type}`, elementClass(element)]" :style="elementStyle(element.id)" @pointerdown="startElementDrag(element.id, $event)" @click.stop="selectElement(element.id, $event)">
                 <template v-if="element.type === 'audio'">
-                  <audio v-if="element.url || element.src" class="workspace-media-player" :src="element.url || element.src" :controls="element.controls !== false" :autoplay="Boolean(element.autoplay)" preload="metadata" @pointerdown.stop @click.stop="selectElement(element.id, $event)" />
+                  <audio v-if="element.url || element.src" class="workspace-media-player" :src="element.url || element.src" :controls="element.controls !== false" :autoplay="Boolean(element.autoplay)" preload="metadata" @pointerdown.stop="startElementDrag(element.id, $event)" @click.stop="selectElement(element.id, $event)" />
                   <span v-else class="widget-empty-state">尚未添加音频文件，请在右侧选择本地文件</span>
                 </template>
                 <template v-else-if="element.type === 'video'">
-                  <video v-if="element.url || element.src" class="workspace-media-player" :src="element.url || element.src" :controls="element.controls !== false" :autoplay="Boolean(element.autoplay)" playsinline preload="metadata" @pointerdown.stop @click.stop="selectElement(element.id, $event)" />
+                  <video v-if="element.url || element.src" class="workspace-media-player" :src="element.url || element.src" :controls="element.controls !== false" :autoplay="Boolean(element.autoplay)" playsinline preload="metadata" @pointerdown.stop="startElementDrag(element.id, $event)" @click.stop="selectElement(element.id, $event)" />
                   <span v-else class="widget-empty-state">尚未添加视频文件，请在右侧选择本地文件</span>
                 </template>
                 <template v-else-if="element.type === 'h5'">
