@@ -8,7 +8,7 @@
   - 流程说明: 大纲生成走 Java 网关流式（API-11S SSE）。final 事件到达后直接渲染大纲，question 转入澄清阶段等待教师补充回复后继续。修改要求通过再次发送流式消息实现重生成。
 -->
 <script setup>
-import { computed, nextTick, onMounted, reactive, ref, watch } from 'vue'
+import { computed, nextTick, onMounted, onUnmounted, reactive, ref, watch } from 'vue'
 import { ElMessage } from 'element-plus'
 import { Brush, Document, Promotion } from '@element-plus/icons-vue'
 import MarkdownRender from 'markstream-vue'
@@ -43,6 +43,16 @@ const emit = defineEmits(['back', 'open-workspace', 'planning-request', 'session
 
 const userStore = useUserStore()
 const isGeneralChat = computed(() => props.mode === 'general')
+
+// ========== 响应式断点（design.md §9.3：手机档 <768px） ==========
+/** 手机档断点：补充信息表单由 display:table 降级为卡片堆叠渲染。 */
+const isMobile = ref(window.matchMedia('(max-width: 767.98px)').matches)
+/** 触屏设备（无 hover + 粗指针）：Enter 不触发发送，避免与移动端键盘回车冲突。 */
+const isTouchDevice = window.matchMedia('(hover: none) and (pointer: coarse)').matches
+const mobileBreakpointQuery = window.matchMedia('(max-width: 767.98px)')
+const syncMobileBreakpoint = () => { isMobile.value = mobileBreakpointQuery.matches }
+mobileBreakpointQuery.addEventListener('change', syncMobileBreakpoint)
+onUnmounted(() => mobileBreakpointQuery.removeEventListener('change', syncMobileBreakpoint))
 /** 大纲单独直连 Python 真实模型；不改变 mock 登录和 Java 会话开关。 */
 const useRealOutlineApi = import.meta.env.VITE_USE_REAL_OUTLINE_API === 'true'
 /** Python 大纲会话 ID，与 Java mock 会话 ID 分开保存，便于同一对话继续生成/修改。 */
@@ -339,11 +349,19 @@ function openPlanningClarification(rawQuestion) {
   return true
 }
 
-/** 滚动消息列表到底部 */
+/** 滚动消息列表到底部（手机档消息区与 composer 同为容器滚动上下文时，兜底滚动 chat-container） */
 async function scrollToBottom() {
   await nextTick()
   const el = messageListRef.value
-  if (el) el.scrollTop = el.scrollHeight
+  if (!el) return
+  if (el.scrollHeight > el.clientHeight) {
+    el.scrollTop = el.scrollHeight
+    return
+  }
+  const container = el.parentElement
+  if (container && container.scrollHeight > container.clientHeight) {
+    container.scrollTop = container.scrollHeight
+  }
 }
 
 /** 判断响应是否成功（兼容 code 0 / 200） */
@@ -1208,9 +1226,10 @@ function handleComposerSubmit() {
   if (phase.value === 'clarifying') void handleClarificationReply()
 }
 
-/** 聊天快捷键：Enter 发送，Shift+Enter 换行；中文输入法候选确认不触发发送。 */
+/** 聊天快捷键：Enter 发送，Shift+Enter 换行；中文输入法候选确认不触发发送；触屏设备 Enter 仅换行，发送走按钮。 */
 function handleComposerKeydown(event) {
   if (event.isComposing || event.keyCode === 229 || event.shiftKey) return
+  if (isTouchDevice) return
   event.preventDefault()
   handleComposerSubmit()
 }
@@ -1572,7 +1591,7 @@ async function restoreSession() {
                 <strong>补充信息</strong>
               </div>
 
-              <div class="info-table">
+              <div v-if="!isMobile" class="info-table">
                 <!-- 基础信息行 -->
                 <div class="info-row">
                   <span class="info-label">基础信息</span>
@@ -1635,6 +1654,57 @@ async function restoreSession() {
                       :disabled="phase !== 'info'"
                     />
                   </span>
+                </div>
+              </div>
+
+              <!-- 手机档：display:table 降级为卡片堆叠（<768px，响应式基线） -->
+              <div v-else class="info-stack">
+                <div class="info-stack-field">
+                  <div class="info-stack-head">
+                    <span class="info-stack-label">基础信息</span>
+                    <span class="info-stack-desc">学段/学科/年级/教材</span>
+                  </div>
+                  <div class="info-basic-fields">
+                    <el-select v-model="infoForm.stage" size="small" placeholder="学段" :disabled="phase !== 'info'" clearable>
+                      <el-option v-for="stage in STAGE_OPTIONS" :key="stage" :label="stage" :value="stage" />
+                    </el-select>
+                    <el-select v-model="infoForm.subject" size="small" placeholder="学科" :disabled="phase !== 'info'" filterable allow-create default-first-option clearable>
+                      <el-option v-for="subject in SUBJECT_OPTIONS" :key="subject" :label="subject" :value="subject" />
+                    </el-select>
+                    <el-select v-model="infoForm.grade" size="small" placeholder="年级" :disabled="phase !== 'info'" filterable allow-create default-first-option clearable>
+                      <el-option v-for="grade in GRADE_OPTIONS" :key="grade" :label="grade" :value="grade" />
+                    </el-select>
+                    <el-input v-model="infoForm.textbook" size="small" placeholder="教材版本（可选）" :disabled="phase !== 'info'" />
+                  </div>
+                </div>
+                <div class="info-stack-field">
+                  <div class="info-stack-head">
+                    <span class="info-stack-label">班级学情</span>
+                    <span class="info-stack-desc">学生整体基础水平</span>
+                  </div>
+                  <el-select v-model="infoForm.classLevel" size="small" :disabled="phase !== 'info'">
+                    <el-option v-for="level in CLASS_LEVEL_OPTIONS" :key="level" :label="level" :value="level" />
+                  </el-select>
+                </div>
+                <div class="info-stack-field">
+                  <div class="info-stack-head">
+                    <span class="info-stack-label">课程名称</span>
+                    <span class="info-stack-desc">教学内容主题</span>
+                  </div>
+                  <el-input v-model="infoForm.courseName" size="small" placeholder="请输入课程名称" :disabled="phase !== 'info'" />
+                </div>
+                <div class="info-stack-field">
+                  <div class="info-stack-head">
+                    <span class="info-stack-label">个性化需求</span>
+                    <span class="info-stack-desc">教学侧重点与风格偏好</span>
+                  </div>
+                  <el-input
+                    v-model="infoForm.requirements"
+                    type="textarea"
+                    :autosize="{ minRows: 2, maxRows: 4 }"
+                    size="small"
+                    :disabled="phase !== 'info'"
+                  />
                 </div>
               </div>
 
@@ -1787,12 +1857,12 @@ async function restoreSession() {
           />
         </span>
       </div>
-      <p class="composer-hint">{{ CHAT_COMPOSER.hint }} · Enter 发送 · Shift + Enter 换行</p>
+      <p class="composer-hint">{{ CHAT_COMPOSER.hint }}{{ isTouchDevice ? ' · 点击右侧按钮发送' : ' · Enter 发送 · Shift + Enter 换行' }}</p>
     </footer>
   </div>
 
   <!-- 教学设计方案确认/修改模态框（由操作栏"修改"按钮触发） -->
-  <el-dialog v-model="outlineDialogVisible" title="教学设计方案" width="min(700px, 92vw)" destroy-on-close>
+  <el-dialog v-model="outlineDialogVisible" title="教学设计方案" width="min(700px, 92vw)" align-center destroy-on-close>
     <div v-loading="planLoading" class="plan-dialog-content">
       <p class="plan-status">请确认以下教学设计方案，或填写修改要求后重新生成。</p>
 
@@ -2015,6 +2085,45 @@ async function restoreSession() {
   border-top: 1px solid var(--zh-line-parting);
 }
 
+/* 手机档补充信息卡片堆叠（isMobile 渲染，替代 display:table 隐藏列降级） */
+.info-stack {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+.info-stack-field {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  padding: 10px 12px;
+  border: 1px solid var(--zh-line-parting);
+  border-radius: var(--zh-radius8);
+  background: var(--zh-background-light);
+}
+.info-stack-head {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 8px;
+}
+.info-stack-label {
+  font-weight: 600;
+  color: var(--zh-text-primary);
+  font-size: var(--zh-font-size13);
+}
+.info-stack-desc {
+  color: var(--zh-text-caption);
+  font-size: var(--zh-font-size11);
+}
+.info-stack-field :deep(.el-select),
+.info-stack-field :deep(.el-input) {
+  width: 100%;
+}
+.info-stack-field .info-basic-fields :deep(.el-select) {
+  flex: 1 1 40%;
+  width: auto;
+}
+
 /* ===== 澄清问题卡片（后端需要补充信息时展示） ===== */
 .clarification-card {
   width: 100%;
@@ -2214,17 +2323,35 @@ async function restoreSession() {
   50% { opacity: 1; transform: scale(1.2); }
 }
 
-/* ===== 响应式 ===== */
-@media (max-width: 768px) {
+/* ===== 响应式（断点收敛：手机档 max-width 767.98px，design.md §9.3） ===== */
+@media (max-width: 767.98px) {
   .chat-container {
     padding: 0 12px;
+    /* 手机档由容器自身滚动：软键盘弹起时 100dvh 收缩容器可滚，composer sticky bottom 常驻可见 */
+    overflow-y: auto;
+    /* 手机档顶栏 48px+safe-top、底部 TabBar 56px+safe-bottom（TeacherLayout） */
+    height: calc(100dvh - 48px - var(--zh-safe-top) - var(--zh-tabbar-h) - var(--zh-safe-bottom));
+  }
+  .chat-messages {
+    /* 取消内部独立滚动，消息与 composer 处于同一滚动上下文 */
+    overflow-y: visible;
   }
   .user-bubble {
     max-width: 92%;
   }
-  .info-label,
-  .info-desc {
-    display: none;
+  .chat-composer {
+    position: sticky;
+    bottom: 0;
+    z-index: 5;
+    padding-bottom: calc(16px + var(--zh-safe-bottom));
+  }
+  .outline-actions-bar {
+    flex-direction: column;
+    align-items: stretch;
+  }
+  .outline-actions-bar .el-button {
+    width: 100%;
+    margin-left: 0;
   }
   .resource-card {
     align-items: flex-start;
