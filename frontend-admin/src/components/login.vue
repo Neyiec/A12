@@ -475,14 +475,13 @@ onBeforeUnmount(() => {
     <main class="flex-1 flex items-center justify-center px-6 sm:px-10 lg:px-16">
       <div class="w-full max-w-[440px]">
 
-        <!-- 移动端可见的品牌 Logo + 名称 -->
-        <div class="flex flex-col items-center mb-10 lg:hidden">
-          <div class="w-12 h-12 rounded-xl bg-gradient-to-br from-[#2563EB] to-[#60A5FA] flex items-center justify-center mb-3 shadow-lg">
-            <span class="text-white font-bold text-xl">智</span>
-          </div>
-          <span class="text-lg font-semibold text-(--zh-text-primary)">
-            {{ LOGIN_TEXT.brand.name }}
-          </span>
+        <!-- 登录页品牌标志：同步用户端 login.vue 的竖版完整品牌标志（桌面/移动端均显示） -->
+        <div class="login-brand-logo-wrap">
+          <img
+            class="login-brand-logo"
+            src="/branding/logo-login.png"
+            alt="智核，让知识与 AI 共创更大的可能"
+          />
         </div>
 
         <!-- 表单标题区域 -->
@@ -775,6 +774,28 @@ onBeforeUnmount(() => {
 </template>
 
 <style scoped>
+/* ===== 登录页品牌标志（同步用户端 login.vue 样式） ===== */
+
+/* 竖版标志容器：flex 居中 + 负边距收紧与表单标题的间距 */
+.login-brand-logo-wrap {
+  display: flex;
+  justify-content: center;
+  margin: -28px 0 -18px;
+}
+
+/* 竖版完整品牌标志：宽度随视口自适应 */
+.login-brand-logo {
+  width: clamp(150px, 13vw, 190px);
+  height: auto;
+  object-fit: contain;
+}
+
+/* 移动端（与用户端同断点 <1024px）：收窄宽度与间距 */
+@media (max-width: 1023px) {
+  .login-brand-logo-wrap { margin: -16px 0 -12px; }
+  .login-brand-logo { width: 170px; }
+}
+
 /* ===== 表单切换动画 ===== */
 
 /** 新内容从右侧滑入 */

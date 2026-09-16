@@ -29,6 +29,9 @@ import {
   Setting,
   ArrowUp,
   ArrowDown,
+  Document,
+  Picture,
+  VideoPlay,
 } from '@element-plus/icons-vue'
 import { getDashboard, listAlerts } from '@/apis/config'
 import { getModerationTasks } from '@/apis/moderation'
@@ -327,13 +330,13 @@ const formatRelativeTime = (value) => {
 }
 
 /**
- * 获取缩略图类型对应的占位图标字符
+ * 获取缩略图类型对应的 Element Plus 图标组件
  * @param {'doc' | 'image' | 'video'} type - 文件类型
- * @returns {string} emoji 占位字符
+ * @returns {Component} Element Plus 图标组件
  */
 const getThumbnailIcon = (type) => {
-  const map = { doc: '📄', image: '🖼', video: '🎬' }
-  return map[type] || '📄'
+  const map = { doc: Document, image: Picture, video: VideoPlay }
+  return map[type] || Document
 }
 
 // ========== 生命周期 ==========
@@ -380,16 +383,14 @@ onBeforeUnmount(() => {
           <!-- 标题行 + 右上角图标 -->
           <div class="flex items-center justify-between mb-3">
             <span
-              class="text-[13px]"
+              class="text-[14px]"
               style="color: var(--zh-text-caption);"
             >
               {{ card.title }}
             </span>
-            <component
-              :is="card.icon"
-              class="w-6 h-6"
-              style="color: var(--zh-text-caption);"
-            />
+            <el-icon :size="24" style="color: var(--zh-text-caption);">
+              <component :is="card.icon" />
+            </el-icon>
           </div>
 
           <!-- 主数据行 -->
@@ -409,7 +410,7 @@ onBeforeUnmount(() => {
               class="flex items-center gap-0.5 text-xs font-medium"
               :style="{ color: card.trendColor }"
             >
-              <component :is="card.trendUp ? ArrowUp : ArrowDown" class="w-3.5 h-3.5" />
+              <el-icon :size="14"><component :is="card.trendUp ? ArrowUp : ArrowDown" /></el-icon>
               {{ card.trendLabel }}
             </span>
             <!-- 无方向趋势时仅显示文字标签（如「正常」「持平」） -->
@@ -431,14 +432,14 @@ onBeforeUnmount(() => {
               :style="{ background: card.statusColor }"
             ></span>
             <span
-              class="text-[11px]"
+              class="text-[12px]"
               style="color: var(--zh-text-disabled);"
             >
               {{ card.subText }}
             </span>
             <span
               v-if="card.hasStatusDot"
-              class="text-[11px] font-medium"
+              class="text-[12px] font-medium"
               :style="{ color: card.statusColor }"
             >
               {{ card.statusLabel }}
@@ -448,7 +449,7 @@ onBeforeUnmount(() => {
           <!-- 详情说明行 -->
           <div class="mt-1">
             <span
-              class="text-[11px]"
+              class="text-[12px]"
               style="color: var(--zh-text-disabled);"
             >
               {{ card.breakdown }}
@@ -523,12 +524,14 @@ onBeforeUnmount(() => {
                 borderColor: 'var(--zh-line-parting)',
               }"
             >
-              <!-- 内容缩略图 -->
+              <!-- 内容缩略图：主题色底 + 白色描线（与角色/模板图标规范一致） -->
               <div
-                class="w-10 h-10 rounded-md flex items-center justify-center flex-shrink-0 text-lg"
-                style="background: var(--zh-background-light-gray);"
+                class="w-10 h-10 rounded-md flex items-center justify-center flex-shrink-0"
+                :style="{ background: 'var(--zh-gradient-blue)' }"
               >
-                {{ getThumbnailIcon(item.thumbnailType) }}
+                <el-icon style="color: #ffffff; font-size: 20px;">
+                  <component :is="getThumbnailIcon(item.thumbnailType)" />
+                </el-icon>
               </div>
 
               <!-- 标题 + 提交者信息 -->
@@ -541,7 +544,7 @@ onBeforeUnmount(() => {
                     {{ item.title }}
                   </span>
                   <span
-                    class="text-[11px] px-1.5 py-0.5 rounded flex-shrink-0"
+                    class="text-[12px] px-1.5 py-0.5 rounded flex-shrink-0"
                     style="
                       background: var(--zh-background-tag);
                       color: var(--zh-text-caption);
@@ -565,7 +568,7 @@ onBeforeUnmount(() => {
                     {{ item.submitter.name }}
                   </span>
                   <span
-                    class="text-[11px]"
+                    class="text-[12px]"
                     style="color: var(--zh-text-disabled);"
                   >
                     · {{ item.time }}
@@ -667,7 +670,7 @@ onBeforeUnmount(() => {
                 }"
                 @click="handleQuickAction(action.action)"
               >
-                <component :is="action.icon" class="w-4 h-4 mr-2" />
+                <el-icon :size="16" class="mr-2"><component :is="action.icon" /></el-icon>
                 {{ action.label }}
               </el-button>
             </div>
@@ -731,19 +734,19 @@ onBeforeUnmount(() => {
               <!-- 告警内容 -->
               <div class="flex-1 min-w-0">
                 <p
-                  class="text-[13px] font-medium leading-5 truncate"
+                  class="text-[14px] font-medium leading-5 truncate"
                   style="color: var(--zh-text-primary);"
                 >
                   {{ alert.title }}
                 </p>
                 <p
-                  class="text-[11px] leading-4 truncate mt-0.5"
+                  class="text-[12px] leading-4 truncate mt-0.5"
                   style="color: var(--zh-text-caption);"
                 >
                   {{ alert.detail }}
                 </p>
                 <span
-                  class="text-[11px]"
+                  class="text-[12px]"
                   style="color: var(--zh-text-disabled);"
                 >
                   {{ alert.time }}

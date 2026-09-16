@@ -222,12 +222,9 @@ const handleUserCommand = async (command) => {
       :class="collapsed ? 'justify-center px-0 gap-0' : 'gap-2 px-3'"
       style="border-color: var(--zh-line-parting);"
     >
-      <!-- Logo 图标（始终显示） -->
-      <div
-        class="w-8 h-8 rounded-lg flex items-center justify-center flex-shrink-0"
-        style="background: var(--zh-gradient-blue);"
-      >
-        <span class="text-white font-bold text-sm">智</span>
+      <!-- Logo 图标（始终显示）：同步用户端 TeacherLayout .app-brand-icon 展示规范（白底+蓝影+放大裁切） -->
+      <div class="admin-brand-icon flex-shrink-0">
+        <img src="/branding/logo-intro.png" alt="智核 Admin" />
       </div>
       <!-- Logo 文字（仅展开态显示） -->
       <span
@@ -288,8 +285,12 @@ const handleUserCommand = async (command) => {
       </template>
     </el-menu>
 
-    <!-- ===== 底部：管理员信息区（保持原样，点击任意处弹出操作菜单） ===== -->
-    <div class="flex-shrink-0 border-t px-3 py-4" :class="collapsed ? 'px-0' : ''" style="border-color: var(--zh-line-parting);">
+    <!-- ===== 底部：管理员信息区（视觉规范同步用户端 TeacherLayout .teacher-profile） ===== -->
+    <div
+      class="flex-shrink-0 border-t pt-[13px] px-2"
+      :class="collapsed ? 'px-0' : ''"
+      style="border-color: var(--zh-line-border);"
+    >
       <!-- 原用户信息区：结构与样式保持不变，仅挂模板 ref 供下方 el-dropdown 虚拟触发绑定 -->
       <el-tooltip
         :content="`${adminName} · ${adminRole}`"
@@ -301,28 +302,29 @@ const handleUserCommand = async (command) => {
         <div
           ref="userTriggerRef"
           class="flex items-center"
-          :class="collapsed ? 'justify-center gap-0' : 'gap-3'"
+          :class="collapsed ? 'justify-center gap-0' : 'gap-2.5'"
         >
-          <!-- 管理员头像 -->
+          <!-- 管理员头像：38px 方形（对齐用户端 avatar 规范） -->
           <el-avatar
-            :size="36"
+            :size="38"
+            shape="square"
             :src="userStore.userInfo?.avatar || undefined"
-            :style="{ background: 'var(--zh-gradient-blue)' }"
+            :style="{ background: 'var(--zh-gradient-blue)', borderRadius: 'var(--zh-radius8)' }"
           >
             {{ adminName.charAt(0) }}
           </el-avatar>
 
-          <!-- 名称与角色（仅展开态显示） -->
+          <!-- 名称与角色（仅展开态显示，字号字重对齐用户端 profile-copy） -->
           <div class="flex flex-col min-w-0 sidebar-text-fade" :class="{ 'sidebar-text-hidden': collapsed }">
             <span
-              class="text-[13px] leading-5 truncate"
-              style="color: var(--zh-text-primary); font-weight: 500;"
+              class="text-[13px] font-bold leading-5 truncate"
+              style="color: var(--zh-text-primary);"
             >
               {{ adminName }}
             </span>
             <span
-              class="text-[11px] leading-4"
-              style="color: var(--zh-text-caption);"
+              class="text-[12px] leading-4"
+              style="color: var(--zh-text-caption); margin-top: 2px;"
             >
               {{ adminRole }}
             </span>
@@ -399,6 +401,32 @@ const handleUserCommand = async (command) => {
   transition: padding 250ms cubic-bezier(0.4, 0, 0.2, 1);
 }
 
+/* ===== 品牌图标：同步用户端 TeacherLayout .app-brand-icon 展示规范 ===== */
+
+/* 白底容器：40px 方形 + 10px 圆角 + 品牌蓝投影 */
+.admin-brand-icon {
+  position: relative;
+  width: 40px;
+  height: 40px;
+  display: block;
+  overflow: hidden;
+  border-radius: var(--zh-radius10);
+  background: #ffffff;
+  box-shadow: 0 8px 18px -8px rgb(37 99 235 / 40%);
+}
+
+/* 图片居中放大裁切（约 1.78 倍），与用户端顶栏视觉完全一致 */
+.admin-brand-icon img {
+  position: absolute;
+  top: 50%;
+  left: 50%;
+  width: 71px;
+  height: 71px;
+  max-width: none;
+  object-fit: cover;
+  transform: translate(-50%, -50%);
+}
+
 /* ===== ElMenu 内部样式覆盖 ===== */
 
 /** 菜单项内的中文标签文字 */
@@ -410,7 +438,7 @@ const handleUserCommand = async (command) => {
 
 /** 菜单项内的英文副标签 */
 .menu-item-sublabel {
-  font-size: 11px;
+  font-size: 12px;
   line-height: 1.25;
   color: var(--zh-text-disabled);
 }
