@@ -418,12 +418,12 @@ watch(latestSessionPush, (session) => {
 @media (max-width: 680px) {
   .teacher-shell, .teacher-shell.assistant-mode { display: grid; grid-template-columns: 1fr; grid-template-rows: 56px minmax(0, 1fr); grid-template-areas: "topbar" "main"; }
   .teacher-sidebar { display: none; }
-  .teacher-topbar { height: 56px; min-height: 56px; grid-template-columns: 1fr auto; gap: 10px; padding: 4px 12px; }
+  .teacher-topbar { height: 56px; min-height: 56px; grid-template-columns: 1fr auto; gap: 10px; padding: 4px 12px; background: var(--zh-background-primary); backdrop-filter: none; }
   .app-brand-icon { width: 34px; height: 34px; }
   .app-brand-icon img { width: 61px; height: 61px; }
   .app-brand-name { font-size: 16px; }
   .brand-copy strong { font-size: 16px; }
-  .top-navigation { position: fixed; z-index: 120; right: 8px; bottom: max(8px, env(safe-area-inset-bottom)); left: 8px; width: auto; min-height: 56px; justify-content: stretch; overflow-x: visible; border-radius: 16px; box-shadow: 0 12px 32px rgb(15 23 42 / 18%); }
+  .top-navigation { position: fixed; z-index: 120; right: 8px; bottom: max(8px, env(safe-area-inset-bottom)); left: 8px; width: auto; min-height: 58px; justify-content: stretch; overflow-x: visible; border-radius: 16px; background: color-mix(in srgb, var(--zh-background-primary) 96%, transparent); box-shadow: 0 12px 32px rgb(15 23 42 / 18%); }
   .top-nav-item { min-width: 0; flex: 1; flex-direction: column; gap: 2px; padding: 5px 3px; justify-content: center; font-size: 10px; line-height: 1.1; }
   .top-nav-item span { display: inline; }
   .top-nav-item .el-icon { font-size: 18px; }

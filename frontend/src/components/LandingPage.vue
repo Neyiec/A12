@@ -11,6 +11,10 @@ const router = useRouter()
 const userStore = useUserStore()
 const entering = ref(false)
 
+const scrollToSection = (sectionId) => {
+  document.getElementById(sectionId)?.scrollIntoView({ behavior: 'smooth', block: 'start' })
+}
+
 /** 先确认 12 小时本地会话，再由后端确认令牌没有被异地登录替换。 */
 const enterProgram = async () => {
   if (entering.value) return
@@ -49,9 +53,9 @@ const enterProgram = async () => {
       </a>
 
       <nav class="site-nav" aria-label="官网导航">
-        <a href="#features">核心能力</a>
-        <a href="#workflow">使用流程</a>
-        <a href="#results">教学成果</a>
+        <button type="button" @click="scrollToSection('features')">核心能力</button>
+        <button type="button" @click="scrollToSection('tutorial')">使用教程</button>
+        <button type="button" @click="scrollToSection('showcase')">成果展示</button>
       </nav>
 
       <button class="header-action" type="button" :disabled="entering" @click="enterProgram">
@@ -72,11 +76,11 @@ const enterProgram = async () => {
             从一句主题到完整课件、教案与互动活动。智核把备课所需的资料、灵感和制作流程放进一个工作空间。
           </p>
           <div class="hero-actions">
-            <button class="primary-action" type="button" :disabled="entering" @click="enterProgram">
-              {{ entering ? '正在进入' : '开始使用' }}
+            <button class="primary-action" type="button" @click="scrollToSection('showcase')">
+              查看成果展示
               <el-icon><ArrowRight /></el-icon>
             </button>
-            <a class="secondary-action" href="#features">了解核心能力</a>
+            <button class="secondary-action" type="button" @click="scrollToSection('tutorial')">查看使用教程</button>
           </div>
           <ul class="hero-proof" aria-label="产品特点">
             <li><el-icon><Check /></el-icon>多模态资料理解</li>
@@ -154,7 +158,7 @@ const enterProgram = async () => {
         </div>
       </section>
 
-      <section id="workflow" class="workflow-section" aria-labelledby="workflow-title">
+      <section id="tutorial" class="workflow-section" aria-labelledby="workflow-title">
         <div class="workflow-inner">
           <div class="workflow-copy">
             <span class="section-kicker">从想法到成果</span>
@@ -194,11 +198,38 @@ const enterProgram = async () => {
         </div>
       </section>
 
-      <section id="results" class="content-section results-section" aria-labelledby="results-title">
+      <section id="showcase" class="content-section results-section" aria-labelledby="results-title">
+        <div class="section-heading results-heading">
+          <span>成果展示</span>
+          <h2 id="results-title">从教学想法到可直接使用的课堂成果</h2>
+          <p>课件、教案和互动活动同步生成，每一项都能继续修改，让 AI 产出真正适应你的课堂。</p>
+        </div>
+
+        <div class="showcase-grid">
+          <article>
+            <span>01 · 互动课件</span>
+            <h3>不是文字堆叠，而是学生参与的学习路径</h3>
+            <p>按情境导入、问题探究、即时练习和迁移检测组织页面，让每一页都有明确作用。</p>
+            <div class="showcase-preview preview-slides" aria-hidden="true"><i></i><i></i><i></i></div>
+          </article>
+          <article>
+            <span>02 · 完整教案</span>
+            <h3>教学目标、活动流程和评价方式彼此对应</h3>
+            <p>自动整理教师讲授、学生任务、时间分配与设计意图，方便直接备课和二次调整。</p>
+            <div class="showcase-preview preview-document" aria-hidden="true"><i></i><i></i><i></i><i></i></div>
+          </article>
+          <article>
+            <span>03 · 课堂活动</span>
+            <h3>让学生预测、讨论、操作，再用反馈完成闭环</h3>
+            <p>根据课程内容生成讨论题、互动任务和课堂检测，减少单向讲授带来的注意力流失。</p>
+            <div class="showcase-preview preview-activity" aria-hidden="true"><b>?</b><i></i><i></i></div>
+          </article>
+        </div>
+
         <div class="results-panel">
           <div>
             <span class="section-kicker">成果不止停留在页面里</span>
-            <h2 id="results-title">备课完成，马上带进课堂</h2>
+            <h2>备课完成，马上带进课堂</h2>
             <p>统一导出 PPTX、Word 和成果包，保留项目版本，方便继续调整与复用。</p>
           </div>
           <div class="result-types" aria-label="支持导出格式">
@@ -229,6 +260,7 @@ const enterProgram = async () => {
       <p>多模态 AI 互动式教学智能体</p>
       <span>让每一次备课都有清晰的开始</span>
     </footer>
+
   </div>
 </template>
 
@@ -236,6 +268,7 @@ const enterProgram = async () => {
 .landing-page {
   min-height: 100%;
   overflow-x: hidden;
+  scroll-behavior: smooth;
   color: #172033;
   background:
     radial-gradient(circle at 82% 12%, rgb(219 234 254 / 72%), transparent 30rem),
@@ -294,15 +327,22 @@ const enterProgram = async () => {
   gap: 34px;
 }
 
-.site-nav a {
+.site-nav a,
+.site-nav button {
+  padding: 0;
+  border: 0;
   color: #596579;
   font-size: 15px;
   font-weight: 550;
   text-decoration: none;
+  white-space: nowrap;
+  cursor: pointer;
+  background: transparent;
   transition: color 160ms ease;
 }
 
-.site-nav a:hover { color: #1d4ed8; }
+.site-nav a:hover,
+.site-nav button:hover { color: #1d4ed8; }
 
 .header-action,
 .primary-action {
@@ -417,6 +457,8 @@ h1 span {
   font-size: 15px;
   font-weight: 620;
   text-decoration: none;
+  white-space: nowrap;
+  cursor: pointer;
   background: rgb(255 255 255 / 70%);
   transition: border-color 160ms ease, background 160ms ease;
 }
@@ -512,6 +554,10 @@ h1 span {
   margin: 0 auto;
   padding: 108px 0;
 }
+
+#features,
+#tutorial,
+#showcase { scroll-margin-top: 24px; }
 
 .section-heading { max-width: 720px; margin-bottom: 48px; }
 .section-heading > span,
@@ -639,6 +685,26 @@ h1 span {
 .canvas-prompt em { display: grid; width: 27px; height: 27px; place-items: center; border-radius: 8px; color: white; font-style: normal; background: #2563eb; }
 
 .results-section { padding-bottom: 50px; }
+.results-heading { max-width: 820px; }
+.showcase-grid { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 18px; margin-bottom: 24px; }
+.showcase-grid article { display: flex; min-width: 0; min-height: 390px; flex-direction: column; overflow: hidden; padding: 30px 30px 0; border: 1px solid #e4eaf2; border-radius: 26px; background: #f8fbff; }
+.showcase-grid article:nth-child(2) { background: #f8fafc; }
+.showcase-grid article:nth-child(3) { background: linear-gradient(145deg, #eff6ff, #eef2ff); }
+.showcase-grid article > span { color: #2563eb; font-size: 13px; font-weight: 700; }
+.showcase-grid h3 { margin: 11px 0 0; color: #18233a; font-size: 24px; line-height: 1.35; letter-spacing: -.025em; }
+.showcase-grid p { margin: 13px 0 24px; color: #6b768a; font-size: 14px; line-height: 1.75; }
+.showcase-preview { position: relative; flex: 1; min-height: 130px; margin-top: auto; border: 1px solid #dce6f4; border-bottom: 0; border-radius: 18px 18px 0 0; background: white; box-shadow: 0 -8px 32px rgb(37 99 235 / 7%); }
+.preview-slides { display: flex; align-items: flex-end; gap: 8px; padding: 24px 22px 0; background: linear-gradient(145deg, #1e40af, #3b82f6); }
+.preview-slides i { height: 70%; flex: 1; border-radius: 9px 9px 0 0; background: rgb(255 255 255 / 24%); }
+.preview-slides i:nth-child(2) { height: 88%; background: rgb(255 255 255 / 90%); }
+.preview-document { display: grid; align-content: center; gap: 11px; padding: 24px; }
+.preview-document i { display: block; width: 100%; height: 7px; border-radius: 99px; background: #e6edf7; }
+.preview-document i:nth-child(2) { width: 78%; background: #bfdbfe; }
+.preview-document i:nth-child(4) { width: 62%; }
+.preview-activity { display: grid; grid-template-columns: 58px 1fr; align-content: center; gap: 10px 16px; padding: 24px; }
+.preview-activity b { display: grid; grid-row: 1 / 3; width: 58px; height: 58px; place-items: center; border-radius: 16px; color: white; font-size: 25px; background: #2563eb; }
+.preview-activity i { display: block; align-self: end; height: 8px; border-radius: 99px; background: #bfdbfe; }
+.preview-activity i:last-child { width: 68%; align-self: start; background: #dce6f4; }
 .results-panel { display: grid; grid-template-columns: 1fr auto; align-items: end; gap: 40px; padding: 55px; border: 1px solid #e4eaf2; border-radius: 30px; background: linear-gradient(135deg, #f8fbff, #f2f7ff); }
 .results-panel h2 { max-width: 680px; font-size: clamp(34px, 3.5vw, 48px); }
 .results-panel p { max-width: 650px; font-size: 16px; }
@@ -648,7 +714,12 @@ h1 span {
 
 .final-cta { display: flex; flex-direction: column; align-items: center; width: min(920px, calc(100% - 48px)); margin: 70px auto 120px; text-align: center; }
 .final-cta > span { color: #2563eb; font-size: 14px; font-weight: 700; }
-.final-cta h2 { max-width: 820px; }
+.final-cta h2 {
+  max-width: none;
+  font-size: clamp(18px, 4.6vw, 48px);
+  letter-spacing: -.05em;
+  white-space: nowrap;
+}
 .cta-action { margin-top: 32px; }
 .site-footer { display: grid; grid-template-columns: 1fr auto 1fr; align-items: center; gap: 24px; width: min(1180px, calc(100% - 48px)); min-height: 118px; margin: 0 auto; border-top: 1px solid #e8ecf2; color: #8a95a7; font-size: 13px; }
 .footer-brand .brand-logo-frame { width: 32px; height: 32px; border-radius: 10px; }
@@ -666,6 +737,8 @@ h1 span {
   .hero-visual { width: min(720px, 100%); margin: 0 auto; }
   .feature-card-wide { grid-template-columns: 1fr; padding-top: 108px; }
   .workflow-inner { grid-template-columns: 1fr; gap: 45px; padding: 80px 0; }
+  .showcase-grid { grid-template-columns: 1fr; }
+  .showcase-grid article { min-height: 350px; }
   .results-panel { grid-template-columns: 1fr; align-items: start; }
   .result-types { justify-content: flex-start; }
 }
@@ -675,7 +748,7 @@ h1 span {
   .site-header { min-height: 70px; }
   .header-action { min-height: 40px; padding: 0 15px; }
   .hero-section { min-height: auto; padding: 55px 0 72px; }
-  h1 { font-size: clamp(40px, 12vw, 58px); }
+  h1 { font-size: clamp(32px, 9vw, 40px); letter-spacing: -.055em; }
   .hero-description { font-size: 16px; }
   .hero-actions { flex-direction: column; align-items: stretch; }
   .primary-action, .secondary-action { width: 100%; }
@@ -695,6 +768,8 @@ h1 span {
   .workflow-canvas { transform: none; }
   .canvas-content { padding: 28px 20px; }
   .canvas-body { grid-template-columns: 42px 1fr; min-height: 430px; }
+  .showcase-grid article { min-height: 330px; padding: 24px 24px 0; border-radius: 22px; }
+  .showcase-grid h3 { font-size: 22px; }
   .results-panel { padding: 30px 24px; border-radius: 22px; }
   .final-cta { width: min(100% - 32px, 920px); margin-bottom: 80px; }
   .site-footer { grid-template-columns: 1fr; justify-items: start; width: min(100% - 32px, 1180px); padding: 30px 0; }

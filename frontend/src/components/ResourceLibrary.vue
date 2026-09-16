@@ -801,7 +801,7 @@ onBeforeUnmount(clearUploadProgressTimers)
       </template>
     </el-dialog>
 
-    <el-dialog v-model="editDialogVisible" title="编辑资源信息" width="520px" destroy-on-close>
+    <el-dialog v-model="editDialogVisible" title="编辑资源信息" width="min(520px, calc(100vw - 24px))" destroy-on-close>
       <el-form label-position="top">
         <el-form-item label="资源名称"><el-input v-model="editForm.file_name" maxlength="100" show-word-limit /></el-form-item>
         <el-form-item label="描述"><el-input v-model="editForm.description" type="textarea" :rows="3" maxlength="500" show-word-limit /></el-form-item>
@@ -811,28 +811,27 @@ onBeforeUnmount(clearUploadProgressTimers)
       <template #footer><el-button @click="editDialogVisible = false">取消</el-button><el-button type="primary" :loading="saving" @click="submitEdit">保存</el-button></template>
     </el-dialog>
 
-    <el-dialog v-model="taxonomyDialogVisible" :title="`${taxonomyTitle}管理`" width="720px" destroy-on-close>
+    <el-dialog v-model="taxonomyDialogVisible" :title="`${taxonomyTitle}管理`" width="min(720px, calc(100vw - 24px))" destroy-on-close>
       <el-tabs v-model="taxonomyTab" @tab-change="resetTaxonomyForm">
         <el-tab-pane label="分类词典" name="category" />
         <el-tab-pane label="标签词典" name="tag" />
       </el-tabs>
       <div class="taxonomy-editor">
-        <el-input v-model="taxonomyForm.name" :placeholder="`输入${taxonomyTypeLabel}名称`" maxlength="80" @keyup.enter="saveTaxonomy" />
-        <el-input v-model="taxonomyForm.color" placeholder="颜色（可选，如 #2f6feb）" />
-        <el-input-number v-model="taxonomyForm.sort_order" :min="0" :max="99999" controls-position="right" />
-        <el-button type="primary" :loading="taxonomySaving" @click="saveTaxonomy">{{ taxonomyEditing ? '保存修改' : `新增${taxonomyTypeLabel}` }}</el-button>
-        <el-button v-if="taxonomyEditing" @click="resetTaxonomyForm">取消编辑</el-button>
+        <label class="taxonomy-field taxonomy-name"><span>{{ taxonomyTypeLabel }}名称</span><el-input v-model="taxonomyForm.name" :placeholder="`输入${taxonomyTypeLabel}名称`" maxlength="80" @keyup.enter="saveTaxonomy" /></label>
+        <label class="taxonomy-field taxonomy-color"><span>标识颜色</span><el-input v-model="taxonomyForm.color" placeholder="可选，如 #2f6feb" /></label>
+        <label class="taxonomy-field taxonomy-order"><span>排序值</span><el-input-number v-model="taxonomyForm.sort_order" :min="0" :max="99999" controls-position="right" /></label>
+        <div class="taxonomy-actions"><el-button type="primary" :loading="taxonomySaving" @click="saveTaxonomy">{{ taxonomyEditing ? '保存修改' : `新增${taxonomyTypeLabel}` }}</el-button><el-button v-if="taxonomyEditing" @click="resetTaxonomyForm">取消编辑</el-button></div>
       </div>
-      <el-table v-loading="taxonomyLoading" :data="taxonomyItems" size="small" row-key="name">
-        <el-table-column prop="name" :label="taxonomyTypeLabel" min-width="220" />
-        <el-table-column prop="count" label="使用资源数" width="110" />
-        <el-table-column label="来源" width="100"><template #default="{ row }"><el-tag size="small" :type="row.managed ? 'success' : 'info'">{{ row.managed ? '词典' : '历史值' }}</el-tag></template></el-table-column>
-        <el-table-column label="操作" width="150" align="right"><template #default="{ row }"><el-button v-if="row.managed" link type="primary" @click="editTaxonomy(row)">编辑</el-button><el-button v-if="row.managed" link type="danger" @click="removeTaxonomy(row)">删除</el-button></template></el-table-column>
-      </el-table>
+      <div class="taxonomy-table-shell"><el-table v-loading="taxonomyLoading" :data="taxonomyItems" size="small" row-key="name">
+          <el-table-column prop="name" :label="taxonomyTypeLabel" min-width="220" />
+          <el-table-column prop="count" label="使用资源数" width="110" />
+          <el-table-column label="来源" width="100"><template #default="{ row }"><el-tag size="small" :type="row.managed ? 'success' : 'info'">{{ row.managed ? '词典' : '历史值' }}</el-tag></template></el-table-column>
+          <el-table-column label="操作" width="150" align="right"><template #default="{ row }"><el-button v-if="row.managed" link type="primary" @click="editTaxonomy(row)">编辑</el-button><el-button v-if="row.managed" link type="danger" @click="removeTaxonomy(row)">删除</el-button></template></el-table-column>
+        </el-table></div>
       <p class="dialog-hint">删除词典项不会清除已有资源中的分类或标签；编辑资源时仍可选择历史值或新增词条。</p>
     </el-dialog>
 
-    <el-dialog v-model="indexDialogVisible" title="知识库索引管理" width="1000px" top="5vh" destroy-on-close>
+    <el-dialog v-model="indexDialogVisible" title="知识库索引管理" width="min(1000px, calc(100vw - 24px))" top="5vh" destroy-on-close>
       <el-tabs v-model="indexTab">
         <el-tab-pane label="索引概览" name="overview">
           <div v-loading="indexLoading" class="index-panel">
@@ -875,7 +874,7 @@ onBeforeUnmount(clearUploadProgressTimers)
       </el-tabs>
     </el-dialog>
 
-    <el-dialog v-model="permissionDialogVisible" title="资源权限设置" width="480px" destroy-on-close>
+    <el-dialog v-model="permissionDialogVisible" title="资源权限设置" width="min(480px, calc(100vw - 24px))" destroy-on-close>
       <el-form label-position="top" v-loading="saving">
         <el-form-item label="访问范围"><el-radio-group v-model="permissionForm.access_type"><el-radio value="private">仅自己</el-radio><el-radio value="shared">所有成员</el-radio><el-radio value="authorized">指定成员</el-radio></el-radio-group></el-form-item>
         <el-form-item v-if="permissionForm.access_type === 'authorized'" label="授权用户 ID"><el-input v-model="permissionForm.authorized_users" placeholder="多个用户 ID 请用逗号分隔" /></el-form-item>
@@ -884,7 +883,7 @@ onBeforeUnmount(clearUploadProgressTimers)
       <template #footer><el-button @click="permissionDialogVisible = false">取消</el-button><el-button type="primary" :loading="saving" @click="submitPermission">保存权限</el-button></template>
     </el-dialog>
 
-    <el-dialog v-model="batchDialogVisible" title="批量管理资源" width="480px" destroy-on-close>
+    <el-dialog v-model="batchDialogVisible" title="批量管理资源" width="min(480px, calc(100vw - 24px))" destroy-on-close>
       <p class="batch-summary">已选择 {{ selectedRows.length }} 个资源</p>
       <el-form label-position="top"><el-form-item label="操作"><el-radio-group v-model="batchForm.action"><el-radio value="delete">批量删除</el-radio><el-radio value="move">移动目录</el-radio><el-radio value="categorize">修改分类</el-radio></el-radio-group></el-form-item><el-form-item v-if="batchForm.action !== 'delete'" :label="batchForm.action === 'move' ? '目标目录' : '目标分类'"><el-input v-model="batchForm.target" /></el-form-item></el-form>
       <template #footer><el-button @click="batchDialogVisible = false">取消</el-button><el-button type="primary" :loading="saving" @click="submitBatchAction">确认操作</el-button></template>
@@ -970,7 +969,13 @@ onBeforeUnmount(clearUploadProgressTimers)
 :global(.resource-danger-menu-item) { color: var(--zh-red) !important; }
 :global(.resource-danger-menu-item:hover), :global(.resource-danger-menu-item:focus) { color: var(--zh-danger-clicked) !important; background: var(--zh-danger-background) !important; }
 :deep(.el-table) { --el-table-border-color: var(--zh-line-parting); --el-table-header-bg-color: var(--zh-background-light); border-radius: var(--zh-radius12); }
-.taxonomy-editor { display: grid; grid-template-columns: minmax(160px, 1fr) minmax(180px, 1fr) 130px auto auto; align-items: center; gap: 8px; margin: 6px 0 18px; }
+.taxonomy-editor { display: grid; grid-template-columns: minmax(160px, 1fr) minmax(170px, .9fr) 118px auto; align-items: end; gap: 10px; margin: 8px 0 20px; }
+.taxonomy-field { min-width: 0; display: grid; gap: 6px; color: var(--zh-text-caption); font-size: 11px; }
+.taxonomy-field :deep(.el-input-number) { width: 100%; }
+.taxonomy-actions { display: flex; align-items: center; gap: 8px; }
+.taxonomy-actions :deep(.el-button) { margin: 0; white-space: nowrap; }
+.taxonomy-table-shell { width: 100%; overflow-x: auto; border-radius: var(--zh-radius8); }
+.taxonomy-table-shell :deep(.el-table) { min-width: 620px; }
 .dialog-hint { margin: 14px 0 0; color: var(--zh-text-caption); font-size: 12px; }
 .index-panel { min-height: 180px; }
 .index-overview-grid { display: grid; grid-template-columns: repeat(4, 1fr); gap: 10px; margin-bottom: 22px; }
@@ -988,7 +993,7 @@ onBeforeUnmount(clearUploadProgressTimers)
 .index-result-list strong { color: var(--zh-text-primary); font-size: 13px; }
 .index-result-list span { color: var(--zh-text-caption); font-size: 11px; }
 .index-result-list p { margin: 8px 0 0; color: var(--zh-text-secondary); font-size: 12px; line-height: 1.65; white-space: pre-wrap; }
-@media (max-width: 920px) { .taxonomy-editor { grid-template-columns: 1fr 1fr; }.taxonomy-editor .el-button:last-child { grid-column: 2; }.index-overview-grid { grid-template-columns: repeat(2, 1fr); }.index-panel-heading { align-items: flex-start; flex-direction: column; }.index-actions { justify-content: flex-start; } }
-@media (max-width: 820px) { .page-heading { align-items: flex-start; flex-direction: column; }.resource-layout { grid-template-columns: 1fr; }.folder-panel { display: none; }.stat-strip { grid-template-columns: 1fr; }.stat-strip article { border-right: 0; }.resource-toolbar { grid-template-columns: 1fr; }.resource-toolbar-actions { justify-content: flex-start; flex-wrap: wrap; } }
-@media (max-width: 560px) { .taxonomy-editor { grid-template-columns: 1fr; }.taxonomy-editor .el-button:last-child { grid-column: auto; }.index-overview-grid { grid-template-columns: 1fr; }.index-search-bar { grid-template-columns: 1fr; }.index-result-list article > div { align-items: flex-start; flex-direction: column; gap: 4px; } }
+@media (max-width: 920px) { .taxonomy-editor { grid-template-columns: 1fr 1fr; }.taxonomy-order { grid-column: 1; }.taxonomy-actions { grid-column: 2; align-self: end; }.index-overview-grid { grid-template-columns: repeat(2, 1fr); }.index-panel-heading { align-items: flex-start; flex-direction: column; }.index-actions { justify-content: flex-start; } }
+@media (max-width: 820px) { .page-heading { align-items: flex-start; flex-direction: column; }.resource-layout { grid-template-columns: 1fr; }.folder-panel { display: none; }.stat-strip article { padding: 18px 16px; }.resource-toolbar { grid-template-columns: 1fr; }.resource-toolbar-actions { justify-content: flex-start; flex-wrap: wrap; } }
+@media (max-width: 620px) { .page-wrap { width: min(100% - 28px, 1220px); padding: 28px 0 42px; }.stat-strip { grid-template-columns: 1fr; }.stat-strip article { min-height: 72px; border-right: 0; border-bottom: 1px solid var(--zh-line-parting); }.stat-strip article:last-child { border-bottom: 0; }.taxonomy-editor { grid-template-columns: 1fr; }.taxonomy-order, .taxonomy-actions { grid-column: auto; }.taxonomy-actions { align-items: stretch; flex-direction: column; }.taxonomy-actions :deep(.el-button) { width: 100%; }.dialog-hint { line-height: 1.65; }.index-overview-grid { grid-template-columns: 1fr; }.index-search-bar { grid-template-columns: 1fr; }.index-result-list article > div { align-items: flex-start; flex-direction: column; gap: 4px; } }
 </style>

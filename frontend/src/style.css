@@ -196,6 +196,20 @@ textarea {
   font: inherit;
 }
 
+.el-button,
+.el-tag,
+.el-tabs__item {
+  white-space: nowrap;
+}
+
+.el-dialog {
+  max-width: calc(100vw - 24px);
+}
+
+.el-dialog__body {
+  min-width: 0;
+}
+
 .skip-link {
   position: fixed;
   z-index: 2000;
@@ -226,5 +240,28 @@ textarea {
     transition-duration: 0.01ms !important;
     animation-duration: 0.01ms !important;
     animation-iteration-count: 1 !important;
+  }
+}
+
+@media (max-width: 600px) {
+  .el-dialog {
+    width: calc(100vw - 24px) !important;
+    margin-right: auto !important;
+    margin-left: auto !important;
+    border-radius: 16px;
+  }
+
+  .el-dialog__header {
+    padding: 18px 18px 10px;
+  }
+
+  .el-dialog__body {
+    padding-right: 18px;
+    padding-left: 18px;
+  }
+
+  .el-dialog__footer {
+    padding-right: 18px;
+    padding-left: 18px;
   }
 }
