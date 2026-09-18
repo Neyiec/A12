@@ -60,6 +60,11 @@ export function changePassword(data) {
   return post('/api/v1/users/me/password-change', data)
 }
 
+/** 使用原邮箱验证码修改当前用户的真实姓名、邮箱或手机号。 */
+export function changeContact(data) {
+  return post('/api/v1/users/me/contact-change', data)
+}
+
 /** 通过邮箱验证码重置密码。 */
 export function resetPassword(data) {
   return post('/api/v1/auth/password-reset', data)

@@ -8,6 +8,7 @@ import { computed, onMounted, onUnmounted, ref, watch } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import {
+  ArrowDown,
   Collection,
   Document,
   EditPen,
@@ -16,17 +17,63 @@ import {
   Monitor,
   More,
   Paperclip,
+  Plus,
   Promotion,
 } from '@element-plus/icons-vue'
 import { TEACHER_HOME } from '../config/teacherHome.config.js'
 import { INFO_FORM_DEFAULTS, isPlanningPrompt, requestNewChat, openChatSession } from '../config/teacherChat.config.js'
+import { useUserStore } from '../storage/user'
 import ChatView from './ChatView.vue'
 import { archiveProject, copyProject, createAiSession, createProject, deleteProject, listProjects, listResources, transcribeAudio, uploadResource } from '../apis/teacher'
 
 const router = useRouter()
 const route = useRoute()
+const userStore = useUserStore()
+const currentTime = ref(new Date())
+let greetingClockTimer = null
+const teacherSurname = computed(() => {
+  const realName = String(userStore.userInfo?.real_name || '').trim()
+  return realName ? Array.from(realName)[0] : ''
+})
+const greetingPeriod = computed(() => {
+  const hour = currentTime.value.getHours()
+  if (hour >= 5 && hour < 9) return '清晨好'
+  if (hour >= 9 && hour < 12) return '上午好'
+  if (hour >= 12 && hour < 14) return '中午好'
+  if (hour >= 14 && hour < 18) return '下午好'
+  return '晚上好'
+})
+const teacherGreeting = computed(() => `${greetingPeriod.value}，${teacherSurname.value ? `${teacherSurname.value}老师` : '老师'}`)
 const prompt = ref('')
 const canSend = computed(() => prompt.value.trim().length > 0)
+const homeModelOptions = [
+  { value: 'qwen3.7-max', label: 'Qwen 3.7 Max', description: '复杂教学与内容创作' },
+  { value: 'qwen-plus', label: 'Qwen Plus', description: '日常任务，速度均衡' },
+  { value: 'qwen-turbo', label: 'Qwen Turbo', description: '快速问答与整理' },
+]
+const homeReasoningOptions = [
+  { value: 'none', label: '快速回答' },
+  { value: 'low', label: '轻度推理' },
+  { value: 'medium', label: '中度推理' },
+  { value: 'high', label: '深度推理' },
+]
+const homeTaskModeOptions = [
+  { value: 'general', label: '自由对话', hint: '问答、建议与通用协作' },
+  { value: 'lesson_design', label: '课件与教案', hint: '进入结构化教学设计流程' },
+  { value: 'content', label: '内容创作', hint: '讲稿、通知、文案与学习材料' },
+  { value: 'assessment', label: '题目与测验', hint: '试题、答案、解析与评价量规' },
+  { value: 'research', label: '研究与总结', hint: '调研、归纳、对比与报告' },
+  { value: 'data_analysis', label: '资料分析', hint: '提取重点并形成结论' },
+  { value: 'interactive', label: '互动与代码', hint: '小游戏、HTML 与互动组件' },
+]
+const selectedHomeModel = ref(window.localStorage.getItem('a12:chat-model') || homeModelOptions[0].value)
+const selectedHomeReasoning = ref(window.localStorage.getItem('a12:reasoning-effort') || 'low')
+const selectedHomeTaskMode = ref('general')
+const currentHomeModel = computed(() => homeModelOptions.find((item) => item.value === selectedHomeModel.value) || homeModelOptions[0])
+const currentHomeReasoning = computed(() => homeReasoningOptions.find((item) => item.value === selectedHomeReasoning.value) || homeReasoningOptions[1])
+const currentHomeTaskMode = computed(() => homeTaskModeOptions.find((item) => item.value === selectedHomeTaskMode.value) || homeTaskModeOptions[0])
+watch(selectedHomeModel, value => window.localStorage.setItem('a12:chat-model', value))
+watch(selectedHomeReasoning, value => window.localStorage.setItem('a12:reasoning-effort', value))
 const composerInput = ref(null)
 const activeSuggestionId = ref(null)
 const iconMap = { Presentation: Monitor, Document, MagicStick }
@@ -91,6 +138,18 @@ const openNewWorkspace = () => router.push({
   path: '/main/workspace',
   query: route.query.preview ? { preview: '1' } : {},
 })
+
+const handleHomeAddCommand = (command) => {
+  if (command === 'upload_files') {
+    openUploadDialog()
+    return
+  }
+  if (command === 'knowledge') {
+    void openKnowledgeDialog()
+    return
+  }
+  selectedHomeTaskMode.value = command
+}
 
 const normalizeResourceIds = (resourceIds = []) => [...new Set(
   (Array.isArray(resourceIds) ? resourceIds : [resourceIds])
@@ -298,7 +357,7 @@ const sendPrompt = async () => {
   if (!canSend.value) return
   const text = prompt.value.trim()
 
-  if (!isPlanningPrompt(text)) {
+  if (selectedHomeTaskMode.value !== 'lesson_design' && !isPlanningPrompt(text)) {
     chatMode.value = 'general'
     chatSessionId.value = `local-chat-${Date.now()}`
     chatPrompt.value = text
@@ -452,7 +511,7 @@ const openKnowledgeDialog = async () => {
 const triggerResourceUpload = () => resourceFileInput.value?.click()
 const uploadLocalFiles = async (rawFiles) => {
   const supportedExtensions = [
-    'pdf', 'doc', 'docx', 'ppt', 'pptx', 'txt', 'md',
+    'pdf', 'doc', 'docx', 'ppt', 'pptx', 'xls', 'xlsx', 'csv', 'tsv', 'txt', 'md',
     'jpg', 'jpeg', 'png', 'gif', 'webp', 'svg',
     'mp3', 'wav', 'm4a', 'ogg', 'mp4', 'avi', 'mov', 'mkv', 'webm',
   ]
@@ -527,9 +586,15 @@ const mobileViewport = window.matchMedia('(max-width: 767.98px)')
 const isMobile = ref(mobileViewport.matches)
 const handleMobileViewportChange = (event) => { isMobile.value = event.matches }
 onMounted(() => mobileViewport.addEventListener('change', handleMobileViewportChange))
-onUnmounted(() => mobileViewport.removeEventListener('change', handleMobileViewportChange))
+onUnmounted(() => {
+  mobileViewport.removeEventListener('change', handleMobileViewportChange)
+  if (greetingClockTimer) window.clearInterval(greetingClockTimer)
+})
 
-onMounted(loadProjects)
+onMounted(() => {
+  loadProjects()
+  greetingClockTimer = window.setInterval(() => { currentTime.value = new Date() }, 60_000)
+})
 </script>
 
 <template>
@@ -538,7 +603,7 @@ onMounted(loadProjects)
     <template v-if="viewMode === 'welcome'">
     <div class="welcome-scroll">
     <div class="welcome-copy motion-stage motion-stage-1">
-      <p class="eyebrow">{{ TEACHER_HOME.greeting.eyebrow }}</p>
+      <p class="eyebrow">{{ teacherGreeting }}</p>
       <h1>{{ TEACHER_HOME.greeting.title }}</h1>
       <p class="intro">{{ TEACHER_HOME.greeting.description }}</p>
       <div class="welcome-actions motion-stage motion-stage-2">
@@ -602,19 +667,59 @@ onMounted(loadProjects)
       />
       <div class="composer-toolbar">
         <div class="composer-tools">
-          <el-tooltip content="从电脑上传本次备课要使用的资料"><span><el-button text :icon="Paperclip" @click="openUploadDialog">{{ TEACHER_HOME.composer.attach }}</el-button></span></el-tooltip>
-          <el-tooltip content="从个人知识库中检索并引用已有资料"><span><el-button text :icon="Collection" @click="openKnowledgeDialog">{{ TEACHER_HOME.composer.knowledge }}</el-button></span></el-tooltip>
-          <el-tooltip content="打开语音输入"><span><el-button text circle aria-label="语音输入" @click="voiceDialogVisible = true"><el-icon><Microphone /></el-icon></el-button></span></el-tooltip>
+          <el-dropdown trigger="click" placement="top-start" @command="handleHomeAddCommand">
+            <button type="button" class="home-composer-tool home-composer-add" aria-label="添加文件、知识库或选择任务类型"><el-icon><Plus /></el-icon></button>
+            <template #dropdown>
+              <el-dropdown-menu>
+                <el-dropdown-item command="upload_files">
+                  <span class="home-menu-item"><strong><el-icon><Paperclip /></el-icon>文件和资料</strong><small>文档、表格、演示文稿、图片、音频和视频</small></span>
+                </el-dropdown-item>
+                <el-dropdown-item command="knowledge">
+                  <span class="home-menu-item"><strong><el-icon><Collection /></el-icon>引用知识库</strong><small>使用个人资源库中的已有资料</small></span>
+                </el-dropdown-item>
+                <el-dropdown-item v-for="(item, index) in homeTaskModeOptions" :key="item.value" :command="item.value" :divided="index === 0" :class="{ selected: selectedHomeTaskMode === item.value }">
+                  <span class="home-menu-item"><strong>{{ item.label }}</strong><small>{{ item.hint }}</small></span>
+                </el-dropdown-item>
+              </el-dropdown-menu>
+            </template>
+          </el-dropdown>
+
+          <span class="home-mode-pill">{{ currentHomeTaskMode.label }}</span>
+
+          <el-dropdown trigger="click" placement="top-start" @command="selectedHomeModel = $event">
+            <button type="button" class="home-composer-tool"><span>{{ currentHomeModel.label }}</span><el-icon><ArrowDown /></el-icon></button>
+            <template #dropdown>
+              <el-dropdown-menu>
+                <el-dropdown-item v-for="item in homeModelOptions" :key="item.value" :command="item.value" :class="{ selected: selectedHomeModel === item.value }">
+                  <span class="home-menu-item"><strong>{{ item.label }}</strong><small>{{ item.description }}</small></span>
+                </el-dropdown-item>
+              </el-dropdown-menu>
+            </template>
+          </el-dropdown>
+
+          <el-dropdown trigger="click" placement="top-start" @command="selectedHomeReasoning = $event">
+            <button type="button" class="home-composer-tool"><span>{{ currentHomeReasoning.label }}</span><el-icon><ArrowDown /></el-icon></button>
+            <template #dropdown>
+              <el-dropdown-menu>
+                <el-dropdown-item v-for="item in homeReasoningOptions" :key="item.value" :command="item.value" :class="{ selected: selectedHomeReasoning === item.value }">{{ item.label }}</el-dropdown-item>
+              </el-dropdown-menu>
+            </template>
+          </el-dropdown>
+
+          <button v-if="selectedResourceIds.length" type="button" class="home-resource-count" @click="openKnowledgeDialog">已引用 {{ selectedResourceIds.length }} 项</button>
         </div>
-        <el-button
-          type="primary"
-          circle
-          :icon="Promotion"
-          :class="{ 'is-ready': canSend }"
-          :disabled="!canSend"
-          :aria-label="TEACHER_HOME.composer.send"
-          @click="sendPrompt"
-        />
+        <div class="home-composer-actions">
+          <el-tooltip content="打开语音输入"><span><el-button text circle aria-label="语音输入" @click="voiceDialogVisible = true"><el-icon><Microphone /></el-icon></el-button></span></el-tooltip>
+          <el-button
+            type="primary"
+            circle
+            :icon="Promotion"
+            :class="{ 'is-ready': canSend }"
+            :disabled="!canSend"
+            :aria-label="TEACHER_HOME.composer.send"
+            @click="sendPrompt"
+          />
+        </div>
       </div>
     </section>
 
@@ -633,6 +738,9 @@ onMounted(loadProjects)
       :continuation-history="chatContinuationHistory"
       :mode="chatMode"
       :resume="chatResume"
+      :initial-model="selectedHomeModel"
+      :initial-reasoning="selectedHomeReasoning"
+      :initial-task-mode="selectedHomeTaskMode"
       @back="closeChatView"
       @open-workspace="openWorkspaceFromChat"
       @planning-request="handlePlanningRequest"
@@ -640,7 +748,7 @@ onMounted(loadProjects)
 
     <!-- 资料上传 / 知识库 / 语音对话框（欢迎视图和聊天视图共用）-->
     <el-dialog v-model="uploadDialogVisible" title="添加资料" width="min(560px, 92vw)">
-      <input ref="resourceFileInput" class="resource-file-input" type="file" multiple accept=".pdf,.doc,.docx,.ppt,.pptx,.txt,.md,.jpg,.jpeg,.png,.gif,.webp,.svg,.mp3,.wav,.m4a,.ogg,.mp4,.avi,.mov,.mkv,.webm" @change="uploadPickedResource" />
+      <input ref="resourceFileInput" class="resource-file-input" type="file" multiple accept=".pdf,.doc,.docx,.ppt,.pptx,.xls,.xlsx,.csv,.tsv,.txt,.md,.jpg,.jpeg,.png,.gif,.webp,.svg,.mp3,.wav,.m4a,.ogg,.mp4,.avi,.mov,.mkv,.webm" @change="uploadPickedResource" />
       <button
         type="button"
         :class="['upload-dropzone', { 'is-dragging': uploadDragging, 'is-touch': isMobile }]"
@@ -654,7 +762,7 @@ onMounted(loadProjects)
         <el-icon><Paperclip /></el-icon>
         <strong class="dropzone-title-default">{{ uploadDragging ? '松开即可添加资料' : '点击选择或拖入本地资料' }}</strong>
         <strong class="dropzone-title-touch">选择文件</strong>
-        <span>支持 PDF、Word、PowerPoint、TXT 和 Markdown，可多选</span>
+        <span>支持文档、表格、演示文稿、图片、音频和视频，可多选</span>
       </button>
       <el-progress v-if="resourceUploading" :percentage="resourceUploadProgress" :show-text="true" />
       <div v-if="uploadedResourceNames.length" class="uploaded-resource-list"><span>已自动引用</span><p v-for="name in uploadedResourceNames" :key="name">{{ name }}</p></div>
@@ -763,12 +871,26 @@ h1 { margin: 0; font-size: clamp(36px, 4vw, 48px); line-height: 1.15; letter-spa
 .suggestion-card:hover .card-arrow, .suggestion-card:focus-visible .card-arrow { color: var(--zh-text-theme); transform: rotate(-45deg) translateX(3px); }
 .recent-projects { margin-top: 30px; }.recent-projects-heading { display: flex; align-items: baseline; justify-content: space-between; }.recent-projects-heading h2 { margin: 0; font-size: 16px; }.recent-projects-heading span { color: var(--zh-text-caption); font-size: 12px; }.project-grid { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 10px; margin-top: 12px; }.project-card { display: flex; min-width: 0; flex-direction: column; gap: 5px; padding: 14px; border: 1px solid var(--zh-line-border); border-radius: var(--zh-radius10); color: var(--zh-text-primary); background: var(--zh-background-primary); text-align: left; cursor: pointer; transition: transform 200ms cubic-bezier(0.4, 0, 0.2, 1), border-color 200ms cubic-bezier(0.4, 0, 0.2, 1), background-color 200ms cubic-bezier(0.4, 0, 0.2, 1), box-shadow 200ms cubic-bezier(0.4, 0, 0.2, 1); }.project-card:hover, .project-card:focus-visible { transform: translateY(-2px); border-color: var(--zh-line-theme50); background: var(--zh-background-weaken); box-shadow: var(--zh-shadow1); }.project-card:active { transform: translateY(-1px) scale(.99); transition-duration: 150ms; }.project-card strong { overflow: hidden; font-size: 13px; text-overflow: ellipsis; white-space: nowrap; }.project-card span { color: var(--zh-text-caption); font-size: 11px; }
 .project-skeleton { min-width: 0; padding: 14px; border: 1px solid var(--zh-line-border); border-radius: var(--zh-radius10); background: var(--zh-background-primary); }.project-skeleton-title { width: 76%; }.project-skeleton-meta { width: 52%; margin-top: 8px; }
-.composer { margin-top: 24px; padding: 9px 10px 10px; border: 1px solid var(--zh-line-heavier); border-radius: var(--zh-radius16); background: var(--zh-background-input); box-shadow: var(--zh-shadow1); transition: border-color 200ms cubic-bezier(0.4, 0, 0.2, 1), box-shadow 200ms cubic-bezier(0.4, 0, 0.2, 1); }
-.composer:focus-within { border-color: var(--zh-line-theme50); box-shadow: 0 0 0 3px var(--zh-line-theme20), var(--zh-shadow2); }
+.composer { margin-top:24px; padding: 9px 10px 10px; border: 1px solid var(--zh-line-heavier); border-radius: 24px; background: var(--zh-background-input); box-shadow: var(--zh-shadow1); transition: border-color 200ms cubic-bezier(0.4, 0, 0.2, 1), box-shadow 200ms cubic-bezier(0.4, 0, 0.2, 1); }
+.composer:focus-within {
+  border-color: var(--zh-line-theme50);
+  box-shadow: var(--zh-shadow1);
+}
 .composer :deep(.el-textarea__inner) { min-height: 78px !important; padding: 10px 12px 6px; border: 0; background: transparent; box-shadow: none; color: var(--zh-text-primary); font-size: 15px; line-height: 1.65; }
-.composer-toolbar { display: flex; align-items: center; justify-content: space-between; padding: 2px 2px 0; }
-.composer-tools { display: flex; align-items: center; }
-.composer-tools :deep(.el-button) { color: var(--zh-text-secondary); }
+.composer-toolbar { display: flex; align-items: center; justify-content: space-between; gap:10px;padding: 2px 2px 0; }
+.composer-tools { display:flex;min-width:0;align-items:center;gap:4px;overflow-x:auto;scrollbar-width:none; }
+.composer-tools::-webkit-scrollbar { display:none; }
+.home-composer-tool { display:inline-flex;min-height:30px;align-items:center;gap:5px;padding:0 9px;border:0;border-radius:9px;color:var(--zh-text-secondary);background:transparent;font:inherit;font-size:12px;white-space:nowrap;cursor:pointer; }
+.home-composer-tool:hover { color:var(--zh-text-primary);background:var(--zh-background-option); }
+.home-composer-add { width:32px;justify-content:center;padding:0;border:1px solid var(--zh-line-border);border-radius:50%; }
+.home-mode-pill { display:inline-flex;min-height:28px;align-items:center;padding:0 10px;border-radius:999px;color:var(--zh-text-theme);background:var(--zh-background-option-on);font-size:12px;font-weight:600;white-space:nowrap; }
+.home-resource-count { min-height:28px;padding:0 9px;border:0;border-radius:999px;color:var(--zh-text-secondary);background:var(--zh-background-option);font-size:11px;white-space:nowrap;cursor:pointer; }
+.home-composer-actions { display:inline-flex;flex:none;align-items:center;gap:4px; }
+.home-composer-actions :deep(.el-button) { color:var(--zh-text-secondary); }
+.home-composer-actions :deep(.el-button--primary) { color:#fff; }
+.home-menu-item { display:grid;min-width:225px;gap:2px;padding:3px 0; }
+.home-menu-item strong { display:inline-flex;align-items:center;gap:7px;color:var(--zh-text-primary);font-size:13px; }
+.home-menu-item small { color:var(--zh-text-caption);font-size:11px; }
 .composer-toolbar :deep(.el-button.is-ready) { animation: pulse 200ms cubic-bezier(0.4, 0, 0.2, 1); }
 .composer-hint { margin: 10px 0 0; color: var(--zh-text-caption); font-size: 11px; text-align: center; }
 .session-fields { display:grid; grid-template-columns: 1.5fr 1fr 1fr; gap:12px; }.session-fields :deep(.el-form-item){margin-bottom:0}.prompt-preview{width:100%;padding:10px 12px;border-radius:var(--zh-radius8);color:var(--zh-text-secondary);background:var(--zh-background-light);line-height:1.65;white-space:pre-wrap}.resource-picker{display:grid;gap:8px;max-height:160px;overflow:auto;padding:10px 12px;border:1px solid var(--zh-line-border);border-radius:var(--zh-radius8);background:var(--zh-background-light)}.empty-resources{color:var(--zh-text-caption);font-size:12px}
@@ -801,6 +923,9 @@ h1 { margin: 0; font-size: clamp(36px, 4vw, 48px); line-height: 1.15; letter-spa
   .suggestion-icon { margin-bottom: 16px; }
   .session-fields { grid-template-columns:1fr; }
   .knowledge-picker-header { grid-template-columns:1fr; }
+  .composer-toolbar { align-items:flex-end;flex-wrap:wrap; }
+  .composer-tools { width:100%; }
+  .home-composer-actions { margin-left:auto; }
 }
 
 /* 平板档（768–1023.98）：双 grid 降 2 列、间距收敛 12px；知识库弹窗头部单列堆叠 */
