@@ -104,7 +104,7 @@ const reflection = computed(() => firstText(previewPlan.value, ['reflection', 't
     :model-value="modelValue"
     title="教学案预览"
     width="min(1060px, 94vw)"
-    top="4vh"
+    align-center
     class="lesson-plan-preview-dialog"
     @update:model-value="emit('update:modelValue', $event)"
   >
@@ -195,5 +195,5 @@ const reflection = computed(() => firstText(previewPlan.value, ['reflection', 't
 .lesson-plan-preview-activities > h2 { margin-bottom: 0; }
 .lesson-plan-preview-activities article { display: grid; gap: 7px; padding: 12px; border-radius: 8px; background: var(--zh-background-light); }
 .lesson-plan-preview-activities p { font-size: 12px; }
-@media (max-width: 680px) { .lesson-plan-preview { max-height: 72vh; } .lesson-plan-preview-header, .lesson-plan-preview-section { padding: 16px; } .lesson-plan-preview-grid { grid-template-columns: 1fr; } .lesson-plan-preview-wide { grid-column: auto; } .lesson-plan-preview-step-content dl { grid-template-columns: 1fr; gap: 3px; } .lesson-plan-preview-step-content dd { margin-bottom: 6px; } }
+@media (max-width: 767.98px) { .lesson-plan-preview { max-height: 72vh; } .lesson-plan-preview-header, .lesson-plan-preview-section { padding: 16px; } .lesson-plan-preview-grid { grid-template-columns: 1fr; } .lesson-plan-preview-wide { grid-column: auto; } .lesson-plan-preview-step-content dl { grid-template-columns: 1fr; gap: 3px; } .lesson-plan-preview-step-content dd { margin-bottom: 6px; } }
 </style>

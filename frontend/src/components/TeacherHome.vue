@@ -4,7 +4,7 @@
   - 输出: 教师端默认首页内容，由 `TeacherLayout.vue` 承载全局导航
 -->
 <script setup>
-import { computed, onMounted, ref, watch } from 'vue'
+import { computed, onMounted, onUnmounted, ref, watch } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import {
@@ -14,13 +14,14 @@ import {
   MagicStick,
   Microphone,
   Monitor,
+  More,
   Paperclip,
   Promotion,
 } from '@element-plus/icons-vue'
 import { TEACHER_HOME } from '../config/teacherHome.config.js'
 import { INFO_FORM_DEFAULTS, isPlanningPrompt, requestNewChat, openChatSession } from '../config/teacherChat.config.js'
 import ChatView from './ChatView.vue'
-import { archiveProject, copyProject, createAiSession, createProject, deleteProject, listProjects, listResources, restoreProject, transcribeAudio, uploadResource } from '../apis/teacher'
+import { archiveProject, copyProject, createAiSession, createProject, deleteProject, listProjects, listResources, transcribeAudio, uploadResource } from '../apis/teacher'
 
 const router = useRouter()
 const route = useRoute()
@@ -52,9 +53,6 @@ let voiceMediaStream = null
 let voiceRecorder = null
 let voiceChunks = []
 let voiceTimer = null
-const archivedVisible = ref(false)
-const archivedProjects = ref([])
-const archivedLoading = ref(false)
 const projectManagerVisible = ref(false)
 const managedProjects = ref([])
 const projectManagerLoading = ref(false)
@@ -325,8 +323,13 @@ const sendPrompt = async () => {
   }, selectedResourceIds.value))
 }
 
-/** 欢迎页快捷键：Enter 发送，Shift+Enter 保留换行；中文输入法确认候选词时不抢占 Enter。 */
+/** 欢迎页快捷键：Enter 发送，Shift+Enter 保留换行；中文输入法确认候选词时不抢占 Enter。
+ *  触屏设备禁用 Enter 发送（软键盘回车仅换行），与 ChatView 行为一致。 */
+const isTouchDevice = typeof window !== 'undefined'
+  && window.matchMedia('(hover: none) and (pointer: coarse)').matches
+
 const handlePromptKeydown = (event) => {
+  if (isTouchDevice) return
   if (event.isComposing || event.keyCode === 229 || event.shiftKey) return
   event.preventDefault()
   void sendPrompt()
@@ -494,15 +497,6 @@ const dropResourceFiles = async (event) => {
   if (supported.length !== files.length) ElMessage.warning('已忽略不支持的文件格式')
   await uploadLocalFiles(supported)
 }
-const openArchivedProjects = async () => {
-  archivedVisible.value = true; archivedLoading.value = true
-  try { const result = await listProjects({ page: 1, size: 30, status: 'archived' }); archivedProjects.value = result?.data?.records || result?.data?.list || result?.data?.items || [] }
-  catch (error) { ElMessage.error(error?.message || '归档项目加载失败') } finally { archivedLoading.value = false }
-}
-const restoreArchivedProject = async (project) => {
-  try { await restoreProject(project.id); archivedProjects.value = archivedProjects.value.filter((item) => item.id !== project.id); await loadProjects(); ElMessage.success('项目已恢复到草稿') }
-  catch (error) { ElMessage.error(error?.message || '项目恢复失败') }
-}
 const openProjectManager = async () => {
   projectManagerVisible.value = true; projectManagerLoading.value = true
   try { const result = await listProjects({ page: 1, size: 50 }); managedProjects.value = result?.data?.records || result?.data?.list || result?.data?.items || [] }
@@ -521,6 +515,20 @@ const deleteManagedProject = async (project) => {
   catch (error) { if (error !== 'cancel' && error !== 'close') ElMessage.error(error?.message || '项目删除失败') }
 }
 
+/** 手机档项目管理「更多」下拉命令分发：复用桌面端同批项目操作。 */
+const handleManagedProjectCommand = ({ action, project }) => {
+  if (action === 'copy') copyManagedProject(project)
+  else if (action === 'archive') archiveManagedProject(project)
+  else if (action === 'delete') deleteManagedProject(project)
+}
+
+/** 手机档视口判断（<768px）：项目操作收进下拉、上传改「选择文件」等触屏降级。 */
+const mobileViewport = window.matchMedia('(max-width: 767.98px)')
+const isMobile = ref(mobileViewport.matches)
+const handleMobileViewportChange = (event) => { isMobile.value = event.matches }
+onMounted(() => mobileViewport.addEventListener('change', handleMobileViewportChange))
+onUnmounted(() => mobileViewport.removeEventListener('change', handleMobileViewportChange))
+
 onMounted(loadProjects)
 </script>
 
@@ -528,6 +536,7 @@ onMounted(loadProjects)
   <section class="home-welcome" :class="{ 'is-chat-mode': viewMode === 'chat' }">
     <!-- 欢迎视图 -->
     <template v-if="viewMode === 'welcome'">
+    <div class="welcome-scroll">
     <div class="welcome-copy motion-stage motion-stage-1">
       <p class="eyebrow">{{ TEACHER_HOME.greeting.eyebrow }}</p>
       <h1>{{ TEACHER_HOME.greeting.title }}</h1>
@@ -553,7 +562,7 @@ onMounted(loadProjects)
         </el-skeleton>
       </div>
       <div v-else class="project-grid">
-        <button v-for="project in projects" :key="project.id" type="button" class="project-card" @click="openProject(project)">
+        <button v-for="project in projects" :key="project.id" type="button" class="project-card" data-hover-lift @click="openProject(project)">
           <strong>{{ project.project_name }}</strong>
           <span>{{ project.project_type || '教学项目' }} · v{{ project.current_version || 1 }}</span>
         </button>
@@ -578,6 +587,7 @@ onMounted(loadProjects)
         <p>{{ suggestion.description }}</p>
         <el-icon class="card-arrow"><Promotion /></el-icon>
       </el-card>
+    </div>
     </div>
 
     <section class="composer motion-stage motion-stage-4" aria-label="AI 教学任务输入">
@@ -633,7 +643,7 @@ onMounted(loadProjects)
       <input ref="resourceFileInput" class="resource-file-input" type="file" multiple accept=".pdf,.doc,.docx,.ppt,.pptx,.txt,.md,.jpg,.jpeg,.png,.gif,.webp,.svg,.mp3,.wav,.m4a,.ogg,.mp4,.avi,.mov,.mkv,.webm" @change="uploadPickedResource" />
       <button
         type="button"
-        :class="['upload-dropzone', { 'is-dragging': uploadDragging }]"
+        :class="['upload-dropzone', { 'is-dragging': uploadDragging, 'is-touch': isMobile }]"
         :disabled="resourceUploading"
         @click="triggerResourceUpload"
         @dragenter.prevent="uploadDragging = true"
@@ -642,7 +652,8 @@ onMounted(loadProjects)
         @drop.prevent="dropResourceFiles"
       >
         <el-icon><Paperclip /></el-icon>
-        <strong>{{ uploadDragging ? '松开即可添加资料' : '点击选择或拖入本地资料' }}</strong>
+        <strong class="dropzone-title-default">{{ uploadDragging ? '松开即可添加资料' : '点击选择或拖入本地资料' }}</strong>
+        <strong class="dropzone-title-touch">选择文件</strong>
         <span>支持 PDF、Word、PowerPoint、TXT 和 Markdown，可多选</span>
       </button>
       <el-progress v-if="resourceUploading" :percentage="resourceUploadProgress" :show-text="true" />
@@ -689,15 +700,11 @@ onMounted(loadProjects)
 
   </section>
 
-  <div class="archive-entry"><el-button text size="small" @click="openArchivedProjects">归档项目管理</el-button></div>
-
   <el-dialog v-model="projectManagerVisible" title="项目管理" width="min(720px, 92vw)">
     <div v-loading="projectManagerLoading" class="managed-project-list">
-      <article v-for="project in managedProjects" :key="project.id"><div><strong>{{ project.project_name }}</strong><span>{{ project.project_type || '教学项目' }} · {{ project.status }}</span></div><div class="managed-project-actions"><el-button text size="small" @click="openProject(project)">打开</el-button><el-button text size="small" @click="copyManagedProject(project)">复制</el-button><el-button v-if="project.status !== 'archived'" text size="small" @click="archiveManagedProject(project)">归档</el-button><el-button type="danger" text size="small" @click="deleteManagedProject(project)">删除</el-button></div></article><el-empty v-if="!projectManagerLoading && !managedProjects.length" description="暂无项目" />
+      <article v-for="project in managedProjects" :key="project.id"><div><strong>{{ project.project_name }}</strong><span>{{ project.project_type || '教学项目' }} · {{ project.status }}</span></div><div class="managed-project-actions"><el-button text size="small" @click="openProject(project)">打开</el-button><template v-if="!isMobile"><el-button text size="small" @click="copyManagedProject(project)">复制</el-button><el-button v-if="project.status !== 'archived'" text size="small" @click="archiveManagedProject(project)">归档</el-button><el-button type="danger" text size="small" @click="deleteManagedProject(project)">删除</el-button></template><el-dropdown v-else trigger="click" popper-class="managed-project-dropdown" @command="handleManagedProjectCommand"><el-button text size="small" :icon="More">更多</el-button><template #dropdown><el-dropdown-menu><el-dropdown-item :command="{ action: 'copy', project }">复制</el-dropdown-item><el-dropdown-item v-if="project.status !== 'archived'" :command="{ action: 'archive', project }">归档</el-dropdown-item><el-dropdown-item :command="{ action: 'delete', project }" class="managed-project-danger">删除</el-dropdown-item></el-dropdown-menu></template></el-dropdown></div></article><el-empty v-if="!projectManagerLoading && !managedProjects.length" description="暂无项目" />
     </div>
   </el-dialog>
-  
-  <el-dialog v-model="archivedVisible" title="归档项目" width="min(620px, 92vw)"><div v-loading="archivedLoading" class="archived-list"><article v-for="project in archivedProjects" :key="project.id"><div><strong>{{ project.project_name }}</strong><span>{{ project.project_type || '教学项目' }}</span></div><el-button type="primary" plain size="small" @click="restoreArchivedProject(project)">恢复</el-button></article><el-empty v-if="!archivedLoading && !archivedProjects.length" description="暂无归档项目" /></div><template #footer><el-button @click="archivedVisible = false">关闭</el-button></template></el-dialog>
 </template>
 
 <style scoped>
@@ -706,6 +713,24 @@ onMounted(loadProjects)
   margin: 0 auto;
   padding: clamp(70px, 10vh, 124px) 0 42px;
 }
+/* 欢迎视图固定布局：内容区独立滚动，composer 固定底部（不随页面滚动） */
+.home-welcome:not(.is-chat-mode) {
+  display: flex;
+  flex-direction: column;
+  height: calc(100dvh - 68px); /* 桌面/平板/中屏顶栏 68px */
+  padding: 0 0 14px;
+  overflow: hidden;
+}
+.welcome-scroll {
+  flex: 1;
+  min-height: 0;
+  overflow-y: auto;
+  padding-top: clamp(48px, 7vh, 96px);
+  scrollbar-gutter: stable;
+}
+.welcome-scroll::-webkit-scrollbar { width: 4px; }
+.welcome-scroll::-webkit-scrollbar-track { background: transparent; }
+.welcome-scroll::-webkit-scrollbar-thumb { border-radius: var(--zh-radius4); background: var(--zh-line-border); }
 /* 聊天模式下移除欢迎页内边距，让 ChatView 撑满可用空间 */
 .home-welcome.is-chat-mode {
   width: 100%;
@@ -748,6 +773,14 @@ h1 { margin: 0; font-size: clamp(36px, 4vw, 48px); line-height: 1.15; letter-spa
 .composer-hint { margin: 10px 0 0; color: var(--zh-text-caption); font-size: 11px; text-align: center; }
 .session-fields { display:grid; grid-template-columns: 1.5fr 1fr 1fr; gap:12px; }.session-fields :deep(.el-form-item){margin-bottom:0}.prompt-preview{width:100%;padding:10px 12px;border-radius:var(--zh-radius8);color:var(--zh-text-secondary);background:var(--zh-background-light);line-height:1.65;white-space:pre-wrap}.resource-picker{display:grid;gap:8px;max-height:160px;overflow:auto;padding:10px 12px;border:1px solid var(--zh-line-border);border-radius:var(--zh-radius8);background:var(--zh-background-light)}.empty-resources{color:var(--zh-text-caption);font-size:12px}
 .resource-file-input{display:none}.resource-picker-dialog{max-height:280px;margin-top:12px}.upload-dropzone{width:100%;min-height:180px;display:grid;place-items:center;align-content:center;gap:9px;padding:24px;border:1px dashed var(--zh-line-theme50);border-radius:var(--zh-radius12);color:var(--zh-text-theme);background:var(--zh-background-weaken);cursor:pointer;transition:border-color 200ms cubic-bezier(.4,0,.2,1),background-color 200ms cubic-bezier(.4,0,.2,1),transform 200ms cubic-bezier(.4,0,.2,1),box-shadow 200ms cubic-bezier(.4,0,.2,1)}.upload-dropzone:hover,.upload-dropzone:focus-visible{border-color:var(--zh-line-theme);background:var(--zh-background-option-on);transform:translateY(-1px)}.upload-dropzone.is-dragging{border-color:var(--zh-line-theme);background:var(--zh-background-option-on);box-shadow:0 0 0 4px var(--zh-line-theme20);transform:scale(1.01)}.upload-dropzone:disabled{cursor:wait;opacity:.65}.upload-dropzone .el-icon{font-size:28px}.upload-dropzone strong{color:var(--zh-text-primary);font-size:16px}.upload-dropzone span{color:var(--zh-text-caption);font-size:12px}.uploaded-resource-list{display:grid;gap:6px;margin-top:14px;padding:12px;border-radius:var(--zh-radius8);background:var(--zh-background-light)}.uploaded-resource-list>span{color:var(--zh-text-caption);font-size:12px}.uploaded-resource-list p{margin:0;color:var(--zh-text-secondary);font-size:13px}.knowledge-picker-header{display:grid;grid-template-columns:minmax(0,1fr) 240px;align-items:center;gap:16px}.knowledge-picker-header p{margin:0;color:var(--zh-text-secondary);font-size:13px;line-height:1.6}.selected-resource-count{display:inline-block;margin-right:16px;color:var(--zh-text-caption);font-size:12px}
+/* 触屏降级：无拖拽能力，隐藏拖拽提示文案；dropzone 本体即「选择文件」按钮，点击复用既有文件选择入口 */
+.dropzone-title-touch{display:none}
+.upload-dropzone.is-touch .dropzone-title-default{display:none}
+.upload-dropzone.is-touch .dropzone-title-touch{display:block}
+@media (hover: none) and (pointer: coarse) {
+  .upload-dropzone .dropzone-title-default{display:none}
+  .upload-dropzone .dropzone-title-touch{display:block}
+}
 .voice-panel{display:grid;justify-items:center;padding:8px 8px 0;text-align:center}.voice-orb{width:78px;height:78px;display:grid;place-items:center;padding:0;margin:4px 0 18px;border:1px solid var(--zh-line-theme20);border-radius:50%;color:var(--zh-text-theme);background:var(--zh-background-weaken);box-shadow:0 0 0 10px var(--zh-background-weaken);font-family:inherit;cursor:pointer;transition:border-color 200ms cubic-bezier(.4,0,.2,1),background-color 200ms cubic-bezier(.4,0,.2,1),box-shadow 200ms cubic-bezier(.4,0,.2,1),transform 200ms cubic-bezier(.4,0,.2,1)}.voice-orb:hover,.voice-orb:focus-visible{border-color:var(--zh-line-theme);box-shadow:0 0 0 10px var(--zh-line-theme20);transform:translateY(-1px)}.voice-orb:active{transform:scale(.96)}.voice-orb:disabled{cursor:wait;opacity:.75}.voice-orb.is-recording{border-color:var(--zh-red);color:var(--zh-red);background:var(--zh-danger-background);box-shadow:0 0 0 10px var(--zh-danger-background)}.voice-orb .el-icon{font-size:30px}.voice-panel>strong{font-size:18px}.voice-panel>p{max-width:350px;margin:8px 0 20px;color:var(--zh-text-secondary);font-size:13px;line-height:1.65}.voice-wave{height:42px;display:flex;align-items:center;gap:5px}.voice-wave i{width:3px;height:10px;border-radius:999px;background:var(--zh-line-theme50)}.voice-wave i:nth-child(2),.voice-wave i:nth-child(8){height:16px}.voice-wave i:nth-child(3),.voice-wave i:nth-child(7){height:24px}.voice-wave i:nth-child(4),.voice-wave i:nth-child(6){height:32px}.voice-wave i:nth-child(5){height:40px}.voice-status{width:100%;display:grid;grid-template-columns:auto 1fr auto;align-items:center;gap:8px;margin-top:16px;padding:12px 14px;border-radius:var(--zh-radius8);color:var(--zh-text-secondary);background:var(--zh-background-light);font-size:12px;text-align:left}.voice-status-dot{width:7px;height:7px;border-radius:50%;background:var(--zh-text-disabled)}
 .voice-status-dot.is-recording{background:var(--zh-red);animation:pulse 200ms cubic-bezier(.4,0,.2,1) infinite}
 .voice-status-dot.is-busy{background:var(--zh-text-theme)}.voice-status time{color:var(--zh-text-caption);font-family:var(--zh-font-number)}.voice-settings{width:100%;margin-top:18px;text-align:left}.voice-settings :deep(.el-select){width:100%}
@@ -755,16 +788,31 @@ h1 { margin: 0; font-size: clamp(36px, 4vw, 48px); line-height: 1.15; letter-spa
 .voice-wave.is-recording i:nth-child(1){animation-delay:0s}.voice-wave.is-recording i:nth-child(2){animation-delay:.08s}.voice-wave.is-recording i:nth-child(3){animation-delay:.16s}.voice-wave.is-recording i:nth-child(4){animation-delay:.24s}.voice-wave.is-recording i:nth-child(5){animation-delay:.32s}.voice-wave.is-recording i:nth-child(6){animation-delay:.4s}.voice-wave.is-recording i:nth-child(7){animation-delay:.48s}.voice-wave.is-recording i:nth-child(8){animation-delay:.56s}.voice-wave.is-recording i:nth-child(9){animation-delay:.64s}
 @keyframes waveMove{0%,100%{transform:scaleY(.35)}50%{transform:scaleY(1)}}
 
-@media (max-width: 680px) {
-  .home-welcome { width: min(100% - 28px, 540px); padding-top: 54px; }
+@media (max-width: 767.98px) {
+  .home-welcome:not(.is-chat-mode) {
+    /* 手机档顶栏 48px+safe-top，底部 TabBar 56px+safe-bottom */
+    height: calc(100dvh - 48px - var(--zh-safe-top) - var(--zh-tabbar-h) - var(--zh-safe-bottom));
+  }
+  .home-welcome:not(.is-chat-mode),
+  .welcome-scroll { width: min(100% - 28px, 540px); }
+  .welcome-scroll { padding-top: 32px; }
   .suggestion-grid, .project-grid { grid-template-columns: 1fr; }
   .suggestion-card :deep(.el-card__body) { min-height: 118px; }
   .suggestion-icon { margin-bottom: 16px; }
   .session-fields { grid-template-columns:1fr; }
   .knowledge-picker-header { grid-template-columns:1fr; }
 }
-.archive-entry{display:flex;justify-content:center;margin-top:10px}.archived-list{display:grid;gap:10px}.archived-list article{display:flex;align-items:center;justify-content:space-between;padding:12px;border:1px solid var(--zh-line-border);border-radius:var(--zh-radius8);background:var(--zh-background-light)}.archived-list article div{display:flex;flex-direction:column;gap:4px}.archived-list strong{font-size:13px}.archived-list span{color:var(--zh-text-caption);font-size:11px}
+
+/* 平板档（768–1023.98）：双 grid 降 2 列、间距收敛 12px；知识库弹窗头部单列堆叠 */
+@media (min-width: 768px) and (max-width: 1023.98px) {
+  .project-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 12px; }
+  .suggestion-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 12px; }
+  .knowledge-picker-header { grid-template-columns:1fr; }
+}
+
 .managed-project-list{display:grid;gap:10px}.managed-project-list article{display:flex;align-items:center;justify-content:space-between;gap:16px;padding:12px;border:1px solid var(--zh-line-border);border-radius:var(--zh-radius8);background:var(--zh-background-light)}.managed-project-list article>div:first-child{display:grid;gap:4px;min-width:0}.managed-project-list strong{overflow:hidden;text-overflow:ellipsis;white-space:nowrap;font-size:14px}.managed-project-list span{color:var(--zh-text-caption);font-size:12px}.managed-project-actions{display:flex;flex-wrap:wrap;justify-content:flex-end;gap:2px}
+/* 手机档「更多」下拉渲染在弹窗 popper（teleport 到 body），危险项配色需全局命中 */
+:global(.managed-project-dropdown .managed-project-danger) { color: var(--zh-red); }
 
 @keyframes fadeIn {
   from { opacity: 0; transform: translateY(8px); }

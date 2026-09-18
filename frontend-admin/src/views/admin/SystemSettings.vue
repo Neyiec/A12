@@ -35,10 +35,16 @@ import {
   CopyDocument,
   InfoFilled,
   Loading,
+  Film,
+  Notebook,
+  StarFilled,
+  Star,
 } from '@element-plus/icons-vue'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import { getExportTemplates, createExportTemplate, replaceExportTemplate, deleteExportTemplate, downloadExportTemplate } from '@/apis/export'
 import { getAiConfigs, createAiConfig, getSystemLogs } from '@/apis/config'
+import FileDropUpload from '@/components/admin/FileDropUpload.vue'
+import { formatFileSize } from '@/utils/file'
 
 // ===================================================================
 // 配置常量 — Tab 定义
@@ -237,12 +243,6 @@ const uploadMode = ref('create')
 
 /** 替换目标模板 ID（Python 侧 theme） */
 const replaceTargetId = ref(null)
-
-/** 隐藏文件选择 input 引用 */
-const templateFileInputRef = ref(null)
-
-/** 拖拽区高亮状态 */
-const isTemplateDragOver = ref(false)
 
 /** 已选模板文件（单文件队列：模板一次上传一个文件） */
 const templateFile = ref(null)
@@ -729,7 +729,6 @@ const openReplaceDialog = (row) => {
   templateUploadForm.type = row.type
   templateUploadForm.description = ''
   templateFile.value = null
-  isTemplateDragOver.value = false
   templateUploadVisible.value = true
 }
 
@@ -797,94 +796,44 @@ const openUploadDialog = () => {
   templateUploadForm.type = 'pptx'
   templateUploadForm.description = ''
   templateFile.value = null
-  isTemplateDragOver.value = false
   templateUploadVisible.value = true
 }
 
 // ===================================================================
-// 上传模板 — 文件选择与拖拽（结构参考用户端个人资源库上传素材）
+// 上传模板 — 拖拽/选择交互由 FileDropUpload 组件承担，此处仅做模板 JSON 结构校验
 // ===================================================================
 
 /**
- * 获取文件扩展名（小写）
- * @param {string} name - 文件名
- * @returns {string} 扩展名（不含点），无扩展名返回空串
+ * 校验模板 JSON 结构：顶层对象且含 html_template 字段
+ * （扩展名/大小/单文件限制已由 FileDropUpload 通用校验完成，此处只做模板结构校验）
+ * @param {string} content - 模板文件文本
+ * @returns {string} 校验失败原因，通过时返回空串
  */
-const getFileExtension = (name) => {
-  const parts = String(name || '').toLowerCase().split('.')
-  return parts.length > 1 ? parts.pop() : ''
+const getTemplateJsonError = (content) => {
+  let parsed
+  try {
+    parsed = JSON.parse(content)
+  } catch (error) {
+    return `模板文件不是有效的 JSON 格式：${error?.message || '解析失败'}`
+  }
+  if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) {
+    return '模板 JSON 顶层必须是对象（{...}）'
+  }
+  if (!String(parsed.html_template || '').trim()) {
+    return '模板 JSON 缺少 html_template 字段，无法用于 PPT 生成'
+  }
+  return ''
 }
 
 /**
- * 格式化文件大小为可读文本
- * @param {number} bytes - 字节数
- * @returns {string} 如 "4.2 MB"
+ * 处理 FileDropUpload 通过通用校验（.json 扩展名 / ≤20MB / 单文件）后的模板文件：
+ * 读取文本内容存入单文件队列（重复选择直接覆盖），类型锁定 pptx，名称为空时自动回填
+ * @param {Array<File>} files - 通过通用校验的文件集合（multiple=false 至多一个）
  */
-const formatFileSize = (bytes) => {
-  if (!Number.isFinite(bytes) || bytes < 0) return '—'
-  if (bytes < 1024) return `${bytes} B`
-  if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(1)} KB`
-  return `${(bytes / (1024 * 1024)).toFixed(1)} MB`
-}
-
-/** 打开系统文件选择器（上传中禁止） */
-const openTemplateFilePicker = () => {
-  if (!isTemplateUploading.value) templateFileInputRef.value?.click()
-}
-
-/**
- * 文件选择 input change 处理 — 取文件后清空 input 允许重复选择同一文件
- */
-const onTemplateFileInputChange = (event) => {
-  addTemplateFile(event.target?.files)
-  if (event.target) event.target.value = ''
-}
-
-/** 拖拽悬停高亮 */
-const onTemplateDragOver = (event) => {
-  event.preventDefault()
-  if (!isTemplateUploading.value) isTemplateDragOver.value = true
-}
-
-/** 拖拽离开取消高亮（仅当离开拖拽区本身） */
-const onTemplateDragLeave = (event) => {
-  event.preventDefault()
-  if (event.currentTarget === event.target || !event.currentTarget.contains(event.relatedTarget)) {
-    isTemplateDragOver.value = false
-  }
-}
-
-/** 放置文件 — 进入队列 */
-const onTemplateDrop = (event) => {
-  event.preventDefault()
-  isTemplateDragOver.value = false
-  if (!isTemplateUploading.value) addTemplateFile(event.dataTransfer?.files)
-}
-
-/**
- * 将所选文件加入队列（单文件：重复选择直接覆盖）
- * 校验扩展名（.json）、大小（≤20MB）与 JSON 格式（顶层对象且含 html_template 字段），
- * 通过后读取文本内容存入队列项，类型锁定 pptx，名称为空时自动回填（去掉扩展名）
- * @param {FileList|Array} files - 待加入的文件列表
- */
-const addTemplateFile = async (files) => {
-  if (isTemplateUploading.value) return
-  const incoming = Array.from(files || [])
-  if (!incoming.length) return
-  if (incoming.length > 1) {
-    ElMessage.info('模板一次只能上传一个文件，已选取第一个文件')
-  }
-  const file = incoming[0]
-  const ext = getFileExtension(file.name)
-  if (ext !== 'json') {
-    ElMessage.warning('仅支持 .json 模板文件（模板 JSON 需含 html_template 字段）')
-    return
-  }
-  if (file.size > TEMPLATE_FILE_MAX_SIZE) {
-    ElMessage.warning(`文件 ${formatFileSize(file.size)} 超过 20MB 限制，已跳过`)
-    return
-  }
-  // 校验 JSON 格式与模板结构
+const onTemplateFilesAccepted = async (files) => {
+  const file = files?.[0]
+  if (!file) return
+  // 读取文本内容，确认上传时整体提交给 Python 侧
   let content
   try {
     content = await file.text()
@@ -892,22 +841,11 @@ const addTemplateFile = async (files) => {
     ElMessage.error('读取模板文件失败，请重试')
     return
   }
-  let parsed
-  try {
-    parsed = JSON.parse(content)
-  } catch (error) {
-    ElMessage.warning(`模板文件不是有效的 JSON 格式：${error?.message || '解析失败'}`)
+  const jsonError = getTemplateJsonError(content)
+  if (jsonError) {
+    ElMessage.warning(jsonError)
     return
   }
-  if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) {
-    ElMessage.warning('模板 JSON 顶层必须是对象（{...}）')
-    return
-  }
-  if (!String(parsed.html_template || '').trim()) {
-    ElMessage.warning('模板 JSON 缺少 html_template 字段，无法用于 PPT 生成')
-    return
-  }
-  const stem = file.name.replace(/\.json$/i, '')
   templateFile.value = {
     uid: `${Date.now()}-${Math.random().toString(16).slice(2)}`,
     file,
@@ -922,7 +860,7 @@ const addTemplateFile = async (files) => {
   // 名称即 Python 侧 theme（模板文件名），名称为空时自动回填文件名去后缀
   templateUploadForm.type = 'pptx'
   if (!templateUploadForm.name.trim()) {
-    templateUploadForm.name = stem
+    templateUploadForm.name = file.name.replace(/\.json$/i, '')
   }
 }
 
@@ -988,11 +926,12 @@ const handleTemplateUpload = async () => {
 }
 
 /**
- * 获取模板类型 emoji 图标
+ * 获取模板类型图标（Element Plus 图标组件）
+ * pptx 课件 → Film（放映胶片）；docx 教案 → Notebook（教案本）
  * @param {string} type - 模板类型
- * @returns {string} emoji 图标字符
+ * @returns {Component} Element Plus 图标组件
  */
-const getTemplateIcon = (type) => (type === 'pptx' ? '📙' : '📘')
+const getTemplateIcon = (type) => (type === 'pptx' ? Film : Notebook)
 
 /**
  * 获取模板类型 Tag 类型
@@ -1242,7 +1181,7 @@ onBeforeUnmount(() => {
           <template #header>
             <div class="flex items-center justify-between">
               <div class="flex items-center gap-2">
-                <Cpu :size="18" :style="{ color: 'var(--zh-text-theme)' }" />
+                <el-icon :size="18" :style="{ color: 'var(--zh-text-theme)' }"><Cpu /></el-icon>
                 <span :style="{ fontSize: 'var(--zh-font-size15)', fontWeight: 600, color: 'var(--zh-text-primary)' }">
                   模型基础参数
                 </span>
@@ -1310,7 +1249,7 @@ onBeforeUnmount(() => {
           <template #header>
             <div class="flex items-center justify-between">
               <div class="flex items-center gap-2">
-                <MagicStick :size="18" :style="{ color: 'var(--zh-text-theme)' }" />
+                <el-icon :size="18" :style="{ color: 'var(--zh-text-theme)' }"><MagicStick /></el-icon>
                 <span :style="{ fontSize: 'var(--zh-font-size15)', fontWeight: 600, color: 'var(--zh-text-primary)' }">
                   生成策略参数
                 </span>
@@ -1384,7 +1323,7 @@ onBeforeUnmount(() => {
           <template #header>
             <div class="flex items-center justify-between">
               <div class="flex items-center gap-2">
-                <Edit :size="18" :style="{ color: 'var(--zh-text-theme)' }" />
+                <el-icon :size="18" :style="{ color: 'var(--zh-text-theme)' }"><Edit /></el-icon>
                 <span :style="{ fontSize: 'var(--zh-font-size15)', fontWeight: 600, color: 'var(--zh-text-primary)' }">
                   系统提示词模板
                 </span>
@@ -1484,8 +1423,11 @@ onBeforeUnmount(() => {
             <el-table-column prop="name" label="模板名称" min-width="200">
               <template #default="{ row }">
                 <div class="flex items-center gap-3">
-                  <div class="w-10 h-10 rounded-md flex items-center justify-center shrink-0 text-lg" :style="{ background: 'var(--zh-background-light-gray)' }">
-                    {{ getTemplateIcon(row.type) }}
+                  <!-- 模板类型图标：主题色底 + 白色描线（与角色管理图标规范一致） -->
+                  <div class="w-10 h-10 rounded-md flex items-center justify-center shrink-0" :style="{ background: 'var(--zh-gradient-blue)' }">
+                    <el-icon style="color: #ffffff; font-size: 20px;">
+                      <component :is="getTemplateIcon(row.type)" />
+                    </el-icon>
                   </div>
                   <div class="min-w-0">
                     <el-tooltip :content="row.name" placement="top" effect="dark" :disabled="row.name.length <= 18">
@@ -1540,9 +1482,11 @@ onBeforeUnmount(() => {
             <!-- 列：是否默认 -->
             <el-table-column prop="isDefault" label="默认" width="70" align="center">
               <template #default="{ row }">
-                <span :style="{ color: row.isDefault ? 'var(--zh-yellow)' : 'var(--zh-text-disabled)', fontSize: 'var(--zh-font-size16)' }">
-                  {{ row.isDefault ? '★' : '☆' }}
-                </span>
+                <el-icon
+                  :style="{ color: row.isDefault ? 'var(--zh-yellow)' : 'var(--zh-text-disabled)', fontSize: 'var(--zh-font-size16)' }"
+                >
+                  <component :is="row.isDefault ? StarFilled : Star" />
+                </el-icon>
               </template>
             </el-table-column>
 
@@ -1633,14 +1577,29 @@ onBeforeUnmount(() => {
           :show-close="!isTemplateUploading"
           :style="{ '--el-dialog-bg-color': 'var(--zh-background-pop)', '--el-dialog-border-radius': 'var(--zh-radius16)' }"
         >
-          <!-- 隐藏文件选择 input（由拖拽区点击触发） -->
-          <input
-            ref="templateFileInputRef"
-            class="visually-hidden"
-            type="file"
+          <!-- 拖拽上传区（复用 FileDropUpload：仅 .json / 单文件 / ≤20MB） -->
+          <FileDropUpload
             :accept="TEMPLATE_FILE_ACCEPT"
-            @change="onTemplateFileInputChange"
+            :multiple="false"
+            :accept-exts="['json']"
+            :max-size-bytes="TEMPLATE_FILE_MAX_SIZE"
+            :disabled="isTemplateUploading"
+            @accept="onTemplateFilesAccepted"
           >
+            <template #default="{ dragOver }">
+              <div
+                class="upload-dropzone"
+                :class="{ 'is-dragover': dragOver, 'is-uploading': isTemplateUploading }"
+              >
+                <el-icon :size="42" class="upload-dropzone-icon">
+                  <Loading v-if="isTemplateUploading" class="upload-loading-icon" />
+                  <Upload v-else />
+                </el-icon>
+                <strong>{{ isTemplateUploading ? '正在上传模板，请稍候…' : '拖拽文件到这里，或点击选择文件' }}</strong>
+                <span>仅支持 .json 模板文件（需含 html_template 字段），单文件最大 20MB，一次上传一个文件</span>
+              </div>
+            </template>
+          </FileDropUpload>
 
           <!-- 替换模式提示 -->
           <div
@@ -1652,24 +1611,6 @@ onBeforeUnmount(() => {
             <span :style="{ fontSize: 'var(--zh-font-size13)', color: 'var(--zh-text-secondary)' }">
               将替换模板「{{ templateUploadForm.name }}」的模板内容，替换后立即生效
             </span>
-          </div>
-
-          <!-- 拖拽上传区 -->
-          <div
-            class="upload-dropzone"
-            :class="{ 'is-dragover': isTemplateDragOver, 'is-uploading': isTemplateUploading }"
-            @click="openTemplateFilePicker"
-            @dragenter.prevent="onTemplateDragOver"
-            @dragover.prevent="onTemplateDragOver"
-            @dragleave.prevent="onTemplateDragLeave"
-            @drop.prevent="onTemplateDrop"
-          >
-            <el-icon :size="42" class="upload-dropzone-icon">
-              <Loading v-if="isTemplateUploading" class="upload-loading-icon" />
-              <Upload v-else />
-            </el-icon>
-            <strong>{{ isTemplateUploading ? '正在上传模板，请稍候…' : '拖拽文件到这里，或点击选择文件' }}</strong>
-            <span>支持 .pptx / .docx 模板文件，单文件最大 20MB，一次上传一个文件</span>
           </div>
 
           <!-- 已选文件队列（单文件） -->
@@ -2131,7 +2072,7 @@ onBeforeUnmount(() => {
   min-width: 0;
   overflow: hidden;
   color: var(--zh-text-primary);
-  font-size: 13px;
+  font-size: 14px;
   font-weight: 500;
   text-overflow: ellipsis;
   white-space: nowrap;
@@ -2142,7 +2083,7 @@ onBeforeUnmount(() => {
 .upload-file-status.is-success { color: var(--zh-green); }
 .upload-file-status.is-error,
 .upload-error { color: var(--zh-red); }
-.upload-error { display: block; margin-top: 4px; overflow: hidden; font-size: 11px; text-overflow: ellipsis; white-space: nowrap; }
+.upload-error { display: block; margin-top: 4px; overflow: hidden; font-size: 12px; text-overflow: ellipsis; white-space: nowrap; }
 
 .visually-hidden { position: absolute; width: 1px; height: 1px; overflow: hidden; clip: rect(0 0 0 0); white-space: nowrap; }
 

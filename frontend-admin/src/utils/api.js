@@ -8,6 +8,9 @@ import request from './request'
  * @param {Object} [options.params] - URL 参数（GET 请求）
  * @param {Object} [options.data] - 请求体数据（POST/PUT 请求）
  * @param {Object} [options.headers] - 自定义请求头
+ * @param {number} [options.timeout] - 请求超时时间（毫秒）
+ * @param {AbortSignal} [options.signal] - 可选的请求取消信号
+ * @param {Function} [options.onUploadProgress] - 上传进度回调（axios onUploadProgress 透传）
  * @returns {Promise}
  */
 export function apiRequest(options) {
@@ -17,7 +20,10 @@ export function apiRequest(options) {
     params: options.params,
     data: options.data,
     headers: options.headers,
-    responseType: options.responseType
+    responseType: options.responseType,
+    timeout: options.timeout,
+    signal: options.signal,
+    onUploadProgress: options.onUploadProgress
   })
 }
 

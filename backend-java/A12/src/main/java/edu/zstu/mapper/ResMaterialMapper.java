@@ -8,6 +8,7 @@ import java.util.List;
 @Mapper
 public interface ResMaterialMapper {
     Res_Material findById(@Param("id") Integer id);
+    List<Res_Material> findByIds(@Param("ids") List<Integer> ids);
     List<Res_Material> findByUserId(@Param("userId") Integer userId);
     List<Res_Material> findAll();
     List<Res_Material> findAiAvailable();

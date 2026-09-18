@@ -2,7 +2,7 @@
 import { computed, nextTick, onBeforeUnmount, onMounted, reactive, ref, watch } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { ElMessage, ElMessageBox } from 'element-plus'
-import { Aim, Plus, Promotion } from '@element-plus/icons-vue'
+import { Aim, ArrowDown, ArrowUp, Plus, Promotion } from '@element-plus/icons-vue'
 import MarkdownRender from 'markstream-vue'
 import { addProjectPermission, archiveProject, batchSaveProjectPages, copyProject, createCommunitySubmission, createProject, createProjectPage, deleteProject, deleteProjectPage, downloadResource, exportLessonPlanDocx, exportPresentationPptx, findUserByEmail, findUserByUsername, generateInteractiveModule, generateLessonPlan, generatePresentation, getAiPlan, getProject, getProjectPage, getProjectVersionDiff, listProjectPages, listProjectVersions, listProjects, listResources, modifyPresentation, modifyPresentationSlide, patchProject, recognizeIntent, restoreProject, restoreProjectVersion, reviseProjectWithAi, saveCommunitySubmissionVersion, saveProjectPage, saveProjectVersion, sendAiSessionAudioMessage, sendAiSessionMessage, streamGeneralChat, submitCommunitySubmission, transcribeAudio, uploadResource, validatePresentationHtml, validateProjectComponent } from '../apis/teacher'
 import { secureHtmlForSandbox } from '../utils/htmlSecurity'
@@ -329,6 +329,9 @@ const extendedElementPresets = [
 ]
 const allElementPresets = [...elementPresets, ...extendedElementPresets]
 let elementSequence = 1
+// 工作台内元素剪贴板：仅保存当前会话中的可编辑元素，不写入系统剪贴板。
+// 这样可避免将课件的内部 HTML、资源地址暴露到其他应用，同时仍支持 Ctrl/Cmd+C、V。
+let workspaceElementClipboard = null
 const cloneElementListData = (data) => Array.isArray(data)
   ? data.map((item) => Array.isArray(item) ? [...item] : (item && typeof item === 'object' ? { ...item } : item))
   : data
@@ -507,6 +510,50 @@ const assistantDrawerVisible = ref(false)
 const propertiesDrawerVisible = ref(false)
 const assistantDock = ref('side')
 const assistantTargetScope = ref('auto')
+// ===== 手机档（<768px）分段切换：对话 / 大纲 / 预览 / 教案，同一时刻只渲染一段 =====
+const isMobile = ref(window.matchMedia('(max-width: 767.98px)').matches)
+const activeSegment = ref('chat')
+// hover: none 的触屏设备没有鼠标指针，激光笔（mousemove）与拖拽不可用。
+const presentationPointerAvailable = typeof window !== 'undefined' && !window.matchMedia?.('(hover: none)')?.matches
+// 触屏设备（无 hover + 粗指针）一次性判定：Enter 仅换行不发送，发送走按钮（参照 ChatView.vue）。
+const isTouchDevice = window.matchMedia('(hover: none) and (pointer: coarse)').matches
+let mobileViewportMq = null
+const handleMobileViewportChange = (event) => { isMobile.value = Boolean(event?.matches) }
+const mobileSegments = computed(() => (
+  workspaceMode.value === 'document'
+    ? [{ label: '对话', value: 'chat' }, { label: '教案', value: 'plan' }]
+    : [{ label: '对话', value: 'chat' }, { label: '大纲', value: 'outline' }, { label: '预览', value: 'preview' }, { label: '教案', value: 'plan' }]
+))
+const handleMobileSegmentChange = (value) => {
+  activeSegment.value = value
+  // PPT 模式下切到教案段：直接进入教案工作台（document 模式），分段随之收敛为 对话/教案。
+  if (value === 'plan' && workspaceMode.value !== 'document') openLessonPlanWorkspace()
+}
+watch(workspaceMode, (mode) => {
+  if (!isMobile.value) return
+  if (mode === 'document') {
+    if (!['chat', 'plan'].includes(activeSegment.value)) activeSegment.value = 'plan'
+  } else if (!['chat', 'outline', 'preview'].includes(activeSegment.value)) {
+    activeSegment.value = 'preview'
+  }
+})
+// 手机档大纲段：以上下移按钮替代 HTML5 拖拽排序（复用 reorderSlides）。
+const moveSlideRelative = (index, delta) => {
+  const target = index + delta
+  if (target < 0 || target >= slides.length) return
+  reorderSlides(index, delta < 0 ? target : target + 1)
+}
+// 手机档放映：点击左右半屏翻页（激光笔已禁用，鼠标依赖降级）。
+const handlePresentationStageClick = (event) => {
+  // 仅触屏场景启用点击翻页（无指针设备或手机档）；桌面保持键盘/按钮翻页不变。
+  if (!presentationMode.value || (presentationPointerAvailable && !isMobile.value)) return
+  if (event.target?.closest?.('button, a, input, textarea, .preview-toolbar, .presentation-notes')) return
+  const rect = previewStageRef.value?.getBoundingClientRect()
+  if (!rect?.width) return
+  const ratio = (event.clientX - rect.left) / rect.width
+  if (ratio < 0.3) scrollPreviewTo(previewSlideIndex.value - 1)
+  else scrollPreviewTo(previewSlideIndex.value + 1)
+}
 const queryArrayValue = (value) => {
   const parsed = parseJson(routeQueryValue(value), null)
   if (Array.isArray(parsed)) return parsed
@@ -2053,7 +2100,7 @@ const attachHtmlDragEditor = (iframe, { structuredMode = false, onCommit = null 
     refreshElements()
     commitDocument()
   }
-  const copySelected = () => {
+  const cloneSelectedForClipboard = () => {
     if (!selected) return
     const clone = selected.cloneNode(true)
     clone.removeAttribute('data-a12-drag-selected')
@@ -2061,13 +2108,40 @@ const attachHtmlDragEditor = (iframe, { structuredMode = false, onCommit = null 
     clone.removeAttribute('contenteditable')
     clone.removeAttribute('spellcheck')
     clone.removeAttribute('id')
+    return clone
+  }
+  const copySelectedToClipboard = () => {
+    const clone = cloneSelectedForClipboard()
+    if (!clone) return false
+    workspaceElementClipboard = { kind: 'html', markup: clone.outerHTML }
+    return true
+  }
+  const pasteClipboard = () => {
+    if (workspaceElementClipboard?.kind !== 'html' || !workspaceElementClipboard.markup) return false
+    const template = document.createElement('template')
+    template.innerHTML = workspaceElementClipboard.markup
+    const clone = template.content.firstElementChild
+    if (!clone) return false
+    clone.removeAttribute('data-a12-drag-selected')
+    clone.removeAttribute('data-a12-html-editing')
+    clone.removeAttribute('contenteditable')
+    clone.removeAttribute('spellcheck')
+    clone.removeAttribute('id')
     clone.setAttribute('data-ppt-element', `copy-${Date.now()}`)
-    const origin = parseCssTranslate(frameWindow.getComputedStyle(selected).translate)
+    const origin = selected?.isConnected
+      ? parseCssTranslate(frameWindow.getComputedStyle(selected).translate)
+      : parseCssTranslate(clone.style.translate)
     clone.style.translate = `${origin.x + 18}px ${origin.y + 18}px`
-    selected.after(clone)
+    if (selected?.isConnected) selected.after(clone)
+    else (document.querySelector('.slide') || document.body).appendChild(clone)
     refreshElements()
     select(clone)
     commitDocument()
+    return true
+  }
+  const copySelected = () => {
+    if (!copySelectedToClipboard()) return false
+    return pasteClipboard()
   }
   const runHistoryAction = (action) => {
     if (selected?.isConnected) htmlSelectionRestoreKey.value = elementPanelKey.get(selected) || ''
@@ -2109,6 +2183,15 @@ const attachHtmlDragEditor = (iframe, { structuredMode = false, onCommit = null 
     if (editing && modifier && event.key === 'Enter') {
       event.preventDefault()
       finishTextEditing(true)
+      return
+    }
+    if (!editing && modifier && event.key.toLowerCase() === 'c' && selected) {
+      event.preventDefault()
+      copySelectedToClipboard()
+      return
+    }
+    if (!editing && modifier && event.key.toLowerCase() === 'v') {
+      if (pasteClipboard()) event.preventDefault()
       return
     }
     if (!editing && selected && ['Delete', 'Backspace'].includes(event.key)) {
@@ -2496,6 +2579,8 @@ const attachHtmlDragEditor = (iframe, { structuredMode = false, onCommit = null 
     insertElement,
     insertInteractive,
     copySelected: (id) => { const element = findElement(id); if (element) { select(element); copySelected() } },
+    copyToClipboard: (id) => { const element = findElement(id); if (element) { select(element); return copySelectedToClipboard() } return false },
+    pasteFromClipboard: pasteClipboard,
     deleteSelected: (id) => { const element = findElement(id); if (element) { select(element); deleteSelected() } },
   }
   const cleanup = () => {
@@ -2619,6 +2704,8 @@ const openPreview = () => {
 }
 const previewSpeakerNotes = (slide) => String(slide?.notes || slide?.speaker_notes || slide?.speakerNotes || slide?.description || '暂无备注提示')
 const updatePresentationPointer = (event) => {
+  // 触屏设备（hover: none）没有鼠标指针，禁用激光笔；放映改用点击翻页。
+  if (!presentationPointerAvailable) return
   if (!presentationMode.value || !presentationLaserEnabled.value || !previewStageRef.value) return
   const rect = previewStageRef.value.getBoundingClientRect()
   if (!rect.width || !rect.height) return
@@ -3422,6 +3509,8 @@ const handleCanvasAreaClick = (event) => {
   clearElementSelection()
 }
 const startElementDrag = (id, event) => {
+  // 手机档禁用指针拖拽：改为点击选中 + 浮动操作按钮（编辑/删除）。
+  if (isMobile.value) return
   if (event.button !== 0) return
   if (placementMode.value) {
     event.stopPropagation()
@@ -3451,7 +3540,10 @@ const startElementDrag = (id, event) => {
   window.addEventListener('pointerup', stopElementDrag, { once: true })
   window.addEventListener('pointercancel', stopElementDrag, { once: true })
   event.currentTarget.setPointerCapture?.(event.pointerId)
-  event.preventDefault()
+  // 音视频播放器覆盖了整个组件。允许播放器的 pointerdown 启动拖动，但不
+  // 阻止它的默认点击行为，这样点击播放/暂停等原生控件仍然可用。
+  const isNativeMediaPlayer = event.currentTarget?.classList?.contains('workspace-media-player')
+  if (!isNativeMediaPlayer) event.preventDefault()
 }
 const handleElementDrag = (event) => {
   const state = dragState.value
@@ -4347,6 +4439,49 @@ const copyElement = (id = selectedElementId.value) => {
   selectedElementId.value = copy.id
   markSlideComponentDirty(current.value, copy.id)
   WorkspaceMessage.success('元素已复制')
+}
+const copyElementToClipboard = (id = workspaceSelectedElementId.value) => {
+  if (workspaceUsesHtmlEditor.value) {
+    const targetId = id || htmlSelectedElementId.value
+    if (!targetId) return false
+    const copied = activeHtmlController()?.copyToClipboard?.(targetId) || false
+    if (copied) WorkspaceMessage.success('元素已复制，可使用 Ctrl+V 粘贴')
+    return copied
+  }
+  const source = elementById(id)
+  if (!source) return false
+  workspaceElementClipboard = {
+    kind: 'structured',
+    // 标题、说明等绑定字段复制后可能粘贴到另一页，因此此处固化当前展示内容。
+    element: { ...cloneElementData(source), content: elementContent(source) },
+  }
+  WorkspaceMessage.success('元素已复制，可使用 Ctrl+V 粘贴')
+  return true
+}
+const pasteElementFromClipboard = () => {
+  if (!current.value) return false
+  if (workspaceUsesHtmlEditor.value) {
+    const pasted = activeHtmlController()?.pasteFromClipboard?.() || false
+    if (pasted) WorkspaceMessage.success('元素已粘贴')
+    return pasted
+  }
+  if (workspaceElementClipboard?.kind !== 'structured' || !workspaceElementClipboard.element) return false
+  const source = cloneElementData(workspaceElementClipboard.element)
+  const copy = cloneElementData(source)
+  copy.id = `${source.type}-${Date.now()}-${elementSequence++}`
+  copy.name = `${source.name || elementTypeLabels[source.type] || '元素'} 副本`
+  copy.target = null
+  copy.content = source.content
+  copy.position = {
+    ...copy.position,
+    x: Math.min(82, Number(copy.position?.x || 0) + 4),
+    y: Math.min(78, Number(copy.position?.y || 0) + 4),
+  }
+  current.value.elements.push(copy)
+  selectedElementId.value = copy.id
+  markSlideComponentDirty(current.value, copy.id)
+  WorkspaceMessage.success('元素已粘贴')
+  return true
 }
 const clarificationFieldMeta = {
   title: { label: '课程/PPT主题', text: '你希望这次备课围绕什么课程主题展开？', options: [], placeholder: '例如：勾股定理与生活测量' },
@@ -6289,7 +6424,8 @@ const initializeSessionFlow = async () => {
 }
 const handleWorkspaceKeydown = (event) => {
   if (presentationMode.value) return
-  if ((event.ctrlKey || event.metaKey) && event.key.toLowerCase() === 's') {
+  const modifier = event.ctrlKey || event.metaKey
+  if (modifier && event.key.toLowerCase() === 's') {
     event.preventDefault()
     void saveWorkspaceNow()
     return
@@ -6300,14 +6436,26 @@ const handleWorkspaceKeydown = (event) => {
     cancelCanvasPlacement()
     return clearElementSelection()
   }
-  if (isEditingField || !selectedElementId.value) return
+  if (isEditingField) return
+  if (modifier && event.key.toLowerCase() === 'v') {
+    if (pasteElementFromClipboard()) event.preventDefault()
+    return
+  }
+  const selectedId = workspaceSelectedElementId.value
+  if (!selectedId) return
   if (event.key === 'Delete' || event.key === 'Backspace') {
     event.preventDefault()
-    removeElement()
+    removeElement(selectedId)
+    return
   }
-  if ((event.ctrlKey || event.metaKey) && event.key.toLowerCase() === 'd') {
+  if (modifier && event.key.toLowerCase() === 'c') {
     event.preventDefault()
-    copyElement()
+    copyElementToClipboard(selectedId)
+    return
+  }
+  if (modifier && event.key.toLowerCase() === 'd') {
+    event.preventDefault()
+    copyElement(selectedId)
   }
 }
 const restoreLocalWorkspaceDraft = () => {
@@ -6347,11 +6495,13 @@ onMounted(async () => {
     canvasViewportObserver = new ResizeObserver(() => centerCanvasView())
     canvasViewportObserver.observe(canvasAreaRef.value)
   }
+  mobileViewportMq = window.matchMedia('(max-width: 767.98px)')
+  mobileViewportMq.addEventListener('change', handleMobileViewportChange)
   window.addEventListener('keydown', handleWorkspaceKeydown)
   window.addEventListener('keydown', handlePresentationKeydown)
   document.addEventListener('fullscreenchange', handlePresentationFullscreenChange)
 })
-onBeforeUnmount(() => { if (canvasCenterFrame != null) cancelAnimationFrame(canvasCenterFrame); canvasViewportObserver?.disconnect(); canvasViewportObserver = null; interactivePreviewResizeObserver?.disconnect(); interactivePreviewResizeObserver = null; htmlFrameObservers.forEach(({ observer, cleanup }) => { observer?.disconnect(); cleanup?.() }); htmlFrameObservers.clear(); clearPreviewFrameObservers(); stopCanvasPan(); stopElementDrag(); cancelCanvasPlacement(); workspaceMessageInstance?.close(); window.removeEventListener('keydown', handleWorkspaceKeydown); window.removeEventListener('keydown', handlePresentationKeydown); document.removeEventListener('fullscreenchange', handlePresentationFullscreenChange); if (document.fullscreenElement && document.exitFullscreen) void document.exitFullscreen() })
+onBeforeUnmount(() => { mobileViewportMq?.removeEventListener('change', handleMobileViewportChange); mobileViewportMq = null; if (canvasCenterFrame != null) cancelAnimationFrame(canvasCenterFrame); canvasViewportObserver?.disconnect(); canvasViewportObserver = null; interactivePreviewResizeObserver?.disconnect(); interactivePreviewResizeObserver = null; htmlFrameObservers.forEach(({ observer, cleanup }) => { observer?.disconnect(); cleanup?.() }); htmlFrameObservers.clear(); clearPreviewFrameObservers(); stopCanvasPan(); stopElementDrag(); cancelCanvasPlacement(); workspaceMessageInstance?.close(); window.removeEventListener('keydown', handleWorkspaceKeydown); window.removeEventListener('keydown', handlePresentationKeydown); document.removeEventListener('fullscreenchange', handlePresentationFullscreenChange); if (document.fullscreenElement && document.exitFullscreen) void document.exitFullscreen() })
 const currentPagePayload = (slide = current.value, index = selectedSlide.value, overrides = {}) => pagePayloadForSlide(slide, index, {
   // 普通内容保存不修改页面顺序，避免旧顺序与当前数组索引不一致时触发唯一索引冲突。
   includePageOrder: false,
@@ -7315,9 +7465,10 @@ const handleWorkspaceVoice = async (file) => {
   }
 }
 const handleWorkspaceVoiceError = (error) => WorkspaceMessage.error(error?.message || '录音失败，请检查浏览器麦克风权限')
-/** 工作台 AI 输入快捷键：Enter 发送，Shift+Enter 换行，兼容中文输入法候选确认。 */
+/** 工作台 AI 输入快捷键：Enter 发送，Shift+Enter 换行，兼容中文输入法候选确认；触屏设备 Enter 仅换行，发送走按钮。 */
 const handleAssistantKeydown = (event) => {
   if (event.isComposing || event.keyCode === 229 || event.shiftKey) return
+  if (isTouchDevice) return
   event.preventDefault()
   sendAssistantMessage()
 }
@@ -7345,7 +7496,7 @@ const selectSlide = (index) => { selectedSlide.value = index; selectedElementId.
       @return-ppt="returnToPptWorkspace"
       @project-manage="openProjectManager"
       @save-as-project="saveWorkspaceAsProject"
-      @toggle-assistant="assistantDrawerVisible = !assistantDrawerVisible"
+      @toggle-assistant="isMobile ? (activeSegment = 'chat') : (assistantDrawerVisible = !assistantDrawerVisible)"
       @toggle-properties="propertiesDrawerVisible = !propertiesDrawerVisible"
       @online-preview="openWorkspacePreview"
       @export="exportProject"
@@ -7356,8 +7507,18 @@ const selectSlide = (index) => { selectedSlide.value = index; selectedElementId.
       @tool-select="handleToolSelect"
     />
 
-    <div class="workspace-grid" :class="{ 'is-assistant-bottom': assistantDock === 'bottom' }">
-      <aside class="assistant-panel" :class="{ 'is-mobile-open': assistantDrawerVisible }" aria-label="AI 教学助手">
+    <div v-if="isMobile" class="workspace-mobile-segments">
+      <el-segmented
+        v-model="activeSegment"
+        :options="mobileSegments"
+        block
+        aria-label="工作台分区切换"
+        @change="handleMobileSegmentChange"
+      />
+    </div>
+
+    <div class="workspace-grid" :class="{ 'is-assistant-bottom': assistantDock === 'bottom', 'is-mobile-segmented': isMobile }" :data-mobile-segment="activeSegment">
+      <aside v-if="!isMobile || activeSegment === 'chat'" class="assistant-panel" :class="{ 'is-mobile-open': assistantDrawerVisible }" aria-label="AI 教学助手">
         <header class="assistant-header">
           <div class="assistant-identity">
             <div class="assistant-mark" aria-hidden="true"><span>AI</span></div>
@@ -7436,7 +7597,7 @@ const selectSlide = (index) => { selectedSlide.value = index; selectedElementId.
         </footer>
       </aside>
 
-      <section v-if="workspaceMode === 'document'" class="editor-stage document-editor-stage">
+      <section v-if="workspaceMode === 'document' && (!isMobile || activeSegment === 'plan')" class="editor-stage document-editor-stage">
         <main class="document-workspace" aria-label="教学案文档工作区">
           <header class="document-workspace-header">
             <div>
@@ -7465,15 +7626,15 @@ const selectSlide = (index) => { selectedSlide.value = index; selectedElementId.
         </main>
       </section>
 
-      <section v-else class="editor-stage">
+      <section v-else-if="workspaceMode !== 'document' && (!isMobile || activeSegment === 'outline' || activeSegment === 'preview')" class="editor-stage">
         <aside class="slide-rail" aria-label="课件页面列表">
           <button
             v-for="(slide, index) in slides"
             :key="slide.pageId || slide.componentId || `${slide.title}-${slide.html ? 'html' : 'slide'}`"
-            draggable="true"
+            :draggable="!isMobile"
             :class="{ active: selectedSlide === index, dragging: draggingSlideIndex === index, 'drop-before': slideDropIndex === index, 'drop-after': slideDropIndex === index + 1 }"
-            :aria-label="`第 ${index + 1} 页：${slide.title}，可拖动调整顺序`"
-            title="拖动页面可调整顺序"
+            :aria-label="`第 ${index + 1} 页：${slide.title}${isMobile ? '，使用上下按钮调整顺序' : '，可拖动调整顺序'}`"
+            :title="isMobile ? '使用上下按钮调整顺序' : '拖动页面可调整顺序'"
             @dragstart="startSlideDrag(index, $event)"
             @dragover="handleSlideDragOver(index, $event)"
             @drop="dropSlide(index, $event)"
@@ -7482,6 +7643,8 @@ const selectSlide = (index) => { selectedSlide.value = index; selectedElementId.
           >
             <span>{{ String(index + 1).padStart(2, '0') }}</span>
             <div class="thumbnail" :style="{ '--thumb': themes.find((item) => item.id === slide.theme)?.color }"><i></i><b>{{ slide.title }}</b></div>
+            <span v-if="isMobile && slides.length > 1" class="rail-reorder rail-reorder-down" data-hover-reveal role="button" aria-label="下移本页" @pointerdown.stop @click.stop="moveSlideRelative(index, 1)"><el-icon><ArrowDown /></el-icon></span>
+            <span v-if="isMobile && slides.length > 1" class="rail-reorder rail-reorder-up" data-hover-reveal role="button" aria-label="上移本页" @pointerdown.stop @click.stop="moveSlideRelative(index, -1)"><el-icon><ArrowUp /></el-icon></span>
           </button>
           <el-button text :icon="Plus" @click="addSlide">添加页面</el-button>
        </aside>
@@ -7497,6 +7660,12 @@ const selectSlide = (index) => { selectedSlide.value = index; selectedElementId.
                </div>
              </div>
            </div>
+           <div v-if="!slides.length && !projectLoadError" class="canvas-empty-state" role="status">
+             <el-empty description="暂无课件页面" :image-size="80">
+               <el-button v-if="isMobile" type="primary" @click="activeSegment = 'chat'">去对话生成大纲</el-button>
+               <el-button v-else type="primary" @click="addSlide">添加页面</el-button>
+             </el-empty>
+           </div>
            <div v-if="revisionSubmitting" class="revision-overlay" role="status" aria-live="polite" @click.stop>
             <div class="revision-overlay-card">
               <span class="revision-orbit" aria-hidden="true"><i></i><i></i><i></i></span>
@@ -7509,7 +7678,7 @@ const selectSlide = (index) => { selectedSlide.value = index; selectedElementId.
           </div>
           <div class="canvas-meta">
             <span>第 {{ selectedSlide + 1 }} 页，共 {{ slides.length }} 页</span>
-            <span v-if="workspaceUsesHtmlEditor" class="canvas-placement-status"><b>拖动元素 · 双击文字编辑</b><small>选中后可缩放、旋转、复制或删除</small></span>
+            <span v-if="workspaceUsesHtmlEditor" class="canvas-placement-status"><b>{{ isMobile ? '点击元素选中 · 浮动按钮编辑' : '拖动元素 · 双击文字编辑' }}</b><small>选中后可缩放、旋转、复制或删除</small></span>
             <span v-if="placementMode" class="canvas-placement-status"><b>{{ placementInstruction }}</b><small>Esc 取消</small></span>
             <span>16:9 · 自适应窗口</span>
           </div>
@@ -7565,11 +7734,11 @@ const selectSlide = (index) => { selectedSlide.value = index; selectedElementId.
               </div>
               <div v-else-if="['audio', 'video', 'h5', 'subject'].includes(element.type)" :data-element-id="element.id" class="workspace-widget" :class="[`widget-${element.type}`, elementClass(element)]" :style="elementStyle(element.id)" @pointerdown="startElementDrag(element.id, $event)" @click.stop="selectElement(element.id, $event)">
                 <template v-if="element.type === 'audio'">
-                  <audio v-if="element.url || element.src" class="workspace-media-player" :src="element.url || element.src" :controls="element.controls !== false" :autoplay="Boolean(element.autoplay)" preload="metadata" @pointerdown.stop @click.stop="selectElement(element.id, $event)" />
+                  <audio v-if="element.url || element.src" class="workspace-media-player" :src="element.url || element.src" :controls="element.controls !== false" :autoplay="Boolean(element.autoplay)" preload="metadata" @pointerdown.stop="startElementDrag(element.id, $event)" @click.stop="selectElement(element.id, $event)" />
                   <span v-else class="widget-empty-state">尚未添加音频文件，请在右侧选择本地文件</span>
                 </template>
                 <template v-else-if="element.type === 'video'">
-                  <video v-if="element.url || element.src" class="workspace-media-player" :src="element.url || element.src" :controls="element.controls !== false" :autoplay="Boolean(element.autoplay)" playsinline preload="metadata" @pointerdown.stop @click.stop="selectElement(element.id, $event)" />
+                  <video v-if="element.url || element.src" class="workspace-media-player" :src="element.url || element.src" :controls="element.controls !== false" :autoplay="Boolean(element.autoplay)" playsinline preload="metadata" @pointerdown.stop="startElementDrag(element.id, $event)" @click.stop="selectElement(element.id, $event)" />
                   <span v-else class="widget-empty-state">尚未添加视频文件，请在右侧选择本地文件</span>
                 </template>
                 <template v-else-if="element.type === 'h5'">
@@ -7631,6 +7800,10 @@ const selectSlide = (index) => { selectedSlide.value = index; selectedElementId.
             <button type="button" aria-label="放大画布" title="放大画布" :disabled="canvasZoom >= CANVAS_ZOOM_MAX" @click="adjustCanvasZoom(CANVAS_ZOOM_STEP)">+</button>
             <button type="button" aria-label="将画布回到中心" title="将画布回到中心" @click="centerCanvasView"><el-icon><Aim /></el-icon></button>
           </div>
+          <div v-if="isMobile && workspaceSelectedElementId" class="mobile-element-actions" role="toolbar" aria-label="选中元素操作" @click.stop>
+            <el-button size="small" type="primary" plain @click="propertiesDrawerVisible = true">编辑</el-button>
+            <el-button size="small" type="danger" plain @click="removeElement(workspaceSelectedElementId)">删除</el-button>
+          </div>
           <WorkspaceProjectActions v-if="projectId" :status="autosaveState" :saving-version="versionActionLoading" :can-undo="Boolean(revisionUndoSnapshot?.length)" @undo="undoLastAiRevision" @quality="openQualityPanel" @save-version="createVersion" @versions="loadVersions" @permissions="openPermissionDialog" />
         </main>
       </section>
@@ -7684,13 +7857,13 @@ const selectSlide = (index) => { selectedSlide.value = index; selectedElementId.
       @click="assistantDrawerVisible = false; propertiesDrawerVisible = false"
     ></button>
 
-    <el-dialog v-model="previewVisible" class="preview-dialog" :class="{ 'presentation-dialog': presentationMode }" width="min(960px, 92vw)" title="在线预览 · 全部页面" @closed="clearPreviewFrameObservers">
-      <div ref="previewStageRef" class="preview presentation-stage" :class="{ 'is-presenting': presentationMode }" @mousemove="updatePresentationPointer" @mouseleave="hidePresentationPointer">
+    <el-dialog v-model="previewVisible" class="preview-dialog" :class="{ 'presentation-dialog': presentationMode }" align-center width="min(960px, 92vw)" title="在线预览 · 全部页面" @closed="clearPreviewFrameObservers">
+      <div ref="previewStageRef" class="preview presentation-stage" :class="{ 'is-presenting': presentationMode }" @mousemove="updatePresentationPointer" @mouseleave="hidePresentationPointer" @click="handlePresentationStageClick">
         <div class="preview-toolbar">
           <span>{{ presentationMode ? `放映模式 · 第 ${previewSlideIndex + 1} / ${slides.length} 页` : `连续预览 · 共 ${slides.length} 页` }}</span>
           <div class="preview-toolbar-actions">
             <el-button v-if="!presentationMode" text size="small" :icon="VideoPlay" @click="enterPresentationMode">放映</el-button>
-            <el-button v-if="presentationMode" text size="small" :type="presentationLaserEnabled ? 'primary' : 'default'" @click="presentationLaserEnabled = !presentationLaserEnabled">激光笔</el-button>
+            <el-button v-if="presentationMode && presentationPointerAvailable" text size="small" :type="presentationLaserEnabled ? 'primary' : 'default'" @click="presentationLaserEnabled = !presentationLaserEnabled">激光笔</el-button>
             <el-button v-if="presentationMode" text size="small" :type="presentationNotesVisible ? 'primary' : 'default'" @click="presentationNotesVisible = !presentationNotesVisible">备注提示</el-button>
             <el-button v-if="presentationMode" text size="small" @click="exitPresentationMode">退出放映</el-button>
           </div>
@@ -7741,7 +7914,7 @@ const selectSlide = (index) => { selectedSlide.value = index; selectedElementId.
       </div>
       <template #footer><el-button v-if="presentationMode" @click="exitPresentationMode">退出放映</el-button><el-button v-else @click="closePreview">继续编辑</el-button></template>
     </el-dialog>
-    <el-dialog v-model="revisionPreviewVisible" title="确认 AI 整套修改" width="min(900px, 94vw)" :close-on-click-modal="false" :close-on-press-escape="false">
+    <el-dialog v-model="revisionPreviewVisible" align-center title="确认 AI 整套修改" width="min(900px, 94vw)" :close-on-click-modal="false" :close-on-press-escape="false">
       <div v-if="pendingDeckRevision" class="revision-preview-dialog">
         <div class="revision-preview-summary">
           <div><span>变更摘要</span><strong>{{ pendingDeckRevision.summary }}</strong></div>
@@ -7776,7 +7949,7 @@ const selectSlide = (index) => { selectedSlide.value = index; selectedElementId.
         <el-button type="primary" :disabled="!pendingDeckRevision" @click="acceptDeckRevision">接受并应用</el-button>
       </template>
     </el-dialog>
-    <el-dialog v-model="interactiveDialogVisible" title="生成 H5 组件" width="min(720px, 92vw)" destroy-on-close>
+    <el-dialog v-model="interactiveDialogVisible" align-center title="生成 H5 组件" width="min(720px, 92vw)" destroy-on-close>
       <el-form :model="interactiveForm" label-position="top" class="interactive-form">
         <div class="interactive-form-grid">
           <el-form-item label="组件标题" required>
@@ -7814,7 +7987,7 @@ const selectSlide = (index) => { selectedSlide.value = index; selectedElementId.
       </el-form>
       <template #footer><el-button @click="interactiveDialogVisible = false">取消</el-button><el-button type="primary" :loading="interactiveGenerating" @click="handleGenerateInteractiveModule">生成 H5 组件</el-button></template>
     </el-dialog>
-    <el-dialog v-model="interactivePreviewVisible" title="H5 组件预览" width="min(900px, 94vw)" class="interactive-preview-dialog">
+    <el-dialog v-model="interactivePreviewVisible" align-center title="H5 组件预览" width="min(900px, 94vw)" class="interactive-preview-dialog">
       <div v-if="interactiveModule" class="interactive-preview-meta">
         <div><strong>{{ interactiveModule.title || 'H5 组件' }}</strong><span>{{ interactiveModuleTypeInfo(interactiveModule.module_type || interactiveModule.moduleType).label }}</span><code>{{ interactiveModule.module_type_raw || interactiveModule.module_type || 'unknown' }}</code></div>
         <p>{{ interactiveModule.topic || '暂无主题说明' }}</p>
@@ -7877,7 +8050,7 @@ const selectSlide = (index) => { selectedSlide.value = index; selectedElementId.
         </div>
       </div>
     </div>
-    <el-dialog v-model="qualityPanelVisible" title="生成质量与改进建议" width="min(680px, 92vw)">
+    <el-dialog v-model="qualityPanelVisible" align-center title="生成质量与改进建议" width="min(680px, 92vw)">
       <div v-if="qualityReport" class="quality-report-panel">
         <header class="quality-report-heading">
           <div><span>报告来源</span><strong>{{ qualityReportSource || '最近一次生成' }}</strong></div>
@@ -7904,7 +8077,7 @@ const selectSlide = (index) => { selectedSlide.value = index; selectedElementId.
       <el-empty v-else description="暂无质量报告" />
       <template #footer><el-button @click="qualityPanelVisible = false">关闭</el-button></template>
     </el-dialog>
-    <el-dialog v-model="contextManagerVisible" title="工作台 AI 上下文" width="min(680px, 92vw)" :close-on-click-modal="false">
+    <el-dialog v-model="contextManagerVisible" align-center title="工作台 AI 上下文" width="min(680px, 92vw)" :close-on-click-modal="false">
       <div class="context-manager">
         <section v-if="workspaceContextPayload().community" class="context-source-card">
           <span>社区来源</span>
@@ -7920,7 +8093,7 @@ const selectSlide = (index) => { selectedSlide.value = index; selectedElementId.
       </div>
       <template #footer><el-button @click="contextManagerVisible = false">取消</el-button><el-button type="primary" :loading="contextManagerSaving" @click="saveWorkspaceContextBindings">保存绑定</el-button></template>
     </el-dialog>
-    <el-dialog v-model="versionDialogVisible" title="项目版本历史" width="min(720px, 92vw)" :close-on-click-modal="!versionActionLoading" :close-on-press-escape="!versionActionLoading" :show-close="!versionActionLoading">
+    <el-dialog v-model="versionDialogVisible" align-center title="项目版本历史" width="min(720px, 92vw)" :close-on-click-modal="!versionActionLoading" :close-on-press-escape="!versionActionLoading" :show-close="!versionActionLoading">
       <p class="dialog-hint">保存关键阶段的课件，随时比较或恢复；恢复前会自动备份当前内容。</p>
       <div class="workspace-version-create">
         <el-input v-model="versionDescription" aria-label="版本说明" placeholder="版本说明，例如：完成课堂练习与讲解备注" maxlength="200" show-word-limit :disabled="versionActionLoading" />
@@ -7949,7 +8122,7 @@ const selectSlide = (index) => { selectedSlide.value = index; selectedElementId.
       </section>
       <template #footer><el-button :disabled="versionActionLoading" @click="versionDialogVisible = false">关闭</el-button></template>
     </el-dialog>
-    <el-dialog v-model="permissionDialogVisible" title="协作者管理" width="min(620px, 92vw)" :close-on-click-modal="false">
+    <el-dialog v-model="permissionDialogVisible" align-center title="协作者管理" width="min(620px, 92vw)" :close-on-click-modal="false">
       <div class="permission-manager">
         <section class="permission-search-card">
           <div class="permission-section-heading"><strong>添加协作者</strong><span>通过用户名或邮箱查找</span></div>
@@ -7982,7 +8155,7 @@ const selectSlide = (index) => { selectedSlide.value = index; selectedElementId.
       </div>
       <template #footer><el-button @click="permissionDialogVisible = false">关闭</el-button></template>
     </el-dialog>
-    <el-dialog v-model="communityPublishVisible" title="发布到社区" width="min(680px, 92vw)" :close-on-click-modal="false">
+    <el-dialog v-model="communityPublishVisible" align-center title="发布到社区" width="min(680px, 92vw)" :close-on-click-modal="false">
       <el-form :model="communityPublishForm" label-position="top" class="community-publish-form">
         <div class="community-form-grid">
           <el-form-item label="内容类型"><el-select v-model="communityPublishForm.content_type"><el-option label="课程案例" value="lesson_case" /><el-option label="教学技能" value="skill" /></el-select></el-form-item>
@@ -8001,7 +8174,7 @@ const selectSlide = (index) => { selectedSlide.value = index; selectedElementId.
       <template #footer><el-button @click="communityPublishVisible = false">取消</el-button><el-button :loading="communityPublishLoading" @click="publishCommunity(false)">保存草稿</el-button><el-button type="primary" :loading="communityPublishLoading" @click="publishCommunity(true)">提交审核</el-button></template>
     </el-dialog>
 
-    <el-dialog v-model="projectManagerVisible" title="项目管理" width="min(760px, 92vw)" class="project-manager-dialog">
+    <el-dialog v-model="projectManagerVisible" align-center title="项目管理" width="min(760px, 92vw)" class="project-manager-dialog">
       <section v-if="projectId" class="project-manager-current">
         <label>当前项目名称</label>
         <div><el-input v-model="projectNameDraft" maxlength="80" show-word-limit /><el-button type="primary" :loading="projectActionLoading" @click="renameWorkspaceProject">保存名称</el-button></div>
@@ -8056,13 +8229,13 @@ const selectSlide = (index) => { selectedSlide.value = index; selectedElementId.
 .version-list{max-height:400px;overflow:auto;margin:14px 0}
 .project-manager-list .el-tag{margin-left:8px}
 .project-manager-list .el-pagination{justify-content:center}
-@media(max-width:640px){.workspace-project-filters{grid-template-columns:repeat(2,minmax(0,1fr))}.workspace-project-filters>.el-input{grid-column:1/-1}.workspace-version-create{flex-wrap:wrap}.workspace-version-actions{flex-direction:column}.workspace-version-compare{flex-wrap:wrap}}
+@media(max-width:767.98px){.workspace-project-filters{grid-template-columns:repeat(2,minmax(0,1fr))}.workspace-project-filters>.el-input{grid-column:1/-1}.workspace-version-create{flex-wrap:wrap}.workspace-version-actions{flex-direction:column}.workspace-version-compare{flex-wrap:wrap}}
 
 .workspace-composer-buttons{display:inline-flex;align-items:center;gap:4px}
 .context-manager-trigger{margin-left:auto;flex:none}.context-manager{display:grid;gap:12px}.context-source-card{display:grid;gap:4px;padding:12px 14px;border:1px solid var(--zh-line-theme20);border-radius:var(--zh-radius10);background:var(--zh-background-weaken)}.context-source-card span,.context-source-card small{color:var(--zh-text-caption);font-size:11px}.context-source-card strong{color:var(--zh-text-primary);font-size:14px}.context-resource-picker{display:grid;gap:7px;max-height:280px;overflow:auto;padding:10px;border:1px solid var(--zh-line-border);border-radius:var(--zh-radius8);background:var(--zh-background-light)}.context-resource-picker :deep(.el-checkbox){display:flex;align-items:flex-start;margin:0}.context-resource-picker :deep(.el-checkbox__label){display:flex;align-items:baseline;gap:8px;min-width:0;color:var(--zh-text-secondary);font-size:12px}.context-resource-picker small{color:var(--zh-text-caption);font-size:10px}.context-selected-resources{display:flex;align-items:center;flex-wrap:wrap;gap:6px}.context-selected-resources strong{margin-right:3px;color:var(--zh-text-caption);font-size:11px}
 .generation-observability{display:grid;gap:8px;max-height:38vh;overflow:auto;margin-top:12px;padding-top:12px;border-top:1px solid rgb(37 99 235 / 14%);text-align:left}.generation-detail-section{padding:9px 10px;border:1px solid rgb(37 99 235 / 12%);border-radius:8px;background:rgb(255 255 255 / 74%)}.generation-detail-section header{display:flex;align-items:center;justify-content:space-between;gap:8px;margin-bottom:7px}.generation-detail-section header strong{font-size:11px}.generation-detail-section header span{color:#7c8491;font-size:10px}.generation-timeline{display:grid;gap:6px;margin:0;padding:0;list-style:none}.generation-timeline li{display:flex;align-items:flex-start;gap:7px}.generation-timeline li>i{flex:none;width:7px;height:7px;margin-top:4px;border-radius:50%;background:#9ca3af}.generation-timeline li>i.status-running,.generation-timeline li>i.status-executing,.generation-timeline li>i.status-processing{background:#2563eb;box-shadow:0 0 0 3px rgb(37 99 235 / 14%)}.generation-timeline li>i.status-completed,.generation-timeline li>i.status-success,.generation-timeline li>i.status-done{background:#16a34a}.generation-timeline li>i.status-failed,.generation-timeline li>i.status-error{background:#dc2626}.generation-timeline li div{display:grid;gap:2px;min-width:0}.generation-timeline li strong{overflow:hidden;color:#26364d;font-size:11px;text-overflow:ellipsis;white-space:nowrap}.generation-timeline li span,.generation-compact-list li span{color:#7c8491;font-size:10px;line-height:1.45}.generation-compact-list{display:grid;gap:5px;margin:0;padding:0;list-style:none}.generation-compact-list li{display:flex;gap:6px;min-width:0;color:#526176;font-size:10px;line-height:1.45}.generation-compact-list li b{flex:none;color:#334c70;font-size:10px}.generation-compact-list li span{min-width:0;overflow:hidden;text-overflow:ellipsis}.generation-reflection p{margin:0;color:#526176;font-size:10px;line-height:1.5}.generation-failure-detail,.generation-recovery{padding:8px 10px;border-radius:8px;text-align:left;font-size:11px;line-height:1.5}.generation-failure-detail{color:#9b2c2c;background:#fff3f0}.generation-recovery{color:#7a5a14;background:#fff8e7}.generation-failure-timeline{display:grid;gap:5px;padding:8px 10px;border-radius:8px;color:#7c8491;background:#f8fafc;text-align:left;font-size:10px;line-height:1.45}.generation-failure-timeline strong{color:#526176;font-size:11px}
-.revision-preview-dialog{display:grid;gap:14px}.revision-preview-summary{display:flex;align-items:center;justify-content:space-between;gap:12px;padding:14px 16px;border:1px solid var(--zh-line-theme20);border-radius:var(--zh-radius10);background:var(--zh-background-weaken)}.revision-preview-summary div{display:grid;gap:4px;min-width:0}.revision-preview-summary span:first-child{color:var(--zh-text-caption);font-size:11px}.revision-preview-summary strong{color:var(--zh-text-primary);font-size:14px;line-height:1.5}.revision-preview-count{flex:none;padding:5px 9px;border-radius:999px;color:var(--zh-text-theme);background:var(--zh-background-primary);font-size:11px}.revision-preview-section{padding:14px;border:1px solid var(--zh-line-border);border-radius:var(--zh-radius10);background:var(--zh-background-primary)}.revision-preview-section-heading{display:flex;align-items:baseline;justify-content:space-between;gap:12px;margin-bottom:10px}.revision-preview-section-heading strong{font-size:13px}.revision-preview-section-heading span{color:var(--zh-text-caption);font-size:11px}.revision-operation-list{display:grid;gap:7px;max-height:180px;overflow:auto;margin:0;padding:0;list-style:none}.revision-operation-list li{display:flex;align-items:center;gap:8px;min-width:0;padding:7px 8px;border-radius:var(--zh-radius8);background:var(--zh-background-light);color:var(--zh-text-secondary);font-size:12px}.revision-operation-list li>span{overflow:hidden;text-overflow:ellipsis;white-space:nowrap}.revision-comparison-grid{display:grid;grid-template-columns:1fr 1fr;gap:10px}.revision-comparison-column{min-width:0;border:1px solid var(--zh-line-border);border-radius:var(--zh-radius8);overflow:hidden}.revision-comparison-column header{padding:9px 11px;color:var(--zh-text-secondary);background:var(--zh-background-light);font-size:12px;font-weight:600}.revision-comparison-column.is-after header{color:var(--zh-text-theme);background:var(--zh-background-weaken)}.revision-comparison-column ol{display:grid;gap:5px;max-height:220px;overflow:auto;margin:0;padding:9px;list-style:none}.revision-comparison-column li{display:flex;align-items:center;gap:8px;min-width:0;color:var(--zh-text-secondary);font-size:12px}.revision-comparison-column li b{display:grid;place-items:center;flex:none;width:24px;height:20px;border-radius:5px;color:var(--zh-text-theme);background:var(--zh-background-weaken);font:600 10px var(--zh-font-number)}.revision-comparison-column li span{overflow:hidden;text-overflow:ellipsis;white-space:nowrap}@media(max-width:640px){.revision-comparison-grid{grid-template-columns:1fr}.revision-preview-summary{align-items:flex-start;flex-direction:column}}
-.workspace{height:100dvh;display:grid;grid-template-rows:auto minmax(0,1fr);overflow:hidden;background:var(--zh-background-light)}.workspace-grid{min-height:0;display:grid;grid-template-columns:286px minmax(500px,1fr) 270px}.assistant-panel,.properties{min-height:0;background:var(--zh-background-primary)}.assistant-panel{display:flex;flex-direction:column;border-right:1px solid var(--zh-line-border)}.assistant-panel>header{display:flex;align-items:center;gap:9px;padding:16px;border-bottom:1px solid var(--zh-line-parting)}.assistant-mark{display:grid;place-items:center;width:32px;height:32px;border-radius:var(--zh-radius8);color:#fff;background:var(--zh-gradient-blue);font-weight:700}.assistant-panel header div:last-child{display:flex;flex-direction:column}.assistant-panel header strong{font-size:13px}.assistant-panel header span{margin-top:2px;color:var(--zh-text-caption);font-size:10px}.conversation{flex:1;padding:16px;overflow:auto}.message{display:flex;align-items:flex-start;gap:8px;margin-bottom:16px}.message>span{display:grid;place-items:center;flex:none;width:24px;height:24px;border-radius:6px;color:#fff;background:var(--zh-theme-primary);font-size:10px}.message p{margin:0;padding:10px 12px;border-radius:var(--zh-radius12);color:var(--zh-text-secondary);background:var(--zh-background-answer-card);font-size:12px;line-height:1.65}.message.user{justify-content:flex-end}.message.user p{color:var(--zh-text-primary);background:var(--zh-background-user-query)}.composer{padding:12px;border-top:1px solid var(--zh-line-border)}.composer>div{display:flex;align-items:center;justify-content:space-between;margin-top:8px}.composer span{color:var(--zh-text-caption);font-size:10px}.composer :deep(.el-textarea__inner){background:var(--zh-background-light);box-shadow:none}.editor-stage{display:grid;grid-template-columns:116px minmax(0,1fr);min-width:0}.slide-rail{padding:12px 9px;overflow:auto;border-right:1px solid var(--zh-line-border);background:var(--zh-background-primary)}.slide-rail>button{display:grid;grid-template-columns:18px 1fr;gap:4px;width:100%;margin-bottom:10px;padding:3px;border:1px solid transparent;border-radius:6px;color:var(--zh-text-caption);background:transparent;text-align:left;cursor:pointer}.slide-rail>button.active{border-color:var(--zh-line-theme);color:var(--zh-text-theme);background:var(--zh-background-weaken)}.thumbnail{display:flex;flex-direction:column;justify-content:center;gap:5px;height:54px;padding:8px;border-radius:4px;background:var(--zh-background-light)}.thumbnail i{width:65%;height:3px;background:var(--thumb)}.thumbnail b{overflow:hidden;color:var(--zh-text-secondary);font-size:8px;text-overflow:ellipsis;white-space:nowrap}.slide-rail :deep(.el-button){width:100%;justify-content:flex-start}.canvas-area{position:relative;display:grid;place-items:center;min-width:0;padding:44px 34px;overflow:auto;background-color:#eef0f4;background-image:radial-gradient(#c9ced7 1px,transparent 1px);background-size:18px 18px}.canvas-meta{position:absolute;top:12px;inset-inline:20px;display:flex;justify-content:space-between;color:#7c8491;font-size:10px}.slide-canvas{position:relative;width:min(780px,100%);aspect-ratio:16/9;overflow:hidden;padding:clamp(28px,4vw,52px);color:#102d54;background:#f9fbff;box-shadow:0 18px 45px rgb(40 57 82 / 18%)}.slide-eyebrow,.slide-canvas h1,.slide-canvas>p,.theorem{position:relative;z-index:1}.slide-eyebrow{color:var(--accent);font:600 10px var(--zh-font-number);letter-spacing:.12em}.slide-canvas h1{max-width:76%;margin:18px 0 0;font-size:clamp(26px,3vw,40px);line-height:1.2;letter-spacing:-.04em}.slide-canvas>p{max-width:64%;margin:12px 0;color:#607491;font-size:clamp(11px,1.2vw,15px);line-height:1.65}.theorem{display:grid;grid-template-columns:.8fr 1.2fr;align-items:center;gap:28px;width:76%;margin:28px auto}.triangle{position:relative;width:104px;height:104px;border-right:5px solid var(--accent);border-bottom:5px solid var(--accent);transform:skewY(-35deg) rotate(-10deg)}.triangle i{position:absolute;color:var(--accent);font-style:normal;font-weight:700;transform:skewY(35deg) rotate(10deg)}.triangle i:nth-child(1){bottom:-22px;left:36px}.triangle i:nth-child(2){top:40px;right:-18px}.triangle i:nth-child(3){top:-22px;left:8px}.formula{display:grid;grid-template-columns:auto 24px auto;align-items:center;font-family:var(--zh-font-number)}.formula span,.formula strong{font-size:clamp(22px,3vw,36px)}.formula em{color:#7c8da4;font-style:normal}.formula strong{color:var(--accent)}.formula small{grid-column:1/-1;margin-top:8px;color:#7c8da4;font-size:10px}.slide-canvas footer{position:absolute;z-index:1;right:0;bottom:0;left:0;display:grid;grid-template-columns:110px 1fr;padding:14px 28px;color:#fff;background:color-mix(in srgb,var(--accent) 82%,#102d54)}.slide-canvas footer p{margin:0;font-size:10px;line-height:1.5}.layout-重点陈述 h1{margin-top:54px;font-size:clamp(34px,4.4vw,52px)}.canvas-controls{position:absolute;right:18px;bottom:14px;display:flex;overflow:hidden;border-radius:var(--zh-radius8);background:var(--zh-background-capsule);box-shadow:var(--zh-shadow1)}.canvas-controls button,.canvas-controls span{padding:6px 9px;border:0;color:var(--zh-text-secondary);background:transparent;font-size:11px}.canvas-controls button{cursor:pointer}.properties{overflow:auto;border-left:1px solid var(--zh-line-border)}.properties>header{display:flex;justify-content:space-between;padding:16px;border-bottom:1px solid var(--zh-line-parting)}.properties header strong{font-size:13px}.properties header span{color:var(--zh-text-caption);font-size:10px}.tabs{display:grid;grid-template-columns:repeat(3,1fr);padding:10px 14px 0;border-bottom:1px solid var(--zh-line-parting)}.tabs button{padding:8px;border:0;border-bottom:2px solid transparent;color:var(--zh-text-caption);background:transparent;cursor:pointer}.tabs button.active{border-color:var(--zh-line-theme);color:var(--zh-text-theme)}.properties section{padding:16px;border-bottom:1px solid var(--zh-line-parting)}.properties label{display:block;margin:0 0 10px;color:var(--zh-text-secondary);font-size:11px;font-weight:600}.properties label:not(:first-child){margin-top:18px}.theme-picker{display:flex;gap:12px}.theme-picker button{width:24px;height:24px;border:2px solid var(--zh-background-primary);border-radius:50%;box-shadow:0 0 0 1px var(--zh-line-border);cursor:pointer}.theme-picker button.selected{outline:2px solid var(--zh-text-theme);outline-offset:2px}.layout-picker{display:grid;grid-template-columns:repeat(3,1fr);gap:8px}.layout-picker button{display:grid;grid-template-rows:26px auto;gap:4px;min-height:66px;padding:7px 4px;border:1px solid var(--zh-line-border);border-radius:6px;color:var(--zh-text-caption);background:var(--zh-background-light);font-size:9px;cursor:pointer}.layout-picker button.active{border-color:var(--zh-line-theme);color:var(--zh-text-theme);background:var(--zh-background-weaken)}.layout-picker i{display:block;width:70%;height:4px;margin:auto;background:var(--zh-line-theme50)}.layout-picker i:nth-child(2){width:48%}.page-actions{display:grid;gap:8px}.page-actions :deep(.el-button){justify-content:flex-start;margin:0}.assistant-tip{display:flex;gap:8px;margin:16px;padding:12px;border-radius:var(--zh-radius8);background:var(--zh-background-weaken)}.assistant-tip p,.hint{margin:0;color:var(--zh-text-secondary);font-size:10px;line-height:1.6}.preview{display:grid;place-items:center;padding:18px;background:#eef0f4}.preview-slide{width:min(780px,100%)}.preview-formula{width:max-content;margin:50px auto}.preview-dialog :deep(.el-dialog__body){padding:0}@media(max-width:1120px){.workspace-grid{grid-template-columns:250px minmax(460px,1fr)}.properties{display:none}}@media(max-width:820px){.workspace-grid{grid-template-columns:1fr}.assistant-panel{display:none}.editor-stage{grid-template-columns:88px minmax(0,1fr)}}
+.revision-preview-dialog{display:grid;gap:14px}.revision-preview-summary{display:flex;align-items:center;justify-content:space-between;gap:12px;padding:14px 16px;border:1px solid var(--zh-line-theme20);border-radius:var(--zh-radius10);background:var(--zh-background-weaken)}.revision-preview-summary div{display:grid;gap:4px;min-width:0}.revision-preview-summary span:first-child{color:var(--zh-text-caption);font-size:11px}.revision-preview-summary strong{color:var(--zh-text-primary);font-size:14px;line-height:1.5}.revision-preview-count{flex:none;padding:5px 9px;border-radius:999px;color:var(--zh-text-theme);background:var(--zh-background-primary);font-size:11px}.revision-preview-section{padding:14px;border:1px solid var(--zh-line-border);border-radius:var(--zh-radius10);background:var(--zh-background-primary)}.revision-preview-section-heading{display:flex;align-items:baseline;justify-content:space-between;gap:12px;margin-bottom:10px}.revision-preview-section-heading strong{font-size:13px}.revision-preview-section-heading span{color:var(--zh-text-caption);font-size:11px}.revision-operation-list{display:grid;gap:7px;max-height:180px;overflow:auto;margin:0;padding:0;list-style:none}.revision-operation-list li{display:flex;align-items:center;gap:8px;min-width:0;padding:7px 8px;border-radius:var(--zh-radius8);background:var(--zh-background-light);color:var(--zh-text-secondary);font-size:12px}.revision-operation-list li>span{overflow:hidden;text-overflow:ellipsis;white-space:nowrap}.revision-comparison-grid{display:grid;grid-template-columns:1fr 1fr;gap:10px}.revision-comparison-column{min-width:0;border:1px solid var(--zh-line-border);border-radius:var(--zh-radius8);overflow:hidden}.revision-comparison-column header{padding:9px 11px;color:var(--zh-text-secondary);background:var(--zh-background-light);font-size:12px;font-weight:600}.revision-comparison-column.is-after header{color:var(--zh-text-theme);background:var(--zh-background-weaken)}.revision-comparison-column ol{display:grid;gap:5px;max-height:220px;overflow:auto;margin:0;padding:9px;list-style:none}.revision-comparison-column li{display:flex;align-items:center;gap:8px;min-width:0;color:var(--zh-text-secondary);font-size:12px}.revision-comparison-column li b{display:grid;place-items:center;flex:none;width:24px;height:20px;border-radius:5px;color:var(--zh-text-theme);background:var(--zh-background-weaken);font:600 10px var(--zh-font-number)}.revision-comparison-column li span{overflow:hidden;text-overflow:ellipsis;white-space:nowrap}@media(max-width:767.98px){.revision-comparison-grid{grid-template-columns:1fr}.revision-preview-summary{align-items:flex-start;flex-direction:column}}
+.workspace{height:100dvh;display:grid;grid-template-rows:auto minmax(0,1fr);overflow:hidden;background:var(--zh-background-light)}.workspace-grid{min-height:0;display:grid;grid-template-columns:286px minmax(500px,1fr) 270px}.assistant-panel,.properties{min-height:0;background:var(--zh-background-primary)}.assistant-panel{display:flex;flex-direction:column;border-right:1px solid var(--zh-line-border)}.assistant-panel>header{display:flex;align-items:center;gap:9px;padding:16px;border-bottom:1px solid var(--zh-line-parting)}.assistant-mark{display:grid;place-items:center;width:32px;height:32px;border-radius:var(--zh-radius8);color:#fff;background:var(--zh-gradient-blue);font-weight:700}.assistant-panel header div:last-child{display:flex;flex-direction:column}.assistant-panel header strong{font-size:13px}.assistant-panel header span{margin-top:2px;color:var(--zh-text-caption);font-size:10px}.conversation{flex:1;padding:16px;overflow:auto}.message{display:flex;align-items:flex-start;gap:8px;margin-bottom:16px}.message>span{display:grid;place-items:center;flex:none;width:24px;height:24px;border-radius:6px;color:#fff;background:var(--zh-theme-primary);font-size:10px}.message p{margin:0;padding:10px 12px;border-radius:var(--zh-radius12);color:var(--zh-text-secondary);background:var(--zh-background-answer-card);font-size:12px;line-height:1.65}.message.user{justify-content:flex-end}.message.user p{color:var(--zh-text-primary);background:var(--zh-background-user-query)}.composer{padding:12px;border-top:1px solid var(--zh-line-border)}.composer>div{display:flex;align-items:center;justify-content:space-between;margin-top:8px}.composer span{color:var(--zh-text-caption);font-size:10px}.composer :deep(.el-textarea__inner){background:var(--zh-background-light);box-shadow:none}.editor-stage{display:grid;grid-template-columns:116px minmax(0,1fr);min-width:0}.slide-rail{padding:12px 9px;overflow:auto;border-right:1px solid var(--zh-line-border);background:var(--zh-background-primary)}.slide-rail>button{display:grid;grid-template-columns:18px 1fr;gap:4px;width:100%;margin-bottom:10px;padding:3px;border:1px solid transparent;border-radius:6px;color:var(--zh-text-caption);background:transparent;text-align:left;cursor:pointer}.slide-rail>button.active{border-color:var(--zh-line-theme);color:var(--zh-text-theme);background:var(--zh-background-weaken)}.thumbnail{display:flex;flex-direction:column;justify-content:center;gap:5px;height:54px;padding:8px;border-radius:4px;background:var(--zh-background-light)}.thumbnail i{width:65%;height:3px;background:var(--thumb)}.thumbnail b{overflow:hidden;color:var(--zh-text-secondary);font-size:8px;text-overflow:ellipsis;white-space:nowrap}.slide-rail :deep(.el-button){width:100%;justify-content:flex-start}.canvas-area{position:relative;display:grid;place-items:center;min-width:0;padding:44px 34px;overflow:auto;background-color:#eef0f4;background-image:radial-gradient(#c9ced7 1px,transparent 1px);background-size:18px 18px}.canvas-meta{position:absolute;top:12px;inset-inline:20px;display:flex;justify-content:space-between;color:#7c8491;font-size:10px}.slide-canvas{position:relative;width:min(780px,100%);aspect-ratio:16/9;overflow:hidden;padding:clamp(28px,4vw,52px);color:#102d54;background:#f9fbff;box-shadow:0 18px 45px rgb(40 57 82 / 18%)}.slide-eyebrow,.slide-canvas h1,.slide-canvas>p,.theorem{position:relative;z-index:1}.slide-eyebrow{color:var(--accent);font:600 10px var(--zh-font-number);letter-spacing:.12em}.slide-canvas h1{max-width:76%;margin:18px 0 0;font-size:clamp(26px,3vw,40px);line-height:1.2;letter-spacing:-.04em}.slide-canvas>p{max-width:64%;margin:12px 0;color:#607491;font-size:clamp(11px,1.2vw,15px);line-height:1.65}.theorem{display:grid;grid-template-columns:.8fr 1.2fr;align-items:center;gap:28px;width:76%;margin:28px auto}.triangle{position:relative;width:104px;height:104px;border-right:5px solid var(--accent);border-bottom:5px solid var(--accent);transform:skewY(-35deg) rotate(-10deg)}.triangle i{position:absolute;color:var(--accent);font-style:normal;font-weight:700;transform:skewY(35deg) rotate(10deg)}.triangle i:nth-child(1){bottom:-22px;left:36px}.triangle i:nth-child(2){top:40px;right:-18px}.triangle i:nth-child(3){top:-22px;left:8px}.formula{display:grid;grid-template-columns:auto 24px auto;align-items:center;font-family:var(--zh-font-number)}.formula span,.formula strong{font-size:clamp(22px,3vw,36px)}.formula em{color:#7c8da4;font-style:normal}.formula strong{color:var(--accent)}.formula small{grid-column:1/-1;margin-top:8px;color:#7c8da4;font-size:10px}.slide-canvas footer{position:absolute;z-index:1;right:0;bottom:0;left:0;display:grid;grid-template-columns:110px 1fr;padding:14px 28px;color:#fff;background:color-mix(in srgb,var(--accent) 82%,#102d54)}.slide-canvas footer p{margin:0;font-size:10px;line-height:1.5}.layout-重点陈述 h1{margin-top:54px;font-size:clamp(34px,4.4vw,52px)}.canvas-controls{position:absolute;right:18px;bottom:14px;display:flex;overflow:hidden;border-radius:var(--zh-radius8);background:var(--zh-background-capsule);box-shadow:var(--zh-shadow1)}.canvas-controls button,.canvas-controls span{padding:6px 9px;border:0;color:var(--zh-text-secondary);background:transparent;font-size:11px}.canvas-controls button{cursor:pointer}.properties{overflow:auto;border-left:1px solid var(--zh-line-border)}.properties>header{display:flex;justify-content:space-between;padding:16px;border-bottom:1px solid var(--zh-line-parting)}.properties header strong{font-size:13px}.properties header span{color:var(--zh-text-caption);font-size:10px}.tabs{display:grid;grid-template-columns:repeat(3,1fr);padding:10px 14px 0;border-bottom:1px solid var(--zh-line-parting)}.tabs button{padding:8px;border:0;border-bottom:2px solid transparent;color:var(--zh-text-caption);background:transparent;cursor:pointer}.tabs button.active{border-color:var(--zh-line-theme);color:var(--zh-text-theme)}.properties section{padding:16px;border-bottom:1px solid var(--zh-line-parting)}.properties label{display:block;margin:0 0 10px;color:var(--zh-text-secondary);font-size:11px;font-weight:600}.properties label:not(:first-child){margin-top:18px}.theme-picker{display:flex;gap:12px}.theme-picker button{width:24px;height:24px;border:2px solid var(--zh-background-primary);border-radius:50%;box-shadow:0 0 0 1px var(--zh-line-border);cursor:pointer}.theme-picker button.selected{outline:2px solid var(--zh-text-theme);outline-offset:2px}.layout-picker{display:grid;grid-template-columns:repeat(3,1fr);gap:8px}.layout-picker button{display:grid;grid-template-rows:26px auto;gap:4px;min-height:66px;padding:7px 4px;border:1px solid var(--zh-line-border);border-radius:6px;color:var(--zh-text-caption);background:var(--zh-background-light);font-size:9px;cursor:pointer}.layout-picker button.active{border-color:var(--zh-line-theme);color:var(--zh-text-theme);background:var(--zh-background-weaken)}.layout-picker i{display:block;width:70%;height:4px;margin:auto;background:var(--zh-line-theme50)}.layout-picker i:nth-child(2){width:48%}.page-actions{display:grid;gap:8px}.page-actions :deep(.el-button){justify-content:flex-start;margin:0}.assistant-tip{display:flex;gap:8px;margin:16px;padding:12px;border-radius:var(--zh-radius8);background:var(--zh-background-weaken)}.assistant-tip p,.hint{margin:0;color:var(--zh-text-secondary);font-size:10px;line-height:1.6}.preview{display:grid;place-items:center;padding:18px;background:#eef0f4}.preview-slide{width:min(780px,100%)}.preview-formula{width:max-content;margin:50px auto}.preview-dialog :deep(.el-dialog__body){padding:0}@media(max-width:1023.98px){.workspace-grid{grid-template-columns:250px minmax(460px,1fr)}.properties{display:none}}@media(max-width:767.98px){.workspace-grid{grid-template-columns:1fr}.assistant-panel{display:none}.editor-stage{grid-template-columns:88px minmax(0,1fr)}}
 .plan-dialog-content .plan-status{margin:0 0 14px;color:var(--zh-text-secondary);font-size:13px}.plan-preview{display:grid;gap:12px;max-height:min(62vh,680px);overflow:auto;padding:2px 4px 4px 0}.plan-overview{display:flex;align-items:flex-start;justify-content:space-between;gap:18px;padding:18px;border:1px solid var(--zh-line-theme20);border-radius:var(--zh-radius12);background:linear-gradient(135deg,var(--zh-background-weaken),var(--zh-background-primary))}.plan-overview-heading{min-width:0}.plan-eyebrow{color:var(--zh-text-theme);font-size:10px;font-weight:700;letter-spacing:.12em}.plan-overview h3{margin:7px 0 6px;color:var(--zh-text-primary);font-size:19px;line-height:1.35}.plan-overview p{margin:0;color:var(--zh-text-secondary);font-size:12px;line-height:1.7}.plan-slide-count{display:inline-flex;flex:none;align-items:center;padding:7px 10px;border-radius:999px;color:var(--zh-text-theme);background:var(--zh-background-primary);font:700 12px var(--zh-font-number);white-space:nowrap}.plan-meta{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:8px}.plan-meta>span{display:grid;gap:4px;padding:11px 12px;border:1px solid var(--zh-line-border);border-radius:var(--zh-radius8);background:var(--zh-background-light)}.plan-meta small,.slide-details small{color:var(--zh-text-caption);font-size:10px}.plan-meta strong{overflow:hidden;color:var(--zh-text-primary);font-size:12px;text-overflow:ellipsis;white-space:nowrap}.plan-section{padding:14px;border:1px solid var(--zh-line-border);border-radius:var(--zh-radius10);background:var(--zh-background-primary)}.plan-section-heading{display:flex;align-items:baseline;justify-content:space-between;gap:12px;margin-bottom:10px}.plan-section-heading strong{color:var(--zh-text-primary);font-size:13px}.plan-section-heading span{color:var(--zh-text-caption);font-size:11px}.plan-bullet-list,.slide-points{display:grid;gap:7px;margin:0;padding-left:18px;color:var(--zh-text-secondary);font-size:12px;line-height:1.6}.plan-bullet-list li::marker,.slide-points li::marker{color:var(--zh-text-theme)}.plan-tags{display:flex;flex-wrap:wrap;gap:7px}.plan-tags span{padding:5px 9px;border-radius:999px;color:var(--zh-text-theme);background:var(--zh-background-weaken);font-size:11px}.plan-slide-list{display:grid;gap:8px}.plan-slide-card{display:grid;grid-template-columns:36px minmax(0,1fr);gap:10px;padding:12px;border:1px solid var(--zh-line-border);border-radius:var(--zh-radius8);background:var(--zh-background-light)}.plan-slide-number{display:grid;place-items:center;width:30px;height:30px;border-radius:8px;color:var(--zh-text-theme);background:var(--zh-background-weaken);font:700 11px var(--zh-font-number)}.plan-slide-main{min-width:0}.plan-slide-heading{display:flex;align-items:center;justify-content:space-between;gap:12px;margin-bottom:7px}.plan-slide-heading h4{margin:0;color:var(--zh-text-primary);font-size:13px}.plan-slide-heading span{color:var(--zh-text-caption);font-size:10px}.slide-points{margin-bottom:9px}.slide-details{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:10px;padding-top:9px;border-top:1px solid var(--zh-line-parting)}.slide-details p{margin:3px 0 0;color:var(--zh-text-secondary);font-size:11px;line-height:1.55}.plan-comment{margin-top:14px}.run-progress{position:fixed;z-index:100;right:24px;bottom:24px;width:min(320px,calc(100vw - 48px));padding:12px 14px;border:1px solid var(--zh-line-theme20);border-radius:var(--zh-radius12);color:var(--zh-text-secondary);background:var(--zh-background-pop);box-shadow:var(--zh-shadow2);font-size:12px}.run-progress :deep(.el-progress){margin-top:9px}
   .version-list{display:grid;gap:10px}.version-list article{display:flex;align-items:center;justify-content:space-between;gap:16px;padding:12px;border:1px solid var(--zh-line-border);border-radius:var(--zh-radius8);background:var(--zh-background-light)}.version-list strong{font-size:13px}.version-list p{margin:4px 0 0;color:var(--zh-text-caption);font-size:12px}.version-diff{margin:0;padding:12px;border-radius:var(--zh-radius8);color:var(--zh-text-secondary);background:var(--zh-background-weaken);font-size:12px;line-height:1.6;white-space:pre-wrap}.dialog-hint{margin:0 0 12px;color:var(--zh-text-secondary);font-size:13px}
 .quality-report-panel{display:grid;gap:14px}.quality-report-heading{display:flex;align-items:center;justify-content:space-between;gap:16px;padding:14px 16px;border:1px solid var(--zh-line-theme20);border-radius:var(--zh-radius10);background:var(--zh-background-weaken)}.quality-report-heading div{display:grid;gap:4px}.quality-report-heading span:first-child{color:var(--zh-text-caption);font-size:10px}.quality-report-heading strong{color:var(--zh-text-primary);font-size:14px}.quality-score{color:var(--zh-text-theme);font:700 28px var(--zh-font-number)}.quality-score small{margin-left:2px;color:var(--zh-text-caption);font-size:11px}.quality-summary{margin:0;color:var(--zh-text-secondary);font-size:13px;line-height:1.7}.quality-report-section{padding:12px 14px;border:1px solid var(--zh-line-border);border-radius:var(--zh-radius8);background:var(--zh-background-light)}.quality-report-section>strong,.quality-section-heading strong{color:var(--zh-text-primary);font-size:12px}.quality-report-section ul{display:grid;gap:6px;margin:8px 0 0;padding-left:18px;color:var(--zh-text-secondary);font-size:12px;line-height:1.55}.quality-report-risk{border-color:color-mix(in srgb,var(--el-color-warning) 35%,var(--zh-line-border))}.quality-report-suggestions{display:grid;gap:8px}.quality-section-heading{display:flex;align-items:baseline;justify-content:space-between;gap:12px}.quality-section-heading span,.quality-retry-hint{color:var(--zh-text-caption);font-size:10px}.quality-report-suggestions article{display:flex;align-items:center;justify-content:space-between;gap:12px;padding:9px 10px;border-radius:var(--zh-radius8);background:var(--zh-background-weaken)}.quality-report-suggestions article span{min-width:0;color:var(--zh-text-secondary);font-size:12px;line-height:1.5}.quality-report-suggestions article :deep(.el-button){flex:none;margin:0}.quality-retry-hint{margin:0}
@@ -8216,7 +8389,7 @@ const selectSlide = (index) => { selectedSlide.value = index; selectedElementId.
 
 .preview-slide .canvas-element-shape.theorem { display: none; }
 
-@media (max-width: 620px) {
+@media (max-width: 767.98px) {
   .plan-overview { flex-direction: column; gap: 10px; }
   .plan-slide-count { align-self: flex-start; }
   .plan-meta { grid-template-columns: repeat(2, minmax(0, 1fr)); }
@@ -8589,6 +8762,16 @@ const selectSlide = (index) => { selectedSlide.value = index; selectedElementId.
   backdrop-filter: blur(3px);
 }
 
+/* 画布空状态：无页面时兜底，防止预览段白屏（移动端分段切换 / 桌面空草稿通用） */
+.canvas-empty-state {
+  position: absolute;
+  z-index: 20;
+  inset: 0;
+  display: grid;
+  place-items: center;
+  background: var(--zh-background-light);
+}
+
 .workspace-load-error-card {
   display: grid;
   justify-items: center;
@@ -8939,7 +9122,7 @@ const selectSlide = (index) => { selectedSlide.value = index; selectedElementId.
   font-size: 11px;
 }
 
-@media (max-width: 640px) {
+@media (max-width: 767.98px) {
   .interactive-form-grid {
     grid-template-columns: 1fr;
   }
@@ -9127,7 +9310,7 @@ const selectSlide = (index) => { selectedSlide.value = index; selectedElementId.
   margin: 0 auto;
 }
 
-@media (max-width: 640px) {
+@media (max-width: 767.98px) {
   .preview-toolbar {
     align-items: flex-start;
     flex-direction: column;
@@ -9601,7 +9784,7 @@ const selectSlide = (index) => { selectedSlide.value = index; selectedElementId.
 .workspace-grid.is-assistant-bottom .properties { grid-column: 2; grid-row: 1; }
 .workspace-mobile-overlay { display: none; }
 
-@media (max-width: 1120px) {
+@media (max-width: 1023.98px) {
   .workspace-grid { grid-template-columns: 250px minmax(0, 1fr); }
   .workspace-grid.is-assistant-bottom { grid-template-columns: minmax(0, 1fr); grid-template-rows: minmax(0, 1fr) minmax(220px, 34vh); }
   .workspace-grid.is-assistant-bottom .editor-stage { grid-column: 1; }
@@ -9612,7 +9795,7 @@ const selectSlide = (index) => { selectedSlide.value = index; selectedElementId.
   .workspace-mobile-overlay { position: fixed; z-index: 89; inset: 60px 0 0; display: block; padding: 0; border: 0; background: rgb(16 24 40 / 35%); cursor: default; }
 }
 
-@media (max-width: 820px) {
+@media (max-width: 767.98px) {
   .workspace-grid, .workspace-grid.is-assistant-bottom { grid-template-columns: minmax(0, 1fr); grid-template-rows: minmax(0, 1fr); }
   .workspace-grid.is-assistant-bottom .editor-stage { grid-column: 1; grid-row: 1; }
   .assistant-panel, .workspace-grid.is-assistant-bottom .assistant-panel { display: none; }
@@ -9626,6 +9809,61 @@ const selectSlide = (index) => { selectedSlide.value = index; selectedElementId.
   .document-workspace-header { flex-direction: column; padding: 18px; }
   .document-workspace-actions { justify-content: flex-start; }
   .document-mobile-return, .document-mobile-preview { display: inline-flex; }
+}
+
+/* ===== 手机档（<768px）分段切换：方案 doc/responsive-design/08-creation-workspace.md ===== */
+.workspace-mobile-segments { display: none; }
+.rail-reorder { display: none; }
+.mobile-element-actions { display: none; }
+
+@media (max-width: 767.98px) {
+  /* 视口可滚 + 100dvh：composer 用 sticky bottom 而非 fixed，软键盘弹起靠页面滚动缓解遮挡 */
+  .workspace { height: auto; min-height: 100dvh; overflow: visible; padding-top: var(--zh-safe-top); padding-bottom: var(--zh-safe-bottom); }
+  .workspace-mobile-segments { display: block; padding: 8px 12px; border-bottom: 1px solid var(--zh-line-border); background: var(--zh-background-primary); }
+  .workspace-mobile-segments :deep(.el-segmented) { width: 100%; }
+  .workspace-mobile-segments :deep(.el-segmented__group) { width: 100%; }
+  .workspace-mobile-segments :deep(.el-segmented__item) { flex: 1; min-height: 40px; }
+  /* 分段单栏：消除三栏 500px 硬下限（桌面基线 286px / minmax(500px,1fr) / 270px 不受影响） */
+  .workspace-grid.is-mobile-segmented,
+  .workspace-grid.is-mobile-segmented.is-assistant-bottom { grid-template-columns: minmax(0, 1fr); grid-template-rows: minmax(0, 1fr); }
+  /* 手机档不存在「AI 面板停靠底部」，中和 is-assistant-bottom 的网格占位 */
+  .workspace-grid.is-mobile-segmented.is-assistant-bottom .assistant-panel,
+  .workspace-grid.is-mobile-segmented.is-assistant-bottom .editor-stage,
+  .workspace-grid.is-mobile-segmented.is-assistant-bottom .properties { grid-column: auto; grid-row: auto; }
+  .workspace-grid.is-mobile-segmented.is-assistant-bottom .assistant-panel { border-top: 0; border-right: 1px solid var(--zh-line-border); }
+  .workspace-grid.is-mobile-segmented .editor-stage {
+    grid-template-columns: minmax(0, 1fr);
+    /* workspace 高度 auto 后 1fr 行塌陷，画布（absolute 定位）无固有高度 → 显式给高 */
+    height: calc(100dvh - 150px);
+    min-height: 420px;
+    overflow: auto;
+  }
+  .workspace-grid.is-mobile-segmented[data-mobile-segment='outline'] .canvas-area { display: none; }
+  .workspace-grid.is-mobile-segmented[data-mobile-segment='preview'] .slide-rail { display: none; }
+  /* 手机档画布元信息：中间操作提示让位（触屏已有浮动操作条），左右两项平铺防竖排 */
+  .workspace-grid.is-mobile-segmented .canvas-meta { grid-template-columns: auto auto; justify-content: space-between; font-size: var(--zh-font-size10); }
+  .workspace-grid.is-mobile-segmented .canvas-meta .canvas-placement-status { display: none; }
+  .workspace-grid.is-mobile-segmented .canvas-meta > span:last-child { grid-column: auto; }
+  .workspace-grid.is-mobile-segmented[data-mobile-segment='chat'] .assistant-panel { display: flex; }
+  /* 手机档不再使用左/右抽屉（平板档能力）：AI 面板回到文档流，属性面板改为底部面板 */
+  .workspace-grid.is-mobile-segmented .assistant-panel.is-mobile-open { position: static; inset: auto; width: auto; box-shadow: none; }
+  .workspace-grid.is-mobile-segmented .properties.is-mobile-open { position: fixed; z-index: 90; top: auto; right: 0; bottom: 0; display: block; width: min(390px, 100vw); max-height: min(72dvh, 640px); border-left: 1px solid var(--zh-line-border); box-shadow: var(--zh-shadow2); }
+  .workspace-mobile-overlay { inset: 0; }
+  /* 对话段 composer：sticky 贴底 + 底部安全区 */
+  .workspace-grid.is-mobile-segmented[data-mobile-segment='chat'] .assistant-composer { position: sticky; z-index: 5; bottom: 0; padding-bottom: calc(12px + var(--zh-safe-bottom)); }
+  /* 大纲段：页面列表铺满 + 上下移按钮（替代 HTML5 拖拽排序） */
+  .workspace-grid.is-mobile-segmented[data-mobile-segment='outline'] .slide-rail { padding: 12px; }
+  .workspace-grid.is-mobile-segmented[data-mobile-segment='outline'] .slide-rail > button { grid-template-columns: auto minmax(0, 1fr); align-items: center; min-height: 44px; padding: 8px 54px 8px 8px; }
+  .rail-reorder { position: absolute; z-index: 3; top: 50%; display: grid; place-items: center; width: 34px; height: 34px; margin-top: -17px; border: 1px solid var(--zh-line-border); border-radius: 50%; color: var(--zh-text-secondary); background: var(--zh-background-primary); font-size: 15px; line-height: 1; }
+  /* 触控目标 ≥44×44：视觉保留 34px 圆钮，伪元素外扩热区 */
+  .rail-reorder::before { content: ''; position: absolute; inset: -5px; }
+  .rail-reorder:active { transform: scale(0.94); }
+  .rail-reorder-down { right: 8px; }
+  .rail-reorder-up { right: 50px; }
+  /* 预览段：选中元素的浮动操作（替代拖拽 / 双击编辑） */
+  .mobile-element-actions { position: fixed; z-index: 88; right: 14px; bottom: calc(18px + var(--zh-safe-bottom)); display: flex; align-items: center; gap: 8px; padding: 8px 10px; border: 1px solid var(--zh-line-border); border-radius: 999px; background: var(--zh-background-pop); box-shadow: var(--zh-shadow2); }
+  /* 触屏无鼠标指针：激光笔样式兜底隐藏（mousemove 守卫已在 JS 中禁用） */
+  .presentation-laser-pointer { display: none; }
 }
 
 @keyframes a12-spin {

@@ -75,6 +75,15 @@ const editForm = ref({ file_name: '', description: '', categories: [], tags: [] 
 const permissionForm = ref({ access_type: 'private', authorized_users: '', allow_ai: false })
 const batchForm = ref({ action: 'delete', target: '' })
 
+// 移动端判定（<768px）：表格切换为卡片列表、分类入口移到顶部下拉
+const isMobile = ref(false)
+let mobileMediaQuery = null
+const handleMobileMediaChange = (event) => {
+  isMobile.value = event.matches
+  // 表格与卡片的选择状态不互通，断点切换时清空，避免批量管理作用于不可见选择
+  selectedRows.value = []
+}
+
 const MAX_UPLOAD_FILES = 20
 const MAX_UPLOAD_FILE_SIZE = 500 * 1024 * 1024
 const SUPPORTED_UPLOAD_EXTENSIONS = new Set([
@@ -89,6 +98,8 @@ const uploadOverallProgress = computed(() => {
   const total = uploadQueue.value.reduce((sum, file) => sum + (Number(file.progress) || 0), 0)
   return Math.round(total / uploadQueue.value.length)
 })
+/** 上传队列全部成功（进度条 success 态，修复模板引用未定义变量的存量问题） */
+const uploadAllComplete = computed(() => uploadQueue.value.length > 0 && completedUploadCount.value === uploadQueue.value.length)
 const uploadProgressTimers = new Map()
 
 const formatFileSize = (bytes) => {
@@ -380,6 +391,13 @@ const confirmUploadDialog = () => {
   uploadDialogVisible.value = false
 }
 
+const toggleCardSelection = (row) => {
+  const selected = selectedRows.value.some((item) => item.id === row.id)
+  selectedRows.value = selected
+    ? selectedRows.value.filter((item) => item.id !== row.id)
+    : [...selectedRows.value, row]
+}
+
 const handleAction = async (row, command) => {
   if (!row.id) return ElMessage.info('示例素材暂不支持此操作')
   try {
@@ -390,7 +408,7 @@ const handleAction = async (row, command) => {
       const url = result?.data?.download_url || result?.download_url
       if (url) window.open(url, '_blank', 'noopener')
     }
-    if (command === 'delete') { await deleteResource(row.id); resources.value = resources.value.filter((item) => item.id !== row.id) }
+    if (command === 'delete') { await deleteResource(row.id); resources.value = resources.value.filter((item) => item.id !== row.id); selectedRows.value = selectedRows.value.filter((item) => item.id !== row.id) }
   } catch { ElMessage.error('操作未成功，请稍后重试') }
 }
 
@@ -638,8 +656,14 @@ const runIndexSearch = async () => {
 onMounted(() => {
   void loadResources()
   void loadTaxonomy()
+  mobileMediaQuery = window.matchMedia('(max-width: 767.98px)')
+  isMobile.value = mobileMediaQuery.matches
+  mobileMediaQuery.addEventListener('change', handleMobileMediaChange)
 })
-onBeforeUnmount(clearUploadProgressTimers)
+onBeforeUnmount(() => {
+  mobileMediaQuery?.removeEventListener('change', handleMobileMediaChange)
+  clearUploadProgressTimers()
+})
 </script>
 
 <template>
@@ -668,6 +692,14 @@ onBeforeUnmount(clearUploadProgressTimers)
       </aside>
 
       <div class="resource-content">
+        <el-select
+          v-if="isMobile"
+          v-model="activeFolder"
+          class="mobile-folder-select"
+          aria-label="选择分类目录"
+        >
+          <el-option v-for="folder in resourceFolders" :key="folder" :label="folder" :value="folder" />
+        </el-select>
         <div class="resource-toolbar">
           <el-input v-model="keyword" :prefix-icon="Search" placeholder="搜索文件名、课程或标签" clearable />
           <el-select v-model="typeFilter" aria-label="资源类型" clearable placeholder="全部类型"><el-option label="全部类型" value="" /><el-option label="课件" value="ppt" /><el-option label="文档" value="word" /><el-option label="PDF" value="pdf" /><el-option label="图片" value="image" /><el-option label="音视频" value="audio" /></el-select>
@@ -676,7 +708,7 @@ onBeforeUnmount(clearUploadProgressTimers)
             <el-button :icon="Delete" :disabled="selectedRows.length === 0" @click="openBatchDialog">批量管理</el-button>
           </div>
         </div>
-        <el-table v-loading="loading" :data="visibleFiles" @selection-change="selectedRows = $event">
+        <el-table v-if="!isMobile" v-loading="loading" :data="visibleFiles" @selection-change="selectedRows = $event">
           <el-table-column type="selection" width="42" />
           <el-table-column label="素材" min-width="260">
             <template #default="{ row }">
@@ -692,15 +724,49 @@ onBeforeUnmount(clearUploadProgressTimers)
           <el-table-column prop="date" label="更新时间" min-width="120" />
           <el-table-column label="解析状态" width="110"><template #default="{ row }"><el-tag :type="row.status === '已解析' ? 'success' : row.status === '解析中' ? 'warning' : 'info'" effect="light">{{ row.status }}</el-tag></template></el-table-column>
           <el-table-column label="权限" width="108"><template #default="{ row }"><span class="private-label"><el-icon><Lock /></el-icon> {{ row.private ? '私有' : '共享' }}</span></template></el-table-column>
-          <el-table-column class-name="resource-action-column" width="54" align="center"><template #default="{ row }"><el-dropdown trigger="click" @command="handleAction(row, $event)"><el-button class="resource-more-button" text circle aria-label="更多操作"><el-icon><MoreFilled /></el-icon></el-button><template #dropdown><el-dropdown-menu><el-dropdown-item command="edit"><el-icon><Edit /></el-icon>编辑信息</el-dropdown-item><el-dropdown-item command="permission">权限设置</el-dropdown-item><el-dropdown-item command="download">下载</el-dropdown-item><el-dropdown-item class="resource-danger-menu-item" command="delete" divided><el-icon><Delete /></el-icon>删除</el-dropdown-item></el-dropdown-menu></template></el-dropdown></template></el-table-column>
+          <el-table-column class-name="resource-action-column" width="54" align="center"><template #default="{ row }"><el-dropdown trigger="click" @command="handleAction(row, $event)"><el-button class="resource-more-button" text circle data-hover-reveal aria-label="更多操作"><el-icon><MoreFilled /></el-icon></el-button><template #dropdown><el-dropdown-menu><el-dropdown-item command="edit"><el-icon><Edit /></el-icon>编辑信息</el-dropdown-item><el-dropdown-item command="permission">权限设置</el-dropdown-item><el-dropdown-item command="download">下载</el-dropdown-item><el-dropdown-item class="resource-danger-menu-item" command="delete" divided><el-icon><Delete /></el-icon>删除</el-dropdown-item></el-dropdown-menu></template></el-dropdown></template></el-table-column>
         </el-table>
+        <div v-if="isMobile" v-loading="loading" class="resource-card-list">
+          <el-empty v-if="!visibleFiles.length" description="暂无素材" />
+          <article v-for="row in visibleFiles" :key="row.id" class="resource-card">
+            <div class="resource-card-main">
+              <el-checkbox
+                class="resource-card-check"
+                :model-value="selectedRows.some((item) => item.id === row.id)"
+                aria-label="选择该资源"
+                @change="toggleCardSelection(row)"
+              />
+              <span class="file-mark">{{ row.type.slice(0, 1) }}</span>
+              <div class="resource-card-info">
+                <strong>{{ row.name }}</strong>
+                <small>{{ row.course }} · {{ row.size }} · {{ row.date }}</small>
+                <div class="resource-card-meta">
+                  <el-tag size="small" :type="row.status === '已解析' ? 'success' : row.status === '解析中' ? 'warning' : 'info'" effect="light">{{ row.status }}</el-tag>
+                  <span class="private-label"><el-icon><Lock /></el-icon>{{ row.private ? '私有' : '共享' }}</span>
+                </div>
+              </div>
+            </div>
+            <el-dropdown trigger="click" @command="handleAction(row, $event)">
+              <el-button class="resource-more-button" text circle data-hover-reveal aria-label="更多操作"><el-icon><MoreFilled /></el-icon></el-button>
+              <template #dropdown>
+                <el-dropdown-menu>
+                  <el-dropdown-item command="edit"><el-icon><Edit /></el-icon>编辑信息</el-dropdown-item>
+                  <el-dropdown-item command="permission">权限设置</el-dropdown-item>
+                  <el-dropdown-item command="download">下载</el-dropdown-item>
+                  <el-dropdown-item class="resource-danger-menu-item" command="delete" divided><el-icon><Delete /></el-icon>删除</el-dropdown-item>
+                </el-dropdown-menu>
+              </template>
+            </el-dropdown>
+          </article>
+        </div>
       </div>
     </section>
 
     <el-dialog
       v-model="uploadDialogVisible"
       title="上传素材"
-      width="680px"
+      width="min(680px, 92vw)"
+      align-center
       destroy-on-close
       :close-on-click-modal="!uploading"
       :close-on-press-escape="!uploading"
@@ -801,7 +867,7 @@ onBeforeUnmount(clearUploadProgressTimers)
       </template>
     </el-dialog>
 
-    <el-dialog v-model="editDialogVisible" title="编辑资源信息" width="min(520px, calc(100vw - 24px))" destroy-on-close>
+    <el-dialog v-model="editDialogVisible" title="编辑资源信息" width="min(520px, 92vw)" align-center destroy-on-close>
       <el-form label-position="top">
         <el-form-item label="资源名称"><el-input v-model="editForm.file_name" maxlength="100" show-word-limit /></el-form-item>
         <el-form-item label="描述"><el-input v-model="editForm.description" type="textarea" :rows="3" maxlength="500" show-word-limit /></el-form-item>
@@ -811,7 +877,7 @@ onBeforeUnmount(clearUploadProgressTimers)
       <template #footer><el-button @click="editDialogVisible = false">取消</el-button><el-button type="primary" :loading="saving" @click="submitEdit">保存</el-button></template>
     </el-dialog>
 
-    <el-dialog v-model="taxonomyDialogVisible" :title="`${taxonomyTitle}管理`" width="min(720px, calc(100vw - 24px))" destroy-on-close>
+    <el-dialog v-model="taxonomyDialogVisible" :title="`${taxonomyTitle}管理`" width="min(720px, 92vw)" align-center destroy-on-close>
       <el-tabs v-model="taxonomyTab" @tab-change="resetTaxonomyForm">
         <el-tab-pane label="分类词典" name="category" />
         <el-tab-pane label="标签词典" name="tag" />
@@ -831,7 +897,7 @@ onBeforeUnmount(clearUploadProgressTimers)
       <p class="dialog-hint">删除词典项不会清除已有资源中的分类或标签；编辑资源时仍可选择历史值或新增词条。</p>
     </el-dialog>
 
-    <el-dialog v-model="indexDialogVisible" title="知识库索引管理" width="min(1000px, calc(100vw - 24px))" top="5vh" destroy-on-close>
+    <el-dialog v-model="indexDialogVisible" title="知识库索引管理" width="min(1000px, 94vw)" align-center destroy-on-close>
       <el-tabs v-model="indexTab">
         <el-tab-pane label="索引概览" name="overview">
           <div v-loading="indexLoading" class="index-panel">
@@ -874,7 +940,7 @@ onBeforeUnmount(clearUploadProgressTimers)
       </el-tabs>
     </el-dialog>
 
-    <el-dialog v-model="permissionDialogVisible" title="资源权限设置" width="min(480px, calc(100vw - 24px))" destroy-on-close>
+    <el-dialog v-model="permissionDialogVisible" title="资源权限设置" width="min(480px, 92vw)" align-center destroy-on-close>
       <el-form label-position="top" v-loading="saving">
         <el-form-item label="访问范围"><el-radio-group v-model="permissionForm.access_type"><el-radio value="private">仅自己</el-radio><el-radio value="shared">所有成员</el-radio><el-radio value="authorized">指定成员</el-radio></el-radio-group></el-form-item>
         <el-form-item v-if="permissionForm.access_type === 'authorized'" label="授权用户 ID"><el-input v-model="permissionForm.authorized_users" placeholder="多个用户 ID 请用逗号分隔" /></el-form-item>
@@ -883,7 +949,7 @@ onBeforeUnmount(clearUploadProgressTimers)
       <template #footer><el-button @click="permissionDialogVisible = false">取消</el-button><el-button type="primary" :loading="saving" @click="submitPermission">保存权限</el-button></template>
     </el-dialog>
 
-    <el-dialog v-model="batchDialogVisible" title="批量管理资源" width="min(480px, calc(100vw - 24px))" destroy-on-close>
+    <el-dialog v-model="batchDialogVisible" title="批量管理资源" width="min(480px, 92vw)" align-center destroy-on-close>
       <p class="batch-summary">已选择 {{ selectedRows.length }} 个资源</p>
       <el-form label-position="top"><el-form-item label="操作"><el-radio-group v-model="batchForm.action"><el-radio value="delete">批量删除</el-radio><el-radio value="move">移动目录</el-radio><el-radio value="categorize">修改分类</el-radio></el-radio-group></el-form-item><el-form-item v-if="batchForm.action !== 'delete'" :label="batchForm.action === 'move' ? '目标目录' : '目标分类'"><el-input v-model="batchForm.target" /></el-form-item></el-form>
       <template #footer><el-button @click="batchDialogVisible = false">取消</el-button><el-button type="primary" :loading="saving" @click="submitBatchAction">确认操作</el-button></template>
@@ -993,7 +1059,10 @@ onBeforeUnmount(clearUploadProgressTimers)
 .index-result-list strong { color: var(--zh-text-primary); font-size: 13px; }
 .index-result-list span { color: var(--zh-text-caption); font-size: 11px; }
 .index-result-list p { margin: 8px 0 0; color: var(--zh-text-secondary); font-size: 12px; line-height: 1.65; white-space: pre-wrap; }
-@media (max-width: 920px) { .taxonomy-editor { grid-template-columns: 1fr 1fr; }.taxonomy-order { grid-column: 1; }.taxonomy-actions { grid-column: 2; align-self: end; }.index-overview-grid { grid-template-columns: repeat(2, 1fr); }.index-panel-heading { align-items: flex-start; flex-direction: column; }.index-actions { justify-content: flex-start; } }
-@media (max-width: 820px) { .page-heading { align-items: flex-start; flex-direction: column; }.resource-layout { grid-template-columns: 1fr; }.folder-panel { display: none; }.stat-strip article { padding: 18px 16px; }.resource-toolbar { grid-template-columns: 1fr; }.resource-toolbar-actions { justify-content: flex-start; flex-wrap: wrap; } }
-@media (max-width: 620px) { .page-wrap { width: min(100% - 28px, 1220px); padding: 28px 0 42px; }.stat-strip { grid-template-columns: 1fr; }.stat-strip article { min-height: 72px; border-right: 0; border-bottom: 1px solid var(--zh-line-parting); }.stat-strip article:last-child { border-bottom: 0; }.taxonomy-editor { grid-template-columns: 1fr; }.taxonomy-order, .taxonomy-actions { grid-column: auto; }.taxonomy-actions { align-items: stretch; flex-direction: column; }.taxonomy-actions :deep(.el-button) { width: 100%; }.dialog-hint { line-height: 1.65; }.index-overview-grid { grid-template-columns: 1fr; }.index-search-bar { grid-template-columns: 1fr; }.index-result-list article > div { align-items: flex-start; flex-direction: column; gap: 4px; } }
+/* 平板（768–1023.98）与手机（<768）共用：布局收单列、知识库 header 转单列 */
+@media (max-width: 1023.98px) { .page-heading { align-items: flex-start; flex-direction: column; }.resource-layout { grid-template-columns: 1fr; }.stat-strip { grid-template-columns: repeat(2, 1fr); }.stat-strip article:nth-child(2n) { border-right: 0; }.resource-toolbar { grid-template-columns: 1fr 1fr; }.resource-toolbar > .el-input { grid-column: 1 / -1; }.resource-toolbar-actions { justify-content: flex-start; flex-wrap: wrap; }.taxonomy-editor { grid-template-columns: 1fr 1fr; }.taxonomy-editor .el-button:last-child { grid-column: 2; }.index-overview-grid { grid-template-columns: repeat(2, 1fr); }.index-panel-heading { align-items: flex-start; flex-direction: column; }.index-actions { justify-content: flex-start; } }
+/* 平板档：分类面板收为 76px 图标态（点击仍可切换分类，入口不丢） */
+@media (min-width: 768px) and (max-width: 1023.98px) { .folder-panel { width: 76px; padding: 12px 6px; }.panel-title { justify-content: center; padding: 0 0 8px; }.panel-title > span { display: none; }.folder-panel > button { flex-direction: column; gap: 4px; padding: 8px 2px; }.folder-panel > button .el-icon { display: none; }.folder-panel > button > span { display: block; max-width: 100%; overflow: hidden; font-size: 11px; text-align: center; text-overflow: ellipsis; white-space: nowrap; }.privacy-note { display: none; } }
+/* 手机档：分类面板隐藏（顶部 el-select 承载入口）、主表格切换为卡片列表 */
+@media (max-width: 767.98px) { .folder-panel { display: none; }.stat-strip { grid-template-columns: 1fr; }.stat-strip article { border-right: 0; }.resource-toolbar { grid-template-columns: 1fr; }.resource-toolbar > .el-input { grid-column: auto; }.mobile-folder-select { width: 100%; margin-bottom: 12px; }.resource-card-list { display: grid; gap: 10px; min-height: 120px; }.resource-card { display: flex; align-items: center; justify-content: space-between; gap: 10px; padding: 12px; border: 1px solid var(--zh-line-border); border-radius: var(--zh-radius12); background: var(--zh-background-light); }.resource-card-main { display: flex; align-items: center; gap: 10px; min-width: 0; flex: 1; }.resource-card-info { display: flex; flex-direction: column; gap: 4px; min-width: 0; flex: 1; }.resource-card-info strong { overflow: hidden; color: var(--zh-text-primary); font-size: 14px; text-overflow: ellipsis; white-space: nowrap; }.resource-card-info small { color: var(--zh-text-caption); font-size: 12px; }.resource-card-meta { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }.resource-card :deep(.resource-more-button) { width: 40px; height: 40px; flex: 0 0 auto; }.taxonomy-editor { grid-template-columns: 1fr; }.taxonomy-editor .el-button:last-child { grid-column: auto; }.index-overview-grid { grid-template-columns: 1fr; }.index-search-bar { grid-template-columns: 1fr; }.index-result-list article > div { align-items: flex-start; flex-direction: column; gap: 4px; } }
 </style>

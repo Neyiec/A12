@@ -7,8 +7,10 @@ import edu.zstu.dto.AuditDTO;
 import edu.zstu.dto.RecommendationDTO;
 import edu.zstu.entity.Adm_Audit;
 import edu.zstu.entity.Com_Content;
+import edu.zstu.entity.Sys_User;
 import edu.zstu.mapper.AdmAuditMapper;
 import edu.zstu.mapper.ComContentMapper;
+import edu.zstu.mapper.SysUserMapper;
 import edu.zstu.service.AdminModerationService;
 import edu.zstu.service.BusinessLogService;
 import edu.zstu.utils.PageResult;
@@ -29,13 +31,16 @@ public class AdminModerationServiceImpl implements AdminModerationService {
 
     private final AdmAuditMapper auditMapper;
     private final ComContentMapper contentMapper;
+    private final SysUserMapper userMapper;
     private final BusinessLogService businessLogService;
     private final RedisCacheUtil redisCacheUtil;
 
     public AdminModerationServiceImpl(AdmAuditMapper auditMapper, ComContentMapper contentMapper,
-                                      BusinessLogService businessLogService, RedisCacheUtil redisCacheUtil) {
+                                      SysUserMapper userMapper, BusinessLogService businessLogService,
+                                      RedisCacheUtil redisCacheUtil) {
         this.auditMapper = auditMapper;
         this.contentMapper = contentMapper;
+        this.userMapper = userMapper;
         this.businessLogService = businessLogService;
         this.redisCacheUtil = redisCacheUtil;
     }
@@ -225,10 +230,32 @@ public class AdminModerationServiceImpl implements AdminModerationService {
         };
     }
 
+    /**
+     * 实体转 VO 并富化关联信息（关联内容标题 + 提交者），供列表与详情共用
+     */
     private AuditVO toAuditVO(Adm_Audit a) {
         AuditVO vo = new AuditVO();
         BeanUtil.copyProperties(a, vo);
+        enrichAuditTarget(a, vo);
         return vo;
+    }
+
+    /**
+     * 富化审核 VO：补齐关联内容标题与提交者显示名，解决列表只显示裸 target_id 的缺口
+     * 内容或用户已删除时对应字段保持为空，不阻断列表返回
+     */
+    private void enrichAuditTarget(Adm_Audit audit, AuditVO vo) {
+        Com_Content content = contentMapper.findById(audit.getTarget_id());
+        if (content == null) {
+            return;
+        }
+        vo.setContent_title(content.getTitle());
+        vo.setSubmitter_id(content.getAuthor_id());
+        Sys_User author = userMapper.findById(content.getAuthor_id());
+        if (author != null) {
+            boolean hasRealName = author.getReal_name() != null && !author.getReal_name().isBlank();
+            vo.setSubmitter_name(hasRealName ? author.getReal_name() : author.getUsername());
+        }
     }
 
     private PageResult<AuditVO> toAuditPageResult(PageInfo<Adm_Audit> info, int page, int size) {

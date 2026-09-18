@@ -47,12 +47,21 @@ public class ResourceIndexSyncService {
      */
     @Async("resourceIndexExecutor")
     public void syncPersonalResourceIndex(Res_Material material) {
+        syncPersonalResourceIndex(material, false);
+    }
+
+    /**
+     * 异步同步个人素材索引（可指定 force_reparse）。
+     * force_reparse=true 用于管理端「重解析/重试」：绕过 file_fingerprint 短路，强制重新解析并重建向量。
+     */
+    @Async("resourceIndexExecutor")
+    public void syncPersonalResourceIndex(Res_Material material, boolean forceReparse) {
         if (material == null || material.getFile_url() == null || material.getFile_url().isBlank()) {
             return;
         }
 
         try {
-            Map<String, Object> response = pythonPptClient.syncResourceIndex(personalResourcePayload(material, false));
+            Map<String, Object> response = pythonPptClient.syncResourceIndex(personalResourcePayload(material, forceReparse));
             Object data = response.get("data");
             String status = extractPythonStatus(data);
             if ("failed".equals(status)) {

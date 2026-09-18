@@ -47,14 +47,11 @@ const CONTENT_TYPE_OPTIONS = [
   { label: '案例', value: 'case' },
 ]
 
-/** 内容类型 → 显示标签映射 */
-const CONTENT_TYPE_LABEL_MAP = { skill: 'Skill', case: '案例' }
+/** 内容类型 → 显示标签映射（后端实际值域 skill/lesson_case，兼容历史 case 值） */
+const CONTENT_TYPE_LABEL_MAP = { skill: 'Skill', lesson_case: '教学案例', case: '教学案例' }
 
 /** 内容类型 → Tag 类型映射 */
 const CONTENT_TYPE_TAG_TYPE_MAP = { skill: 'info', case: '' }
-
-/** 内容类型 → 图标映射 */
-const CONTENT_TYPE_ICON_MAP = { skill: '⚡', case: '📋' }
 
 /** 内容审核状态筛选项（对应 AuditVO.status：pending 待审核 / processed 已处理） */
 const AUDIT_STATUS_OPTIONS = [
@@ -297,11 +294,6 @@ const handleSizeChange = (size) => {
  * 获取内容类型 Tag 类型
  */
 const getContentTagType = (type) => CONTENT_TYPE_TAG_TYPE_MAP[type] || 'info'
-
-/**
- * 获取内容类型图标
- */
-const getContentIcon = (type) => CONTENT_TYPE_ICON_MAP[type] || ''
 
 /**
  * 获取审核状态 Tag 类型
@@ -662,7 +654,7 @@ onBeforeUnmount(() => {
                   size="small"
                   effect="plain"
                 >
-                  {{ getContentIcon(row.target_type) }} {{ CONTENT_TYPE_LABEL_MAP[row.target_type] || row.target_type }}
+                  {{ CONTENT_TYPE_LABEL_MAP[row.target_type] || row.target_type }}
                 </el-tag>
               </template>
             </el-table-column>
@@ -831,7 +823,7 @@ onBeforeUnmount(() => {
                   size="small"
                   effect="plain"
                 >
-                  {{ getContentIcon(row.target_type) }} {{ CONTENT_TYPE_LABEL_MAP[row.target_type] || row.target_type }}
+                  {{ CONTENT_TYPE_LABEL_MAP[row.target_type] || row.target_type }}
                 </el-tag>
               </template>
             </el-table-column>
@@ -1014,7 +1006,7 @@ onBeforeUnmount(() => {
               <span style="font-size: var(--zh-font-size13); color: var(--zh-text-caption);">目标类型</span>
               <span>
                 <el-tag :type="getContentTagType(currentContent.target_type)" size="small" effect="plain">
-                  {{ getContentIcon(currentContent.target_type) }} {{ CONTENT_TYPE_LABEL_MAP[currentContent.target_type] || currentContent.target_type }}
+                  {{ CONTENT_TYPE_LABEL_MAP[currentContent.target_type] || currentContent.target_type }}
                 </el-tag>
               </span>
 

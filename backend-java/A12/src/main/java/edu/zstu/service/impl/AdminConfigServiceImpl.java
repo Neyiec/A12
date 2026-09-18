@@ -375,14 +375,28 @@ public class AdminConfigServiceImpl implements AdminConfigService {
         log.info("listAlerts level={}, source={}, status={}, page={}, size={}", level, source, status, page, size);
         int p = page <= 0 ? 1 : page;
         int s = size <= 0 ? 10 : size;
-        return new PageResult<>(0, p, s, List.of());
+        // 派生告警恒为 open：查询其它状态（acknowledged/resolved）时无持久化数据，返回空页
+        if (status != null && !status.isBlank() && !"open".equals(status)) {
+            return new PageResult<>(0, p, s, List.of());
+        }
+        List<Map<String, Object>> filtered = deriveAlerts().stream()
+                .filter(a -> level == null || level.isBlank() || level.equals(a.get("level")))
+                .filter(a -> source == null || source.isBlank() || source.equals(a.get("source")))
+                .toList();
+        int total = filtered.size();
+        int from = Math.min((p - 1) * s, total);
+        int to = Math.min(from + s, total);
+        return new PageResult<>(total, p, s, new ArrayList<>(filtered.subList(from, to)));
     }
 
     @Override
     public Map<String, Object> getAlert(String id) {
         log.info("getAlert alertId={}", id);
-        return Map.of("id", id, "level", "info", "source", "system", "title", "告警不存在",
-                "detail", "当前系统未接入告警存储", "status", "resolved");
+        return deriveAlerts().stream()
+                .filter(a -> id != null && id.equals(String.valueOf(a.get("id"))))
+                .findFirst()
+                .orElse(Map.of("id", id == null ? "" : id, "level", "info", "source", "system",
+                        "title", "告警不存在", "detail", "派生式告警随数据恢复自动消失", "status", "resolved"));
     }
 
     @Override
@@ -397,6 +411,113 @@ public class AdminConfigServiceImpl implements AdminConfigService {
         if (resolution == null || resolution.isBlank()) throw new RuntimeException("resolution 不能为空");
         businessLogService.record("operation", "admin_alert", "resolve", "alert", Integer.parseInt(id),
                 Map.of("resolution", resolution));
+    }
+
+    // ==================== 派生式告警（第一阶段：无告警存储表，数据驱动投影） ====================
+
+    /**
+     * 派生式告警总入口：从既有业务数据投影当前异常（设计见 doc/admin-dashboard-workflow.md 3④）
+     * 告警无持久化，id 为派生指纹；处置（acknowledge/resolve）仅记审计日志，数据恢复后告警自动消失
+     */
+    private List<Map<String, Object>> deriveAlerts() {
+        List<Map<String, Object>> alerts = new ArrayList<>();
+        addTaskFailureAlerts(alerts, expTaskMapper.findAll(), aiTaskMapper.findAll(), materialMapper.findAll());
+        addLogErrorAlert(alerts, logMapper.findAll());
+        // danger 优先，同级按时间倒序（null 时间排最后）
+        Comparator<Map<String, Object>> bySeverity =
+                Comparator.comparingInt(a -> severityWeight((String) a.get("level")));
+        alerts.sort(bySeverity.thenComparing(
+                (Map<String, Object> a) -> (LocalDateTime) a.get("created_at"),
+                Comparator.nullsLast(Comparator.reverseOrder())));
+        return alerts;
+    }
+
+    /**
+     * 任务类告警规则：导出失败 / AI 任务失败 / 素材 AI 索引失败 / 导出队列积压（处理超 30 分钟）
+     */
+    private void addTaskFailureAlerts(List<Map<String, Object>> alerts,
+                                      List<Exp_Task> exportTasks, List<AI_Task> aiTasks,
+                                      List<Res_Material> materials) {
+        List<Exp_Task> exportFailed = exportTasks.stream()
+                .filter(t -> "failed".equals(t.getStatus())).toList();
+        if (!exportFailed.isEmpty()) {
+            alerts.add(derivedAlert("derived:export_failed", "warning", "export", "导出任务存在失败",
+                    "共 " + exportFailed.size() + " 项导出任务失败，建议前往导出记录排查",
+                    latestTime(exportFailed.stream().map(Exp_Task::getCreated_at).toList())));
+        }
+        List<AI_Task> aiFailed = aiTasks.stream()
+                .filter(t -> "failed".equals(t.getStatus())).toList();
+        if (!aiFailed.isEmpty()) {
+            alerts.add(derivedAlert("derived:ai_task_failed", "warning", "ai", "AI 生成任务存在失败",
+                    "共 " + aiFailed.size() + " 项 AI 任务失败，可查看系统日志定位原因",
+                    latestTime(aiFailed.stream().map(AI_Task::getCreated_at).toList())));
+        }
+        List<Res_Material> indexFailed = materials.stream()
+                .filter(m -> "failed".equals(m.getAi_index_status())).toList();
+        if (!indexFailed.isEmpty()) {
+            alerts.add(derivedAlert("derived:material_index_failed", "warning", "resource", "个人素材 AI 索引失败",
+                    indexFailed.size() + " 条素材向量化失败，可在资源库中重新开启 AI 引用",
+                    latestTime(indexFailed.stream().map(Res_Material::getCreated_at).toList())));
+        }
+        LocalDateTime backlogDeadline = LocalDateTime.now().minusMinutes(30);
+        long backlog = exportTasks.stream()
+                .filter(t -> "processing".equals(t.getStatus()))
+                .filter(t -> t.getCreated_at() != null && t.getCreated_at().isBefore(backlogDeadline))
+                .count();
+        if (backlog > 0) {
+            alerts.add(derivedAlert("derived:export_backlog", "warning", "export", "导出任务队列积压",
+                    backlog + " 项任务处理超过 30 分钟，请检查导出服务状态", LocalDateTime.now()));
+        }
+    }
+
+    /**
+     * 系统日志类告警规则：近 1 小时 error 日志计数（logs_by_type 分布无 status 维度，需单独过滤）
+     */
+    private void addLogErrorAlert(List<Map<String, Object>> alerts, List<Sys_Log> logs) {
+        LocalDateTime windowStart = LocalDateTime.now().minusHours(1);
+        long recentErrors = logs.stream()
+                .filter(l -> "error".equals(l.getStatus()))
+                .filter(l -> l.getCreate_at() != null && l.getCreate_at().isAfter(windowStart))
+                .count();
+        if (recentErrors > 0) {
+            alerts.add(derivedAlert("derived:system_error", "danger", "system", "系统错误日志激增",
+                    "近 1 小时产生 " + recentErrors + " 条 error 日志，请前往系统日志排查", LocalDateTime.now()));
+        }
+    }
+
+    /**
+     * 构造一条派生告警（id 为派生指纹，如 derived:export_failed）
+     */
+    private Map<String, Object> derivedAlert(String id, String level, String source,
+                                             String title, String detail, LocalDateTime createdAt) {
+        Map<String, Object> alert = new LinkedHashMap<>();
+        alert.put("id", id);
+        alert.put("level", level);
+        alert.put("source", source);
+        alert.put("title", title);
+        alert.put("detail", detail);
+        alert.put("status", "open");
+        alert.put("created_at", createdAt);
+        return alert;
+    }
+
+    /**
+     * 告警严重度排序权重：danger → warning → info → 其它
+     */
+    private int severityWeight(String level) {
+        return switch (level == null ? "" : level) {
+            case "danger" -> 0;
+            case "warning" -> 1;
+            case "info" -> 2;
+            default -> 9;
+        };
+    }
+
+    /**
+     * 取时间列表中最新的一条（过滤 null，空列表返回 null）
+     */
+    private LocalDateTime latestTime(List<LocalDateTime> times) {
+        return times.stream().filter(Objects::nonNull).max(Comparator.naturalOrder()).orElse(null);
     }
 
     // ==================== 内部辅助 ====================

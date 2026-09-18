@@ -5,12 +5,12 @@
       ElPagination, ElDrawer, ElDialog, ElSkeleton, ElEmpty, ElMessageBox, ElMessage, ElTooltip,
       ElRadioGroup, ElRadioButton, ElProgress, ElUpload
     - ElementPlus Icons: Search, Refresh, Delete, Upload, Document, VideoCamera, PictureFilled,
-      Headset, FolderOpened, Files, Download, View, Edit, CircleCheckFilled, CircleCloseFilled,
+      Headset, FolderOpened, Files, Download, View, Edit, CircleCheckFilled,
       WarningFilled, Clock, Loading, ArrowDown, ArrowUp, Top
     - `ref`, `reactive`, `computed`, `onMounted`, `onBeforeUnmount` from Vue
   - 依赖:
-    - `@/apis/resource`: 导入 `getPublicResources`（API-83，分页查询公共资源）
-  - 输入: 无 props；资源列表来自 API-83（服务端分页），知识库向量化任务暂为本地模拟数据
+    - `@/apis/resource`: 导入 `getPublicResources`（API-83，分页查询公共资源）与 ai-index 系列（overview/tasks/search/reparse，透传 Python 索引查询）
+  - 输入: 无 props；资源列表来自 API-83（服务端分页），知识库数据来自 PostgreSQL a12_resource_index（服务端筛选/分页）
   - 输出: 渲染公共资源管理与知识库维护视图（Tab 切换 + 筛选工具 + 数据表格 + 分页器 + 上传对话框 + 详情抽屉）
   - 监听: `admin-refresh` 自定义事件（从 AdminHeader 刷新按钮发出），触发数据重新加载
   - 对应需求文档: §4.7.3.2 — 公共资源与知识库维护
@@ -33,16 +33,35 @@ import {
   View,
   Edit,
   CircleCheckFilled,
-  CircleCloseFilled,
   WarningFilled,
   Clock,
   Loading,
   ArrowDown,
   ArrowUp,
   Top,
+  Film,
+  Grid,
 } from '@element-plus/icons-vue'
 import { ElMessage, ElMessageBox } from 'element-plus'
-import { getPublicResources } from '@/apis/resource'
+import {
+  getPublicResources,
+  createUploadSession,
+  completeUpload,
+  updateResource,
+  deleteResource,
+  reparseResource,
+  getDownloadUrl,
+  getProcessingStatus,
+  bootstrapAiIndex,
+  getAiIndexOverview,
+  getAiIndexTasks,
+  getAiIndexResource,
+  searchAiIndex,
+  reparseAiIndex,
+} from '@/apis/resource'
+import FileDropUpload from '@/components/admin/FileDropUpload.vue'
+import { apiRequest } from '@/utils/api'
+import { buildFileKey, formatFileSize, getFileExtension } from '@/utils/file'
 
 // ===================================================================
 // 配置常量 — Tab 1：公共资源管理
@@ -79,21 +98,21 @@ const RESOURCE_TYPE_TAG_MAP = {
   document: 'info',
 }
 
-/** 资源类型 → 缩略图图标映射（用于无缩略图时的 emoji 占位） */
+/** 资源类型 → 缩略图图标映射（Element Plus 图标组件，用于无缩略图时的占位） */
 const RESOURCE_TYPE_ICON_MAP = {
-  pdf: '📕',
-  docx: '📘',
-  pptx: '📙',
-  xlsx: '📊',
-  mp4: '🎬',
-  avi: '🎬',
-  mov: '🎬',
-  jpg: '🖼',
-  png: '🖼',
-  gif: '🖼',
-  mp3: '🎵',
-  wav: '🎵',
-  other: '📄',
+  pdf: Document,
+  docx: Document,
+  pptx: Film,
+  xlsx: Grid,
+  mp4: VideoCamera,
+  avi: VideoCamera,
+  mov: VideoCamera,
+  jpg: PictureFilled,
+  png: PictureFilled,
+  gif: PictureFilled,
+  mp3: Headset,
+  wav: Headset,
+  other: Document,
 }
 
 /** 资源类型 → 副类型映射（用于显示中文标签） */
@@ -192,53 +211,61 @@ const GRADE_LABEL_MAP = {
 }
 
 // ===================================================================
-// 配置常量 — Tab 2：知识库维护
+// 配置常量 — Tab 2：知识库维护（真实数据：PG a12_resource_index）
 // ===================================================================
 
-/** 向量化任务状态筛选项 */
+/**
+ * 索引状态筛选项（服务端过滤 parse_status）
+ * 注：PG 行仅在终态落库（completed/failed），「索引中」由 MySQL ai_index_status 合成，无法作为服务端筛选值
+ */
 const VECTOR_STATUS_OPTIONS = [
   { label: '全部状态', value: '' },
   { label: '已完成', value: 'completed' },
-  { label: '解析中', value: 'processing' },
   { label: '失败', value: 'failed' },
-  { label: '排队中', value: 'queued' },
-  { label: '已取消', value: 'cancelled' },
 ]
 
-/** 向量化状态 → 显示标签映射 */
+/** 索引状态 → 显示标签映射（indexing 为 MySQL 合成状态，pending 为兜底显示） */
 const VECTOR_STATUS_LABEL_MAP = {
   completed: '已完成',
-  processing: '解析中',
+  indexing: '索引中',
   failed: '失败',
-  queued: '排队中',
-  cancelled: '已取消',
+  pending: '待解析',
 }
 
-/** 向量化状态 → Tag 类型映射 */
+/** 索引状态 → Tag 类型映射 */
 const VECTOR_STATUS_TAG_MAP = {
   completed: 'success',
-  processing: '',
+  indexing: '',
   failed: 'danger',
-  queued: 'info',
-  cancelled: 'info',
+  pending: 'info',
 }
 
-/** 向量化状态 → 圆点颜色映射 */
+/** 索引状态 → 圆点颜色映射 */
 const VECTOR_STATUS_DOT_COLOR_MAP = {
   completed: 'var(--zh-green)',
-  processing: 'var(--zh-theme-primary)',
+  indexing: 'var(--zh-theme-primary)',
   failed: 'var(--zh-red)',
-  queued: 'var(--zh-text-disabled)',
-  cancelled: 'var(--zh-text-disabled)',
+  pending: 'var(--zh-text-disabled)',
 }
 
-/** 知识条目搜索类型 */
-const KNOWLEDGE_SEARCH_TYPES = [
+/** 知识索引来源域筛选项（对应 a12_resource_index.source_type） */
+const KNOWLEDGE_SOURCE_OPTIONS = [
   { label: '全部来源', value: '' },
-  { label: '教材', value: 'textbook' },
-  { label: '题库', value: 'exam' },
-  { label: '文档', value: 'document' },
+  { label: '公共资源', value: 'public' },
+  { label: '个人素材', value: 'personal' },
 ]
+
+/** 来源域 → 显示标签映射 */
+const KNOWLEDGE_SOURCE_LABEL_MAP = {
+  public: '公共资源',
+  personal: '个人素材',
+}
+
+/** 来源域 → Tag 类型映射 */
+const KNOWLEDGE_SOURCE_TAG_MAP = {
+  public: 'primary',
+  personal: 'warning',
+}
 
 /** 每页条数选项 */
 const PAGE_SIZE_OPTIONS = [10, 20, 50, 100]
@@ -301,17 +328,8 @@ const uploadDialogVisible = ref(false)
 /** 上传文件列表 */
 const uploadFileList = ref([])
 
-/** 上传文件选择器 */
-const uploadInput = ref(null)
-
-/** 拖拽上传区域是否处于悬停状态 */
-const isDragOver = ref(false)
-
 /** 上传中状态 */
 const isUploading = ref(false)
-
-/** 上传定时器（当前页面使用 mock 上传，接入 API 时可替换为真实进度回调） */
-let uploadTimer = null
 
 /** 上传队列中的重命名状态 */
 const renamingUploadUid = ref(null)
@@ -330,11 +348,32 @@ const knowledgeSearchExpanded = ref(false)
 /** 知识条目搜索关键词 */
 const knowledgeSearchKeyword = ref('')
 
+/** 知识条目检索来源域（'' = 全部 / public / personal） */
+const knowledgeSearchScope = ref('')
+
 /** 知识条目搜索结果 */
 const knowledgeSearchResults = ref([])
 
+/** 知识条目检索元信息（search_mode / latency_ms，来自真实检索响应） */
+const knowledgeSearchMeta = ref(null)
+
 /** 知识条目搜索中 */
 const isKnowledgeSearching = ref(false)
+
+/** 知识索引总览统计（GET ai-index/overview，KPI 数据源） */
+const indexOverview = ref(null)
+
+/** 分块明细抽屉可见性 */
+const chunkDrawerVisible = ref(false)
+
+/** 分块明细抽屉加载中 */
+const chunkDrawerLoading = ref(false)
+
+/** 当前查看分块明细的任务行 */
+const currentChunkRow = ref(null)
+
+/** 分块明细列表（真实 chunks） */
+const chunkList = ref([])
 
 /** 操作执行中状态 */
 const isActionLoading = ref(false)
@@ -347,6 +386,12 @@ const SUPPORTED_UPLOAD_EXTENSIONS = new Set([
   'jpg', 'jpeg', 'png', 'gif', 'webp', 'mp3', 'wav', 'm4a',
   'mp4', 'avi', 'mov', 'mkv',
 ])
+/** 资源扩展名白名单数组（供 FileDropUpload 的 acceptExts 使用） */
+const SUPPORTED_UPLOAD_EXT_LIST = Array.from(SUPPORTED_UPLOAD_EXTENSIONS)
+/** 资源 MIME 前缀白名单（与扩展名白名单按 OR 命中） */
+const SUPPORTED_UPLOAD_MIME_PREFIXES = ['image/', 'audio/', 'video/']
+/** 文件选择器 accept 属性串（扩展名 + MIME 通配，与白名单保持一致） */
+const UPLOAD_INPUT_ACCEPT = '.pdf,.doc,.docx,.ppt,.pptx,.xls,.xlsx,.txt,.jpg,.jpeg,.png,.gif,.webp,.mp3,.wav,.m4a,.mp4,.avi,.mov,.mkv,image/*,audio/*,video/*'
 
 /** 上传队列中尚未完成的文件 */
 const pendingUploadFiles = computed(() => {
@@ -423,72 +468,94 @@ const mapResourceRow = (vo) => {
 }
 
 // ===================================================================
-// Mock 数据生成 — Tab 2：向量化任务数据
+// 数据映射 — Tab 2：知识索引任务行（Python list_resources item → 前端行对象）
 // ===================================================================
 
-/**
- * 生成模拟向量化任务数据（知识库任务接口尚未提供，暂以 API-83 返回的资源数据驱动）
- * @param {Array} resources - 资源列表（用于关联资源名称）
- * @returns {Array} 任务对象数组
- */
-const generateMockVectorTasks = (resources) => {
-  const taskStatuses = ['completed', 'completed', 'processing', 'completed', 'failed', 'queued', 'completed', 'processing', 'cancelled', 'completed']
-  const durations = ['3m 28s', '1m 12s', null, '8m 05s', '0m 32s', null, '2m 15s', null, '1m 45s', '5m 10s']
-
-  return resources.map((res, i) => {
-    const taskStatus = taskStatuses[i % taskStatuses.length]
-    const entryCount = taskStatus === 'completed' ? (Math.floor(Math.random() * 15000) + 500) : (taskStatus === 'processing' ? Math.floor(Math.random() * 8000) + 1000 : Math.floor(Math.random() * 5000))
-    const progress = taskStatus === 'completed' ? 100 : (taskStatus === 'processing' ? Math.floor(Math.random() * 50) + 30 : (taskStatus === 'failed' ? Math.floor(Math.random() * 40) + 20 : 0))
-    const errorMsg = taskStatus === 'failed' ? '向量化引擎异常：第' + (Math.floor(Math.random() * 200) + 1) + '页编码无法识别，请检查文件完整性' : ''
-
-    return {
-      id: `V${String(i + 1).padStart(4, '0')}`,
-      resourceId: res.id,
-      resourceName: res.name,
-      resourceType: res.type,
-      resourceFormat: res.format,
-      entryCount,
-      progress,
-      status: taskStatus,
-      duration: taskStatus === 'completed' || taskStatus === 'failed' ? (durations[i] || '0m 45s') : null,
-      elapsedTime: taskStatus === 'processing' ? (Math.floor(Math.random() * 120) + 10) + 's' : null,
-      failReason: errorMsg,
-      startedAt: res.updatedAt,
-    }
-  })
+/** 短文件类型 → 图标映射（Element Plus 图标组件，metadata.file_type 存 short 标识） */
+const KNOWLEDGE_FILE_TYPE_ICON_MAP = {
+  word: Document,
+  pdf: Document,
+  ppt: Film,
+  txt: Document,
+  image: PictureFilled,
+  audio: Headset,
+  video: VideoCamera,
+  other: Document,
 }
 
-/** 全部向量化任务数据（模拟数据库，由最新拉取的资源列表驱动） */
-let allVectorTasks = []
+/**
+ * 获取知识索引任务行的文件图标（兼容 short 类型标识与扩展名）
+ * @param {string} fileType - 文件类型（word/pdf/ppt 或 docx/mp4 等扩展名）
+ * @returns {Component} Element Plus 图标组件
+ */
+const getKnowledgeFileIcon = (fileType) => {
+  return KNOWLEDGE_FILE_TYPE_ICON_MAP[fileType] || RESOURCE_TYPE_ICON_MAP[fileType] || RESOURCE_TYPE_ICON_MAP.other
+}
+
+/**
+ * 将后端索引任务行映射为前端行对象
+ * @param {Object} item - Python list_resources 返回的条目（resource_key/source_type/parse_status/chunk_count...）
+ * @returns {Object} 前端任务行对象
+ */
+const mapVectorTaskRow = (item) => {
+  const meta = item.metadata || {}
+  return {
+    resourceKey: item.resource_key,
+    sourceType: item.source_type,
+    resourceId: item.resource_id,
+    resourceName: item.title || meta.title || meta.file_name || `资源#${item.resource_id}`,
+    resourceFormat: String(meta.file_type || '').toLowerCase(),
+    entryCount: item.chunk_count || 0,
+    textLength: item.text_length || 0,
+    status: item.effective_status || item.parse_status || '',
+    failReason: item.error_message || '',
+    available: item.available,
+    allowAi: item.allow_ai,
+    indexedAt: formatDateTime(item.indexed_at),
+    updatedAt: formatDateTime(item.updated_at),
+  }
+}
 
 // ===================================================================
-// 计算属性：知识库概览统计数据
+// 计算属性：知识库概览统计（GET ai-index/overview 真实数据驱动）
 // ===================================================================
 
-/** 知识条目总数 */
-const totalKnowledgeEntries = computed(() => {
-  return allVectorTasks
-    .filter((t) => t.status === 'completed' || t.status === 'processing')
-    .reduce((sum, t) => sum + t.entryCount, 0)
-})
+/** 知识条目总数（a12_resource_index 全部行） */
+const totalKnowledgeEntries = computed(() => indexOverview.value?.resource_count || 0)
 
-/** 已完成向量化条目数 */
+/** 已完成向量化条目数（parse_status=completed 的资源数） */
 const completedVectorEntries = computed(() => {
-  return allVectorTasks
-    .filter((t) => t.status === 'completed')
-    .reduce((sum, t) => sum + t.entryCount, 0)
+  const groups = indexOverview.value?.groups || []
+  return groups
+    .filter((g) => g.parse_status === 'completed')
+    .reduce((sum, g) => sum + g.resource_count, 0)
 })
 
-/** 待处理资源数 */
+/** 待处理资源数（解析失败，可重试） */
 const pendingVectorCount = computed(() => {
-  return allVectorTasks.filter((t) => t.status === 'failed' || t.status === 'queued').length
+  const groups = indexOverview.value?.groups || []
+  return groups
+    .filter((g) => g.parse_status === 'failed')
+    .reduce((sum, g) => sum + g.resource_count, 0)
 })
 
-/** 向量化覆盖率 */
+/** 向量化覆盖率（已向量化 / 总数） */
 const vectorCoverage = computed(() => {
   if (totalKnowledgeEntries.value === 0) return '0%'
   return ((completedVectorEntries.value / totalKnowledgeEntries.value) * 100).toFixed(1) + '%'
 })
+
+/** 索引分块总数（真实分块行数） */
+const totalChunkCount = computed(() => indexOverview.value?.chunk_count || 0)
+
+/** 累计检索次数（a12_retrieval_log 行数） */
+const retrievalLogCount = computed(() => indexOverview.value?.retrieval_log_count || 0)
+
+/** 向量维度（真实 embedding 配置） */
+const embeddingDimensions = computed(() => indexOverview.value?.embedding_dimensions || '—')
+
+/** PostgreSQL 可用性（真实状态） */
+const postgresAvailable = computed(() => indexOverview.value?.postgres_available !== false)
 
 // ===================================================================
 // 数据筛选与获取方法
@@ -512,55 +579,56 @@ const fetchResources = async () => {
       ElMessage.error(res?.message || '资源加载失败')
       resourceList.value = []
       resourcePagination.total = 0
-      allVectorTasks = []
       return
     }
     const data = res?.data || {}
     resourceList.value = (data.records || []).map(mapResourceRow)
     resourcePagination.total = data.total || 0
-    // 以当前页资源数据驱动 Tab 2 的模拟向量化任务（知识库任务接口尚未提供）
-    allVectorTasks = generateMockVectorTasks(resourceList.value)
   } catch {
     ElMessage.error('资源加载失败，请稍后重试')
     resourceList.value = []
     resourcePagination.total = 0
-    allVectorTasks = []
   } finally {
     isTableLoading.value = false
   }
 }
 
 /**
- * 获取向量化任务列表数据（模拟异步请求）
- * 根据当前 Tab 2 的筛选条件 + 分页参数过滤 mock 数据
+ * 获取知识索引总览统计（GET ai-index/overview → Python overview → PG 真实统计）
+ * KPI 四卡数据源；失败时置空（KPI 显示 0，不打断任务列表）
  */
-const fetchVectorTasks = () => {
-  isTableLoading.value = true
+const fetchIndexOverview = async () => {
+  try {
+    indexOverview.value = unwrapResult(await getAiIndexOverview(), '知识库概览加载失败')
+  } catch (error) {
+    ElMessage.error(error?.message || '知识库概览加载失败')
+    indexOverview.value = null
+  }
+}
 
-  setTimeout(() => {
-    let filtered = [...allVectorTasks]
-    if (knowledgeFilters.status) {
-      filtered = filtered.filter((t) => t.status === knowledgeFilters.status)
-    }
-    if (knowledgeFilters.type) {
-      filtered = filtered.filter((t) => t.resourceType === knowledgeFilters.type)
-    }
-    if (knowledgeFilters.keyword.trim()) {
-      const kw = knowledgeFilters.keyword.trim().toLowerCase()
-      filtered = filtered.filter((t) => t.resourceName.toLowerCase().includes(kw))
-    }
-    // 排序：解析中 > 排队中 > 失败 > 已完成 > 已取消
-    const taskPriority = { processing: 0, queued: 1, failed: 2, completed: 3, cancelled: 4 }
-    filtered.sort((a, b) => {
-      const tp = taskPriority[a.status] - taskPriority[b.status]
-      if (tp !== 0) return tp
-      return b.startedAt.localeCompare(a.startedAt)
-    })
-    knowledgePagination.total = filtered.length
-    const start = (knowledgePagination.currentPage - 1) * knowledgePagination.pageSize
-    vectorTaskList.value = filtered.slice(start, start + knowledgePagination.pageSize)
+/**
+ * 获取向量化任务列表（GET ai-index/tasks → Python list_resources，服务端筛选 + 分页）
+ * 行状态由后端合成：PG parse_status（终态）+ MySQL ai_index_status（indexing 进行中）
+ */
+const fetchVectorTasks = async () => {
+  isTableLoading.value = true
+  try {
+    const payload = unwrapResult(await getAiIndexTasks({
+      source_type: knowledgeFilters.type || undefined,
+      parse_status: knowledgeFilters.status || undefined,
+      keyword: knowledgeFilters.keyword.trim() || undefined,
+      page: knowledgePagination.currentPage,
+      size: knowledgePagination.pageSize,
+    }), '任务列表加载失败')
+    vectorTaskList.value = (payload?.items || []).map(mapVectorTaskRow)
+    knowledgePagination.total = payload?.total || 0
+  } catch (error) {
+    ElMessage.error(error?.message || '任务列表加载失败，请稍后重试')
+    vectorTaskList.value = []
+    knowledgePagination.total = 0
+  } finally {
     isTableLoading.value = false
-  }, 300)
+  }
 }
 
 /**
@@ -572,6 +640,7 @@ const fetchData = () => {
     fetchResources()
   } else {
     fetchVectorTasks()
+    fetchIndexOverview()
   }
 }
 
@@ -586,6 +655,7 @@ const loadData = () => {
     })
   } else {
     fetchVectorTasks()
+    fetchIndexOverview()
     isLoading.value = false
   }
 }
@@ -695,9 +765,9 @@ const handleKnowledgeSizeChange = (size) => {
 // ===================================================================
 
 /**
- * 获取文件格式对应的缩略图图标字符
+ * 获取文件格式对应的缩略图图标（Element Plus 图标组件）
  * @param {string} format - 文件扩展名
- * @returns {string} emoji 占位字符
+ * @returns {Component} Element Plus 图标组件
  */
 const getFileIcon = (format) => {
   return RESOURCE_TYPE_ICON_MAP[format] || RESOURCE_TYPE_ICON_MAP.other
@@ -773,7 +843,7 @@ const openDetailDrawer = (row) => {
   drawerVisible.value = true
 }
 
-/** 重命名已入库资源，并同步知识库任务中的来源名称 */
+/** 重命名已入库资源（API-87 PATCH），成功后同步本地行与知识库任务来源名称 */
 const handleRenameResource = (row) => {
   ElMessageBox.prompt('请输入新的资源名称', '重命名资源', {
     confirmButtonText: '保存名称',
@@ -782,150 +852,61 @@ const handleRenameResource = (row) => {
     inputPlaceholder: '例如：2026版数学教材（必修三）.pdf',
     inputValidator: (value) => value?.trim() ? true : '资源名称不能为空',
   })
-    .then(({ value }) => {
+    .then(async ({ value }) => {
       const nextName = value.trim()
-      const resource = resourceList.value.find((item) => item.id === row.id)
-      if (resource) {
-        resource.name = nextName
-        resource.updatedAt = new Date().toISOString().replace('T', ' ').slice(0, 16)
-      }
-      allVectorTasks.forEach((task) => {
-        if (task.resourceId === row.id) task.resourceName = nextName
-      })
+      const res = await updateResource(row.id, { title: nextName })
+      const vo = unwrapResult(res, '重命名失败')
+      row.name = vo.title || nextName
+      row.updatedAt = new Date().toISOString().replace('T', ' ').slice(0, 16)
       if (currentResource.value?.id === row.id) {
-        currentResource.value.name = nextName
-        currentResource.value.updatedAt = resource?.updatedAt || currentResource.value.updatedAt
+        currentResource.value.name = row.name
+        currentResource.value.updatedAt = row.updatedAt
       }
-      // 重命名 API（API-87）尚未接入，暂为本地模拟，不重新拉取以免覆盖
-      ElMessage.success(`已将资源重命名为「${nextName}」`)
+      ElMessage.success(`已将资源重命名为「${row.name}」`)
     })
-    .catch(() => {})
+    .catch((error) => {
+      if (error !== 'cancel' && error !== 'close' && error?.message) ElMessage.error(error.message)
+    })
 }
 
 /**
  * 打开上传对话框 — 重置上传状态
  */
 const openUploadDialog = () => {
-  if (uploadTimer) {
-    clearInterval(uploadTimer)
-    uploadTimer = null
-  }
   uploadFileList.value = []
   uploadCategory.subject = ''
   uploadCategory.type = ''
   uploadCategory.grade = ''
   isUploading.value = false
-  isDragOver.value = false
   renamingUploadUid.value = null
   uploadRenameDraft.value = ''
   uploadDialogVisible.value = true
 }
 
-/** 打开系统文件选择器 */
-const triggerUploadPicker = () => {
-  if (!isUploading.value) uploadInput.value?.click()
-}
-
-/** 获取文件扩展名 */
-const getFileExtension = (name) => {
-  const parts = String(name || '').toLowerCase().split('.')
-  return parts.length > 1 ? parts.pop() : 'other'
-}
-
-/** 判断文件格式是否在资源库支持范围内 */
-const isSupportedUploadFile = (file) => {
-  const extension = getFileExtension(file.name)
-  return SUPPORTED_UPLOAD_EXTENSIONS.has(extension)
-    || String(file.type || '').startsWith('image/')
-    || String(file.type || '').startsWith('audio/')
-    || String(file.type || '').startsWith('video/')
-}
+/** 现有队列的去重键集合（供 FileDropUpload 过滤重复文件与计算数量余量） */
+const uploadExistingKeys = computed(() => {
+  return uploadFileList.value.map((file) => buildFileKey(file))
+})
 
 /**
- * 添加待上传文件到队列
- * @param {FileList|Array<File>} files - 文件选择器或拖拽得到的文件集合
+ * 接收 FileDropUpload 通过通用校验（去重/大小/类型/数量上限）的文件，生成上传队列项
+ * @param {Array<File>} files - 通过通用校验的文件集合
  */
-const addUploadFiles = (files) => {
-  if (isUploading.value) return
-  const incomingFiles = Array.from(files || [])
-  if (incomingFiles.length === 0) return
-
-  const availableSlots = MAX_UPLOAD_FILES - uploadFileList.value.length
-  if (availableSlots <= 0) {
-    ElMessage.warning(`单次最多上传 ${MAX_UPLOAD_FILES} 个文件`)
-    return
-  }
-
-  const existingKeys = new Set(uploadFileList.value.map((file) => `${file.name}:${file.size}:${file.lastModified || 0}`))
-  const acceptedFiles = []
-  let oversizedCount = 0
-  let unsupportedCount = 0
-  let duplicateCount = 0
-
-  for (const file of incomingFiles) {
-    const key = `${file.name}:${file.size}:${file.lastModified || 0}`
-    if (existingKeys.has(key)) {
-      duplicateCount += 1
-      continue
-    }
-    if (isFileOversized(file.size || 0)) {
-      oversizedCount += 1
-      continue
-    }
-    if (!isSupportedUploadFile(file)) {
-      unsupportedCount += 1
-      continue
-    }
-    existingKeys.add(key)
-    acceptedFiles.push(file)
-  }
-
-  const filesToAdd = acceptedFiles.slice(0, availableSlots)
-  filesToAdd.forEach((file, index) => {
+const onUploadFilesAccepted = (files) => {
+  files.forEach((file, index) => {
     uploadFileList.value.push({
       uid: `${Date.now()}-${index}-${Math.random().toString(16).slice(2)}`,
+      raw: file,
+      mimeType: file.type || '',
       name: file.name,
       size: file.size,
       lastModified: file.lastModified,
       status: 'ready',
       progress: 0,
       format: getFileExtension(file.name),
+      error: '',
     })
   })
-
-  const overflowCount = Math.max(acceptedFiles.length - filesToAdd.length, 0)
-  if (oversizedCount > 0) ElMessage.warning(`${oversizedCount} 个文件超过 500MB，已跳过`)
-  if (unsupportedCount > 0) ElMessage.warning(`${unsupportedCount} 个文件格式不受支持，已跳过`)
-  if (duplicateCount > 0) ElMessage.info(`${duplicateCount} 个重复文件已跳过`)
-  if (overflowCount > 0) ElMessage.warning(`单次最多上传 ${MAX_UPLOAD_FILES} 个文件，已忽略多余文件`)
-}
-
-/** 处理文件选择器变更 */
-const handleUploadInputChange = (event) => {
-  addUploadFiles(event.target?.files)
-  // 允许用户再次选择同名文件时仍触发 change 事件。
-  if (event.target) event.target.value = ''
-}
-
-/** 处理拖拽进入上传区域 */
-const handleUploadDragOver = (event) => {
-  event.preventDefault()
-  if (!isUploading.value) isDragOver.value = true
-}
-
-/** 处理拖拽离开上传区域 */
-const handleUploadDragLeave = (event) => {
-  event.preventDefault()
-  if (event.currentTarget === event.target || !event.currentTarget.contains(event.relatedTarget)) {
-    isDragOver.value = false
-  }
-}
-
-/** 处理文件拖拽放下 */
-const handleUploadDrop = (event) => {
-  event.preventDefault()
-  isDragOver.value = false
-  if (!isUploading.value) addUploadFiles(event.dataTransfer?.files)
 }
 
 /** 开始编辑上传队列中的文件名 */
@@ -965,64 +946,73 @@ const removeUploadFile = (uid) => {
 }
 
 /**
- * 格式化文件大小显示
- * @param {number} bytes - 字节数
- * @returns {string} 格式化字符串
+ * 统一解包 Result 响应：非成功码（0/200）抛出业务错误信息
+ * @param {{code: number, message?: string, data?: any}} res - 后端统一响应
+ * @param {string} fallbackMessage - 响应缺失时的兜底错误文案
+ * @returns {any} 响应 data 字段
  */
-const formatFileSize = (bytes) => {
-  if (bytes < 1024) return bytes + ' B'
-  if (bytes < 1024 * 1024) return (bytes / 1024).toFixed(1) + ' KB'
-  if (bytes < 1024 * 1024 * 1024) return (bytes / (1024 * 1024)).toFixed(1) + ' MB'
-  return (bytes / (1024 * 1024 * 1024)).toFixed(2) + ' GB'
-}
-
-/**
- * 判断上传文件是否超过 500MB 限制
- * @param {number} bytes - 文件字节数
- * @returns {boolean} 是否超限
- */
-const isFileOversized = (bytes) => {
-  return bytes > MAX_UPLOAD_FILE_SIZE
-}
-
-/** 将已完成的 mock 上传文件写入资源列表（上传 API 尚未接入，暂为本地模拟） */
-const appendUploadedResources = (files) => {
-  files.forEach((file, idx) => {
-    resourceList.value.unshift({
-      id: Date.now() + idx,
-      name: file.name,
-      type: uploadCategory.type || 'document',
-      format: file.format,
-      subject: uploadCategory.subject || 'math',
-      grade: uploadCategory.grade || 'senior',
-      size: formatFileSize(file.size || 0),
-      status: 'pending',
-      updatedAt: new Date().toISOString().replace('T', ' ').slice(0, 16),
-      uploader: '管理员',
-      tags: [
-        SUBJECT_LABEL_MAP[uploadCategory.subject] || '未分类',
-        GRADE_LABEL_MAP[uploadCategory.grade] || '未分类',
-      ],
-      vectorProgress: 0,
-      failReason: '',
-    })
-  })
-}
-
-/** 完成当前批次的 mock 上传 */
-const finishMockUpload = (files) => {
-  if (uploadTimer) {
-    clearInterval(uploadTimer)
-    uploadTimer = null
+const unwrapResult = (res, fallbackMessage) => {
+  if (!res || (res.code !== 0 && res.code !== 200)) {
+    throw new Error(res?.message || fallbackMessage)
   }
-  appendUploadedResources(files)
-  allVectorTasks = generateMockVectorTasks(resourceList.value)
-  isUploading.value = false
-  ElMessage.success(`成功上传 ${files.length} 个资源，系统正在自动解析...`)
+  return res.data
 }
 
 /**
- * 执行上传操作（当前前端使用 mock 进度，接入 API 时替换为真实上传回调）
+ * OSS 预签名 PUT 直传（axios onUploadProgress 汇报 0-100 上传进度）
+ * 注意：Content-Type 必须与创建会话时的 file_type 一致，否则预签名校验失败
+ * @param {Object} queueFile - 上传队列项（含 raw 原始 File 与 mimeType）
+ * @param {string} uploadUrl - 后端签发的预签名 PUT URL
+ * @param {Function} onProgress - 进度回调（百分比数字）
+ * @returns {Promise<void>}
+ */
+const uploadToOss = (queueFile, uploadUrl, onProgress) => apiRequest({
+  url: uploadUrl,
+  method: 'put',
+  data: queueFile.raw,
+  headers: { 'Content-Type': queueFile.mimeType || 'application/octet-stream' },
+  timeout: 600000,
+  onUploadProgress: (event) => {
+    if (event.total) onProgress((event.loaded / event.total) * 100)
+  },
+})
+
+/**
+ * 上传单个文件：创建会话 → OSS 直传 → 确认完成（后端异步触发索引解析）
+ * @param {Object} queueFile - 上传队列项
+ * @returns {Promise<number|null>} 成功返回资源 ID（upload_id），失败返回 null
+ */
+const uploadSingleFile = async (queueFile) => {
+  queueFile.status = 'uploading'
+  queueFile.progress = 0
+  try {
+    const sessionRes = await createUploadSession({
+      resource_type: uploadCategory.type || 'document',
+      title: queueFile.name,
+      subject: uploadCategory.subject || '',
+      grade: uploadCategory.grade || '',
+      file_name: queueFile.name,
+      file_type: queueFile.mimeType || 'application/octet-stream',
+      file_size: queueFile.size || 0,
+    })
+    const payload = unwrapResult(sessionRes, '创建上传会话失败')
+    await uploadToOss(queueFile, payload.upload_url, (percent) => {
+      queueFile.progress = Math.min(99, Math.round(percent))
+    })
+    queueFile.progress = 99
+    await unwrapResult(await completeUpload(payload.upload_id), '确认上传失败')
+    queueFile.progress = 100
+    queueFile.status = 'success'
+    return payload.upload_id
+  } catch (error) {
+    queueFile.status = 'error'
+    queueFile.error = error?.message || '上传失败'
+    return null
+  }
+}
+
+/**
+ * 执行上传：顺序走三段式（会话 → OSS 直传 → complete），全部结束后刷新列表并对新资源启动索引状态轮询
  */
 const handleUpload = () => {
   const filesToUpload = uploadFileList.value.filter((file) => file.status === 'ready' || file.status === 'error')
@@ -1031,32 +1021,36 @@ const handleUpload = () => {
     else ElMessage.warning('请先选择要上传的文件')
     return
   }
-
-  if (uploadTimer) clearInterval(uploadTimer)
   isUploading.value = true
-  filesToUpload.forEach((file) => {
-    file.status = 'uploading'
-    file.progress = 0
-  })
-
-  let tick = 0
-  uploadTimer = setInterval(() => {
-    tick += 1
-    filesToUpload.forEach((file, index) => {
-      if (file.status !== 'uploading') return
-      const step = 8 + ((tick + index) % 5) * 3
-      file.progress = Math.min(100, file.progress + step)
-      if (file.progress >= 100) file.status = 'success'
-    })
-
-    if (filesToUpload.every((file) => file.status === 'success')) {
-      finishMockUpload(filesToUpload)
-    }
-  }, 180)
+  void runUploadQueue(filesToUpload)
 }
 
 /**
- * 删除资源 — 二次确认后删除
+ * 顺序执行上传队列；结束后回到第 1 页拉取服务端真数据，并对新上传的资源逐个启动索引状态轮询
+ * @param {Array<Object>} filesToUpload - 待上传队列项
+ */
+const runUploadQueue = async (filesToUpload) => {
+  const uploadedIds = []
+  for (const queueFile of filesToUpload) {
+    const uploadId = await uploadSingleFile(queueFile)
+    if (uploadId) uploadedIds.push(uploadId)
+  }
+  isUploading.value = false
+  if (uploadedIds.length === 0) {
+    ElMessage.error('上传失败，请检查网络或稍后重试')
+    return
+  }
+  ElMessage.success(`成功上传 ${uploadedIds.length} 个资源，AI 索引解析已在后台进行`)
+  resourcePagination.currentPage = 1
+  await fetchResources()
+  uploadedIds.forEach((id) => {
+    const row = resourceList.value.find((r) => r.id === id)
+    if (row) pollAiIndexStatus(row)
+  })
+}
+
+/**
+ * 删除资源 — 二次确认后调 DELETE 接口（同步清理 PG 向量索引与 OSS 对象）
  * @param {Object} row - 当前行资源数据
  */
 const handleDeleteResource = (row) => {
@@ -1070,66 +1064,172 @@ const handleDeleteResource = (row) => {
       confirmButtonClass: 'el-button--danger',
     },
   )
-    .then(() => {
-      // 删除 API（API-89）尚未接入，暂为本地模拟删除，刷新后恢复
+    .then(async () => {
+      await unwrapResult(await deleteResource(row.id), '删除失败')
       resourceList.value = resourceList.value.filter((r) => r.id !== row.id)
-      allVectorTasks = allVectorTasks.filter((t) => t.resourceId !== row.id)
       ElMessage.success(`已删除资源「${row.name}」`)
       if (resourceList.value.length === 0 && resourcePagination.currentPage > 1) {
         resourcePagination.currentPage--
       }
     })
-    .catch(() => {})
+    .catch((error) => {
+      if (error !== 'cancel' && error !== 'close' && error?.message) ElMessage.error(error.message)
+    })
 }
 
 /**
- * 重新解析单个资源
- * @param {Object} row - 当前行任务或资源数据
+ * 重新解析单个公共资源（Tab 1：POST /{id}/reparse，后端异步执行）——触发后轮询 processing-status 至出结果
+ * @param {Object} row - 当前行资源数据
  */
-const handleReparse = (row) => {
+const handleReparse = async (row) => {
   const resourceId = row.resourceId || row.id
   const name = row.resourceName || row.name
-
-  // 解析 API 尚未接入，暂为本地模拟：更新资源状态为 indexing
-  const resource = resourceList.value.find((r) => r.id === resourceId)
-  if (resource) {
-    resource.status = 'indexing'
-    resource.vectorProgress = 0
+  try {
+    await unwrapResult(await reparseResource(resourceId), '重新解析失败')
+    const resource = resourceList.value.find((r) => r.id === resourceId)
+    if (resource) {
+      resource.status = 'indexing'
+      resource.vectorProgress = 0
+    }
+    ElMessage.success(`已发起「${name}」的重新解析`)
+    pollAiIndexStatus(resource || row)
+  } catch (error) {
+    ElMessage.error(error?.message || '重新解析失败')
   }
-  // 更新或创建向量化任务
-  const taskIdx = allVectorTasks.findIndex((t) => t.resourceId === resourceId)
-  if (taskIdx !== -1) {
-    allVectorTasks[taskIdx].status = 'processing'
-    allVectorTasks[taskIdx].progress = 0
-    allVectorTasks[taskIdx].duration = null
-    allVectorTasks[taskIdx].failReason = ''
-  }
-  ElMessage.success(`已重新发起「${name}」的解析任务`)
 }
 
 /**
- * 取消解析任务
- * @param {Object} row - 当前行任务数据
+ * 重新解析知识索引任务行（Tab 2：POST /ai-index/{sourceType}/{resourceId}/reparse，双域统一入口）
+ * 后端仅标记 indexing 后立即返回（public 走公共同步服务、personal 走个人素材同步服务），前端轮询任务行状态
+ * @param {Object} row - 当前任务行（需含 sourceType/resourceId/resourceName）
  */
-const handleCancelTask = (row) => {
-  ElMessageBox.confirm(
-    `确认取消「${row.resourceName}」的解析任务？已完成的部分将保留。`,
-    '确认取消',
-    { confirmButtonText: '确认取消', cancelButtonText: '返回', type: 'warning' },
-  )
-    .then(() => {
-      // 取消 API 尚未接入，暂为本地模拟
-      const taskIdx = allVectorTasks.findIndex((t) => t.id === row.id)
-      if (taskIdx !== -1) allVectorTasks[taskIdx].status = 'cancelled'
-      const resource = resourceList.value.find((r) => r.id === row.resourceId)
-      if (resource) resource.status = 'pending'
-      ElMessage.success(`已取消「${row.resourceName}」的解析任务`)
-    })
-    .catch(() => {})
+const handleKnowledgeReparse = async (row) => {
+  try {
+    await unwrapResult(await reparseAiIndex(row.sourceType, row.resourceId), '重新解析失败')
+    row.status = 'indexing'
+    ElMessage.success(`已发起「${row.resourceName}」的重新解析`)
+    pollKnowledgeTaskStatus(row)
+  } catch (error) {
+    ElMessage.error(error?.message || '重新解析失败')
+  }
 }
 
 /**
- * 批量重建全部知识索引 — 二次确认
+ * 下载资源 — 获取 60 分钟预签名 GET URL 后触发浏览器下载
+ * @param {Object} row - 当前行资源数据
+ */
+const handleDownloadResource = async (row) => {
+  try {
+    const res = await getDownloadUrl(row.id)
+    const payload = unwrapResult(res, '获取下载地址失败')
+    if (!payload?.download_url) throw new Error('下载地址为空')
+    window.open(payload.download_url, '_blank')
+  } catch (error) {
+    ElMessage.error(error?.message || '下载失败')
+  }
+}
+
+/** AI 索引状态轮询间隔与上限（4s × 150 ≈ 10 分钟） */
+const AI_POLL_INTERVAL = 4000
+const AI_POLL_MAX_ROUNDS = 150
+
+/** 进行中的索引状态轮询定时器（按资源 ID 索引，防止重复轮询） */
+const aiPollTimers = new Map()
+
+/**
+ * 轮询单资源的 AI 索引状态（GET processing-status），直至 completed/failed 或超时上限
+ * @param {Object} row - 资源行（需含 id/name）
+ */
+const pollAiIndexStatus = (row) => {
+  if (!row?.id || aiPollTimers.has(row.id)) return
+  let rounds = 0
+  const timer = setInterval(async () => {
+    rounds += 1
+    if (rounds > AI_POLL_MAX_ROUNDS) {
+      clearInterval(timer)
+      aiPollTimers.delete(row.id)
+      ElMessage.warning(`「${row.name}」索引解析超过 10 分钟仍未完成，请稍后手动刷新查看`)
+      return
+    }
+    try {
+      const res = await getProcessingStatus(row.id)
+      const payload = unwrapResult(res, '查询索引状态失败')
+      const status = payload.index_status
+      if (status !== 'completed' && status !== 'failed') return
+      clearInterval(timer)
+      aiPollTimers.delete(row.id)
+      row.status = status
+      row.vectorProgress = status === 'completed' ? 100 : 0
+      row.failReason = payload.error_msg || ''
+      if (status === 'completed') ElMessage.success(`「${row.name}」AI 索引解析完成`)
+      else ElMessage.error(`「${row.name}」解析失败：${row.failReason || '未知原因'}`)
+    } catch {
+      // 单次查询失败（网络抖动）忽略，等待下一轮重试
+    }
+  }, AI_POLL_INTERVAL)
+  aiPollTimers.set(row.id, timer)
+}
+
+/** Tab 2 任务状态轮询定时器（按 sourceType:resourceId 索引，防止重复轮询） */
+const knowledgePollTimers = new Map()
+
+/**
+ * 轮询知识索引任务行状态（GET ai-index/resources/{st}/{id}，读 PG parse_status），直至终态或超时
+ * 注：仅当 PG 行已存在时轮询有效——从未索引过的资源完成解析后才会出现在任务列表
+ * @param {Object} row - 任务行（需含 sourceType/resourceId/resourceName）
+ */
+const pollKnowledgeTaskStatus = (row) => {
+  const key = `${row.sourceType}:${row.resourceId}`
+  if (!row?.resourceId || knowledgePollTimers.has(key)) return
+  let rounds = 0
+  const timer = setInterval(async () => {
+    rounds += 1
+    if (rounds > AI_POLL_MAX_ROUNDS) {
+      clearInterval(timer)
+      knowledgePollTimers.delete(key)
+      ElMessage.warning(`「${row.resourceName}」索引解析超过 10 分钟仍未完成，请稍后手动刷新查看`)
+      return
+    }
+    try {
+      const payload = unwrapResult(await getAiIndexResource(row.sourceType, row.resourceId, 1), '查询索引状态失败')
+      const status = payload?.parse_status
+      if (status !== 'completed' && status !== 'failed') return
+      clearInterval(timer)
+      knowledgePollTimers.delete(key)
+      row.status = status
+      row.entryCount = payload?.chunk_count || row.entryCount
+      row.failReason = payload?.error_message || ''
+      fetchIndexOverview()
+      if (status === 'completed') ElMessage.success(`「${row.resourceName}」AI 索引解析完成`)
+      else ElMessage.error(`「${row.resourceName}」解析失败：${row.failReason || '未知原因'}`)
+    } catch {
+      // 单次查询失败（网络抖动）忽略，等待下一轮重试
+    }
+  }, AI_POLL_INTERVAL)
+  knowledgePollTimers.set(key, timer)
+}
+
+/**
+ * 打开分块明细抽屉（GET ai-index/resources/{st}/{id}，展示真实分块内容）
+ * @param {Object} row - 当前任务行
+ */
+const openChunkDrawer = async (row) => {
+  currentChunkRow.value = row
+  chunkDrawerVisible.value = true
+  chunkDrawerLoading.value = true
+  chunkList.value = []
+  try {
+    const payload = unwrapResult(await getAiIndexResource(row.sourceType, row.resourceId, 50), '索引明细加载失败')
+    chunkList.value = payload?.chunks || []
+  } catch (error) {
+    ElMessage.error(error?.message || '索引明细加载失败')
+  } finally {
+    chunkDrawerLoading.value = false
+  }
+}
+
+/**
+ * 批量重建全部知识索引 — 二次确认后调 bootstrap（public + personal 双域，force_reparse=true）
  */
 const handleRebuildAllIndex = () => {
   ElMessageBox.confirm(
@@ -1141,18 +1241,21 @@ const handleRebuildAllIndex = () => {
       type: 'warning',
     },
   )
-    .then(() => {
-      // 重建索引 API 尚未接入，暂为本地模拟
+    .then(async () => {
       isTableLoading.value = true
-      setTimeout(() => {
-        resourceList.value.forEach((r) => {
-          r.status = 'indexing'
-          r.vectorProgress = 0
-        })
-        allVectorTasks.forEach((t) => { t.status = 'processing'; t.progress = 0; t.duration = null; t.failReason = '' })
-        ElMessage.success('已发起全量索引重建任务')
+      try {
+        const res = await bootstrapAiIndex(true)
+        const payload = unwrapResult(res, '重建索引失败')
+        const handled = payload?.results?.length || 0
+        ElMessage.success(`全量索引重建完成，共处理 ${handled} 条资源`)
+        await fetchResources()
+        await fetchVectorTasks()
+        fetchIndexOverview()
+      } catch (error) {
+        ElMessage.error(error?.message || '重建索引失败，请稍后重试')
+      } finally {
         isTableLoading.value = false
-      }, 500)
+      }
     })
     .catch(() => {})
 }
@@ -1162,33 +1265,41 @@ const handleRebuildAllIndex = () => {
 // ===================================================================
 
 /**
- * 执行知识条目检索（模拟异步搜索）
+ * 执行知识条目检索（POST ai-index/search → Python pgvector 混合重排检索，真实向量）
  */
-const handleKnowledgeSearch = () => {
+const handleKnowledgeSearch = async () => {
   const kw = knowledgeSearchKeyword.value.trim()
   if (!kw) {
     knowledgeSearchResults.value = []
+    knowledgeSearchMeta.value = null
     return
   }
   isKnowledgeSearching.value = true
-  setTimeout(() => {
-    const results = []
-    const completedTasks = allVectorTasks.filter((t) => t.status === 'completed')
-    completedTasks.forEach((task) => {
-      const matchCount = Math.floor(Math.random() * 5)
-      for (let i = 0; i < matchCount; i++) {
-        results.push({
-          id: `KE${task.id}_${i}`,
-          content: `与"${kw}"相关的知识条目 #${i + 1} — 来自「${task.resourceName}」`,
-          source: task.resourceName,
-          matchRate: Math.floor(Math.random() * 30) + 70,
-          entryCount: task.entryCount,
-        })
-      }
-    })
-    knowledgeSearchResults.value = results.slice(0, 20)
+  try {
+    const payload = unwrapResult(await searchAiIndex({
+      query: kw,
+      source_type: knowledgeSearchScope.value || undefined,
+      top_k: 10,
+    }), '知识检索失败')
+    const matches = payload?.matches || []
+    knowledgeSearchResults.value = matches.map((m) => ({
+      id: m.chunk_id,
+      content: m.content,
+      // 分块 metadata 携带索引时的 title；老数据缺失时回退 resource_key
+      source: m.metadata?.title || m.resource_id,
+      matchRate: Math.round((m.score || 0) * 100),
+      rank: m.rank,
+      matchType: m.match_type || '',
+    }))
+    knowledgeSearchMeta.value = {
+      mode: payload?.search_mode || '',
+      latency: payload?.latency_ms ?? null,
+    }
+  } catch (error) {
+    ElMessage.error(error?.message || '知识检索失败')
+  } finally {
     isKnowledgeSearching.value = false
-  }, 500)
+  }
 }
 
 /**
@@ -1199,6 +1310,8 @@ const toggleKnowledgeSearch = () => {
   if (!knowledgeSearchExpanded.value) {
     knowledgeSearchResults.value = []
     knowledgeSearchKeyword.value = ''
+    knowledgeSearchMeta.value = null
+    knowledgeSearchScope.value = ''
   }
 }
 
@@ -1213,11 +1326,11 @@ onMounted(() => {
 
 onBeforeUnmount(() => {
   window.removeEventListener('admin-refresh', handleRefresh)
-  if (uploadTimer) {
-    clearInterval(uploadTimer)
-    uploadTimer = null
-  }
   if (knowledgeSearchTimer) clearTimeout(knowledgeSearchTimer)
+  aiPollTimers.forEach((timer) => clearInterval(timer))
+  aiPollTimers.clear()
+  knowledgePollTimers.forEach((timer) => clearInterval(timer))
+  knowledgePollTimers.clear()
 })
 </script>
 
@@ -1365,12 +1478,14 @@ onBeforeUnmount(() => {
             <el-table-column prop="name" label="资源名称" min-width="240">
               <template #default="{ row }">
                 <div class="flex items-center gap-3">
-                  <!-- 缩略图占位 -->
+                  <!-- 缩略图占位：主题色底 + 白色描线 -->
                   <div
-                    class="w-10 h-10 rounded-md flex items-center justify-center shrink-0 text-lg"
-                    :style="{ background: 'var(--zh-background-light-gray)' }"
+                    class="w-10 h-10 rounded-md flex items-center justify-center shrink-0"
+                    :style="{ background: 'var(--zh-gradient-blue)' }"
                   >
-                    {{ getFileIcon(row.format) }}
+                    <el-icon style="color: #ffffff; font-size: 20px;">
+                      <component :is="getFileIcon(row.format)" />
+                    </el-icon>
                   </div>
                   <div class="min-w-0">
                     <el-tooltip
@@ -1551,11 +1666,11 @@ onBeforeUnmount(() => {
          4. Tab 2：知识库维护
          =================================================================== -->
     <template v-if="activeTab === 'knowledge'">
-      <!-- 4.1 知识库概览统计卡片 -->
-      <div class="grid grid-cols-1 sm:grid-cols-3 gap-4 mb-5">
+      <!-- 4.1 知识库概览统计卡片（数据源：GET ai-index/overview，PG 真实统计） -->
+      <div class="grid grid-cols-1 sm:grid-cols-2 xl:grid-cols-4 gap-4 mb-5">
         <el-card
           shadow="never"
-          class="kpi-card cursor-pointer"
+          class="kpi-card"
           :class="{ 'skeleton-pulse kpi-card-skeleton': isLoading }"
           :style="{ background: 'var(--zh-background-capsule)', borderRadius: 'var(--zh-radius12)', borderColor: 'var(--zh-line-border)' }"
         >
@@ -1569,22 +1684,22 @@ onBeforeUnmount(() => {
           <template v-else>
             <div class="flex items-center justify-between mb-3">
               <span :style="{ fontSize: 'var(--zh-font-size13)', color: 'var(--zh-text-caption)' }">知识条目总数</span>
-              <FolderOpened class="w-6 h-6" :style="{ color: 'var(--zh-text-caption)' }" />
+              <el-icon :size="24" :style="{ color: 'var(--zh-text-caption)' }"><FolderOpened /></el-icon>
             </div>
             <div class="flex items-baseline gap-2 mb-2">
               <span :style="{ fontFamily: 'var(--zh-font-number)', fontSize: 'var(--zh-font-size30)', fontWeight: 700, color: 'var(--zh-text-primary)', lineHeight: 1.2 }">
                 {{ totalKnowledgeEntries.toLocaleString() }}
               </span>
             </div>
-            <span :style="{ fontSize: 'var(--zh-font-size11)', color: 'var(--zh-text-disabled)' }">
-              覆盖 10+ 学科
+            <span :style="{ fontSize: 'var(--zh-font-size11)', color: postgresAvailable ? 'var(--zh-text-disabled)' : 'var(--zh-red)' }">
+              向量维度 {{ embeddingDimensions }} · {{ postgresAvailable ? 'PostgreSQL 已连接' : 'PostgreSQL 不可用（降级索引）' }}
             </span>
           </template>
         </el-card>
 
         <el-card
           shadow="never"
-          class="kpi-card cursor-pointer"
+          class="kpi-card"
           :class="{ 'skeleton-pulse kpi-card-skeleton': isLoading }"
           :style="{ background: 'var(--zh-background-capsule)', borderRadius: 'var(--zh-radius12)', borderColor: 'var(--zh-line-border)' }"
         >
@@ -1598,7 +1713,7 @@ onBeforeUnmount(() => {
           <template v-else>
             <div class="flex items-center justify-between mb-3">
               <span :style="{ fontSize: 'var(--zh-font-size13)', color: 'var(--zh-text-caption)' }">已向量化</span>
-              <CircleCheckFilled class="w-6 h-6" :style="{ color: 'var(--zh-green)' }" />
+              <el-icon :size="24" :style="{ color: 'var(--zh-green)' }"><CircleCheckFilled /></el-icon>
             </div>
             <div class="flex items-baseline gap-2 mb-2">
               <span :style="{ fontFamily: 'var(--zh-font-number)', fontSize: 'var(--zh-font-size30)', fontWeight: 700, color: 'var(--zh-text-primary)', lineHeight: 1.2 }">
@@ -1616,7 +1731,7 @@ onBeforeUnmount(() => {
 
         <el-card
           shadow="never"
-          class="kpi-card cursor-pointer"
+          class="kpi-card"
           :class="{ 'skeleton-pulse kpi-card-skeleton': isLoading }"
           :style="{ background: 'var(--zh-background-capsule)', borderRadius: 'var(--zh-radius12)', borderColor: 'var(--zh-line-border)' }"
         >
@@ -1629,8 +1744,8 @@ onBeforeUnmount(() => {
           </template>
           <template v-else>
             <div class="flex items-center justify-between mb-3">
-              <span :style="{ fontSize: 'var(--zh-font-size13)', color: 'var(--zh-text-caption)' }">待处理</span>
-              <WarningFilled class="w-6 h-6" :style="{ color: pendingVectorCount > 0 ? 'var(--zh-orange)' : 'var(--zh-text-caption)' }" />
+              <span :style="{ fontSize: 'var(--zh-font-size13)', color: 'var(--zh-text-caption)' }">解析失败</span>
+              <el-icon :size="24" :style="{ color: pendingVectorCount > 0 ? 'var(--zh-orange)' : 'var(--zh-text-caption)' }"><WarningFilled /></el-icon>
             </div>
             <div class="flex items-baseline gap-2 mb-2">
               <span :style="{ fontFamily: 'var(--zh-font-number)', fontSize: 'var(--zh-font-size30)', fontWeight: 700, color: pendingVectorCount > 0 ? 'var(--zh-orange)' : 'var(--zh-text-primary)', lineHeight: 1.2 }">
@@ -1638,7 +1753,36 @@ onBeforeUnmount(() => {
               </span>
             </div>
             <span :style="{ fontSize: 'var(--zh-font-size11)', color: 'var(--zh-text-disabled)' }">
-              涉及 {{ pendingVectorCount }} 个资源
+              {{ pendingVectorCount > 0 ? '存在解析失败的资源，可在列表中重试' : '无失败资源' }}
+            </span>
+          </template>
+        </el-card>
+
+        <el-card
+          shadow="never"
+          class="kpi-card"
+          :class="{ 'skeleton-pulse kpi-card-skeleton': isLoading }"
+          :style="{ background: 'var(--zh-background-capsule)', borderRadius: 'var(--zh-radius12)', borderColor: 'var(--zh-line-border)' }"
+        >
+          <template v-if="isLoading">
+            <div class="flex flex-col gap-3">
+              <div class="skeleton-loader h-4 w-2/3"></div>
+              <div class="skeleton-loader h-8 w-1/2"></div>
+              <div class="skeleton-loader h-3 w-3/4"></div>
+            </div>
+          </template>
+          <template v-else>
+            <div class="flex items-center justify-between mb-3">
+              <span :style="{ fontSize: 'var(--zh-font-size13)', color: 'var(--zh-text-caption)' }">索引分块总数</span>
+              <el-icon :size="24" :style="{ color: 'var(--zh-text-caption)' }"><Files /></el-icon>
+            </div>
+            <div class="flex items-baseline gap-2 mb-2">
+              <span :style="{ fontFamily: 'var(--zh-font-number)', fontSize: 'var(--zh-font-size30)', fontWeight: 700, color: 'var(--zh-text-primary)', lineHeight: 1.2 }">
+                {{ totalChunkCount.toLocaleString() }}
+              </span>
+            </div>
+            <span :style="{ fontSize: 'var(--zh-font-size11)', color: 'var(--zh-text-disabled)' }">
+              累计知识检索 {{ retrievalLogCount.toLocaleString() }} 次
             </span>
           </template>
         </el-card>
@@ -1664,14 +1808,14 @@ onBeforeUnmount(() => {
 
         <el-select
           v-model="knowledgeFilters.type"
-          placeholder="全部类型"
+          placeholder="全部来源"
           clearable
           size="default"
           style="width: 130px;"
           @change="handleKnowledgeFilterChange"
         >
           <el-option
-            v-for="opt in RESOURCE_TYPE_OPTIONS"
+            v-for="opt in KNOWLEDGE_SOURCE_OPTIONS"
             :key="opt.value"
             :label="opt.label"
             :value="opt.value"
@@ -1680,7 +1824,7 @@ onBeforeUnmount(() => {
 
         <el-input
           v-model="knowledgeFilters.keyword"
-          placeholder="搜索资源名称..."
+          placeholder="搜索资源名称 / ID..."
           clearable
           size="default"
           :prefix-icon="Search"
@@ -1742,10 +1886,12 @@ onBeforeUnmount(() => {
               <template #default="{ row }">
                 <div class="flex items-center gap-3">
                   <div
-                    class="w-10 h-10 rounded-md flex items-center justify-center shrink-0 text-lg"
-                    :style="{ background: 'var(--zh-background-light-gray)' }"
+                    class="w-10 h-10 rounded-md flex items-center justify-center shrink-0"
+                    :style="{ background: 'var(--zh-gradient-blue)' }"
                   >
-                    {{ getFileIcon(row.resourceFormat) }}
+                    <el-icon style="color: #ffffff; font-size: 20px;">
+                      <component :is="getKnowledgeFileIcon(row.resourceFormat)" />
+                    </el-icon>
                   </div>
                   <el-tooltip
                     :content="row.resourceName"
@@ -1764,21 +1910,21 @@ onBeforeUnmount(() => {
               </template>
             </el-table-column>
 
-            <!-- 列：类型 -->
-            <el-table-column prop="resourceType" label="类型" width="120" align="center">
+            <!-- 列：来源域（public=公共资源 adm_resource / personal=个人素材 res_material） -->
+            <el-table-column prop="sourceType" label="来源" width="100" align="center">
               <template #default="{ row }">
                 <el-tag
-                  :type="RESOURCE_TYPE_TAG_MAP[row.resourceType] || 'info'"
+                  :type="KNOWLEDGE_SOURCE_TAG_MAP[row.sourceType] || 'info'"
                   size="small"
                   effect="plain"
                 >
-                  {{ RESOURCE_TYPE_LABEL_MAP[row.resourceType] || row.resourceType }}
+                  {{ KNOWLEDGE_SOURCE_LABEL_MAP[row.sourceType] || row.sourceType }}
                 </el-tag>
               </template>
             </el-table-column>
 
-            <!-- 列：条目数 -->
-            <el-table-column prop="entryCount" label="条目数" width="100" align="center">
+            <!-- 列：分块数（真实 chunk 行数） -->
+            <el-table-column prop="entryCount" label="分块数" width="90" align="center">
               <template #default="{ row }">
                 <span :style="{ fontFamily: 'var(--zh-font-number)', fontSize: 'var(--zh-font-size13)', color: 'var(--zh-text-secondary)' }">
                   {{ row.entryCount.toLocaleString() }}
@@ -1786,96 +1932,79 @@ onBeforeUnmount(() => {
               </template>
             </el-table-column>
 
-            <!-- 列：进度 -->
-            <el-table-column prop="progress" label="进度" width="180">
+            <!-- 列：状态（indexing 为 MySQL 合成状态；失败时 tooltip 展示真实 error_message） -->
+            <el-table-column prop="status" label="状态" width="110" align="center">
               <template #default="{ row }">
-                <div class="flex items-center gap-2">
-                  <el-progress
-                    :percentage="row.progress"
-                    :status="getProgressStatus(row.status)"
-                    :stroke-width="6"
-                    :striped="row.status === 'processing'"
-                    :striped-flow="row.status === 'processing'"
-                    :show-text="false"
-                    style="flex: 1;"
-                  />
-                  <span
-                    :style="{
-                      fontSize: 'var(--zh-font-size12)',
-                      fontFamily: 'var(--zh-font-number)',
-                      color: row.status === 'failed' ? 'var(--zh-red)' : 'var(--zh-text-caption)',
-                      minWidth: '36px',
-                    }"
-                  >
-                    {{ row.progress }}%
-                  </span>
-                </div>
-              </template>
-            </el-table-column>
-
-            <!-- 列：状态 -->
-            <el-table-column prop="status" label="状态" width="100" align="center">
-              <template #default="{ row }">
-                <el-tag
-                  :type="getVectorStatusTagType(row.status)"
-                  size="small"
-                  effect="plain"
+                <el-tooltip
+                  :content="row.failReason"
+                  placement="top"
+                  effect="dark"
+                  :disabled="!row.failReason"
                 >
-                  <span class="flex items-center gap-1.5">
-                    <span
-                      class="inline-block w-1.5 h-1.5 rounded-full shrink-0"
-                      :class="{ 'animate-pulse': row.status === 'processing' }"
-                      :style="{ background: getVectorStatusDotColor(row.status) }"
-                    ></span>
-                    {{ VECTOR_STATUS_LABEL_MAP[row.status] || row.status }}
-                  </span>
-                </el-tag>
+                  <el-tag
+                    :type="getVectorStatusTagType(row.status)"
+                    size="small"
+                    effect="plain"
+                  >
+                    <span class="flex items-center gap-1.5">
+                      <span
+                        class="inline-block w-1.5 h-1.5 rounded-full shrink-0"
+                        :class="{ 'animate-pulse': row.status === 'indexing' }"
+                        :style="{ background: getVectorStatusDotColor(row.status) }"
+                      ></span>
+                      {{ VECTOR_STATUS_LABEL_MAP[row.status] || row.status }}
+                    </span>
+                  </el-tag>
+                </el-tooltip>
               </template>
             </el-table-column>
 
-            <!-- 列：耗时 -->
-            <el-table-column prop="duration" label="耗时" width="90" align="center">
+            <!-- 列：索引时间（真实 indexed_at） -->
+            <el-table-column prop="indexedAt" label="索引时间" width="160" align="center">
               <template #default="{ row }">
-                <span :style="{ fontSize: 'var(--zh-font-size13)', color: 'var(--zh-text-caption)' }">
-                  {{ row.status === 'processing' ? row.elapsedTime : (row.duration || '—') }}
+                <span :style="{ fontSize: 'var(--zh-font-size12)', color: 'var(--zh-text-caption)', fontFamily: 'var(--zh-font-number)' }">
+                  {{ row.indexedAt }}
                 </span>
               </template>
             </el-table-column>
 
-            <!-- 列：操作 -->
-            <el-table-column label="操作" width="160" align="center" fixed="right">
+            <!-- 列：更新时间（真实 updated_at，元数据变更/重建均会刷新） -->
+            <el-table-column prop="updatedAt" label="更新时间" width="160" align="center">
+              <template #default="{ row }">
+                <span :style="{ fontSize: 'var(--zh-font-size12)', color: 'var(--zh-text-caption)', fontFamily: 'var(--zh-font-number)' }">
+                  {{ row.updatedAt }}
+                </span>
+              </template>
+            </el-table-column>
+
+            <!-- 列：操作（completed→重解析 failed→重试 全状态→分块明细 public→详情） -->
+            <el-table-column label="操作" width="180" align="center" fixed="right">
               <template #default="{ row }">
                 <div class="flex items-center justify-center gap-1">
                   <!-- 已完成：重新解析 -->
                   <template v-if="row.status === 'completed'">
-                    <el-button type="primary" link size="small" :style="{ fontSize: 'var(--zh-font-size12)' }" @click="handleReparse(row)">
+                    <el-button type="primary" link size="small" :style="{ fontSize: 'var(--zh-font-size12)' }" @click="handleKnowledgeReparse(row)">
                       <el-icon class="mr-0.5"><Refresh /></el-icon>
                       重解析
                     </el-button>
                   </template>
-                  <!-- 解析中：取消 -->
-                  <template v-if="row.status === 'processing'">
-                    <el-button type="warning" link size="small" :style="{ fontSize: 'var(--zh-font-size12)' }" @click="handleCancelTask(row)">
-                      <el-icon class="mr-0.5"><CircleCloseFilled /></el-icon>
-                      取消
-                    </el-button>
-                  </template>
-                  <!-- 失败：重新解析 -->
+                  <!-- 失败：重试 -->
                   <template v-if="row.status === 'failed'">
-                    <el-button type="primary" link size="small" :style="{ fontSize: 'var(--zh-font-size12)' }" @click="handleReparse(row)">
+                    <el-button type="primary" link size="small" :style="{ fontSize: 'var(--zh-font-size12)' }" @click="handleKnowledgeReparse(row)">
                       <el-icon class="mr-0.5"><Refresh /></el-icon>
                       重试
                     </el-button>
                   </template>
-                  <!-- 排队中：取消 -->
-                  <template v-if="row.status === 'queued'">
-                    <el-button type="warning" link size="small" :style="{ fontSize: 'var(--zh-font-size12)' }" @click="handleCancelTask(row)">
-                      <el-icon class="mr-0.5"><CircleCloseFilled /></el-icon>
-                      取消
-                    </el-button>
-                  </template>
-                  <!-- 查看详情按钮（所有状态通用） -->
-                  <el-button type="primary" link size="small" :style="{ fontSize: 'var(--zh-font-size12)' }" @click="openDetailDrawer({ id: row.resourceId, name: row.resourceName, type: row.resourceType, format: row.resourceFormat })">
+                  <!-- 分块明细（全状态可用，展示 PG 真实分块） -->
+                  <el-button type="primary" link size="small" :style="{ fontSize: 'var(--zh-font-size12)' }" @click="openChunkDrawer(row)">
+                    分块
+                  </el-button>
+                  <!-- 公共资源可跳 Tab 1 资源详情抽屉 -->
+                  <el-button
+                    v-if="row.sourceType === 'public'"
+                    type="primary" link size="small" :style="{ fontSize: 'var(--zh-font-size12)' }"
+                    @click="openDetailDrawer({ id: row.resourceId, name: row.resourceName, type: row.resourceFormat })"
+                  >
                     详情
                   </el-button>
                 </div>
@@ -1884,10 +2013,10 @@ onBeforeUnmount(() => {
 
             <!-- 空数据占位 -->
             <template #empty>
-              <el-empty description="暂无向量化任务记录" :image-size="80">
+              <el-empty description="暂无知识索引记录" :image-size="80">
                 <template v-if="knowledgeFilters.status || knowledgeFilters.type || knowledgeFilters.keyword">
                   <span :style="{ fontSize: 'var(--zh-font-size13)', color: 'var(--zh-text-caption)' }">
-                    没有符合条件的任务，请调整筛选条件
+                    没有符合条件的记录，请调整筛选条件
                   </span>
                   <el-button
                     type="primary" link size="small" class="mt-2"
@@ -1898,7 +2027,7 @@ onBeforeUnmount(() => {
                 </template>
                 <template v-else>
                   <span :style="{ fontSize: 'var(--zh-font-size13)', color: 'var(--zh-text-caption)' }">
-                    知识条目将在资源上传并解析后自动生成
+                    知识索引将在资源解析完成后生成；已启用但尚未索引的资源可通过「全部重新索引」纳入
                   </span>
                   <el-button type="primary" size="small" class="mt-3" @click="activeTab = 'resources'; openUploadDialog();">
                     前往上传资源 →
@@ -1967,29 +2096,46 @@ onBeforeUnmount(() => {
             class="mt-4"
           >
             <div class="flex items-center gap-3 mb-4">
+              <el-select
+                v-model="knowledgeSearchScope"
+                placeholder="全部来源"
+                clearable
+                size="default"
+                style="width: 130px;"
+              >
+                <el-option
+                  v-for="opt in KNOWLEDGE_SOURCE_OPTIONS"
+                  :key="opt.value"
+                  :label="opt.label"
+                  :value="opt.value"
+                />
+              </el-select>
               <el-input
                 v-model="knowledgeSearchKeyword"
-                placeholder="输入关键词检索知识条目..."
+                placeholder="输入关键词进行向量语义检索..."
                 clearable
                 size="default"
                 :prefix-icon="Search"
                 style="flex: 1; max-width: 480px;"
                 @keyup.enter="handleKnowledgeSearch"
-                @clear="knowledgeSearchResults = []"
+                @clear="knowledgeSearchResults = []; knowledgeSearchMeta = null"
               />
               <el-button type="primary" :loading="isKnowledgeSearching" @click="handleKnowledgeSearch">
                 搜索
               </el-button>
             </div>
 
-            <!-- 搜索结果 -->
+            <!-- 搜索结果（真实 pgvector 混合重排检索，score → 匹配度） -->
             <template v-if="knowledgeSearchResults.length > 0">
               <div
                 class="rounded-lg p-4"
                 :style="{ border: '1px solid ' + 'var(--zh-line-border)', background: 'var(--zh-background-light-gray)' }"
               >
                 <p :style="{ fontSize: 'var(--zh-font-size13)', color: 'var(--zh-text-caption)', marginBottom: '12px' }">
-                  检索结果（{{ knowledgeSearchResults.length }} 条）：
+                  检索结果（{{ knowledgeSearchResults.length }} 条）
+                  <template v-if="knowledgeSearchMeta">
+                    · 模式 {{ knowledgeSearchMeta.mode }} · 耗时 {{ knowledgeSearchMeta.latency }}ms
+                  </template>
                 </p>
                 <div
                   v-for="(item, idx) in knowledgeSearchResults"
@@ -2002,7 +2148,7 @@ onBeforeUnmount(() => {
                     {{ idx + 1 }}. {{ item.content }}
                   </p>
                   <span :style="{ fontSize: 'var(--zh-font-size12)', color: 'var(--zh-text-caption)' }">
-                    来源：{{ item.source }} · 匹配度 {{ item.matchRate }}%
+                    来源：{{ item.source }} · 匹配度 {{ item.matchRate }}% · 第 {{ item.rank }} 位
                   </span>
                 </div>
               </div>
@@ -2017,6 +2163,65 @@ onBeforeUnmount(() => {
           </div>
         </el-card>
       </div>
+
+      <!-- 4.5 分块明细抽屉（真实 PG chunks） -->
+      <el-drawer
+        v-model="chunkDrawerVisible"
+        title="索引分块明细"
+        size="560px"
+        :style="{ '--el-drawer-bg-color': 'var(--zh-background-pop)' }"
+      >
+        <div v-if="currentChunkRow" class="flex flex-col gap-2 mb-4 pb-4 border-b" :style="{ borderColor: 'var(--zh-line-parting)' }">
+          <div class="flex items-center gap-2">
+            <span
+              class="block truncate flex-1"
+              :style="{ fontSize: 'var(--zh-font-size15)', fontWeight: 600, color: 'var(--zh-text-primary)' }"
+            >
+              {{ currentChunkRow.resourceName }}
+            </span>
+            <el-tag :type="KNOWLEDGE_SOURCE_TAG_MAP[currentChunkRow.sourceType] || 'info'" size="small" effect="plain">
+              {{ KNOWLEDGE_SOURCE_LABEL_MAP[currentChunkRow.sourceType] || currentChunkRow.sourceType }}
+            </el-tag>
+          </div>
+          <span :style="{ fontSize: 'var(--zh-font-size12)', color: 'var(--zh-text-caption)', fontFamily: 'var(--zh-font-number)' }">
+            resource_key：{{ currentChunkRow.resourceKey }} · 共 {{ currentChunkRow.entryCount.toLocaleString() }} 个分块
+            <template v-if="chunkList.length">（展示前 {{ chunkList.length }} 块）</template>
+          </span>
+        </div>
+
+        <div v-loading="chunkDrawerLoading" element-loading-text="加载分块中...">
+          <div v-if="!chunkDrawerLoading && chunkList.length === 0">
+            <el-empty description="该资源暂无分块数据（解析未完成或未生成向量）" :image-size="80" />
+          </div>
+          <div
+            v-for="chunk in chunkList"
+            :key="chunk.chunk_id"
+            class="rounded-lg p-3 mb-3"
+            :style="{ border: '1px solid var(--zh-line-border)', background: 'var(--zh-background-light-gray)' }"
+          >
+            <div class="flex items-center gap-2 mb-2">
+              <span
+                class="inline-flex items-center justify-center rounded px-1.5 py-0.5"
+                :style="{ background: 'var(--zh-background-option)', fontSize: 'var(--zh-font-size11)', fontFamily: 'var(--zh-font-number)', color: 'var(--zh-text-secondary)' }"
+              >
+                #{{ chunk.chunk_index }}
+              </span>
+              <span
+                class="truncate"
+                :style="{ fontSize: 'var(--zh-font-size11)', color: 'var(--zh-text-disabled)', fontFamily: 'var(--zh-font-number)' }"
+              >
+                {{ chunk.chunk_id }}
+              </span>
+            </div>
+            <p
+              class="whitespace-pre-wrap break-words"
+              :style="{ fontSize: 'var(--zh-font-size13)', lineHeight: 1.7, color: 'var(--zh-text-secondary)', margin: 0 }"
+            >
+              {{ chunk.content }}
+            </p>
+          </div>
+        </div>
+      </el-drawer>
     </template>
 
     <!-- ===================================================================
@@ -2035,45 +2240,46 @@ onBeforeUnmount(() => {
         '--el-dialog-border-radius': 'var(--zh-radius16)',
       }"
     >
-      <!-- 拖拽上传区 -->
-      <div
-        class="upload-dropzone flex flex-col items-center justify-center gap-3 transition-all duration-200"
-        :class="{ 'is-dragover': isDragOver, 'is-uploading': isUploading }"
-        :style="{
-          border: '2px dashed var(--zh-line-heavier)',
-          borderRadius: 'var(--zh-radius12)',
-          background: 'var(--zh-background-light-gray)',
-          minHeight: '160px',
-        }"
-        @click="triggerUploadPicker"
-        @dragenter.prevent="handleUploadDragOver"
-        @dragover.prevent="handleUploadDragOver"
-        @dragleave.prevent="handleUploadDragLeave"
-        @drop.prevent="handleUploadDrop"
+      <!-- 拖拽上传区（复用 FileDropUpload：多文件 / ≤500MB / 单次 20 个） -->
+      <FileDropUpload
+        multiple
+        :accept="UPLOAD_INPUT_ACCEPT"
+        :accept-exts="SUPPORTED_UPLOAD_EXT_LIST"
+        :mime-prefixes="SUPPORTED_UPLOAD_MIME_PREFIXES"
+        :max-size-bytes="MAX_UPLOAD_FILE_SIZE"
+        :max-count="MAX_UPLOAD_FILES"
+        :existing-keys="uploadExistingKeys"
+        :disabled="isUploading"
+        @accept="onUploadFilesAccepted"
       >
-        <input
-          ref="uploadInput"
-          class="visually-hidden"
-          type="file"
-          multiple
-          accept=".pdf,.doc,.docx,.ppt,.pptx,.xls,.xlsx,.txt,.jpg,.jpeg,.png,.gif,.webp,.mp3,.wav,.m4a,.mp4,.avi,.mov,.mkv,image/*,audio/*,video/*"
-          @change="handleUploadInputChange"
-        >
-        <el-icon :size="48" :style="{ color: 'var(--zh-text-caption)' }">
-          <Loading v-if="isUploading" class="is-loading" />
-          <Upload v-else />
-        </el-icon>
-        <p :style="{ fontSize: 'var(--zh-font-size14)', color: 'var(--zh-text-caption)' }">
-          {{ isUploading ? '文件正在上传，请稍候...' : '将文件拖拽到此处，或' }}
-          <span
-            v-if="!isUploading"
-            :style="{ color: 'var(--zh-text-link)', textDecoration: 'underline' }"
-          >点击上传</span>
-        </p>
-        <p :style="{ fontSize: 'var(--zh-font-size12)', color: 'var(--zh-text-disabled)' }">
-          支持 PDF / Word / PPT / 图片 / 音视频，单文件最大 500MB，单次最多 20 个文件
-        </p>
-      </div>
+        <template #default="{ dragOver }">
+          <div
+            class="upload-dropzone flex flex-col items-center justify-center gap-3 transition-all duration-200"
+            :class="{ 'is-dragover': dragOver, 'is-uploading': isUploading }"
+            :style="{
+              border: '2px dashed var(--zh-line-heavier)',
+              borderRadius: 'var(--zh-radius12)',
+              background: 'var(--zh-background-light-gray)',
+              minHeight: '160px',
+            }"
+          >
+            <el-icon :size="48" :style="{ color: 'var(--zh-text-caption)' }">
+              <Loading v-if="isUploading" class="is-loading" />
+              <Upload v-else />
+            </el-icon>
+            <p :style="{ fontSize: 'var(--zh-font-size14)', color: 'var(--zh-text-caption)' }">
+              {{ isUploading ? '文件正在上传，请稍候...' : '将文件拖拽到此处，或' }}
+              <span
+                v-if="!isUploading"
+                :style="{ color: 'var(--zh-text-link)', textDecoration: 'underline' }"
+              >点击上传</span>
+            </p>
+            <p :style="{ fontSize: 'var(--zh-font-size12)', color: 'var(--zh-text-disabled)' }">
+              支持 PDF / Word / PPT / 图片 / 音视频，单文件最大 500MB，单次最多 20 个文件
+            </p>
+          </div>
+        </template>
+      </FileDropUpload>
 
       <!-- 整体上传进度 -->
       <div v-if="uploadFileList.length > 0" class="upload-overall-progress mt-4">
@@ -2108,7 +2314,7 @@ onBeforeUnmount(() => {
             class="upload-file-row flex items-center gap-3 px-4 py-2.5 border-b last:border-0"
             :style="{ borderColor: 'var(--zh-line-parting)' }"
           >
-            <span class="text-lg">{{ getFileIcon(file.format) }}</span>
+            <el-icon style="font-size: 18px; color: var(--zh-text-theme);"><component :is="getFileIcon(file.format)" /></el-icon>
             <div class="upload-file-main min-w-0 flex-1">
               <div class="flex items-center gap-1.5 min-w-0">
                 <template v-if="renamingUploadUid === file.uid">
@@ -2245,7 +2451,7 @@ onBeforeUnmount(() => {
           }"
         >
           <div class="text-center">
-            <span class="text-5xl">{{ getFileIcon(currentResource.format) }}</span>
+            <el-icon style="font-size: 48px; color: var(--zh-text-theme);"><component :is="getFileIcon(currentResource.format)" /></el-icon>
             <p :style="{ fontSize: 'var(--zh-font-size13)', color: 'var(--zh-text-caption)', marginTop: '8px' }">
               [此处需填写：文件预览/封面缩略图 — 建议尺寸 480×270px]
             </p>
@@ -2359,7 +2565,7 @@ onBeforeUnmount(() => {
             class="flex items-start gap-2 mt-2 p-2 rounded"
             :style="{ background: 'var(--zh-yellow-light)', borderLeft: '3px solid var(--zh-orange)' }"
           >
-            <WarningFilled :size="14" :style="{ color: 'var(--zh-orange)', marginTop: '1px', flexShrink: 0 }" />
+            <el-icon :size="14" :style="{ color: 'var(--zh-orange)', marginTop: '1px', flexShrink: 0 }"><WarningFilled /></el-icon>
             <span :style="{ fontSize: 'var(--zh-font-size12)', color: 'var(--zh-text-secondary)' }">
               {{ currentResource.failReason }}
             </span>
@@ -2393,6 +2599,7 @@ onBeforeUnmount(() => {
             <el-button
               :icon="Download"
               :style="{ borderRadius: 'var(--zh-radius8)' }"
+              @click="handleDownloadResource(currentResource)"
             >
               下载
             </el-button>

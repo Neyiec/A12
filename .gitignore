@@ -2,3 +2,6 @@
 .claude
 AGENTS.md
 doc/
+.trae/
+.commit-policy.md
+.ui-workflow/

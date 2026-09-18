@@ -27,6 +27,12 @@ service.interceptors.request.use(
     if (token) {
       config.headers.Authorization = `Bearer ${token}`
     }
+    // FormData 请求必须交给浏览器生成带 boundary 的 multipart Content-Type。
+    // 实例默认的 application/json 会触发 axios 的 formDataToJSON，把 File 序列化成 {}（语音上传 415 的根因）。
+    if (typeof FormData !== 'undefined' && config.data instanceof FormData) {
+      config.headers.delete?.('Content-Type')
+      delete config.headers['Content-Type']
+    }
     return config
   },
   error => {
