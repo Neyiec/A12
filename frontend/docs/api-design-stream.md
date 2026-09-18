@@ -1,5 +1,7 @@
 # 教学设计方案流式生成接口
 
+> 当前为历史协议设计/Mock 文档：Python `main.py` 和 Java 网关尚未实现 `designs/stream`。请勿直连 Python 或把 Mock 响应当作已上线能力；正式教案生成使用 Java `/api/v1/ai/engine/lesson-plans/generate`。
+
 ## 概述
 
 本接口用于 AI 流式生成完整的教学设计方案（教案），以 Markdown 格式渐进返回内容，前端通过 `markstream-vue` 渲染为富文本。

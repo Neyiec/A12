@@ -1,9 +1,7 @@
 import logging
 from pathlib import Path
 
-from openai import AsyncOpenAI
-
-from ...config import get_settings
+from ...asr.service import transcribe_audio
 from .common import ParsedResource
 
 # 统一日志约定（main.py 启动时 basicConfig）

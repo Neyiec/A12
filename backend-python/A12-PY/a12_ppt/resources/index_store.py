@@ -12,7 +12,7 @@ from ..llm import EmbeddingClient
 from ..models import ResourceIndexMetadataRequest, ResourceIndexSyncRequest
 from .chunks import chunk_text
 from .downloader import download_and_parse_resource
-from .identity import resource_fingerprint, resource_key
+from .identity import resource_key
 from .records import IndexedChunk
 from .similarity import cosine_similarity, embedding_to_pgvector, keyword_score
 
@@ -134,7 +134,7 @@ class ResourceIndexStore:
         started_at = time.perf_counter()
         metadata = self._build_metadata(request)
         key = resource_key(request.source_type, request.resource_id)
-        fingerprint = resource_fingerprint(request)
+        fingerprint = ""
         existing = self._load_resource_meta(key)
         if not self.available:
             logger.warning("sync_resource 于降级模式执行（PG 不可用，仅写本地文件） resource_key=%s", key)
@@ -167,6 +167,8 @@ class ResourceIndexStore:
             )
             metadata["parse"] = parsed.metadata
             text = parsed.text
+            if not text.strip():
+                raise ValueError("资料未解析出有效文本，请检查格式、OCR、视觉模型或语音转写服务")
             chunks = chunk_text(text, metadata=metadata)
             # 向量化失败必须显式 failed：静默返回空向量会产生「假 indexed」（有分块无向量，RAG 永远查不到）
             try:

@@ -761,7 +761,7 @@ onMounted(() => {
   <div class="community-page">
     <header class="community-hero">
       <p>教师共创社区 / Community</p>
-      <h1>把好课的经验，变成下一堂课的起点</h1>
+      <h1><span>把好课的经验，</span><span>变成下一堂课的起点</span></h1>
       <span>检索公开可用的 Skill 与教学案例；复用后生成独立草稿，不会修改社区原件。</span>
       <div class="community-search-row">
         <el-input v-model="keyword" :prefix-icon="Search" placeholder="搜索知识点、学科、课型或 Skill" clearable size="large" @keyup.enter="submitSearch">
@@ -1025,6 +1025,7 @@ onMounted(() => {
 .community-page { width: min(1180px, calc(100% - 48px)); margin: 0 auto; padding: 40px 0 60px; }
 .community-hero { width: 100%; padding: 26px 0 20px; }.community-hero > p { margin: 0 0 10px; color: var(--zh-text-theme); font-size: 12px; font-weight: 600; letter-spacing: .08em; }
 .community-hero h1 { max-width: 680px; margin: 0; font-size: clamp(32px, 4vw, 48px); line-height: 1.18; letter-spacing: var(--zh-tracking-tight); text-wrap: balance; }
+.community-hero h1 span { display: inline; }
 .community-hero > span { display: block; max-width: 650px; margin-top: 16px; color: var(--zh-text-secondary); line-height: 1.7; }
 .community-search-row { width: 100%; display: flex; align-items: center; gap: 12px; margin-top: 28px; }.community-search-row :deep(.el-input) { width: min(650px, calc(100% - 140px)); flex: 0 1 650px; }.community-search-row>.submission-button { min-width: 112px; margin: 0 0 0 auto; color: var(--zh-text-white); font-weight: 600; }.community-hero :deep(.el-input__wrapper) { padding-left: 16px; }.community-hero :deep(.el-input-group__append) { padding: 0; background: var(--zh-background-button); box-shadow: none; }.community-hero :deep(.community-search-button) { width: 76px; min-width: 76px; height: 40px; margin: 0; border: 0; border-radius: 0 var(--zh-radius8) var(--zh-radius8) 0; color: var(--zh-text-white) !important; font-weight: 600; letter-spacing: var(--zh-tracking-normal); white-space: nowrap; transition: background 200ms cubic-bezier(.4, 0, .2, 1), transform 200ms cubic-bezier(.4, 0, .2, 1); }.community-hero :deep(.community-search-button:hover), .community-hero :deep(.community-search-button:focus-visible) { color: var(--zh-text-white) !important; background: var(--zh-background-button-hover); }.community-hero :deep(.community-search-button:active) { color: var(--zh-text-white) !important; background: var(--zh-background-button-hover); transform: scale(.98); }
 .community-toolbar { display: flex; align-items: center; justify-content: space-between; gap: 16px; margin-top: 24px; border-bottom: 1px solid var(--zh-line-border); }

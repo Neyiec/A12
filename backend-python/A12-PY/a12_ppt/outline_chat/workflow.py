@@ -133,26 +133,34 @@ class OutlineChatWorkflow:
                     *normalize_messages(final_state.get("messages", [])),
                     AIMessage(content=assistant_text),
                 ]
+                yield {"event": "stage", "data": {"name": "generate_outline", "message": "Generated structured outline"}}
+
+            elif node_name == "reflect":
+                # 只归档反思修订后的最终稿，并替换会话中初稿摘要。
+                final_response = final_state["response"]
+                final_messages = normalize_messages(final_state.get("messages", []))
+                if final_messages and isinstance(final_messages[-1], AIMessage):
+                    final_messages[-1] = AIMessage(content=self._assistant_outline_message(final_response))
+                    final_state["messages"] = final_messages
+                final_assistant_text = self._assistant_outline_message(final_response)
                 outline_session_store.append_message(
                     user_id,
                     session_id,
                     "assistant",
-                    assistant_text,
+                    final_assistant_text,
                     {
                         "type": "outline_result",
-                        "outline_id": final_state["response"].get("outline_id"),
-                        "slide_count": final_state["response"].get("slide_count"),
-                        "title": final_state["response"].get("title"),
+                        "outline_id": final_response.get("outline_id"),
+                        "slide_count": final_response.get("slide_count"),
+                        "title": final_response.get("title"),
+                        "reflection": final_response.get("reflection", {}),
                     },
                 )
-                outline_session_store.save(user_id, session_id, self._session_snapshot(final_state), status="completed")
-                postgres_memory_store.save_generation(user_id, session_id, final_state["response"], final_state.get("final_prompt", ""))
-                yield {"event": "stage", "data": {"name": "generate_outline", "message": "Generated structured outline"}}
-
-            elif node_name == "reflect":
+                postgres_memory_store.save_generation(user_id, session_id, final_response, final_state.get("final_prompt", ""))
                 outline_session_store.save(user_id, session_id, self._session_snapshot(final_state), status="completed")
                 yield {"event": "stage", "data": {"name": "reflect", "message": "Reflected on outline quality and tool usage"}}
                 yield {"event": "reflection", "data": final_state.get("reflection", {})}
+                yield {"event": "outline_replace", "data": {"slides": final_response.get("slides", []), "preview": False}}
 
             elif node_name == "memory":
                 yield {"event": "stage", "data": {"name": "memory", "message": "Evaluated teacher-style long-term memory"}}
@@ -343,29 +351,34 @@ class OutlineChatWorkflow:
         intent = state["intent"]
         tool_context = state.get("tool_context", {})
         prompt = f"""
-Generate a structured teaching PPT outline that closely follows the user's real intent.
+生成一份严格贴合教师真实意图、可用于课堂实施的结构化 PPT 大纲。
 
-Merged intent:
+合并后的当前意图：
 {json.dumps(intent, ensure_ascii=False, indent=2, default=str)}
 
-Tool context:
+教师长期风格画像（本轮明确要求优先级更高）：
+{json.dumps(state.get("teacher_profile") or {}, ensure_ascii=False, default=str)}
+
+工具上下文：
 {json.dumps(tool_context, ensure_ascii=False, indent=2, default=str)[:14000]}
 
-Requirements:
-1. Output an editable structured outline for later HTML PPT generation.
-2. Each slide must include slide_no, title, slide_type, content_points, teaching_intent, visual_suggestion.
-3. Use uploaded reference material for formatting, tone, examples, and user-specific content adaptation.
-4. Use RAG knowledge base matches as the authoritative local knowledge supplement.
-5. If diagram tool returns Mermaid, add top-level diagram_assets and reference it in related slide visual_suggestion.
-6. Reflect stable teacher preferences from teacher_profile when available.
-7. Add top-level teaching_design_chain for frontend display, with teaching_goals, learner_analysis,
-   key_points, difficult_points, teaching_sequence, activity_design, assessment_design, homework.
-8. Include cover, agenda, content, activity/practice, and summary pages; keep slide count close to slide_count.
-9. If interactive_policy.needs_interactive_assets is true, include top-level interactive_assets.
-   Each interactive asset must include asset_id, title, type(animation|game|simulation),
-   target_slide_no, preferred_format(html5|gif|mp4), integration(ppt_video|static_link),
-   and description. Use ppt_video only for mp4. For html5/gif assets, use static_link
-   and make the target slide include clear link text plus a short explanation.
+要求：
+1. 输出可编辑结构化大纲，供后续 HTML PPT 生成使用。
+2. 每页包含 slide_no、title、slide_type、content_points、teaching_intent、visual_suggestion、
+   engagement_hook、student_task、teacher_prompt、understanding_check、estimated_minutes、learning_phase、
+   learning_theories、student_action_mode、learner_question、cognitive_load、scaffolding、feedback_strategy。
+3. 上传资料用于版式、语气、案例和个性化适配；RAG 命中内容作为本地权威知识补充。
+4. 教师长期画像决定稳定教学风格，本轮 requirements、class_level 等特定需求始终优先。
+5. teaching_design_chain 需包含教学目标、学情、重难点、教学顺序、活动、评价、分层支持、
+   参与度策略与作业。
+6. 包含封面、学习路径、内容、活动或练习、总结；每 2 至 3 个内容页安排一次学生任务或即时检测。
+7. 开场使用真实问题/预测/投票，结尾使用回忆、迁移题和出口条，避免整节课连续被动听讲。
+8. 课件按学生认知过程组织：问题与关联→预测前测→分段新知→分步样例→学生尝试→即时反馈→提取与迁移；不能照搬教材目录。
+9. learning_science_strategy 要明确 ARCS、BOPPPS、ICAP、认知负荷、多媒体信号、样例学习和提取练习如何落地。
+10. 每页只承担一个核心认知任务，正文建议不超过 3 个信息组；至少包含一页 worked_example 和一页撤去支架的新情境练习。
+11. 若图示工具返回 Mermaid，加入顶层 diagram_assets，并在相关页说明用途。
+12. 若 interactive_policy.needs_interactive_assets=true，加入顶层 interactive_assets；每项包含
+   asset_id、title、type、target_slide_no、preferred_format、integration 和 description。
 """.strip()
         return {"final_prompt": prompt}
 
@@ -399,7 +412,7 @@ Requirements:
     async def _reflection_node(self, state: OutlineChatState) -> dict[str, Any]:
         response = dict(state.get("response") or {})
         if not response:
-            return {"reflection": {"status": "skipped", "issues": ["No outline response to reflect on."], "retry_count": 0}}
+            return {"reflection": {"status": "skipped", "issues": ["没有可供反思的大纲结果。"], "retry_count": 0}}
 
         reflection = self._build_generation_reflection(response, state)
         if reflection["status"] == "needs_revision" and reflection["retry_count"] == 0:
@@ -418,7 +431,7 @@ Requirements:
                 }
                 response = retry_response
             except Exception as exc:
-                reflection["fixes"].append(f"Auto revision failed: {exc}")
+                reflection["fixes"].append(f"自动修订失败：{exc}")
 
         response["reflection"] = reflection
         response["tool_trace"] = state.get("tool_trace", [])
@@ -433,7 +446,7 @@ Requirements:
         if not evaluation.get("should_store"):
             return {"memory_result": {"stored": False, "reason": evaluation.get("reason", "No stable teacher-style preference found")}}
 
-        postgres_memory_store.save_teacher_style_memory(
+        stored = postgres_memory_store.save_teacher_style_memory(
             state["user_id"],
             state["session_id"],
             user_text,
@@ -443,7 +456,7 @@ Requirements:
         )
         return {
             "memory_result": {
-                "stored": True,
+                "stored": bool(stored),
                 "score": evaluation.get("score", 0.7),
                 "reason": evaluation.get("reason"),
                 "style": evaluation.get("style"),
@@ -528,15 +541,16 @@ Requirements:
             "fixes": [],
             "retry_count": 0,
             "tool_trace": state.get("tool_trace", []),
-            "summary": "Generation quality is acceptable." if status == "passed" else "Generation has issues and should be revised once.",
+            "summary": "生成质量符合要求。" if status == "passed" else "生成结果存在质量问题，应自动修订一次。",
         }
 
     def _reflection_fix_instruction(self, reflection: dict[str, Any]) -> str:
         issues = reflection.get("issues") or []
         return (
-            "Revise the outline to fix these quality issues: "
-            + "; ".join(str(issue) for issue in issues)
-            + ". Preserve user intent, keep the same slide count, include teaching_design_chain, cover, agenda, summary, and explicit teaching_intent/visual_suggestion for every slide."
+            "请修订大纲并解决以下质量问题："
+            + "；".join(str(issue) for issue in issues)
+            + "。保持用户意图和页数，保留完整教学设计链，并确保封面、学习路径、课堂活动、总结及每页的教学意图、视觉建议、学生任务和理解检测齐全。"
+            + "同时补齐学习阶段、理论依据、ICAP参与层级、认知负荷、支架和反馈策略，确保包含前测、分步样例、变式练习、提取练习与迁移出口条。"
         )
 
     def _after_parse(self, state: OutlineChatState) -> Literal["clarify", "continue"]:

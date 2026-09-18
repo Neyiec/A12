@@ -387,6 +387,20 @@ function planJsonToMarkdown(planJson) {
     const points = Array.isArray(slide.content_points) ? slide.content_points : []
     points.forEach((point) => lines.push(`- ${point}`))
     if (slide.teaching_intent) lines.push('', `**教学意图**：${slide.teaching_intent}`)
+    if (slide.learner_question) lines.push(`**学生核心问题**：${slide.learner_question}`)
+    if (slide.student_task) lines.push(`**学生任务**：${slide.student_task}`)
+    const learningMeta = [
+      slide.learning_phase ? `阶段：${slide.learning_phase}` : '',
+      slide.student_action_mode ? `参与：${slide.student_action_mode}` : '',
+      slide.cognitive_load ? `认知负荷：${slide.cognitive_load}` : '',
+      slide.estimated_minutes ? `用时：${slide.estimated_minutes} 分钟` : '',
+    ].filter(Boolean)
+    if (learningMeta.length) lines.push(`**学习设计**：${learningMeta.join(' · ')}`)
+    if (Array.isArray(slide.learning_theories) && slide.learning_theories.length) {
+      lines.push(`**理论依据**：${slide.learning_theories.join('、')}`)
+    }
+    if (slide.scaffolding) lines.push(`**学习支架**：${slide.scaffolding}`)
+    if (slide.feedback_strategy) lines.push(`**反馈策略**：${slide.feedback_strategy}`)
     if (slide.visual_suggestion) lines.push(`**视觉建议**：${slide.visual_suggestion}`)
   }
   return lines.join('\n')

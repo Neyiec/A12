@@ -197,6 +197,20 @@ textarea {
   font: inherit;
 }
 
+.el-button,
+.el-tag,
+.el-tabs__item {
+  white-space: nowrap;
+}
+
+.el-dialog {
+  max-width: calc(100vw - 24px);
+}
+
+.el-dialog__body {
+  min-width: 0;
+}
+
 .skip-link {
   position: fixed;
   z-index: 2000;

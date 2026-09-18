@@ -1,4 +1,5 @@
 import tempfile
+import hashlib
 from pathlib import Path
 
 import httpx
@@ -7,7 +8,7 @@ from ..models import ResourceIndexSyncRequest
 from .parsers import ParsedResource, normalize_file_type, parse_resource_file
 
 
-async def download_and_parse_resource(request: ResourceIndexSyncRequest) -> ParsedResource:
+async def download_and_parse_resource(request: ResourceIndexSyncRequest, previous_digest: str | None = None) -> ParsedResource:
     suffix = guess_suffix(request)
     with tempfile.NamedTemporaryFile(delete=False, suffix=suffix) as temp:
         temp_path = Path(temp.name)
@@ -15,8 +16,13 @@ async def download_and_parse_resource(request: ResourceIndexSyncRequest) -> Pars
         async with httpx.AsyncClient(timeout=60, follow_redirects=True) as client:
             response = await client.get(request.file_url)
             response.raise_for_status()
+            digest = hashlib.sha256(response.content).hexdigest()
+            if previous_digest == digest and not request.force_reparse:
+                return ParsedResource(text="", metadata={"content_sha256": digest, "unchanged": True})
             temp_path.write_bytes(response.content)
-        return await parse_resource_file(temp_path, request.file_type, request.title)
+        parsed = await parse_resource_file(temp_path, request.file_type, request.title)
+        parsed.metadata["content_sha256"] = digest
+        return parsed
     finally:
         temp_path.unlink(missing_ok=True)
 

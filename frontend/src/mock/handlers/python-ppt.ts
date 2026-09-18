@@ -3,7 +3,7 @@
  * - 导出: MSW Python PPT 生成服务请求处理器（API-133 ~ API-144）
  * - 依赖: msw, ../data/common
  * - 输入: 被 handlers/index.ts 聚合导出
- * - 输出: 拦截 /api/v1/python/* 请求并返回模拟响应
+ * - 输出: 拦截 /api/v1/ai/engine/* 请求并返回模拟响应
  */
 
 import { http, HttpResponse, passthrough } from 'msw'
@@ -88,7 +88,7 @@ function mockSlideHtml(slideNo: number, title: string, theme = '素白风'): str
 
 export const pythonPptHandlers = [
   // ========== API-133 健康检查 ==========
-  http.get('/api/v1/python/health', async () => {
+  http.get('/api/v1/ai/engine/health', async () => {
     return HttpResponse.json(success({
       status: 'ok',
       service: 'a12-python-ppt-service',
@@ -101,7 +101,7 @@ export const pythonPptHandlers = [
   }),
 
   // ========== API-134A 语音转写 ASR ==========
-  http.post('/api/v1/python/audio/asr', async () => {
+  http.post('/api/v1/ai/engine/audio/asr', async () => {
     return HttpResponse.json(success({
       text: '请帮我设计一个关于细胞分裂的初中生物教学内容，包含8页PPT，要求有课堂互动环节。',
       language: 'zh',
@@ -114,7 +114,7 @@ export const pythonPptHandlers = [
   }),
 
   // ========== API-134 获取模板列表 ==========
-  http.get('/api/v1/python/templates', async () => {
+  http.get('/api/v1/ai/engine/templates', async () => {
     if (useRealPptApi) {
       return passthrough()
     }
@@ -126,7 +126,7 @@ export const pythonPptHandlers = [
   }),
 
   // ========== API-135 上传参考资料 ==========
-  http.post('/api/v1/python/resources/upload', async () => {
+  http.post('/api/v1/ai/engine/resources/upload', async () => {
     return HttpResponse.json(success({
       resource_id: generateId('res'),
       filename: 'reference.pdf',
@@ -137,7 +137,7 @@ export const pythonPptHandlers = [
   }),
 
   // ========== API-135-1 同步资源索引 ==========
-  http.post('/api/v1/python/resources/index/sync', async ({ request }) => {
+  http.post('/api/v1/ai/engine/resources/index/sync', async ({ request }) => {
     const body = await request.json() as Record<string, unknown>
     const sourceType = body.source_type === 'public' ? 'public' : 'personal'
     const resourceId = String(body.resource_id || '1')
@@ -162,7 +162,7 @@ export const pythonPptHandlers = [
   }),
 
   // ========== API-135-2 批量初始化索引 ==========
-  http.post('/api/v1/python/resources/index/bootstrap', async ({ request }) => {
+  http.post('/api/v1/ai/engine/resources/index/bootstrap', async ({ request }) => {
     const body = await request.json() as { resources?: Record<string, unknown>[]; force_reparse?: boolean }
     const resources = body.resources || []
     resources.forEach((resource) => {
@@ -190,19 +190,19 @@ export const pythonPptHandlers = [
   }),
 
   // ========== API-135-3 更新索引metadata ==========
-  http.patch('/api/v1/python/resources/index/metadata', async () => {
+  http.patch('/api/v1/ai/engine/resources/index/metadata', async () => {
     return HttpResponse.json(success({ resource_key: 'public:1', status: 'updated', available: false, allow_ai: false }))
   }),
 
   // ========== API-135-4 删除索引 ==========
-  http.delete('/api/v1/python/resources/index/:sourceType/:resourceId', async ({ params }) => {
+  http.delete('/api/v1/ai/engine/resources/index/:sourceType/:resourceId', async ({ params }) => {
     const resourceKey = `${params.sourceType}:${params.resourceId}`
     mockIndexResources.delete(resourceKey)
     return HttpResponse.json(success({ resource_key: resourceKey, status: 'deleted' }))
   }),
 
   // ========== API-135-5 索引概览 ==========
-  http.get('/api/v1/python/resources/index/overview', async () => {
+  http.get('/api/v1/ai/engine/resources/index/overview', async () => {
     ensureMockIndexResources()
     const resources = [...mockIndexResources.values()]
     return HttpResponse.json(success({
@@ -217,7 +217,7 @@ export const pythonPptHandlers = [
   }),
 
   // ========== API-135-6 索引资源列表 ==========
-  http.get('/api/v1/python/resources/index/resources', async ({ request }) => {
+  http.get('/api/v1/ai/engine/resources/index/resources', async ({ request }) => {
     ensureMockIndexResources()
     const url = new URL(request.url)
     const sourceType = url.searchParams.get('source_type')
@@ -231,7 +231,7 @@ export const pythonPptHandlers = [
   }),
 
   // ========== API-135-9 检索日志 ==========
-  http.get('/api/v1/python/resources/index/logs', async ({ request }) => {
+  http.get('/api/v1/ai/engine/resources/index/logs', async ({ request }) => {
     const url = new URL(request.url)
     const limit = Math.min(Number(url.searchParams.get('limit') || 50), 200)
     const offset = Number(url.searchParams.get('offset') || 0)
@@ -239,7 +239,7 @@ export const pythonPptHandlers = [
   }),
 
   // ========== API-135-8 索引检索 ==========
-  http.post('/api/v1/python/resources/index/search', async ({ request }) => {
+  http.post('/api/v1/ai/engine/resources/index/search', async ({ request }) => {
     ensureMockIndexResources()
     const body = await request.json() as { query?: string; top_k?: number }
     const query = String(body.query || '')
@@ -259,7 +259,7 @@ export const pythonPptHandlers = [
   }),
 
   // ========== API-136 生成大纲 ==========
-  http.post('/api/v1/python/outlines/generate', async ({ request }) => {
+  http.post('/api/v1/ai/engine/outlines/generate', async ({ request }) => {
     const body = (await request.json()) as Record<string, unknown>
     const slideCount = (body.slide_count as number) || 8
     const title = (body.title as string) || '未命名课程'
@@ -284,7 +284,7 @@ export const pythonPptHandlers = [
   }),
 
   // ========== API-137 修改大纲 ==========
-  http.post('/api/v1/python/outlines/update', async () => {
+  http.post('/api/v1/ai/engine/outlines/update', async () => {
     const outlineId = generateId('outline')
     return HttpResponse.json(success({
       outline_id: outlineId,
@@ -297,7 +297,7 @@ export const pythonPptHandlers = [
   }),
 
   // ========== API-137A 对话式 SSE 大纲生成 ==========
-  http.post('/api/v1/python/outlines/chat/stream', async ({ request }) => {
+  http.post('/api/v1/ai/engine/outlines/chat/stream', async ({ request }) => {
     // 大纲可独立切换到真实 Python 流；不要复用 VITE_USE_REAL_AI_API，
     // 后者同时控制认证/会话 mock，打开后会让 mock 登录 token 无法访问 Java。
     if (useRealOutlineApi || useRealAiApi) {
@@ -366,7 +366,7 @@ export const pythonPptHandlers = [
   // ========== [已弃用] 假 designs/stream 端点 ==========
   // 前端大纲生成已改走 Java 网关（API-13 → API-14），不再直连当前端点。
   // 保留仅作历史参考，可直接删除；如需恢复前端直连流式可回滚。
-  http.post('/api/v1/python/designs/stream', async ({ request }) => {
+  http.post('/api/v1/ai/engine/designs/stream', async ({ request }) => {
     const body = (await request.json()) as Record<string, unknown>
     const sessionId = (body.session_id as string) || generateId('design_chat')
     const userMessage = (body.message as string) || ''
@@ -595,7 +595,7 @@ ${stage}学生已具备一定的自主学习能力和合作探究意识。经过
   }),
 
   // ========== API-137B 查询大纲对话会话 ==========
-  http.get('/api/v1/python/outlines/chat/sessions', async ({ request }) => {
+  http.get('/api/v1/ai/engine/outlines/chat/sessions', async ({ request }) => {
     const url = new URL(request.url)
     const userId = url.searchParams.get('user_id')
     return HttpResponse.json(success({
@@ -607,7 +607,7 @@ ${stage}学生已具备一定的自主学习能力和合作探究意识。经过
   }),
 
   // ========== API-137C 教师画像 ==========
-  http.get('/api/v1/python/teacher-style/profile', async ({ request }) => {
+  http.get('/api/v1/ai/engine/teacher-style/profile', async ({ request }) => {
     const url = new URL(request.url)
     const userId = url.searchParams.get('user_id')
     return HttpResponse.json(success({
@@ -618,7 +618,7 @@ ${stage}学生已具备一定的自主学习能力和合作探究意识。经过
   }),
 
   // ========== API-138 生成整套 PPT ==========
-  http.post('/api/v1/python/presentations/generate', async ({ request }) => {
+  http.post('/api/v1/ai/engine/presentations/generate', async ({ request }) => {
     if (useRealPptApi) {
       return passthrough()
     }
@@ -659,7 +659,7 @@ ${stage}学生已具备一定的自主学习能力和合作探究意识。经过
   }),
 
   // ========== API-139 修改单页 PPT ==========
-  http.post('/api/v1/python/presentations/slides/modify', async ({ request }) => {
+  http.post('/api/v1/ai/engine/presentations/slides/modify', async ({ request }) => {
     if (useRealPptOperations) {
       return passthrough()
     }
@@ -676,7 +676,7 @@ ${stage}学生已具备一定的自主学习能力和合作探究意识。经过
   }),
 
   // ========== API-139A 整套课件修改 ==========
-  http.post('/api/v1/python/presentations/modify', async ({ request }) => {
+  http.post('/api/v1/ai/engine/presentations/modify', async ({ request }) => {
     if (useRealPptOperations) {
       return passthrough()
     }
@@ -705,7 +705,7 @@ ${stage}学生已具备一定的自主学习能力和合作探究意识。经过
   }),
 
   // ========== API-140 HTML 校验 ==========
-  http.post('/api/v1/python/presentations/html/validate', async () => {
+  http.post('/api/v1/ai/engine/presentations/html/validate', async () => {
     return HttpResponse.json(success({
       valid: true,
       errors: [],
@@ -714,7 +714,7 @@ ${stage}学生已具备一定的自主学习能力和合作探究意识。经过
   }),
 
   // ========== API-141 导出 PPTX ==========
-  http.post('/api/v1/python/presentations/export/pptx', async () => {
+  http.post('/api/v1/ai/engine/presentations/export/pptx', async () => {
     // 返回模拟的 PPTX 二进制数据
     const mockPptxData = new Uint8Array([80, 75, 3, 4]) // ZIP magic bytes (PPTX 是 ZIP)
     return new HttpResponse(mockPptxData, {
@@ -726,7 +726,7 @@ ${stage}学生已具备一定的自主学习能力和合作探究意识。经过
   }),
 
   // ========== API-142 生成教案 JSON ==========
-  http.post('/api/v1/python/lesson-plans/generate', async ({ request }) => {
+  http.post('/api/v1/ai/engine/lesson-plans/generate', async ({ request }) => {
     const body = (await request.json()) as Record<string, unknown>
     const lessonPlanId = generateId('lp')
     const lessonPlan = {
@@ -757,7 +757,7 @@ ${stage}学生已具备一定的自主学习能力和合作探究意识。经过
   }),
 
   // ========== API-143 导出教案 DOCX ==========
-  http.post('/api/v1/python/lesson-plans/export/docx', async () => {
+  http.post('/api/v1/ai/engine/lesson-plans/export/docx', async () => {
     const mockDocxData = new Uint8Array([80, 75, 3, 4]) // ZIP magic bytes
     return new HttpResponse(mockDocxData, {
       headers: {
@@ -768,7 +768,7 @@ ${stage}学生已具备一定的自主学习能力和合作探究意识。经过
   }),
 
   // ========== API-144 生成互动模块 ==========
-  http.post('/api/v1/python/interactive-modules/generate', async ({ request }) => {
+  http.post('/api/v1/ai/engine/interactive-modules/generate', async ({ request }) => {
     const body = (await request.json()) as Record<string, unknown>
     const moduleId = generateId('im')
     const moduleType = (body.module_type as string) || 'animation'

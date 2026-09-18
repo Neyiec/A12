@@ -1,8 +1,9 @@
+import asyncio
 import tempfile
 from pathlib import Path
 
 from .common import ParsedResource, merge_text_blocks, plain_text_file
-from .vision_parser import describe_image
+from .vision_parser import describe_image, parse_image
 
 
 async def parse_pdf(path: Path) -> ParsedResource:
@@ -10,13 +11,65 @@ async def parse_pdf(path: Path) -> ParsedResource:
         from PyPDF2 import PdfReader
 
         reader = PdfReader(str(path))
-        blocks = [f"第 {index + 1} 页:\n{page.extract_text() or ''}" for index, page in enumerate(reader.pages)]
+        extracted = [(page.extract_text() or "").strip() for page in reader.pages]
+        page_blocks = {index: f"第 {index + 1} 页文本:\n{text}" for index, text in enumerate(extracted) if text}
+        empty_page_indexes = [index for index, text in enumerate(extracted) if not text]
+        # 扫描版 PDF 没有文本层，只渲染空白文本页再走 OCR + 视觉理解，避免整份资料静默为空。
+        rendered_pages = await asyncio.to_thread(_render_pdf_pages, path, empty_page_indexes[:20])
+        try:
+            scanned_results = await asyncio.gather(*[
+                parse_image(image_path, f"这是扫描版教学 PDF 的第 {page_index + 1} 页，请提取文字、图表含义、知识点和例题信息。")
+                for page_index, image_path in rendered_pages
+            ])
+            for (page_index, _), (text, _metadata) in zip(rendered_pages, scanned_results):
+                if text:
+                    page_blocks[page_index] = f"第 {page_index + 1} 页扫描识别:\n{text}"
+        finally:
+            for _, image_path in rendered_pages:
+                image_path.unlink(missing_ok=True)
         return ParsedResource(
-            text=merge_text_blocks(blocks),
-            metadata={"modality": "document", "parser": "PyPDF2", "page_count": len(reader.pages)},
+            text=merge_text_blocks([page_blocks[index] for index in sorted(page_blocks)]),
+            metadata={
+                "modality": "document",
+                "parser": "PyPDF2+pypdfium2+OCR/vision" if empty_page_indexes else "PyPDF2",
+                "page_count": len(reader.pages),
+                "text_layer_pages": len(reader.pages) - len(empty_page_indexes),
+                "scan_pages_detected": len(empty_page_indexes),
+                "scan_pages_processed": len(rendered_pages),
+                "scan_pages_skipped": max(0, len(empty_page_indexes) - 20),
+            },
         )
     except Exception as exc:
         return ParsedResource(text="", metadata={"modality": "document", "parser": "PyPDF2", "error": str(exc)})
+
+
+def _render_pdf_pages(path: Path, page_indexes: list[int]) -> list[tuple[int, Path]]:
+    if not page_indexes:
+        return []
+    rendered: list[tuple[int, Path]] = []
+    try:
+        import pypdfium2 as pdfium
+
+        document = pdfium.PdfDocument(str(path))
+        try:
+            for page_index in page_indexes:
+                if page_index < 0 or page_index >= len(document):
+                    continue
+                page = document[page_index]
+                with tempfile.NamedTemporaryFile(delete=False, suffix=".png") as temp:
+                    image_path = Path(temp.name)
+                bitmap = page.render(scale=2)
+                bitmap.to_pil().save(image_path, format="PNG")
+                bitmap.close()
+                page.close()
+                rendered.append((page_index, image_path))
+        finally:
+            document.close()
+    except Exception:
+        for _, image_path in rendered:
+            image_path.unlink(missing_ok=True)
+        return []
+    return rendered
 
 
 async def parse_word(path: Path) -> ParsedResource:

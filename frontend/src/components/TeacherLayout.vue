@@ -85,6 +85,16 @@ const handleNewChat = () => {
   requestNewChat.value = true
 }
 
+/** 移动端没有常驻侧栏，通过顶部菜单访问新建对话和最近会话。 */
+const handleMobileHistoryCommand = (command) => {
+  if (command === 'new') {
+    handleNewChat()
+    return
+  }
+  const item = history.value.find((entry) => String(entry.id) === String(command))
+  if (item) openHistorySession(item)
+}
+
 /** 切换全局亮暗主题。 */
 const toggleTheme = () => {
   isDark.value = !isDark.value
@@ -259,6 +269,28 @@ watch(latestSessionPush, (session) => {
 
       <div class="topbar-actions">
         <span v-if="isTeachingAssistant" class="status-dot"><i></i> 智能体在线</span>
+        <el-dropdown
+          v-if="isTeachingAssistant"
+          class="mobile-history-menu"
+          trigger="click"
+          placement="bottom-end"
+          @command="handleMobileHistoryCommand"
+        >
+          <el-button text circle class="icon-action" aria-label="打开最近对话"><el-icon><ChatDotRound /></el-icon></el-button>
+          <template #dropdown>
+            <el-dropdown-menu>
+              <el-dropdown-item command="new"><el-icon><Plus /></el-icon>新建对话</el-dropdown-item>
+              <el-dropdown-item
+                v-for="item in history.slice(0, 10)"
+                :key="item.id"
+                :command="String(item.id)"
+                divided
+              >
+                {{ item.title }} · {{ item.time }}
+              </el-dropdown-item>
+            </el-dropdown-menu>
+          </template>
+        </el-dropdown>
         <el-button
           text
           circle

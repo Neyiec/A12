@@ -54,22 +54,22 @@ export const createResourceCategory = (data) => post('/api/v1/resources/categori
 export const updateResourceCategory = (id, data) => apiRequest({ url: `/api/v1/resources/categories/${id}`, method: 'patch', data })
 export const deleteResourceCategory = (id) => del(`/api/v1/resources/categories/${id}`)
 
-export const syncResourceIndex = (data) => post('/api/v1/python/resources/index/sync', data)
+export const syncResourceIndex = (data) => post('/api/v1/ai/engine/resources/index/sync', data)
 // 资源索引 bootstrap 需要处理全量素材，后端耗时较长，单独放宽超时，避免被默认 10 秒超时误判失败。
 const RESOURCE_INDEX_BOOTSTRAP_TIMEOUT = 210000
 export const bootstrapResourceIndex = (data) => apiRequest({
-  url: '/api/v1/python/resources/index/bootstrap',
+  url: '/api/v1/ai/engine/resources/index/bootstrap',
   method: 'post',
   data,
   timeout: RESOURCE_INDEX_BOOTSTRAP_TIMEOUT,
 })
-export const updateResourceIndexMetadata = (data) => apiRequest({ url: '/api/v1/python/resources/index/metadata', method: 'patch', data })
-export const getResourceIndexOverview = () => get('/api/v1/python/resources/index/overview')
-export const listResourceIndexResources = (params) => get('/api/v1/python/resources/index/resources', params)
-export const getResourceIndexResource = (sourceType, resourceId, params) => get(`/api/v1/python/resources/index/resources/${sourceType}/${resourceId}`, params)
-export const listResourceIndexLogs = (params) => get('/api/v1/python/resources/index/logs', params)
-export const searchResourceIndex = (data) => post('/api/v1/python/resources/index/search', data)
-export const deleteResourceIndex = (sourceType, resourceId) => del(`/api/v1/python/resources/index/${sourceType}/${resourceId}`)
+export const updateResourceIndexMetadata = (data) => apiRequest({ url: '/api/v1/ai/engine/resources/index/metadata', method: 'patch', data })
+export const getResourceIndexOverview = () => get('/api/v1/ai/engine/resources/index/overview')
+export const listResourceIndexResources = (params) => get('/api/v1/ai/engine/resources/index/resources', params)
+export const getResourceIndexResource = (sourceType, resourceId, params) => get(`/api/v1/ai/engine/resources/index/resources/${sourceType}/${resourceId}`, params)
+export const listResourceIndexLogs = (params) => get('/api/v1/ai/engine/resources/index/logs', params)
+export const searchResourceIndex = (data) => post('/api/v1/ai/engine/resources/index/search', data)
+export const deleteResourceIndex = (sourceType, resourceId) => del(`/api/v1/ai/engine/resources/index/${sourceType}/${resourceId}`)
 
 export const listCommunityItems = (params) => get('/api/v1/community/items', params)
 export const favoriteCommunityItem = (id) => put(`/api/v1/community/items/${id}/favorite`)
@@ -183,7 +183,7 @@ export function streamAiRunEvents(runId, lastEventId, options = {}) {
 export const reviseProjectWithAi = (id, data) => post(`/api/v1/projects/${id}/ai-revisions`, data)
 
 /**
- * 调用 Python SSE 大纲/资源生成对话流（POST 端点）
+ * 经 Java AI 网关调用 SSE 大纲/资源生成对话流（POST 端点）
  * 注意：浏览器原生 EventSource 仅支持 GET，API-137A 需要 POST JSON body
  * 因此返回原生 fetch Response，由调用方通过 ReadableStream 读取 SSE 事件
  * @param {Object} body - 请求体 { user_id, session_id, message, history?, ... }
@@ -192,7 +192,7 @@ export const reviseProjectWithAi = (id, data) => post(`/api/v1/projects/${id}/ai
 export function streamOutlineChat(body) {
   const userStore = useUserStore()
   return fetch(
-    `${import.meta.env.VITE_API_BASE_URL || ''}/api/v1/python/outlines/chat/stream`,
+    `${import.meta.env.VITE_API_BASE_URL || ''}/api/v1/ai/engine/outlines/chat/stream`,
     {
       method: 'POST',
       headers: {
@@ -207,7 +207,7 @@ export function streamOutlineChat(body) {
 /** 正式工作台聊天/分类流，经 Java 网关转发 Python 服务；浏览器不持有模型密钥。 */
 export function streamGeneralChat(body, options = {}) {
   const userStore = useUserStore()
-  return fetch(`${import.meta.env.VITE_API_BASE_URL || ''}/api/v1/python/workspace/chat/stream`, {
+  return fetch(`${import.meta.env.VITE_API_BASE_URL || ''}/api/v1/ai/engine/workspace/chat/stream`, {
     method: 'POST',
     headers: {
       'Content-Type': 'application/json',
@@ -265,7 +265,7 @@ export const getTeacherPreferences = () => get('/api/v1/teachers/me/preferences'
  * @param {FormData} formData - 表单数据，含语音文件（file）与可选语言（language）
  * @returns {Promise} 后端返回 { text, language, model, ... }
  */
-export const transcribeAudio = (formData) => apiRequest({ url: '/api/v1/python/audio/asr', method: 'post', data: formData })
+export const transcribeAudio = (formData) => apiRequest({ url: '/api/v1/ai/engine/audio/asr', method: 'post', data: formData })
 
 /**
  * 生成可独立运行或嵌入课件页面的互动模块。
@@ -277,7 +277,7 @@ export const transcribeAudio = (formData) => apiRequest({ url: '/api/v1/python/a
 const INTERACTIVE_MODULE_GENERATION_TIMEOUT = 50000
 
 export const generateInteractiveModule = (data) => apiRequest({
-  url: '/api/v1/python/interactive-modules/generate',
+  url: '/api/v1/ai/engine/interactive-modules/generate',
   method: 'post',
   data,
   timeout: INTERACTIVE_MODULE_GENERATION_TIMEOUT,
@@ -287,13 +287,13 @@ export const generateInteractiveModule = (data) => apiRequest({
  * 获取 Python PPT 生成模板列表。
  * `theme` 是后续调用 PPT 生成接口时应传入的模板值。
  */
-export const listPptTemplates = () => get('/api/v1/python/templates')
+export const listPptTemplates = () => get('/api/v1/ai/engine/templates')
 
 // Python 端单次模型请求为 120 秒，兼容客户端可能自动重试 2 次；前端留出完整响应时间。
 const PYTHON_PPT_REQUEST_TIMEOUT = 420000
 
 export const generatePresentation = (data) => apiRequest({
-  url: '/api/v1/python/presentations/generate',
+  url: '/api/v1/ai/engine/presentations/generate',
   method: 'post',
   data,
   timeout: PYTHON_PPT_REQUEST_TIMEOUT
@@ -301,7 +301,7 @@ export const generatePresentation = (data) => apiRequest({
 
 /** 生成可在线编辑的结构化教案（API-142）。 */
 export const generateLessonPlan = (data) => apiRequest({
-  url: '/api/v1/python/lesson-plans/generate',
+  url: '/api/v1/ai/engine/lesson-plans/generate',
   method: 'post',
   data,
   timeout: PYTHON_PPT_REQUEST_TIMEOUT,
@@ -309,7 +309,7 @@ export const generateLessonPlan = (data) => apiRequest({
 
 /** 直接导出当前 HTML PPT 为 PPTX/ZIP（API-141）。 */
 export const exportPresentationPptx = (data) => apiRequest({
-  url: '/api/v1/python/presentations/export/pptx',
+  url: '/api/v1/ai/engine/presentations/export/pptx',
   method: 'post',
   data,
   responseType: 'blob',
@@ -318,7 +318,7 @@ export const exportPresentationPptx = (data) => apiRequest({
 
 /** 导出当前教案为 DOCX（API-143）。 */
 export const exportLessonPlanDocx = (data) => apiRequest({
-  url: '/api/v1/python/lesson-plans/export/docx',
+  url: '/api/v1/ai/engine/lesson-plans/export/docx',
   method: 'post',
   data,
   responseType: 'blob',
@@ -331,7 +331,7 @@ export const exportLessonPlanDocx = (data) => apiRequest({
  * @returns {Promise} 后端返回 { presentation_id, slide_no, html, change_summary, ... }
  */
 export const modifyPresentationSlide = (data) => apiRequest({
-  url: '/api/v1/python/presentations/slides/modify',
+  url: '/api/v1/ai/engine/presentations/slides/modify',
   method: 'post',
   data,
   timeout: PYTHON_PPT_REQUEST_TIMEOUT
@@ -343,7 +343,7 @@ export const modifyPresentationSlide = (data) => apiRequest({
  * @returns {Promise} 后端返回修改后的 slides
  */
 export const modifyPresentation = (data) => apiRequest({
-  url: '/api/v1/python/presentations/modify',
+  url: '/api/v1/ai/engine/presentations/modify',
   method: 'post',
   data,
   timeout: PYTHON_PPT_REQUEST_TIMEOUT
@@ -351,7 +351,7 @@ export const modifyPresentation = (data) => apiRequest({
 
 /** 校验模型返回的单页 HTML 是否可安全加载到工作台 iframe。 */
 export const validatePresentationHtml = (data) => apiRequest({
-  url: '/api/v1/python/presentations/html/validate',
+  url: '/api/v1/ai/engine/presentations/html/validate',
   method: 'post',
   data,
   timeout: 60000,

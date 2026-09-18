@@ -164,10 +164,18 @@ public class PythonPptClient {
     }
 
     public void streamOutlineChatToEmitter(Map<String, Object> payload, SseEmitter emitter) {
+        streamToEmitter("/api/v1/python/outlines/chat/stream", payload, emitter);
+    }
+
+    public void streamWorkspaceChatToEmitter(Map<String, Object> payload, SseEmitter emitter) {
+        streamToEmitter("/api/v1/python/workspace/chat/stream", payload, emitter);
+    }
+
+    private void streamToEmitter(String path, Map<String, Object> payload, SseEmitter emitter) {
         String event = "message";
         StringBuilder data = new StringBuilder();
         try {
-            HttpResponse<Stream<String>> response = postJsonLinesResponse("/api/v1/python/outlines/chat/stream", payload);
+            HttpResponse<Stream<String>> response = postJsonLinesResponse(path, payload);
             log.info("streamOutlineChatToEmitter statusCode={}", response.statusCode());
             try (Stream<String> lines = response.body()) {
                 for (java.util.Iterator<String> iterator = lines.iterator(); iterator.hasNext(); ) {
@@ -190,7 +198,14 @@ public class PythonPptClient {
             emitter.complete();
         } catch (Exception e) {
             log.warn("streamOutlineChatToEmitter failed", e);
-            emitter.completeWithError(e);
+            try {
+                emitter.send(SseEmitter.event().name("error").data(toJson(Map.of(
+                        "message", "AI 服务调用失败: " + e.getMessage())),
+                        org.springframework.http.MediaType.APPLICATION_JSON));
+                emitter.complete();
+            } catch (IOException | IllegalStateException disconnected) {
+                emitter.completeWithError(e);
+            }
         }
     }
 
@@ -484,7 +499,8 @@ public class PythonPptClient {
                 .build();
         HttpResponse<Stream<String>> response = httpClient.send(request, HttpResponse.BodyHandlers.ofLines());
         if (response.statusCode() < 200 || response.statusCode() >= 300) {
-            throw new RuntimeException("Python鏈嶅姟璋冪敤澶辫触锛孒TTP " + response.statusCode());
+            response.body().close();
+            throw new RuntimeException("Python服务调用失败，HTTP " + response.statusCode());
         }
         return response;
     }
@@ -686,7 +702,7 @@ public class PythonPptClient {
         }
         emitter.send(SseEmitter.event()
                 .name(event == null || event.isBlank() ? "message" : event)
-                .data(data.toString()));
+                .data(data.toString(), org.springframework.http.MediaType.APPLICATION_JSON));
     }
 
     public String toJson(Object value) {

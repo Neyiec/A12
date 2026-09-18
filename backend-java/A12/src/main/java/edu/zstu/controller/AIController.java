@@ -286,7 +286,7 @@ public class AIController {
 
     private Map<String, Object> intentPayload(IntentRecognitionDTO dto, String inputType) {
         Map<String, Object> payload = new LinkedHashMap<>();
-        payload.put("user_id", blankToNull(dto.getUser_id()));
+        payload.put("user_id", String.valueOf(edu.zstu.utils.CurrentHolder.getCurrentId()));
         payload.put("session_id", blankToNull(dto.getSession_id()));
         payload.put("title", blankToNull(dto.getTitle()));
         payload.put("message", dto.getMessage());
