@@ -25,10 +25,12 @@ import {
 import { ElMessage, ElMessageBox } from 'element-plus'
 import {
   getModerationTasks,
+  getModerationContent,
   createModerationDecision,
   getReports,
   resolveReport,
 } from '@/apis/moderation'
+import CommunityContentPreview from '../../../../frontend/src/components/CommunityContentPreview.vue'
 
 // ===================================================================
 // 配置常量
@@ -163,6 +165,14 @@ const drawerMode = ref('audit')
 /** 当前查看的数据（AuditVO 审核任务或举报记录） */
 const currentContent = ref(null)
 
+
+/** 管理员预览的实际投稿内容（与教师端共用同一只读预览组件） */
+const contentPreviewLoading = ref(false)
+const contentPreview = ref(null)
+const contentPreviewError = ref('')
+/** 投稿预览的内容视图与 PPT 当前页 */
+const contentPreviewView = ref('ppt')
+const contentPreviewSlideIndex = ref(0)
 /** 操作执行中 */
 const isActionLoading = ref(false)
 
@@ -343,9 +353,43 @@ const getReportStatusDotColor = (status) => REPORT_STATUS_DOT_COLOR_MAP[status] 
 const openDetailDrawer = (row, mode = 'audit') => {
   drawerMode.value = mode
   currentContent.value = { ...row }
+  contentPreviewView.value = 'ppt'
+  contentPreviewSlideIndex.value = 0
   drawerVisible.value = true
+  void loadContentPreview(currentContent.value)
 }
 
+/**
+ * 加载审核目标的只读预览；待审内容走管理员受控接口，不走公开社区接口。
+ * 在抽屉打开时直接加载，管理员无需再跳到一个独立弹窗才能判断稿件内容。
+ */
+const loadContentPreview = async (row = currentContent.value) => {
+  const targetId = Number(row?.target_id)
+  if (!Number.isInteger(targetId) || targetId <= 0) {
+    contentPreviewLoading.value = false
+    contentPreview.value = null
+    contentPreviewError.value = '未找到可预览的投稿内容'
+    return
+  }
+  contentPreviewLoading.value = true
+  contentPreview.value = null
+  contentPreviewError.value = ''
+  try {
+    const res = await getModerationContent(targetId)
+    if (res?.code !== 0 && res?.code !== 200) throw new Error(res?.message || '内容预览加载失败')
+    if (Number(currentContent.value?.target_id) === targetId) {
+      contentPreview.value = { ...res.data, id: res.data?.id ?? targetId }
+    }
+  } catch (error) {
+    if (Number(currentContent.value?.target_id) === targetId) {
+      contentPreviewError.value = error?.message || '内容预览加载失败，请稍后重试'
+    }
+  } finally {
+    if (Number(currentContent.value?.target_id) === targetId) {
+      contentPreviewLoading.value = false
+    }
+  }
+}
 /**
  * 抽屉状态显示辅助 — 按抽屉模式选择审核/举报语义
  */
@@ -417,6 +461,7 @@ const submitDecision = async (taskId, action, comment) => {
       return
     }
     ElMessage.success(action === 'approve' ? '审核通过，内容已公开' : '已驳回，内容已下架')
+    if (drawerVisible.value && Number(currentContent.value?.id) === Number(taskId)) drawerVisible.value = false
     fetchData()
   } catch {
     ElMessage.error('审核操作失败，请稍后重试')
@@ -481,6 +526,7 @@ const submitReportResolution = async (reportId, action, successMsg) => {
       return
     }
     ElMessage.success(successMsg)
+    if (drawerVisible.value && Number(currentContent.value?.id) === Number(reportId)) drawerVisible.value = false
     fetchData()
   } catch {
     ElMessage.error('举报处理失败，请稍后重试')
@@ -504,35 +550,25 @@ onBeforeUnmount(() => {
 </script>
 
 <template>
-  <div>
+  <main class="moderation-page">
     <!-- ===================================================================
          1. 标题区 + Tab 分段
          =================================================================== -->
-    <div class="flex items-center justify-between flex-wrap gap-3 mb-4">
-      <!-- 左侧：标题 -->
-      <h1
-        class="text-lg font-semibold shrink-0"
-        style="
-          font-size: var(--zh-font-size18);
-          color: var(--zh-text-primary);
-        "
-      >
-        内容审核与治理
-      </h1>
-
-      <!-- 右侧：刷新按钮 -->
+    <header class="moderation-page-header">
+      <div>
+        <p class="moderation-kicker">COMMUNITY GOVERNANCE</p>
+        <h1>内容审核与社区治理</h1>
+        <p class="moderation-page-intro">集中处理社区投稿与举报，所有决定均会同步给投稿教师。</p>
+      </div>
       <el-tooltip content="刷新列表" placement="bottom" effect="dark">
-        <el-button
-          :icon="Refresh"
-          circle
-          size="default"
-          @click="handleRefresh"
-        />
+        <el-button class="moderation-refresh" :icon="Refresh" aria-label="刷新列表" @click="handleRefresh">刷新</el-button>
       </el-tooltip>
-    </div>
+    </header>
 
-    <!-- Tab 分段控件 -->
-    <div class="mb-4">
+    <!-- ===================================================================
+         2. 工作区导航与筛选器
+         =================================================================== -->
+    <section class="moderation-toolbar" aria-label="审核筛选">
       <el-radio-group
         :model-value="activeTab"
         size="default"
@@ -547,52 +583,46 @@ onBeforeUnmount(() => {
           {{ tab.label }}
         </el-radio-button>
       </el-radio-group>
-    </div>
 
-    <!-- ===================================================================
-         2. 筛选器组（根据 Tab 动态调整）
-         =================================================================== -->
-    <div class="flex items-center flex-wrap gap-3 mb-4">
-      <!-- 内容类型筛选（仅审核 Tab） -->
-      <el-select
-        v-if="activeTab === 'audit'"
-        v-model="filters.type"
-        placeholder="全部类型"
-        clearable
-        size="default"
-        style="width: 120px;"
-        @change="handleFilterChange"
-      >
-        <el-option
-          v-for="opt in CONTENT_TYPE_OPTIONS"
-          :key="opt.value"
-          :label="opt.label"
-          :value="opt.value"
-        />
-      </el-select>
+      <div class="moderation-filters">
+        <el-select
+          v-if="activeTab === 'audit'"
+          v-model="filters.type"
+          placeholder="全部类型"
+          clearable
+          size="default"
+          @change="handleFilterChange"
+        >
+          <el-option
+            v-for="opt in CONTENT_TYPE_OPTIONS"
+            :key="opt.value"
+            :label="opt.label"
+            :value="opt.value"
+          />
+        </el-select>
 
-      <!-- 状态筛选 -->
-      <el-select
-        v-model="filters.status"
-        placeholder="全部状态"
-        clearable
-        size="default"
-        style="width: 130px;"
-        @change="handleFilterChange"
-      >
-        <el-option
-          v-for="opt in (activeTab === 'audit' ? AUDIT_STATUS_OPTIONS : REPORT_STATUS_OPTIONS)"
-          :key="opt.value"
-          :label="opt.label"
-          :value="opt.value"
-        />
-      </el-select>
-    </div>
+        <el-select
+          v-model="filters.status"
+          placeholder="全部状态"
+          clearable
+          size="default"
+          @change="handleFilterChange"
+        >
+          <el-option
+            v-for="opt in (activeTab === 'audit' ? AUDIT_STATUS_OPTIONS : REPORT_STATUS_OPTIONS)"
+            :key="opt.value"
+            :label="opt.label"
+            :value="opt.value"
+          />
+        </el-select>
+      </div>
+    </section>
 
     <!-- ===================================================================
          3. 数据表格区
          =================================================================== -->
     <el-card
+      class="moderation-table-card"
       shadow="never"
       :style="{
         background: 'var(--zh-background-capsule)',
@@ -976,166 +1006,257 @@ onBeforeUnmount(() => {
     </el-card>
 
     <!-- ===================================================================
-         4. 内容审核详情抽屉
+         4. 内容审核详情：任务信息与原稿预览同时呈现
          =================================================================== -->
     <el-drawer
       v-model="drawerVisible"
+      class="moderation-detail-drawer"
       direction="rtl"
-      size="560px"
+      size="min(960px, 94vw)"
       destroy-on-close
       :style="{
         '--el-drawer-bg-color': 'var(--zh-background-primary)',
-        '--el-drawer-padding-primary': '24px',
+        '--el-drawer-padding-primary': '0',
       }"
     >
       <template #header>
-        <span style="font-size: var(--zh-font-size16); font-weight: 600; color: var(--zh-text-primary);">
-          {{ (drawerMode === 'audit' ? '审核任务详情 — ' : '举报详情 — ') + (currentContent?.id || '') }}
-        </span>
+        <header v-if="currentContent" class="moderation-drawer-header">
+          <div>
+            <p>{{ drawerMode === 'audit' ? 'CONTENT MODERATION' : 'COMMUNITY REPORT' }}</p>
+            <h2>{{ drawerMode === 'audit' ? '审核任务' : '举报任务' }} <span>· #{{ currentContent.id }}</span></h2>
+          </div>
+          <el-tag :type="drawerStatusTagType(currentContent.status)" effect="plain" class="drawer-status-tag">
+            <i :style="{ background: drawerStatusDotColor(currentContent.status) }"></i>
+            {{ drawerStatusLabel(currentContent.status) }}
+          </el-tag>
+        </header>
       </template>
 
-      <template v-if="currentContent">
-        <!-- ===== 审核任务/举报详情（共享 AuditVO 结构） ===== -->
-        <template v-if="drawerMode !== 'content'">
-          <!-- 任务信息区 -->
-          <div
-            class="rounded-lg p-4 mb-4"
-            style="border: 1px solid var(--zh-line-border);"
-          >
-            <div class="grid grid-cols-[80px_1fr] gap-y-3 gap-x-2">
-              <span style="font-size: var(--zh-font-size13); color: var(--zh-text-caption);">目标类型</span>
-              <span>
-                <el-tag :type="getContentTagType(currentContent.target_type)" size="small" effect="plain">
-                  {{ CONTENT_TYPE_LABEL_MAP[currentContent.target_type] || currentContent.target_type }}
-                </el-tag>
-              </span>
-
-              <span style="font-size: var(--zh-font-size13); color: var(--zh-text-caption);">目标内容</span>
-              <span style="font-family: var(--zh-font-number); font-size: var(--zh-font-size14); color: var(--zh-text-secondary);">
-                #{{ currentContent.target_id }}
-              </span>
-
-              <span style="font-size: var(--zh-font-size13); color: var(--zh-text-caption);">提交时间</span>
-              <span style="font-size: var(--zh-font-size13); color: var(--zh-text-caption);">
-                {{ formatDateTime(currentContent.created_at) }}
-              </span>
-
-              <span style="font-size: var(--zh-font-size13); color: var(--zh-text-caption);">处理时间</span>
-              <span style="font-size: var(--zh-font-size13); color: var(--zh-text-caption);">
-                {{ formatDateTime(currentContent.processed_at) }}
-              </span>
-
-              <span style="font-size: var(--zh-font-size13); color: var(--zh-text-caption);">处理人</span>
-              <span style="font-size: var(--zh-font-size14); color: var(--zh-text-secondary);">
-                {{ currentContent.handler_id ? '管理员 #' + currentContent.handler_id : '—' }}
-              </span>
-
-              <span style="font-size: var(--zh-font-size13); color: var(--zh-text-caption);">审核状态</span>
-              <span>
-                <el-tag :type="getStatusTagType(currentContent.status)" size="small" effect="plain">
-                  <span class="flex items-center gap-1.5">
-                    <span
-                      class="inline-block w-1.5 h-1.5 rounded-full shrink-0"
-                      :style="{ background: getStatusDotColor(currentContent.status) }"
-                    ></span>
-                    {{ getStatusLabel(currentContent.status) }}
-                  </span>
-                </el-tag>
-              </span>
-
-              <span style="font-size: var(--zh-font-size13); color: var(--zh-text-caption);">处理结果</span>
-              <span style="font-size: var(--zh-font-size14); color: var(--zh-text-secondary);">
-                {{ currentContent.status === 'processed' ? (AUDIT_ACTION_LABEL_MAP[currentContent.action] || currentContent.action) : '—' }}
-              </span>
+      <div v-if="currentContent" class="moderation-detail-layout">
+        <aside class="moderation-task-panel" aria-label="审核任务信息">
+          <section class="task-target-summary">
+            <div class="task-target-mark" aria-hidden="true">{{ drawerMode === 'audit' ? '审' : '报' }}</div>
+            <div>
+              <span>{{ CONTENT_TYPE_LABEL_MAP[currentContent.target_type] || currentContent.target_type || '社区内容' }}</span>
+              <strong>{{ contentPreview?.title || currentContent.content_title || `投稿 #${currentContent.target_id}` }}</strong>
+              <small>投稿编号 #{{ currentContent.target_id }}</small>
             </div>
-          </div>
+          </section>
 
-          <!-- 审核理由区 -->
-          <div
-            v-if="currentContent.reason"
-            class="rounded-lg p-4 mb-4"
-            style="border: 1px solid var(--zh-line-border); background: var(--zh-background-light-gray);"
-          >
-            <span style="font-size: var(--zh-font-size12); color: var(--zh-text-caption); display: block; margin-bottom: 8px;">审核理由</span>
-            <p style="font-size: var(--zh-font-size14); color: var(--zh-text-primary); line-height: 1.7; white-space: pre-wrap; margin: 0;">
-              {{ currentContent.reason }}
-            </p>
-          </div>
+          <section class="task-info-section">
+            <div class="task-section-heading">
+              <span>任务信息</span>
+              <el-tag :type="getContentTagType(currentContent.target_type)" size="small" effect="plain">
+                {{ CONTENT_TYPE_LABEL_MAP[currentContent.target_type] || currentContent.target_type }}
+              </el-tag>
+            </div>
+            <dl class="task-meta-list">
+              <div>
+                <dt>提交时间</dt>
+                <dd>{{ formatDateTime(currentContent.created_at) }}</dd>
+              </div>
+              <div>
+                <dt>处理时间</dt>
+                <dd>{{ formatDateTime(currentContent.processed_at) }}</dd>
+              </div>
+              <div>
+                <dt>处理人</dt>
+                <dd>{{ currentContent.handler_id ? `管理员 #${currentContent.handler_id}` : '待分配' }}</dd>
+              </div>
+              <div>
+                <dt>处理结果</dt>
+                <dd>{{ currentContent.status === 'processed'
+                  ? (drawerMode === 'audit'
+                    ? (AUDIT_ACTION_LABEL_MAP[currentContent.action] || currentContent.action)
+                    : (REPORT_ACTION_LABEL_MAP[currentContent.action] || currentContent.action))
+                  : '尚未处理' }}</dd>
+              </div>
+            </dl>
+          </section>
 
-          <!-- 处理意见区 -->
-          <div
-            v-if="currentContent.comment"
-            class="rounded-lg p-4 mb-4"
-            style="border: 1px solid var(--zh-line-border); background: var(--zh-background-light-gray);"
-          >
-            <span style="font-size: var(--zh-font-size12); color: var(--zh-text-caption); display: block; margin-bottom: 8px;">处理意见</span>
-            <p style="font-size: var(--zh-font-size14); color: var(--zh-text-primary); line-height: 1.7; white-space: pre-wrap; margin: 0;">
-              {{ currentContent.comment }}
-            </p>
-          </div>
+          <section v-if="currentContent.reason" class="task-note task-note-warning">
+            <span>{{ drawerMode === 'audit' ? '送审说明' : '举报原因' }}</span>
+            <p>{{ currentContent.reason }}</p>
+          </section>
 
-          <!-- 操作区（仅待处理） -->
-          <div
-            v-if="currentContent.status === 'pending'"
-            class="rounded-lg p-4"
-            style="border: 1px solid var(--zh-line-border); background: var(--zh-background-light-gray);"
-          >
-            <span style="font-size: var(--zh-font-size14); font-weight: 600; color: var(--zh-text-primary); display: block; margin-bottom: 12px;">
-              {{ drawerMode === 'audit' ? '审核操作' : '举报处理' }}
-            </span>
+          <section v-if="currentContent.comment" class="task-note">
+            <span>处理意见</span>
+            <p>{{ currentContent.comment }}</p>
+          </section>
 
-            <div class="flex flex-wrap gap-2">
-              <!-- 审核 Tab：通过 / 驳回（API-91） -->
+          <section v-if="currentContent.status === 'pending'" class="task-action-panel">
+            <div>
+              <strong>{{ drawerMode === 'audit' ? '做出审核决定' : '处理本条举报' }}</strong>
+              <p>{{ drawerMode === 'audit' ? '决定会即时更新投稿的社区状态。' : '确认违规会下架对应的社区内容。' }}</p>
+            </div>
+            <div class="task-action-buttons">
               <template v-if="drawerMode === 'audit'">
-                <el-button
-                  type="success"
-                  :loading="isActionLoading"
-                  :style="{ borderRadius: 'var(--zh-radius8)' }"
-                  @click="handleApprove(currentContent); drawerVisible = false;"
-                >
-                  <el-icon class="mr-1"><Select /></el-icon>
+                <el-button type="primary" :loading="isActionLoading" @click="handleApprove(currentContent)">
+                  <el-icon><Select /></el-icon>
                   审核通过
                 </el-button>
-                <el-button
-                  type="danger"
-                  :loading="isActionLoading"
-                  :style="{ borderRadius: 'var(--zh-radius8)' }"
-                  @click="handleReject(currentContent); drawerVisible = false;"
-                >
-                  <el-icon class="mr-1"><Close /></el-icon>
+                <el-button type="danger" plain :loading="isActionLoading" @click="handleReject(currentContent)">
+                  <el-icon><Close /></el-icon>
                   驳回
                 </el-button>
               </template>
-
-              <!-- 举报 Tab：确认违规 / 驳回举报（API-96） -->
               <template v-else>
-                <el-button
-                  type="danger"
-                  :loading="isActionLoading"
-                  :style="{ borderRadius: 'var(--zh-radius8)' }"
-                  @click="handleConfirmViolation(currentContent); drawerVisible = false;"
-                >
-                  <el-icon class="mr-1"><Select /></el-icon>
+                <el-button type="danger" :loading="isActionLoading" @click="handleConfirmViolation(currentContent)">
+                  <el-icon><Select /></el-icon>
                   确认违规
                 </el-button>
-                <el-button
-                  :loading="isActionLoading"
-                  :style="{ borderRadius: 'var(--zh-radius8)' }"
-                  @click="handleDismissReport(currentContent); drawerVisible = false;"
-                >
-                  <el-icon class="mr-1"><Close /></el-icon>
+                <el-button :loading="isActionLoading" @click="handleDismissReport(currentContent)">
+                  <el-icon><Close /></el-icon>
                   驳回举报
                 </el-button>
               </template>
             </div>
+          </section>
+        </aside>
+
+        <section class="moderation-preview-panel" aria-label="提交内容预览">
+          <header class="preview-panel-header">
+            <div>
+              <p>SUBMISSION PREVIEW</p>
+              <h3>提交内容</h3>
+              <span>以下内容与教师端社区详情使用同一只读预览组件。</span>
+            </div>
+            <el-button link type="primary" :loading="contentPreviewLoading" @click="loadContentPreview(currentContent)">重新加载</el-button>
+          </header>
+
+          <div v-loading="contentPreviewLoading" class="submission-preview-viewport">
+            <el-alert
+              v-if="contentPreviewError"
+              :title="contentPreviewError"
+              type="error"
+              :closable="false"
+              show-icon
+            />
+
+            <template v-else-if="contentPreview">
+              <header class="submission-preview-header">
+                <div>
+                  <el-tag :type="getContentTagType(contentPreview.content_type)" effect="plain">
+                    {{ CONTENT_TYPE_LABEL_MAP[contentPreview.content_type] || contentPreview.content_type }}
+                  </el-tag>
+                  <h4>{{ contentPreview.title || `投稿 #${currentContent.target_id}` }}</h4>
+                  <p v-if="contentPreview.description">{{ contentPreview.description }}</p>
+                </div>
+                <span>v{{ contentPreview.version || 1 }}</span>
+              </header>
+
+              <dl class="submission-attribute-list">
+                <div><dt>学科</dt><dd>{{ contentPreview.subject || '未标注' }}</dd></div>
+                <div><dt>学段</dt><dd>{{ contentPreview.grade || '未标注' }}</dd></div>
+                <div><dt>课型</dt><dd>{{ contentPreview.lesson_type || '未标注' }}</dd></div>
+                <div><dt>授权</dt><dd>{{ contentPreview.license || '未说明' }}</dd></div>
+              </dl>
+
+              <div class="submission-content">
+                <div class="submission-content-heading">
+                  <span>CONTENT</span>
+                  <strong>正文与教学结构</strong>
+                </div>
+                <CommunityContentPreview
+                  :item="contentPreview"
+                  :active-view="contentPreviewView"
+                  :active-slide-index="contentPreviewSlideIndex"
+                  @update:active-view="contentPreviewView = $event"
+                  @update:active-slide-index="contentPreviewSlideIndex = $event"
+                />
+              </div>
+            </template>
+
+            <el-empty v-else description="正在准备投稿内容" :image-size="72" />
           </div>
-        </template>
-      </template>
+        </section>
+      </div>
     </el-drawer>
-  </div>
+  </main>
 </template>
 
 <style scoped>
+.moderation-page {
+  width: min(1440px, 100%);
+  margin: 0 auto;
+  padding: 8px 4px 28px;
+}
+
+.moderation-page-header {
+  display: flex;
+  align-items: flex-end;
+  justify-content: space-between;
+  gap: 24px;
+  padding: 16px 0 24px;
+}
+
+.moderation-kicker,
+.moderation-drawer-header p,
+.preview-panel-header p,
+.submission-content-heading > span {
+  margin: 0;
+  color: var(--zh-text-theme);
+  font-family: var(--zh-font-number);
+  font-size: 11px;
+  font-weight: 700;
+  letter-spacing: var(--zh-tracking-wider);
+}
+
+.moderation-page-header h1 {
+  margin: 7px 0 0;
+  color: var(--zh-text-primary);
+  font-size: var(--zh-font-size30);
+  font-weight: 600;
+  letter-spacing: var(--zh-tracking-tight);
+  line-height: 1.2;
+  text-wrap: balance;
+}
+
+.moderation-page-intro {
+  max-width: 580px;
+  margin: 9px 0 0;
+  color: var(--zh-text-secondary);
+  font-size: var(--zh-font-size14);
+  line-height: 1.65;
+}
+
+.moderation-refresh {
+  flex: none;
+  margin: 0;
+  border-color: var(--zh-line-border);
+  color: var(--zh-text-secondary);
+  transition: color 200ms ease, background-color 200ms ease, transform 200ms ease;
+}
+
+.moderation-toolbar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 16px;
+  margin-bottom: 16px;
+  padding: 10px 12px;
+  border: 1px solid var(--zh-line-border);
+  border-radius: var(--zh-radius12);
+  background: var(--zh-background-capsule);
+}
+
+.moderation-filters {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.moderation-filters :deep(.el-select) {
+  width: 128px;
+}
+
+.moderation-table-card {
+  overflow: hidden;
+}
+
+.moderation-table-card :deep(.el-card__body) {
+  padding: 0 20px 20px;
+}
 /* ===== Tab 分段控件样式覆盖 ===== */
 :deep(.audit-tab-group) {
   background: var(--zh-background-option);
@@ -1158,6 +1279,371 @@ onBeforeUnmount(() => {
   color: var(--zh-text-theme);
   font-weight: 600;
   box-shadow: var(--zh-shadow1) !important;
+}
+
+:deep(.moderation-detail-drawer) {
+  max-width: 94vw;
+}
+
+:deep(.moderation-detail-drawer .el-drawer__header) {
+  align-items: center;
+  min-height: 96px;
+  margin: 0;
+  padding: 0 30px;
+  border-bottom: 1px solid var(--zh-line-border);
+}
+
+:deep(.moderation-detail-drawer .el-drawer__body) {
+  min-height: 0;
+  padding: 0;
+  overflow: hidden;
+}
+
+:deep(.moderation-detail-drawer .el-drawer__close-btn) {
+  width: 34px;
+  height: 34px;
+  border-radius: var(--zh-radius8);
+  color: var(--zh-text-secondary);
+  transition: color 200ms ease, background-color 200ms ease;
+}
+
+:deep(.moderation-detail-drawer .el-drawer__close-btn:hover) {
+  color: var(--zh-text-primary);
+  background: var(--zh-background-option);
+}
+
+.moderation-drawer-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  width: 100%;
+  padding-right: 28px;
+}
+
+.moderation-drawer-header h2 {
+  margin: 7px 0 0;
+  color: var(--zh-text-primary);
+  font-size: var(--zh-font-size24);
+  font-weight: 600;
+  letter-spacing: var(--zh-tracking-tight);
+  line-height: 1.25;
+}
+
+.moderation-drawer-header h2 span {
+  color: var(--zh-text-caption);
+  font-family: var(--zh-font-number);
+  font-weight: 500;
+}
+
+.drawer-status-tag {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  height: 28px;
+  padding: 0 10px;
+  font-weight: 500;
+}
+
+.drawer-status-tag i {
+  display: inline-block;
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+}
+
+.moderation-detail-layout {
+  display: grid;
+  grid-template-columns: minmax(280px, 0.8fr) minmax(0, 1.4fr);
+  height: calc(100dvh - 96px);
+  min-height: 0;
+}
+
+.moderation-task-panel {
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+  min-width: 0;
+  padding: 24px;
+  overflow: auto;
+  background: var(--zh-background-primary);
+}
+
+.task-target-summary {
+  display: grid;
+  grid-template-columns: 42px minmax(0, 1fr);
+  align-items: center;
+  gap: 12px;
+  padding: 14px;
+  border: 1px solid var(--zh-line-theme20);
+  border-radius: var(--zh-radius12);
+  background: var(--zh-background-weaken);
+}
+
+.task-target-mark {
+  display: grid;
+  place-items: center;
+  width: 42px;
+  height: 42px;
+  border-radius: var(--zh-radius10);
+  color: var(--zh-text-white);
+  background: var(--zh-gradient-blue);
+  font-size: var(--zh-font-size16);
+  font-weight: 600;
+}
+
+.task-target-summary > div:last-child {
+  display: grid;
+  min-width: 0;
+  gap: 3px;
+}
+
+.task-target-summary span,
+.task-target-summary small {
+  overflow: hidden;
+  color: var(--zh-text-caption);
+  font-size: var(--zh-font-size12);
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.task-target-summary strong {
+  overflow: hidden;
+  color: var(--zh-text-primary);
+  font-size: var(--zh-font-size14);
+  font-weight: 600;
+  line-height: 1.45;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.task-section-heading,
+.submission-content-heading {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.task-section-heading > span {
+  color: var(--zh-text-primary);
+  font-size: var(--zh-font-size14);
+  font-weight: 600;
+}
+
+.task-meta-list {
+  display: grid;
+  gap: 0;
+  margin: 10px 0 0;
+}
+
+.task-meta-list > div {
+  display: grid;
+  grid-template-columns: 78px minmax(0, 1fr);
+  gap: 10px;
+  padding: 10px 0;
+  border-bottom: 1px solid var(--zh-line-parting);
+}
+
+.task-meta-list dt,
+.submission-attribute-list dt {
+  color: var(--zh-text-caption);
+  font-size: var(--zh-font-size12);
+}
+
+.task-meta-list dd,
+.submission-attribute-list dd {
+  min-width: 0;
+  margin: 0;
+  overflow: hidden;
+  color: var(--zh-text-secondary);
+  font-family: var(--zh-font-number);
+  font-size: var(--zh-font-size12);
+  line-height: 1.5;
+  text-align: right;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.task-note {
+  padding: 14px;
+  border: 1px solid var(--zh-line-border);
+  border-radius: var(--zh-radius10);
+  background: var(--zh-background-light);
+}
+
+.task-note-warning {
+  border-color: color-mix(in srgb, var(--zh-orange) 26%, var(--zh-line-border));
+  background: color-mix(in srgb, var(--zh-orange) 7%, var(--zh-background-primary));
+}
+
+.task-note > span {
+  color: var(--zh-text-caption);
+  font-size: var(--zh-font-size12);
+  font-weight: 500;
+}
+
+.task-note p {
+  margin: 7px 0 0;
+  color: var(--zh-text-primary);
+  font-size: var(--zh-font-size13);
+  line-height: 1.7;
+  white-space: pre-wrap;
+  word-break: break-word;
+}
+
+.task-action-panel {
+  display: grid;
+  gap: 14px;
+  margin-top: auto;
+  padding: 16px;
+  border: 1px solid var(--zh-line-theme20);
+  border-radius: var(--zh-radius12);
+  background: var(--zh-background-weaken);
+}
+
+.task-action-panel strong {
+  color: var(--zh-text-primary);
+  font-size: var(--zh-font-size14);
+  font-weight: 600;
+}
+
+.task-action-panel p {
+  margin: 5px 0 0;
+  color: var(--zh-text-secondary);
+  font-size: var(--zh-font-size12);
+  line-height: 1.6;
+}
+
+.task-action-buttons {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+.task-action-buttons :deep(.el-button) {
+  min-width: 108px;
+  margin: 0;
+  font-weight: 600;
+}
+
+.task-action-buttons :deep(.el-button:active),
+.moderation-refresh:active {
+  transform: scale(.98);
+}
+
+.moderation-preview-panel {
+  display: flex;
+  min-width: 0;
+  min-height: 0;
+  flex-direction: column;
+  border-left: 1px solid var(--zh-line-border);
+  background: var(--zh-background-light);
+}
+
+.preview-panel-header {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 16px;
+  padding: 24px 28px 20px;
+  border-bottom: 1px solid var(--zh-line-border);
+  background: var(--zh-background-primary);
+}
+
+.preview-panel-header h3 {
+  margin: 5px 0 0;
+  color: var(--zh-text-primary);
+  font-size: var(--zh-font-size20);
+  font-weight: 600;
+}
+
+.preview-panel-header span {
+  display: block;
+  margin-top: 6px;
+  color: var(--zh-text-caption);
+  font-size: var(--zh-font-size12);
+  line-height: 1.5;
+}
+
+.submission-preview-viewport {
+  flex: 1;
+  min-height: 0;
+  padding: 24px 28px 32px;
+  overflow: auto;
+}
+
+.submission-preview-header {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 16px;
+  padding-bottom: 18px;
+}
+
+.submission-preview-header h4 {
+  margin: 10px 0 0;
+  color: var(--zh-text-primary);
+  font-size: var(--zh-font-size20);
+  font-weight: 600;
+  letter-spacing: var(--zh-tracking-tight);
+  line-height: 1.4;
+}
+
+.submission-preview-header p {
+  max-width: 620px;
+  margin: 8px 0 0;
+  color: var(--zh-text-secondary);
+  font-size: var(--zh-font-size13);
+  line-height: 1.7;
+  white-space: pre-wrap;
+}
+
+.submission-preview-header > span {
+  flex: none;
+  padding: 6px 8px;
+  border-radius: var(--zh-radius6);
+  color: var(--zh-text-theme);
+  background: var(--zh-background-weaken);
+  font: 600 var(--zh-font-size12) var(--zh-font-number);
+}
+
+.submission-attribute-list {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 8px;
+  margin: 0 0 20px;
+}
+
+.submission-attribute-list > div {
+  min-width: 0;
+  padding: 10px 11px;
+  border: 1px solid var(--zh-line-border);
+  border-radius: var(--zh-radius8);
+  background: var(--zh-background-primary);
+}
+
+.submission-attribute-list dd {
+  margin-top: 5px;
+  color: var(--zh-text-primary);
+  font-family: var(--zh-font-text);
+  text-align: left;
+}
+
+.submission-content {
+  padding: 18px;
+  border: 1px solid var(--zh-line-border);
+  border-radius: var(--zh-radius12);
+  background: var(--zh-background-primary);
+}
+
+.submission-content-heading {
+  margin-bottom: 14px;
+}
+
+.submission-content-heading strong {
+  color: var(--zh-text-primary);
+  font-size: var(--zh-font-size14);
+  font-weight: 600;
 }
 
 /* ===== 表格行悬浮过渡 ===== */
@@ -1202,9 +1688,64 @@ onBeforeUnmount(() => {
   100% { background-position: 200% 0; }
 }
 
-/* ===== 脉冲动画（敏感词预警图标） ===== */
-@keyframes pulse {
-  0%, 100% { opacity: 1; }
-  50% { opacity: 0.5; }
+@media (max-width: 760px) {
+  .moderation-page-header,
+  .moderation-toolbar {
+    align-items: stretch;
+    flex-direction: column;
+  }
+
+  .moderation-page-header {
+    gap: 16px;
+  }
+
+  .moderation-page-header h1 {
+    font-size: var(--zh-font-size24);
+  }
+
+  .moderation-refresh {
+    align-self: flex-start;
+  }
+
+  .moderation-filters {
+    width: 100%;
+  }
+
+  .moderation-filters :deep(.el-select) {
+    flex: 1;
+    width: auto;
+  }
+
+  :deep(.moderation-detail-drawer .el-drawer__header) {
+    min-height: 82px;
+    padding: 0 20px;
+  }
+
+  .moderation-drawer-header {
+    padding-right: 20px;
+  }
+
+  .moderation-drawer-header h2 {
+    font-size: var(--zh-font-size20);
+  }
+
+  .moderation-detail-layout {
+    display: block;
+    height: auto;
+  }
+
+  .moderation-task-panel,
+  .submission-preview-viewport {
+    overflow: visible;
+  }
+
+  .moderation-preview-panel {
+    border-top: 1px solid var(--zh-line-border);
+    border-left: 0;
+  }
+
+  .submission-attribute-list {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
 }
 </style>

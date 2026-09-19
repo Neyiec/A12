@@ -7,6 +7,8 @@ const props = defineProps({
   subject: { type: String, default: '' },
   grade: { type: String, default: '' },
   plan: { type: Object, default: null },
+  embedded: { type: Boolean, default: false },
+  emptyDescription: { type: String, default: '暂无可预览的教案内容' },
 })
 
 const emit = defineEmits(['update:modelValue'])
@@ -97,15 +99,22 @@ const assessment = computed(() => {
 })
 const blackboardDesign = computed(() => firstText(previewPlan.value, ['blackboard_design', 'blackboard']))
 const reflection = computed(() => firstText(previewPlan.value, ['reflection', 'teaching_reflection']))
+const previewWrapperComponent = computed(() => props.embedded ? 'section' : 'el-dialog')
+const previewWrapperProps = computed(() => props.embedded
+  ? { class: 'lesson-plan-preview-embedded' }
+  : {
+      modelValue: props.modelValue,
+      title: '教学案预览',
+      width: 'min(1060px, 94vw)',
+      alignCenter: true,
+      class: 'lesson-plan-preview-dialog',
+    })
 </script>
 
 <template>
-  <el-dialog
-    :model-value="modelValue"
-    title="教学案预览"
-    width="min(1060px, 94vw)"
-    align-center
-    class="lesson-plan-preview-dialog"
+  <component
+    :is="previewWrapperComponent"
+    v-bind="previewWrapperProps"
     @update:model-value="emit('update:modelValue', $event)"
   >
     <article v-if="hasPlan" class="lesson-plan-preview" aria-label="教学案预览内容">
@@ -115,20 +124,20 @@ const reflection = computed(() => firstText(previewPlan.value, ['reflection', 't
         <p>{{ planSubject }}<template v-if="planGrade"> · {{ planGrade }}</template> · {{ planDuration }} 分钟</p>
       </header>
 
-      <section v-if="teachingGoals" class="lesson-plan-preview-section">
-        <h2>教学目标</h2>
+      <details v-if="teachingGoals" class="lesson-plan-preview-section lesson-plan-preview-fold">
+        <summary><h2>教学目标</h2></summary>
         <p>{{ teachingGoals }}</p>
-      </section>
+      </details>
 
       <section v-if="keyPoints.length || difficultPoints.length || teachingMethods.length || teachingResources.length" class="lesson-plan-preview-grid">
-        <section v-if="keyPoints.length" class="lesson-plan-preview-section"><h2>教学重点</h2><ul><li v-for="item in keyPoints" :key="item">{{ item }}</li></ul></section>
-        <section v-if="difficultPoints.length" class="lesson-plan-preview-section"><h2>教学难点</h2><ul><li v-for="item in difficultPoints" :key="item">{{ item }}</li></ul></section>
-        <section v-if="teachingMethods.length" class="lesson-plan-preview-section"><h2>教学方法</h2><ul><li v-for="item in teachingMethods" :key="item">{{ item }}</li></ul></section>
-        <section v-if="teachingResources.length" class="lesson-plan-preview-section"><h2>教学资源</h2><ul><li v-for="item in teachingResources" :key="item">{{ item }}</li></ul></section>
+        <details v-if="keyPoints.length" class="lesson-plan-preview-section lesson-plan-preview-fold"><summary><h2>教学重点</h2></summary><ul><li v-for="item in keyPoints" :key="item">{{ item }}</li></ul></details>
+        <details v-if="difficultPoints.length" class="lesson-plan-preview-section lesson-plan-preview-fold"><summary><h2>教学难点</h2></summary><ul><li v-for="item in difficultPoints" :key="item">{{ item }}</li></ul></details>
+        <details v-if="teachingMethods.length" class="lesson-plan-preview-section lesson-plan-preview-fold"><summary><h2>教学方法</h2></summary><ul><li v-for="item in teachingMethods" :key="item">{{ item }}</li></ul></details>
+        <details v-if="teachingResources.length" class="lesson-plan-preview-section lesson-plan-preview-fold"><summary><h2>教学资源</h2></summary><ul><li v-for="item in teachingResources" :key="item">{{ item }}</li></ul></details>
       </section>
 
-      <section v-if="processSteps.length" class="lesson-plan-preview-section lesson-plan-preview-process">
-        <h2>教学过程</h2>
+      <details v-if="processSteps.length" class="lesson-plan-preview-section lesson-plan-preview-process lesson-plan-preview-fold">
+        <summary><h2>教学过程</h2></summary>
         <ol>
           <li v-for="(step, index) in processSteps" :key="`${step.title}-${index}`">
             <div class="lesson-plan-preview-step-number">{{ String(index + 1).padStart(2, '0') }}</div>
@@ -143,30 +152,31 @@ const reflection = computed(() => firstText(previewPlan.value, ['reflection', 't
             </div>
           </li>
         </ol>
-      </section>
+      </details>
 
-      <section v-if="classroomActivities.length" class="lesson-plan-preview-section lesson-plan-preview-activities">
-        <h2>课堂活动</h2>
+      <details v-if="classroomActivities.length" class="lesson-plan-preview-section lesson-plan-preview-activities lesson-plan-preview-fold">
+        <summary><h2>课堂活动</h2></summary>
         <article v-for="(activity, index) in classroomActivities" :key="`${activity.name}-${index}`">
           <header><h3>{{ activity.name }}</h3><span v-if="activity.duration">{{ activity.duration }} 分钟</span></header>
           <p v-if="activity.description">{{ activity.description }}</p>
         </article>
-      </section>
+      </details>
 
       <section v-if="blackboardDesign || homework.length || assessment.formative || assessment.summative || reflection" class="lesson-plan-preview-grid">
-        <section v-if="blackboardDesign" class="lesson-plan-preview-section"><h2>板书设计</h2><p>{{ blackboardDesign }}</p></section>
-        <section v-if="homework.length" class="lesson-plan-preview-section"><h2>课后作业</h2><ul><li v-for="item in homework" :key="item">{{ item }}</li></ul></section>
-        <section v-if="assessment.formative" class="lesson-plan-preview-section"><h2>形成性评价</h2><p>{{ assessment.formative }}</p></section>
-        <section v-if="assessment.summative" class="lesson-plan-preview-section"><h2>总结性评价</h2><p>{{ assessment.summative }}</p></section>
-        <section v-if="reflection" class="lesson-plan-preview-section lesson-plan-preview-wide"><h2>课后反思</h2><p>{{ reflection }}</p></section>
+        <details v-if="blackboardDesign" class="lesson-plan-preview-section lesson-plan-preview-fold"><summary><h2>板书设计</h2></summary><p>{{ blackboardDesign }}</p></details>
+        <details v-if="homework.length" class="lesson-plan-preview-section lesson-plan-preview-fold"><summary><h2>课后作业</h2></summary><ul><li v-for="item in homework" :key="item">{{ item }}</li></ul></details>
+        <details v-if="assessment.formative" class="lesson-plan-preview-section lesson-plan-preview-fold"><summary><h2>形成性评价</h2></summary><p>{{ assessment.formative }}</p></details>
+        <details v-if="assessment.summative" class="lesson-plan-preview-section lesson-plan-preview-fold"><summary><h2>总结性评价</h2></summary><p>{{ assessment.summative }}</p></details>
+        <details v-if="reflection" class="lesson-plan-preview-section lesson-plan-preview-wide lesson-plan-preview-fold"><summary><h2>课后反思</h2></summary><p>{{ reflection }}</p></details>
       </section>
     </article>
-    <el-empty v-else description="暂无可预览的教案内容" :image-size="72" />
-    <template #footer><el-button @click="emit('update:modelValue', false)">返回编辑</el-button></template>
-  </el-dialog>
+    <el-empty v-else :description="emptyDescription" :image-size="72" />
+    <template v-if="!embedded" #footer><el-button @click="emit('update:modelValue', false)">返回编辑</el-button></template>
+  </component>
 </template>
 
 <style scoped>
+.lesson-plan-preview-embedded .lesson-plan-preview { max-height: none; overflow: visible; padding: 0; }
 .lesson-plan-preview { display: grid; gap: 16px; max-height: min(76vh, 820px); overflow: auto; padding: 2px 4px 8px 0; color: var(--zh-text-secondary); }
 .lesson-plan-preview-header { padding: 22px 24px; border: 1px solid var(--zh-line-theme20); border-radius: var(--zh-radius12); background: var(--zh-background-weaken); }
 .lesson-plan-preview-header > span { color: var(--zh-text-theme); font: 700 10px var(--zh-font-number); letter-spacing: .12em; }
@@ -174,6 +184,7 @@ const reflection = computed(() => firstText(previewPlan.value, ['reflection', 't
 .lesson-plan-preview-header p { margin: 0; color: var(--zh-text-caption); font-size: 12px; }
 .lesson-plan-preview-section { min-width: 0; padding: 18px 20px; border: 1px solid var(--zh-line-border); border-radius: var(--zh-radius10); background: var(--zh-background-primary); }
 .lesson-plan-preview-section h2 { margin: 0 0 10px; color: var(--zh-text-primary); font-size: 14px; }
+.lesson-plan-preview-fold { padding: 0; overflow: hidden; }.lesson-plan-preview-fold > summary { display: flex; align-items: center; justify-content: space-between; gap: 12px; padding: 16px 20px; color: var(--zh-text-primary); cursor: pointer; list-style: none; }.lesson-plan-preview-fold > summary::-webkit-details-marker { display: none; }.lesson-plan-preview-fold > summary h2 { margin: 0; }.lesson-plan-preview-fold > summary::after { flex: none; color: var(--zh-text-link); content: '展开'; font-size: 11px; font-weight: 600; }.lesson-plan-preview-fold[open] > summary { border-bottom: 1px solid var(--zh-line-parting); background: var(--zh-background-light); }.lesson-plan-preview-fold[open] > summary::after { content: '收起'; }.lesson-plan-preview-fold > p,.lesson-plan-preview-fold > ul { margin: 0 20px 18px; }.lesson-plan-preview-fold.lesson-plan-preview-process > ol { margin: 0 20px 18px; }.lesson-plan-preview-fold.lesson-plan-preview-activities { display: block; }.lesson-plan-preview-fold.lesson-plan-preview-activities > article { margin: 0 20px 12px; }.lesson-plan-preview-fold.lesson-plan-preview-activities > article:last-child { margin-bottom: 18px; }
 .lesson-plan-preview-section p { margin: 0; color: var(--zh-text-secondary); font-size: 13px; line-height: 1.8; white-space: pre-wrap; }
 .lesson-plan-preview-section ul { display: grid; gap: 6px; margin: 0; padding: 0; list-style: none; }
 .lesson-plan-preview-section li { position: relative; padding-left: 13px; color: var(--zh-text-secondary); font-size: 13px; line-height: 1.65; white-space: pre-wrap; }
