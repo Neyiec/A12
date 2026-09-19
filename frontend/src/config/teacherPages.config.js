@@ -19,6 +19,8 @@ export const RESOURCE_PAGE = {
   ],
 }
 
+import { createPresentationFixture } from '../mock/data/presentationFixture.js'
+
 /**
  * 教师端可重复运行的全流程测试案例。
  * 路径：社区复用 → 创作工作台 → 导出预检 → 生成进度 → 下载成果。
@@ -36,6 +38,27 @@ export const END_TO_END_TEST_CASE = {
   steps: ['从社区复用案例', '在创作工作台调整内容', '完成导出预检并生成', '下载并预览成果'],
 }
 
+const communityPreviewPresentation = createPresentationFixture()
+const COMMUNITY_CASE_PREVIEW = JSON.stringify({
+  source: 'a12-html-ppt-workspace',
+  slides: communityPreviewPresentation.slides,
+  lesson_plan: {
+    title: communityPreviewPresentation.title,
+    subject: '生物',
+    grade: '七年级',
+    duration_minutes: 45,
+    teaching_goals: '通过观察、实验和证据整理，理解光合作用的基本过程，并能用证据解释现象。',
+    lesson_process: communityPreviewPresentation.slides.map((slide, index) => ({
+      stage: slide.title,
+      duration_minutes: index === 0 ? 5 : 6,
+      teacher_activity: slide.notes || `围绕第 ${index + 1} 页组织课堂讲解与提问。`,
+      student_activity: '观察页面信息，完成小组讨论并表达判断。',
+      design_intent: '让学生把观察到的现象转化为可解释的证据。',
+      ppt_reference: `第 ${index + 1} 页`,
+    })),
+  },
+})
+
 export const COMMUNITY_PAGE = {
   featured: {
     testCaseId: END_TO_END_TEST_CASE.id, type: '测试案例', title: END_TO_END_TEST_CASE.title, description: END_TO_END_TEST_CASE.description,
@@ -45,7 +68,7 @@ export const COMMUNITY_PAGE = {
     { testCaseId: 'concept-question-chain', type: 'Skill', title: '概念课问题链生成器', subject: '通用', stage: '通用', author: '系统测试案例', uses: 0, tag: '问题链', updatedAt: '2026-07-29' },
     { testCaseId: 'circuit-interaction', type: '案例', title: '串联与并联电路互动实验', subject: '物理', stage: '初中', author: '系统测试案例', uses: 0, tag: '互动实验', updatedAt: '2026-07-29' },
     { testCaseId: 'classical-chinese-intro', type: 'Skill', title: '文言文情境导入设计', subject: '语文', stage: '高中', author: '系统测试案例', uses: 0, tag: '情境导入', updatedAt: '2026-07-29' },
-    { testCaseId: 'photosynthesis-evidence', type: '案例', title: '光合作用证据推理课堂', subject: '生物', stage: '初中', author: '系统测试案例', uses: 0, tag: '证据推理', updatedAt: '2026-07-29' },
+    { testCaseId: 'photosynthesis-evidence', type: '案例', title: '光合作用证据推理课堂', subject: '生物', stage: '初中', author: '系统测试案例', uses: 0, tag: '证据推理', description: '用观察、实验和证据整理组织一节探究课，支持直接预览 PPT 与教案。', content_data: COMMUNITY_CASE_PREVIEW, updatedAt: '2026-07-29' },
   ],
 }
 
