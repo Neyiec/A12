@@ -1180,6 +1180,20 @@ onBeforeUnmount(() => {
   width: min(1440px, 100%);
   margin: 0 auto;
   padding: 8px 4px 28px;
+  /* 审核操作保留状态语义，但将高饱和按钮收敛到灰白审核工作台的色阶。 */
+  --audit-control-primary: color-mix(in srgb, var(--zh-text-theme) 68%, var(--zh-text-primary) 32%);
+  --audit-control-primary-hover: color-mix(in srgb, var(--zh-text-theme) 78%, var(--zh-text-primary) 22%);
+  --audit-control-primary-soft: color-mix(in srgb, var(--zh-text-theme) 8%, var(--zh-background-primary));
+  --audit-control-primary-border: color-mix(in srgb, var(--zh-text-theme) 25%, var(--zh-line-border));
+  --audit-control-danger: color-mix(in srgb, var(--zh-red) 64%, var(--zh-text-primary) 36%);
+  --audit-control-danger-hover: color-mix(in srgb, var(--zh-red) 74%, var(--zh-text-primary) 26%);
+  --audit-control-danger-soft: color-mix(in srgb, var(--zh-red) 7%, var(--zh-background-primary));
+  --audit-control-danger-border: color-mix(in srgb, var(--zh-red) 24%, var(--zh-line-border));
+  --audit-control-warning: color-mix(in srgb, var(--zh-orange) 64%, var(--zh-text-primary) 36%);
+  --audit-control-warning-soft: color-mix(in srgb, var(--zh-orange) 8%, var(--zh-background-primary));
+  --audit-control-warning-border: color-mix(in srgb, var(--zh-orange) 24%, var(--zh-line-border));
+  --audit-control-success: color-mix(in srgb, var(--zh-green) 68%, var(--zh-text-primary) 32%);
+  --audit-control-success-hover: color-mix(in srgb, var(--zh-green) 78%, var(--zh-text-primary) 22%);
 }
 
 .moderation-page-header {
@@ -1283,6 +1297,19 @@ onBeforeUnmount(() => {
 
 :deep(.moderation-detail-drawer) {
   max-width: 94vw;
+  --audit-control-primary: color-mix(in srgb, var(--zh-text-theme) 68%, var(--zh-text-primary) 32%);
+  --audit-control-primary-hover: color-mix(in srgb, var(--zh-text-theme) 78%, var(--zh-text-primary) 22%);
+  --audit-control-primary-soft: color-mix(in srgb, var(--zh-text-theme) 8%, var(--zh-background-primary));
+  --audit-control-primary-border: color-mix(in srgb, var(--zh-text-theme) 25%, var(--zh-line-border));
+  --audit-control-danger: color-mix(in srgb, var(--zh-red) 64%, var(--zh-text-primary) 36%);
+  --audit-control-danger-hover: color-mix(in srgb, var(--zh-red) 74%, var(--zh-text-primary) 26%);
+  --audit-control-danger-soft: color-mix(in srgb, var(--zh-red) 7%, var(--zh-background-primary));
+  --audit-control-danger-border: color-mix(in srgb, var(--zh-red) 24%, var(--zh-line-border));
+  --audit-control-warning: color-mix(in srgb, var(--zh-orange) 64%, var(--zh-text-primary) 36%);
+  --audit-control-warning-soft: color-mix(in srgb, var(--zh-orange) 8%, var(--zh-background-primary));
+  --audit-control-warning-border: color-mix(in srgb, var(--zh-orange) 24%, var(--zh-line-border));
+  --audit-control-success: color-mix(in srgb, var(--zh-green) 68%, var(--zh-text-primary) 32%);
+  --audit-control-success-hover: color-mix(in srgb, var(--zh-green) 78%, var(--zh-text-primary) 22%);
 }
 
 :deep(.moderation-detail-drawer .el-drawer__header) {
@@ -1349,6 +1376,36 @@ onBeforeUnmount(() => {
   width: 6px;
   height: 6px;
   border-radius: 50%;
+}
+
+:deep(.moderation-detail-drawer .drawer-status-tag.el-tag--warning) {
+  --el-tag-text-color: var(--audit-control-warning);
+  --el-tag-border-color: var(--audit-control-warning-border);
+  --el-tag-bg-color: var(--audit-control-warning-soft);
+}
+
+:deep(.moderation-detail-drawer .drawer-status-tag.el-tag--warning i) {
+  background: var(--audit-control-warning) !important;
+}
+
+:deep(.moderation-detail-drawer .drawer-status-tag.el-tag--danger) {
+  --el-tag-text-color: var(--audit-control-danger);
+  --el-tag-border-color: var(--audit-control-danger-border);
+  --el-tag-bg-color: var(--audit-control-danger-soft);
+}
+
+:deep(.moderation-detail-drawer .drawer-status-tag.el-tag--danger i) {
+  background: var(--audit-control-danger) !important;
+}
+
+:deep(.moderation-detail-drawer .drawer-status-tag.el-tag--success) {
+  --el-tag-text-color: var(--audit-control-success);
+  --el-tag-border-color: color-mix(in srgb, var(--zh-green) 24%, var(--zh-line-border));
+  --el-tag-bg-color: color-mix(in srgb, var(--zh-green) 7%, var(--zh-background-primary));
+}
+
+:deep(.moderation-detail-drawer .drawer-status-tag.el-tag--success i) {
+  background: var(--audit-control-success) !important;
 }
 
 .moderation-detail-layout {
@@ -1524,6 +1581,72 @@ onBeforeUnmount(() => {
   min-width: 108px;
   margin: 0;
   font-weight: 600;
+}
+
+/* 表格与抽屉里的操作按钮共用一套低饱和审核色。 */
+:deep(.moderation-table-card .el-button.is-link.el-button--primary),
+:deep(.moderation-detail-drawer .el-button.is-link.el-button--primary) {
+  --el-button-text-color: var(--audit-control-primary);
+  --el-button-hover-link-text-color: var(--audit-control-primary-hover);
+  --el-button-hover-text-color: var(--audit-control-primary-hover);
+  --el-button-active-color: var(--audit-control-primary-hover);
+  --el-button-active-text-color: var(--audit-control-primary-hover);
+}
+
+:deep(.moderation-table-card .el-button.is-link.el-button--success) {
+  --el-button-text-color: var(--audit-control-success);
+  --el-button-hover-link-text-color: var(--audit-control-success-hover);
+  --el-button-hover-text-color: var(--audit-control-success-hover);
+  --el-button-active-color: var(--audit-control-success-hover);
+  --el-button-active-text-color: var(--audit-control-success-hover);
+}
+
+:deep(.moderation-table-card .el-button.is-link.el-button--danger) {
+  --el-button-text-color: var(--audit-control-danger);
+  --el-button-hover-link-text-color: var(--audit-control-danger-hover);
+  --el-button-hover-text-color: var(--audit-control-danger-hover);
+  --el-button-active-color: var(--audit-control-danger-hover);
+  --el-button-active-text-color: var(--audit-control-danger-hover);
+}
+
+:deep(.moderation-detail-drawer .task-action-buttons .el-button--primary) {
+  --el-button-text-color: var(--zh-text-white);
+  --el-button-bg-color: var(--audit-control-primary);
+  --el-button-border-color: var(--audit-control-primary);
+  --el-button-hover-text-color: var(--zh-text-white);
+  --el-button-hover-bg-color: var(--audit-control-primary-hover);
+  --el-button-hover-border-color: var(--audit-control-primary-hover);
+  --el-button-active-color: var(--zh-text-white);
+  --el-button-active-text-color: var(--zh-text-white);
+  --el-button-active-bg-color: var(--audit-control-primary-hover);
+  --el-button-active-border-color: var(--audit-control-primary-hover);
+}
+
+:deep(.moderation-detail-drawer .task-action-buttons .el-button--danger:not(.is-plain)) {
+  --el-button-text-color: var(--zh-text-white);
+  --el-button-bg-color: var(--audit-control-danger);
+  --el-button-border-color: var(--audit-control-danger);
+  --el-button-hover-text-color: var(--zh-text-white);
+  --el-button-hover-bg-color: var(--audit-control-danger-hover);
+  --el-button-hover-border-color: var(--audit-control-danger-hover);
+  --el-button-active-color: var(--zh-text-white);
+  --el-button-active-text-color: var(--zh-text-white);
+  --el-button-active-bg-color: var(--audit-control-danger-hover);
+  --el-button-active-border-color: var(--audit-control-danger-hover);
+}
+
+:deep(.moderation-detail-drawer .task-action-buttons .el-button--danger.is-plain) {
+  --el-button-text-color: var(--audit-control-danger);
+  --el-button-bg-color: var(--audit-control-danger-soft);
+  --el-button-border-color: var(--audit-control-danger-border);
+  --el-button-hover-text-color: var(--audit-control-danger-hover);
+  --el-button-hover-link-text-color: var(--audit-control-danger-hover);
+  --el-button-hover-bg-color: color-mix(in srgb, var(--zh-red) 12%, var(--zh-background-primary));
+  --el-button-hover-border-color: var(--audit-control-danger-hover);
+  --el-button-active-color: var(--audit-control-danger-hover);
+  --el-button-active-text-color: var(--audit-control-danger-hover);
+  --el-button-active-bg-color: color-mix(in srgb, var(--zh-red) 12%, var(--zh-background-primary));
+  --el-button-active-border-color: var(--audit-control-danger-hover);
 }
 
 .task-action-buttons :deep(.el-button:active),
