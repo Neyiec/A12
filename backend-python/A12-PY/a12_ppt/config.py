@@ -40,6 +40,12 @@ class Settings:
     enable_quality_pipeline: bool
     quality_preset: str
     postgres_dsn: str
+    enable_autonomous_tools: bool
+    enable_mcp_tools: bool
+    mcp_servers: str
+    tool_call_timeout_seconds: float
+    mcp_discovery_timeout_seconds: float
+    mcp_tool_cache_ttl_seconds: float
 
 
 @lru_cache
@@ -82,4 +88,10 @@ def get_settings() -> Settings:
         enable_quality_pipeline=enable_quality_pipeline,
         quality_preset=quality_preset,
         postgres_dsn=os.getenv("POSTGRES_DSN", "postgresql://postgres:postgres@127.0.0.1:5432/postgres"),
+        enable_autonomous_tools=os.getenv("ENABLE_AUTONOMOUS_TOOLS", "true").lower() == "true",
+        enable_mcp_tools=os.getenv("ENABLE_MCP_TOOLS", "false").lower() == "true",
+        mcp_servers=os.getenv("MCP_SERVERS", ""),
+        tool_call_timeout_seconds=float(os.getenv("TOOL_CALL_TIMEOUT_SECONDS", "30")),
+        mcp_discovery_timeout_seconds=float(os.getenv("MCP_DISCOVERY_TIMEOUT_SECONDS", "15")),
+        mcp_tool_cache_ttl_seconds=float(os.getenv("MCP_TOOL_CACHE_TTL_SECONDS", "300")),
     )

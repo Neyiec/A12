@@ -16,6 +16,10 @@ export default defineConfig(({ mode }) => {
     plugins: [vue(), tailwindcss()],
     server: {
       port: 8888,
+      fs: {
+        // 审核页复用教师端的只读社区预览组件。
+        allow: [fileURLToPath(new URL('..', import.meta.url))],
+      },
       proxy: {
         '/api': {
           target: env.VITE_API_PROXY_TARGET,
