@@ -18,6 +18,8 @@ public class LoginVO {
     private int user_id;
     private String username;
     private String real_name;
+    private String email;
+    private String phone;
     private String avatar;
     private String user_type;
     private String roles;

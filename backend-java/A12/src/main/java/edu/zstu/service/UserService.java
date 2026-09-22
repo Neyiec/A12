@@ -1,6 +1,7 @@
 package edu.zstu.service;
 
 import edu.zstu.dto.PasswordChangeDTO;
+import edu.zstu.dto.ContactChangeDTO;
 import edu.zstu.vo.UserVO;
 
 import java.util.Map;
@@ -12,6 +13,7 @@ import java.util.Map;
 public interface UserService {
     UserVO getCurrentUser();
     void changePassword(PasswordChangeDTO dto);
+    UserVO changeContact(ContactChangeDTO dto);
 
     Map<String, Object> findUserIdByUsername(String username);
     Map<String, Object> findUserIdByEmail(String email);

@@ -173,8 +173,9 @@ public class AuthServiceImpl implements AuthService {
     @Override
     public void sendVerificationCode(VerificationCodeDTO dto) {
         log.info("sendVerificationCode scene={}, channel={}, username={}", dto.getScene(), dto.getChannel(), dto.getUsername());
-        if (!"register".equals(dto.getScene()) && !"password_reset".equals(dto.getScene())) {
-            throw new RuntimeException("无效的场景值，仅支持 register / password_reset");
+        if (!"register".equals(dto.getScene()) && !"password_reset".equals(dto.getScene())
+                && !"profile_update".equals(dto.getScene())) {
+            throw new RuntimeException("无效的验证码场景");
         }
         if (!"email".equals(dto.getChannel())) {
             throw new RuntimeException("目前仅支持邮箱验证码，不支持手机");
@@ -185,7 +186,7 @@ public class AuthServiceImpl implements AuthService {
             // 注册场景：用户未创建，username 字段是邮箱
             email = dto.getUsername();
         } else {
-            // 密码重置场景：通过用户名查邮箱
+            // 密码重置与资料修改场景：通过用户名查找当前绑定邮箱
             Sys_User user = userMapper.findByUsername(dto.getUsername());
             if (user == null) throw new RuntimeException("用户不存在");
             email = user.getEmail();
@@ -205,7 +206,9 @@ public class AuthServiceImpl implements AuthService {
         SimpleMailMessage message = new SimpleMailMessage();
         message.setFrom(mailUsername);
         message.setTo(email);
-        message.setSubject("A12 教学平台 - " + ("register".equals(dto.getScene()) ? "注册" : "密码重置") + "验证码");
+        String sceneName = "register".equals(dto.getScene()) ? "注册"
+                : ("profile_update".equals(dto.getScene()) ? "修改个人信息" : "密码重置");
+        message.setSubject("A12 教学平台 - " + sceneName + "验证码");
         message.setText("您的验证码为：" + code + "\n有效期 60 秒，请勿泄露给他人。");
         mailSender.send(message);
         log.info("sendVerificationCode success scene={}, email={}", dto.getScene(), email);

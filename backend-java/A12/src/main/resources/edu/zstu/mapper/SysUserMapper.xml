@@ -39,6 +39,10 @@
         SELECT <include refid="Base_Columns"/> FROM sys_user WHERE email = #{email} AND deleted_at IS NULL
     </select>
 
+    <select id="findByPhone" resultMap="BaseResultMap">
+        SELECT <include refid="Base_Columns"/> FROM sys_user WHERE phone = #{phone} AND deleted_at IS NULL
+    </select>
+
     <select id="findByUsernameAndPasswordHash" resultMap="BaseResultMap">
         SELECT <include refid="Base_Columns"/> FROM sys_user WHERE username = #{username} AND password_hash = #{passwordHash} AND deleted_at IS NULL
     </select>
@@ -81,6 +85,17 @@
 
     <update id="changePassword">
         UPDATE sys_user SET password_hash = #{newPasswordHash}, password_changed_at = NOW(), updated_at = NOW() WHERE username = #{username} AND deleted_at IS NULL
+    </update>
+
+    <update id="updateContact">
+        UPDATE sys_user
+        <set>
+            <if test="realNameChanged">real_name = #{realName},</if>
+            <if test="emailChanged">email = #{email}, email_verified = 0,</if>
+            <if test="phoneChanged">phone = #{phone}, phone_verified = 0,</if>
+            updated_at = NOW()
+        </set>
+        WHERE id = #{id} AND deleted_at IS NULL
     </update>
 
     <update id="updateLastLogin">

@@ -1,6 +1,7 @@
 package edu.zstu.controller;
 
 import edu.zstu.dto.PasswordChangeDTO;
+import edu.zstu.dto.ContactChangeDTO;
 import edu.zstu.service.UserService;
 import edu.zstu.utils.Result;
 import edu.zstu.vo.UserVO;
@@ -50,6 +51,12 @@ public class UserController {
     {
         userService.changePassword(dto);
         return Result.success();
+    }
+
+    /** 使用发送至原邮箱的验证码修改当前用户真实姓名、邮箱或手机号。 */
+    @PostMapping("/me/contact-change")
+    public Result<UserVO> changeContact(@RequestBody ContactChangeDTO dto) {
+        return Result.success(userService.changeContact(dto));
     }
 
     /**

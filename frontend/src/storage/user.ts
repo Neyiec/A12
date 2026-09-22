@@ -21,6 +21,10 @@ export interface UserInfo {
   real_name: string
   /** 头像URL */
   avatar: string
+  /** 当前绑定邮箱 */
+  email: string
+  /** 当前绑定手机号 */
+  phone: string
   /** 用户类型: teacher / admin */
   user_type: 'teacher' | 'admin'
   /** 角色列表（后端以 JSON 字符串返回，存储时解析为数组） */
@@ -74,10 +78,12 @@ export const useUserStore = defineStore('user', () => {
     } catch { /* 解析失败则使用空数组 */ }
 
     userInfo.value = {
-      user_id: info.user_id,
+      user_id: info.user_id ?? info.id,
       username: info.username,
       real_name: info.real_name || '',
       avatar: info.avatar || '',
+      email: info.email || '',
+      phone: info.phone || '',
       user_type: info.user_type || 'teacher',
       roles,
       permissions,
