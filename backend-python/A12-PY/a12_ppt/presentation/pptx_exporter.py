@@ -1,6 +1,7 @@
 import asyncio
 import base64
 import json
+import logging
 import mimetypes
 import re
 import shutil
@@ -13,13 +14,15 @@ from typing import Any
 
 EXPORT_DIR = Path(__file__).resolve().parents[2] / "data" / "exports"
 EXPORT_DIR.mkdir(parents=True, exist_ok=True)
+LANDPPT_DOM_TO_PPTX_BUNDLE = Path(__file__).resolve().parent / "vendor" / "dom-to-pptx.bundle.js"
+logger = logging.getLogger(__name__)
 
 
 async def export_html_slides_to_pptx(
     title: str,
     slides: list[dict[str, Any]],
     filename: str | None = None,
-    fidelity: str = "high_fidelity",
+    fidelity: str = "dom_editable",
     package_static_assets: bool = True,
 ) -> Path:
     static_assets = _collect_static_assets(slides) if package_static_assets else []
@@ -27,12 +30,338 @@ async def export_html_slides_to_pptx(
         rendered = await _export_high_fidelity_safe(title, slides, filename)
         if rendered:
             return _package_if_needed(title, rendered, static_assets, filename)
-    output = _export_editable_text(title, slides, filename)
+    output = await _export_dom_to_pptx_safe(title, slides, filename)
+    if not output:
+        output = await _export_editable_elements_safe(title, slides, filename)
+    if not output:
+        output = _export_editable_text(title, slides, filename)
     return _package_if_needed(title, output, static_assets, filename)
 
 
 def export_html_slides_to_pptx_sync(title: str, slides: list[dict[str, Any]], filename: str | None = None) -> Path:
     return _export_editable_text(title, slides, filename)
+
+
+async def _export_dom_to_pptx_safe(
+    title: str,
+    slides: list[dict[str, Any]],
+    filename: str | None = None,
+) -> Path | None:
+    """使用 LandPPT 的 dom-to-pptx/PptxGenJS 管线生成原生、可编辑的 PPT 对象。"""
+    try:
+        if _loop_supports_subprocess():
+            return await _export_dom_to_pptx(title, slides, filename)
+        return await asyncio.to_thread(_run_dom_to_pptx_isolated, title, slides, filename)
+    except Exception as exc:
+        # 浏览器运行时或单页 HTML 异常时继续使用项目原有的元素级导出兜底。
+        logger.warning("LandPPT DOM-to-PPTX export failed; using A12 fallback: %s", exc)
+        return None
+
+
+def _run_dom_to_pptx_isolated(
+    title: str,
+    slides: list[dict[str, Any]],
+    filename: str | None = None,
+) -> Path:
+    loop = asyncio.ProactorEventLoop() if sys.platform == "win32" else asyncio.new_event_loop()
+    try:
+        return loop.run_until_complete(_export_dom_to_pptx(title, slides, filename))
+    finally:
+        try:
+            loop.run_until_complete(loop.shutdown_asyncgens())
+        finally:
+            loop.close()
+
+
+async def _export_dom_to_pptx(
+    title: str,
+    slides: list[dict[str, Any]],
+    filename: str | None = None,
+) -> Path:
+    """在 Chromium 中测量真实 DOM，并由 LandPPT/PptxGenJS 输出 OOXML PPTX。"""
+    if not LANDPPT_DOM_TO_PPTX_BUNDLE.is_file():
+        raise FileNotFoundError(f"LandPPT dom-to-pptx bundle not found: {LANDPPT_DOM_TO_PPTX_BUNDLE}")
+
+    from playwright.async_api import async_playwright
+
+    prepared_slides: list[str] = []
+    slide_notes: list[str] = []
+    for index, slide_data in enumerate(slides, 1):
+        markup = str(slide_data.get("html") or slide_data.get("html_content") or "")
+        if not markup.strip():
+            slide_title, bullets = extract_slide_text("", slide_data, index)
+            markup = _fallback_render_html(slide_title, bullets, index, len(slides))
+        prepared_slides.append(markup)
+        slide_notes.append(str(slide_data.get("speaker_notes") or slide_data.get("notes") or ""))
+
+    if not prepared_slides:
+        raise ValueError("No slides provided for PPTX export")
+
+    async with async_playwright() as playwright:
+        browser = await playwright.chromium.launch()
+        page = await browser.new_page(viewport={"width": 1280, "height": 720}, device_scale_factor=1)
+        try:
+            await page.set_content(
+                "<!doctype html><html><head><meta charset='utf-8'></head>"
+                "<body style='margin:0;background:transparent'></body></html>",
+                wait_until="load",
+            )
+            await page.add_script_tag(path=str(LANDPPT_DOM_TO_PPTX_BUNDLE))
+            pptx_base64 = await page.evaluate(
+                _LANDPPT_EXPORT_SCRIPT,
+                {"slides": prepared_slides, "slideNotes": slide_notes},
+            )
+        finally:
+            await browser.close()
+
+    pptx_bytes = base64.b64decode(pptx_base64, validate=True)
+    if not pptx_bytes.startswith(b"PK"):
+        raise ValueError("dom-to-pptx returned an invalid PPTX payload")
+
+    safe_name = _safe_filename(filename or f"{title}_{uuid.uuid4().hex[:8]}_editable.pptx")
+    if not safe_name.lower().endswith(".pptx"):
+        safe_name += ".pptx"
+    output = EXPORT_DIR / safe_name
+    output.write_bytes(pptx_bytes)
+    return output
+
+
+_LANDPPT_EXPORT_SCRIPT = r"""async ({slides, slideNotes}) => {
+  if (!window.domToPptx || typeof window.domToPptx.exportToPptx !== 'function') {
+    throw new Error('LandPPT dom-to-pptx bundle failed to initialize');
+  }
+
+  const renderHost = document.createElement('div');
+  renderHost.style.cssText = 'position:fixed;left:-9999px;top:-9999px;width:1280px;height:720px;opacity:0;pointer-events:none;overflow:hidden';
+  const frame = document.createElement('iframe');
+  frame.style.cssText = 'width:1280px;height:720px;border:0;display:block';
+  renderHost.appendChild(frame);
+  document.body.appendChild(renderHost);
+
+  const waitForFrame = (markup) => new Promise((resolve, reject) => {
+    const timer = setTimeout(() => reject(new Error('Slide iframe load timed out')), 15000);
+    frame.onload = () => { clearTimeout(timer); resolve(); };
+    frame.onerror = () => { clearTimeout(timer); reject(new Error('Slide iframe failed to load')); };
+    frame.srcdoc = markup;
+  });
+
+  const settleDocument = async (doc) => {
+    try { if (doc.fonts && doc.fonts.ready) await Promise.race([doc.fonts.ready, new Promise(r => setTimeout(r, 3000))]); } catch (_) {}
+    const images = Array.from(doc.images || []);
+    await Promise.all(images.map(img => img.complete ? null : new Promise(resolve => {
+      const done = () => resolve();
+      img.addEventListener('load', done, {once:true});
+      img.addEventListener('error', done, {once:true});
+      setTimeout(done, 5000);
+    })));
+    await new Promise(resolve => (doc.defaultView || window).requestAnimationFrame(() =>
+      (doc.defaultView || window).requestAnimationFrame(resolve)));
+  };
+
+  async function* slideStream() {
+    for (const markup of slides) {
+      await waitForFrame(markup);
+      const doc = frame.contentDocument || frame.contentWindow.document;
+      await settleDocument(doc);
+      const root = doc.querySelector('.slide') || doc.querySelector('[data-ppt-slide]') || doc.body;
+      if (!root) throw new Error('Slide root not found');
+      yield root;
+    }
+  }
+
+  try {
+    const blob = await window.domToPptx.exportToPptx(slideStream(), {
+      skipDownload: true,
+      autoEmbedFonts: false,
+      svgAsVector: false,
+      renderMode: 'dom',
+      slideNotes: Array.isArray(slideNotes) ? slideNotes : []
+    });
+    return await new Promise((resolve, reject) => {
+      const reader = new FileReader();
+      reader.onload = () => resolve(String(reader.result || '').split(',', 2)[1] || '');
+      reader.onerror = () => reject(reader.error || new Error('Unable to read generated PPTX'));
+      reader.readAsDataURL(blob);
+    });
+  } finally {
+    renderHost.remove();
+  }
+}"""
+
+
+async def _export_editable_elements_safe(title: str, slides: list[dict[str, Any]], filename: str | None = None) -> Path | None:
+    """将 HTML 前景文字和媒体转换为独立 PPT 对象，装饰层保留为无文字背景。"""
+    try:
+        if _loop_supports_subprocess():
+            return await _export_editable_elements(title, slides, filename)
+        return await asyncio.to_thread(_run_editable_elements_isolated, title, slides, filename)
+    except Exception:
+        return None
+
+
+def _run_editable_elements_isolated(title: str, slides: list[dict[str, Any]], filename: str | None = None):
+    loop = asyncio.ProactorEventLoop() if sys.platform == "win32" else asyncio.new_event_loop()
+    try:
+        return loop.run_until_complete(_export_editable_elements(title, slides, filename))
+    finally:
+        try:
+            loop.run_until_complete(loop.shutdown_asyncgens())
+        finally:
+            loop.close()
+
+
+async def _export_editable_elements(title: str, slides: list[dict[str, Any]], filename: str | None = None) -> Path:
+    from playwright.async_api import async_playwright
+    from pptx import Presentation
+    from pptx.dml.color import RGBColor
+    from pptx.enum.text import MSO_ANCHOR, PP_ALIGN
+    from pptx.util import Inches, Pt
+
+    prs = Presentation()
+    prs.slide_width = Inches(13.333333)
+    prs.slide_height = Inches(7.5)
+    temp_paths: list[Path] = []
+
+    async with async_playwright() as playwright:
+        browser = await playwright.chromium.launch()
+        page = await browser.new_page(viewport={"width": 1280, "height": 720}, device_scale_factor=2)
+        try:
+            for index, slide_data in enumerate(slides, 1):
+                markup = str(slide_data.get("html") or slide_data.get("html_content") or "")
+                if not markup.strip():
+                    slide_title, bullets = extract_slide_text("", slide_data, index)
+                    markup = _fallback_render_html(slide_title, bullets, index, len(slides))
+                await page.set_content(markup, wait_until="load", timeout=60000)
+                await page.evaluate("document.body.style.margin='0';document.documentElement.style.margin='0';")
+                manifest = await page.evaluate(_DOM_EXPORT_SCRIPT)
+
+                ppt_slide = prs.slides.add_slide(prs.slide_layouts[6])
+
+                # 先把所有文字和媒体透明化，截图只保留渐变、阴影、卡片、伪元素等装饰。
+                await page.add_style_tag(content="""
+                    [data-a12-ppt-text]{color:transparent!important;-webkit-text-fill-color:transparent!important;text-shadow:none!important}
+                    [data-a12-ppt-text] *{color:transparent!important;-webkit-text-fill-color:transparent!important;text-shadow:none!important}
+                    [data-a12-ppt-media]{visibility:hidden!important}
+                """)
+                background = _temp_png()
+                temp_paths.append(background)
+                await page.screenshot(path=str(background), full_page=False, type="png")
+                ppt_slide.shapes.add_picture(str(background), 0, 0, width=prs.slide_width, height=prs.slide_height)
+
+                # 恢复媒体可见性并逐个截图，图片/SVG/Canvas/Table 在 PPT 中是独立、可替换对象。
+                await page.evaluate("document.querySelectorAll('[data-a12-ppt-media]').forEach(e=>e.style.setProperty('visibility','visible','important'))")
+                for media in manifest.get("media", []):
+                    media_path = _temp_png()
+                    temp_paths.append(media_path)
+                    try:
+                        await page.locator(f'[data-a12-ppt-media="{media["id"]}"]').screenshot(path=str(media_path), type="png")
+                        x, y, width, height = _ppt_bounds(media)
+                        picture = ppt_slide.shapes.add_picture(str(media_path), x, y, width=width, height=height)
+                        picture.name = str(media.get("name") or f"媒体_{index}_{media['id']}")[:250]
+                    except Exception:
+                        continue
+
+                for item in manifest.get("texts", []):
+                    text = str(item.get("text") or "").strip()
+                    if not text:
+                        continue
+                    x, y, width, height = _ppt_bounds(item)
+                    box = ppt_slide.shapes.add_textbox(x, y, width, height)
+                    box.name = str(item.get("name") or f"文本_{index}_{item.get('id')}")[:250]
+                    box.rotation = float(item.get("rotation") or 0)
+                    frame = box.text_frame
+                    frame.clear()
+                    frame.word_wrap = True
+                    frame.margin_left = frame.margin_right = frame.margin_top = frame.margin_bottom = 0
+                    frame.vertical_anchor = {
+                        "middle": MSO_ANCHOR.MIDDLE,
+                        "bottom": MSO_ANCHOR.BOTTOM,
+                    }.get(str(item.get("vertical_align") or "").lower(), MSO_ANCHOR.TOP)
+                    lines = text.splitlines() or [text]
+                    for line_no, line in enumerate(lines):
+                        paragraph = frame.paragraphs[0] if line_no == 0 else frame.add_paragraph()
+                        paragraph.text = line
+                        paragraph.alignment = {
+                            "center": PP_ALIGN.CENTER,
+                            "right": PP_ALIGN.RIGHT,
+                            "justify": PP_ALIGN.JUSTIFY,
+                        }.get(str(item.get("align") or "").lower(), PP_ALIGN.LEFT)
+                        paragraph.font.size = Pt(max(1, float(item.get("font_size") or 16) * 0.75))
+                        paragraph.font.bold = int(item.get("font_weight") or 400) >= 600
+                        paragraph.font.italic = str(item.get("font_style") or "").lower() == "italic"
+                        paragraph.font.name = _primary_font(str(item.get("font_family") or ""))
+                        color = _parse_css_color(str(item.get("color") or ""))
+                        if color:
+                            paragraph.font.color.rgb = RGBColor(*color)
+        finally:
+            await browser.close()
+
+    safe_name = _safe_filename(filename or f"{title}_{uuid.uuid4().hex[:8]}_editable.pptx")
+    if not safe_name.lower().endswith(".pptx"):
+        safe_name += ".pptx"
+    output = EXPORT_DIR / safe_name
+    prs.save(output)
+    for path in temp_paths:
+        path.unlink(missing_ok=True)
+    return output
+
+
+_DOM_EXPORT_SCRIPT = r"""() => {
+  const root = document.querySelector('.slide') || document.querySelector('main') || document.body;
+  const rootRect = root.getBoundingClientRect();
+  const sx = 1280 / Math.max(1, rootRect.width);
+  const sy = 720 / Math.max(1, rootRect.height);
+  const visible = (el, rect, style) => style.display !== 'none' && style.visibility !== 'hidden' && Number(style.opacity || 1) > 0 && rect.width > 1 && rect.height > 1;
+  const bounds = (rect) => ({x:(rect.left-rootRect.left)*sx,y:(rect.top-rootRect.top)*sy,width:rect.width*sx,height:rect.height*sy});
+  const rotation = (transform) => { const m = String(transform||'').match(/^matrix\(([^)]+)\)$/); if(!m)return 0; const v=m[1].split(',').map(Number); return Math.atan2(v[1],v[0])*180/Math.PI; };
+  const texts=[];
+  [...root.querySelectorAll('*')].forEach((el,i)=>{
+    if(['SCRIPT','STYLE','NOSCRIPT'].includes(el.tagName))return;
+    if(el.closest('svg,canvas'))return;
+    const direct=[...el.childNodes].filter(node=>node.nodeType===Node.TEXT_NODE).map(node=>node.textContent||'').join(' ').trim();
+    const text=(direct || (el.children.length===0 ? (el.innerText||el.textContent||'') : '')).replace(/\n{3,}/g,'\n\n').trim();
+    const rect=el.getBoundingClientRect(), style=getComputedStyle(el);
+    if(!text || !visible(el,rect,style))return;
+    const id=`t${i}`; el.setAttribute('data-a12-ppt-text',id);
+    texts.push({id,text,name:el.getAttribute('data-name')||el.getAttribute('aria-label')||el.tagName,...bounds(rect),color:style.color,font_size:parseFloat(style.fontSize)||16,font_weight:parseInt(style.fontWeight)||400,font_style:style.fontStyle,font_family:style.fontFamily,align:style.textAlign,vertical_align:style.alignItems,rotation:rotation(style.transform)});
+  });
+  const media=[];
+  [...root.querySelectorAll('img,svg,canvas,table,video')].forEach((el,i)=>{
+    if(el.closest('[data-a12-ppt-media]'))return;
+    const rect=el.getBoundingClientRect(), style=getComputedStyle(el);
+    if(!visible(el,rect,style))return;
+    const id=`m${i}`; el.setAttribute('data-a12-ppt-media',id);
+    media.push({id,name:el.getAttribute('alt')||el.getAttribute('data-name')||el.getAttribute('aria-label')||el.tagName,...bounds(rect)});
+  });
+  return {texts,media};
+}"""
+
+
+def _ppt_bounds(item: dict[str, Any]):
+    from pptx.util import Inches
+
+    x = max(0.0, min(1280.0, float(item.get("x") or 0)))
+    y = max(0.0, min(720.0, float(item.get("y") or 0)))
+    width = max(1.0, min(1280.0 - x, float(item.get("width") or 1)))
+    height = max(1.0, min(720.0 - y, float(item.get("height") or 1)))
+    return Inches(x / 96.0), Inches(y / 96.0), Inches(width / 96.0), Inches(height / 96.0)
+
+
+def _primary_font(value: str) -> str:
+    first = (value.split(",", 1)[0] if value else "Microsoft YaHei").strip(" '\"")
+    return first or "Microsoft YaHei"
+
+
+def _parse_css_color(value: str) -> tuple[int, int, int] | None:
+    text = value.strip().lower()
+    match = re.match(r"rgba?\(\s*(\d+)\s*,\s*(\d+)\s*,\s*(\d+)", text)
+    if match:
+        return tuple(max(0, min(255, int(part))) for part in match.groups())
+    match = re.fullmatch(r"#([0-9a-f]{6})", text)
+    if match:
+        raw = match.group(1)
+        return int(raw[0:2], 16), int(raw[2:4], 16), int(raw[4:6], 16)
+    return None
 
 
 async def _export_high_fidelity_safe(title: str, slides: list[dict[str, Any]], filename: str | None = None):

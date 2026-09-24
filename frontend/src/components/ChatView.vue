@@ -47,6 +47,10 @@ const emit = defineEmits(['back', 'open-workspace', 'planning-request', 'session
 
 const userStore = useUserStore()
 const isGeneralChat = computed(() => props.mode === 'general')
+const selectedModelProfile = ref(localStorage.getItem('a12:model-profile') || 'standard')
+const selectedReasoningEffort = ref(localStorage.getItem('a12:reasoning-effort') || 'medium')
+watch(selectedModelProfile, (value) => localStorage.setItem('a12:model-profile', value))
+watch(selectedReasoningEffort, (value) => localStorage.setItem('a12:reasoning-effort', value))
 
 // ========== 响应式断点（design.md §9.3：手机档 <768px） ==========
 /** 手机档断点：补充信息表单由 display:table 降级为卡片堆叠渲染。 */
@@ -930,6 +934,8 @@ async function sendMessageToBackend(message, { includeContinuation = false } = {
     resource_ids: JSON.stringify(props.resourceIds || []),
     enable_rag: props.resourceIds.length > 0,
     enable_web: false,
+    model_profile: selectedModelProfile.value,
+    reasoning_effort: selectedReasoningEffort.value,
     known_context: JSON.stringify({
       title: infoForm.courseName.trim(),
       subject: infoForm.subject,
@@ -1279,7 +1285,9 @@ async function requestOutlineRepairWithModel(response) {
   const modelResponse = await streamGeneralChat({
     mode: 'outline-repair',
     user_id: String(userStore.userInfo?.user_id || '10001'),
-    messages: [{ role: 'user', content: outlineRepairPrompt(response) }],
+      messages: [{ role: 'user', content: outlineRepairPrompt(response) }],
+      model_profile: selectedModelProfile.value,
+      reasoning_effort: selectedReasoningEffort.value,
   })
   if (!modelResponse.ok) {
     let message = ''
@@ -1343,6 +1351,8 @@ async function requestGeneralChatReply() {
         file_size: item.size,
       })),
       messages: history,
+      model_profile: selectedModelProfile.value,
+      reasoning_effort: selectedReasoningEffort.value,
     })
     if (!response.ok) {
       let message = ''
@@ -2067,65 +2077,34 @@ async function restoreSession() {
           :readonly="isRequesterLoading || (!isGeneralChat && phase !== 'clarifying')"
           @keydown.enter="handleComposerKeydown"
         />
-        <div class="composer-toolbar">
-          <div class="composer-tools">
-            <el-dropdown v-if="isGeneralChat" trigger="click" placement="top-start" @command="handleComposerAddCommand">
-              <button type="button" class="composer-tool composer-add"><el-icon><Plus /></el-icon><span>添加</span></button>
-              <template #dropdown>
-                <el-dropdown-menu class="composer-mode-menu">
-                  <el-dropdown-item command="upload_files">
-                    <span class="mode-menu-item add-file-item"><strong><el-icon><Paperclip /></el-icon>文件和资料</strong><small>支持文档、表格、演示文稿、图片、音频和视频</small></span>
-                  </el-dropdown-item>
-                  <el-dropdown-item v-for="(item, index) in taskModeOptions" :key="item.value" :command="item.value" :divided="index === 0" :class="{ selected: taskMode === item.value }">
-                    <span class="mode-menu-item"><strong>{{ item.label }}</strong><small>{{ item.hint }}</small></span>
-                  </el-dropdown-item>
-                </el-dropdown-menu>
-              </template>
-            </el-dropdown>
-
-            <span v-if="isGeneralChat" class="active-mode-pill">{{ currentTaskMode.label }}</span>
-
-            <el-dropdown v-if="isGeneralChat" trigger="click" placement="top-start" @command="selectedChatModel = $event">
-              <button type="button" class="composer-tool"><span>{{ currentModelLabel }}</span><el-icon><ArrowDown /></el-icon></button>
-              <template #dropdown>
-                <el-dropdown-menu>
-                  <el-dropdown-item v-for="item in chatModelOptions" :key="item.value" :command="item.value" :class="{ selected: selectedChatModel === item.value }">
-                    <span class="mode-menu-item"><strong>{{ item.label }}</strong><small>{{ item.description }}</small></span>
-                  </el-dropdown-item>
-                </el-dropdown-menu>
-              </template>
-            </el-dropdown>
-
-            <el-dropdown v-if="isGeneralChat" trigger="click" placement="top-start" @command="reasoningEffort = $event">
-              <button type="button" class="composer-tool reasoning-tool"><span>{{ currentReasoningLabel }}</span><el-icon><ArrowDown /></el-icon></button>
-              <template #dropdown>
-                <el-dropdown-menu>
-                  <el-dropdown-item v-for="item in reasoningOptions" :key="item.value" :command="item.value" :class="{ selected: reasoningEffort === item.value }">{{ item.label }}</el-dropdown-item>
-                </el-dropdown-menu>
-              </template>
-            </el-dropdown>
-          </div>
-
-          <span class="composer-actions">
-            <VoiceRecorderButton
-              :disabled="isRequesterLoading || (!isGeneralChat && !['info', 'clarifying'].includes(phase))"
-              :busy="voiceSubmitting"
-              label="使用语音继续会话"
-              @recorded="handleChatVoice"
-              @error="handleChatVoiceError"
-            />
-            <el-button
-              class="composer-send"
-              type="primary"
-              circle
-              :icon="Promotion"
-              :disabled="isRequesterLoading || (!isGeneralChat && phase !== 'clarifying')"
-              :loading="isRequesterLoading"
-              :aria-label="CHAT_COMPOSER.send"
-              @click="handleComposerSubmit"
-            />
-          </span>
-        </div>
+        <span class="composer-actions">
+          <el-select v-model="selectedModelProfile" class="ai-option-select" size="small" aria-label="模型模式">
+            <el-option label="快速" value="fast" />
+            <el-option label="标准" value="standard" />
+            <el-option label="深度" value="deep" />
+          </el-select>
+          <el-select v-model="selectedReasoningEffort" class="ai-option-select" size="small" aria-label="推理强度">
+            <el-option label="轻度推理" value="low" />
+            <el-option label="标准推理" value="medium" />
+            <el-option label="深度推理" value="high" />
+          </el-select>
+          <VoiceRecorderButton
+            :disabled="isRequesterLoading || (!isGeneralChat && !['info', 'clarifying'].includes(phase))"
+            :busy="voiceSubmitting"
+            label="使用语音继续会话"
+            @recorded="handleChatVoice"
+            @error="handleChatVoiceError"
+          />
+          <el-button
+            type="primary"
+            circle
+            :icon="Promotion"
+            :disabled="isRequesterLoading || (!isGeneralChat && phase !== 'clarifying')"
+            :loading="isRequesterLoading"
+            :aria-label="CHAT_COMPOSER.send"
+            @click="handleComposerSubmit"
+          />
+        </span>
       </div>
       <p class="composer-hint">{{ CHAT_COMPOSER.hint }}{{ isTouchDevice ? ' · 点击右侧按钮发送' : ' · Enter 发送 · Shift + Enter 换行' }}</p>
     </footer>
@@ -2611,69 +2590,12 @@ async function restoreSession() {
   border-color: var(--zh-line-heavier);
   background: var(--zh-background-capsule);
 }
-.composer-shell.is-editable:focus-within {
-  border-color: var(--zh-line-theme);
-  box-shadow: 0 12px 35px rgb(15 23 42 / 9%), 0 2px 8px rgb(15 23 42 / 5%);
-}
-.attachment-file-input { display: none; }
-.composer-attachments {
-  display: flex;
-  gap: 8px;
-  padding: 0 4px 9px;
-  overflow-x: auto;
-  scrollbar-width: thin;
-}
-.attachment-chip {
-  position: relative;
-  display: grid;
-  min-width: 210px;
-  max-width: 280px;
-  grid-template-columns: 34px minmax(0, 1fr) 24px;
-  align-items: center;
-  gap: 8px;
-  overflow: hidden;
-  padding: 8px 7px 8px 9px;
-  border: 1px solid var(--zh-line-border);
-  border-radius: 12px;
-  background: var(--zh-background-option);
-}
-.attachment-chip.is-error { border-color: var(--el-color-danger-light-5); }
-.attachment-icon {
-  display: grid;
-  width: 32px;
-  height: 32px;
-  place-items: center;
-  border-radius: 9px;
-  color: var(--zh-text-theme);
-  background: var(--zh-background-option-on);
-}
-.attachment-copy { display: grid; min-width: 0; gap: 2px; }
-.attachment-copy strong { overflow: hidden; color: var(--zh-text-primary); font-size: 12px; text-overflow: ellipsis; white-space: nowrap; }
-.attachment-copy small { overflow: hidden; color: var(--zh-text-caption); font-size: 10px; text-overflow: ellipsis; white-space: nowrap; }
-.attachment-chip.is-error .attachment-copy small { color: var(--el-color-danger); }
-.attachment-remove {
-  display: grid;
-  width: 24px;
-  height: 24px;
-  place-items: center;
-  border: 0;
-  border-radius: 50%;
-  color: var(--zh-text-caption);
-  cursor: pointer;
-  background: transparent;
-}
-.attachment-remove:hover { color: var(--zh-text-primary); background: var(--zh-background-option); }
-.attachment-progress {
-  position: absolute;
-  bottom: 0;
-  left: 0;
-  height: 2px;
-  background: var(--zh-text-theme);
-  transition: width .18s ease;
-}
-.composer-shell :deep(.el-textarea__inner) {
-  min-height: 58px !important;
-  padding: 5px 7px 10px;
+.composer-actions { display: inline-flex; align-items: center; gap: 3px; flex: none; }
+.ai-option-select { width: 96px; }
+.ai-option-select + .ai-option-select { width: 112px; }
+.composer-input-row :deep(.el-textarea__inner) {
+  min-height: 52px !important;
+  padding: 6px 8px;
   border: 0;
   background: transparent;
   box-shadow: none;
@@ -2754,6 +2676,8 @@ async function restoreSession() {
   .chat-composer {
     padding-bottom: calc(16px + var(--zh-safe-bottom));
   }
+  .ai-option-select { width: 78px; }
+  .ai-option-select + .ai-option-select { width: 92px; }
   .user-bubble {
     max-width: 92%;
   }

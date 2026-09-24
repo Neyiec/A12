@@ -18,6 +18,74 @@ def chunk_text(
     return _pack_segments(segments, effective_size, effective_overlap)
 
 
+def chunk_records(
+    text: str,
+    chunk_size: int = 1200,
+    overlap: int = 120,
+    metadata: dict[str, Any] | None = None,
+) -> list[dict[str, Any]]:
+    """返回可独立入库的内容块；视频块额外携带自己的时间范围。"""
+    source_metadata = metadata or {}
+    parse_metadata = source_metadata.get("parse") if isinstance(source_metadata.get("parse"), dict) else {}
+    timeline = parse_metadata.get("timeline") if isinstance(parse_metadata.get("timeline"), list) else []
+    if parse_metadata.get("modality") != "video" or not timeline:
+        return [
+            {"content": content, "metadata": {}}
+            for content in chunk_text(text, chunk_size, overlap, source_metadata)
+        ]
+
+    records: list[dict[str, Any]] = []
+    for timeline_index, item in enumerate(timeline):
+        if not isinstance(item, dict):
+            continue
+        start = float(item.get("start_seconds") or 0)
+        end = float(item.get("end_seconds") or start)
+        frames = item.get("frames") if isinstance(item.get("frames"), list) else []
+        frame_lines = [
+            f"画面 {_format_seconds(frame.get('timestamp_seconds'))}: {frame.get('summary')}"
+            for frame in frames
+            if isinstance(frame, dict) and str(frame.get("summary") or "").strip()
+        ]
+        segment_text = "\n\n".join(part for part in [
+            f"[{_format_seconds(start)}-{_format_seconds(end)}] 视频片段 {timeline_index + 1}",
+            f"语音或字幕:\n{str(item.get('transcript') or '').strip()}" if item.get("transcript") else "",
+            "\n".join(frame_lines),
+        ] if part).strip()
+        if not segment_text:
+            continue
+        segment_chunks = chunk_text(segment_text, chunk_size, overlap, {**source_metadata, "parse": {"modality": "video"}})
+        for part_index, content in enumerate(segment_chunks):
+            records.append({
+                "content": content,
+                "metadata": {
+                    "timeline_index": timeline_index,
+                    "timeline_part": part_index,
+                    "start_seconds": round(start, 3),
+                    "end_seconds": round(end, 3),
+                    "start_timestamp": _format_seconds(start),
+                    "end_timestamp": _format_seconds(end),
+                    "frame_timestamps": [
+                        round(float(frame.get("timestamp_seconds") or 0), 3)
+                        for frame in frames if isinstance(frame, dict)
+                    ],
+                },
+            })
+    return records or [
+        {"content": content, "metadata": {}}
+        for content in chunk_text(text, chunk_size, overlap, source_metadata)
+    ]
+
+
+def _format_seconds(seconds: Any) -> str:
+    try:
+        value = max(0, int(round(float(seconds or 0))))
+    except (TypeError, ValueError):
+        value = 0
+    hours, remainder = divmod(value, 3600)
+    minutes, secs = divmod(remainder, 60)
+    return f"{hours:02d}:{minutes:02d}:{secs:02d}" if hours else f"{minutes:02d}:{secs:02d}"
+
+
 def _chunk_strategy(metadata: dict[str, Any]) -> str:
     parse_meta = metadata.get("parse") if isinstance(metadata.get("parse"), dict) else {}
     haystack = " ".join([

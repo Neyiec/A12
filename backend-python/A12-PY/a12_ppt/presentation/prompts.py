@@ -177,6 +177,7 @@ def slide_html_prompt(
 - 当 slide_type 为 worked_example/example 时，必须展示“问题→分步方法→为什么→变式”，不能只给题目和答案。
 - 当 learning_phase 为 pre_assessment/post_assessment/summary 时，必须先要求学生回忆、预测或作答，再显示提示；不得把答案直接作为页面视觉中心。
 - teacher_prompt、scaffolding 和 feedback_strategy 属于教师实施信息，不要整段放到学生主画面，只在页面角落保留必要提示。
+- 如果当前页数据包含 generated_image，必须使用其中的 source_url 创建 `<img data-ppt-element="image">`；图片应作为有教学意义的视觉区，使用 object-fit:cover，不能作为整页不可编辑截图，也不要在图片上叠加大段文字。
 
 模板 HTML 参考：
 {compact_template_html(template_html)}

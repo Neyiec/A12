@@ -9,19 +9,12 @@
 
 CREATE EXTENSION IF NOT EXISTS vector;
 
-DROP TABLE IF EXISTS a12_resource_index_chunk CASCADE;
-DROP TABLE IF EXISTS a12_resource_index CASCADE;
-DROP TABLE IF EXISTS a12_retrieval_log CASCADE;
-DROP TABLE IF EXISTS a12_outline_generation_record CASCADE;
-DROP TABLE IF EXISTS a12_teacher_style_memory CASCADE;
-DROP TABLE IF EXISTS a12_outline_chat_message CASCADE;
-DROP TABLE IF EXISTS a12_outline_chat_session CASCADE;
-DROP TABLE IF EXISTS a12_teacher_style_profile CASCADE;
+-- This file is intentionally non-destructive. Use explicit, reviewed migrations for removals.
 
 -- =============================================
 -- Outline chat session
 -- =============================================
-CREATE TABLE a12_outline_chat_session (
+CREATE TABLE IF NOT EXISTS a12_outline_chat_session (
   id BIGSERIAL PRIMARY KEY,
   user_id VARCHAR(64) NOT NULL,
   session_id VARCHAR(80) NOT NULL,
@@ -43,14 +36,14 @@ COMMENT ON COLUMN a12_outline_chat_session.intent IS 'Merged multi-turn user int
 COMMENT ON COLUMN a12_outline_chat_session.final_prompt IS 'Final prompt after merging input/files/RAG/web results';
 COMMENT ON COLUMN a12_outline_chat_session.outline_data IS 'Latest generated outline JSON';
 
-CREATE INDEX idx_a12_outline_chat_session_user ON a12_outline_chat_session (user_id);
-CREATE INDEX idx_a12_outline_chat_session_updated ON a12_outline_chat_session (updated_at DESC);
-CREATE INDEX idx_a12_outline_chat_session_intent_gin ON a12_outline_chat_session USING GIN (intent);
+CREATE INDEX IF NOT EXISTS idx_a12_outline_chat_session_user ON a12_outline_chat_session (user_id);
+CREATE INDEX IF NOT EXISTS idx_a12_outline_chat_session_updated ON a12_outline_chat_session (updated_at DESC);
+CREATE INDEX IF NOT EXISTS idx_a12_outline_chat_session_intent_gin ON a12_outline_chat_session USING GIN (intent);
 
 -- =============================================
 -- Outline chat message
 -- =============================================
-CREATE TABLE a12_outline_chat_message (
+CREATE TABLE IF NOT EXISTS a12_outline_chat_message (
   id BIGSERIAL PRIMARY KEY,
   user_id VARCHAR(64) NOT NULL,
   session_id VARCHAR(80) NOT NULL,
@@ -68,12 +61,12 @@ CREATE TABLE a12_outline_chat_message (
 COMMENT ON TABLE a12_outline_chat_message IS 'A12-PY outline chat messages';
 COMMENT ON COLUMN a12_outline_chat_message.metadata IS 'Message metadata such as resource_ids, tool switches, clarification type';
 
-CREATE INDEX idx_a12_outline_chat_message_session ON a12_outline_chat_message (user_id, session_id, created_at);
+CREATE INDEX IF NOT EXISTS idx_a12_outline_chat_message_session ON a12_outline_chat_message (user_id, session_id, created_at);
 
 -- =============================================
 -- Outline generation record
 -- =============================================
-CREATE TABLE a12_outline_generation_record (
+CREATE TABLE IF NOT EXISTS a12_outline_generation_record (
   id BIGSERIAL PRIMARY KEY,
   user_id VARCHAR(64) NOT NULL,
   session_id VARCHAR(80) NOT NULL,
@@ -91,14 +84,14 @@ CREATE TABLE a12_outline_generation_record (
 
 COMMENT ON TABLE a12_outline_generation_record IS 'A12-PY outline generation results';
 
-CREATE INDEX idx_a12_outline_generation_user ON a12_outline_generation_record (user_id, created_at DESC);
-CREATE INDEX idx_a12_outline_generation_outline_id ON a12_outline_generation_record (outline_id);
-CREATE INDEX idx_a12_outline_generation_data_gin ON a12_outline_generation_record USING GIN (outline_data);
+CREATE INDEX IF NOT EXISTS idx_a12_outline_generation_user ON a12_outline_generation_record (user_id, created_at DESC);
+CREATE INDEX IF NOT EXISTS idx_a12_outline_generation_outline_id ON a12_outline_generation_record (outline_id);
+CREATE INDEX IF NOT EXISTS idx_a12_outline_generation_data_gin ON a12_outline_generation_record USING GIN (outline_data);
 
 -- =============================================
 -- Teacher style profile
 -- =============================================
-CREATE TABLE a12_teacher_style_profile (
+CREATE TABLE IF NOT EXISTS a12_teacher_style_profile (
   id BIGSERIAL PRIMARY KEY,
   user_id VARCHAR(64) NOT NULL,
   style_summary TEXT DEFAULT NULL,
@@ -112,12 +105,12 @@ CREATE TABLE a12_teacher_style_profile (
 
 COMMENT ON TABLE a12_teacher_style_profile IS 'Long-term teacher teaching style profile';
 
-CREATE INDEX idx_a12_teacher_style_profile_profile_gin ON a12_teacher_style_profile USING GIN (profile);
+CREATE INDEX IF NOT EXISTS idx_a12_teacher_style_profile_profile_gin ON a12_teacher_style_profile USING GIN (profile);
 
 -- =============================================
 -- Teacher style memory evidence
 -- =============================================
-CREATE TABLE a12_teacher_style_memory (
+CREATE TABLE IF NOT EXISTS a12_teacher_style_memory (
   id BIGSERIAL PRIMARY KEY,
   user_id VARCHAR(64) NOT NULL,
   session_id VARCHAR(80) NOT NULL,
@@ -134,9 +127,9 @@ CREATE TABLE a12_teacher_style_memory (
 
 COMMENT ON TABLE a12_teacher_style_memory IS 'Teacher style evidence extracted from user inputs';
 
-CREATE INDEX idx_a12_teacher_style_memory_user ON a12_teacher_style_memory (user_id, created_at DESC);
-CREATE INDEX idx_a12_teacher_style_memory_session ON a12_teacher_style_memory (user_id, session_id);
-CREATE INDEX idx_a12_teacher_style_memory_style_gin ON a12_teacher_style_memory USING GIN (extracted_style);
+CREATE INDEX IF NOT EXISTS idx_a12_teacher_style_memory_user ON a12_teacher_style_memory (user_id, created_at DESC);
+CREATE INDEX IF NOT EXISTS idx_a12_teacher_style_memory_session ON a12_teacher_style_memory (user_id, session_id);
+CREATE INDEX IF NOT EXISTS idx_a12_teacher_style_memory_style_gin ON a12_teacher_style_memory USING GIN (extracted_style);
 
 -- =============================================
 -- Resource vector/index master table
@@ -147,7 +140,7 @@ CREATE INDEX idx_a12_teacher_style_memory_style_gin ON a12_teacher_style_memory 
 --   public:{adm_resource.id}
 --   personal:{res_material.id}
 -- =============================================
-CREATE TABLE a12_resource_index (
+CREATE TABLE IF NOT EXISTS a12_resource_index (
   resource_key TEXT PRIMARY KEY,
   source_type TEXT NOT NULL,
   resource_id TEXT NOT NULL,
@@ -171,14 +164,14 @@ CREATE TABLE a12_resource_index (
 COMMENT ON TABLE a12_resource_index IS 'A12-PY resource index master table; metadata stores uploaded_by/resource_id/available/allow_ai/source table information';
 COMMENT ON COLUMN a12_resource_index.metadata IS 'Resource metadata, including source, mysql_table, uploaded_by, owner_user_id, resource_id, available, allow_ai, file_url';
 
-CREATE INDEX idx_a12_resource_index_available ON a12_resource_index (source_type, available, allow_ai);
-CREATE INDEX idx_a12_resource_index_metadata_gin ON a12_resource_index USING GIN (metadata);
+CREATE INDEX IF NOT EXISTS idx_a12_resource_index_available ON a12_resource_index (source_type, available, allow_ai);
+CREATE INDEX IF NOT EXISTS idx_a12_resource_index_metadata_gin ON a12_resource_index USING GIN (metadata);
 
 -- =============================================
 -- Resource chunks for RAG retrieval
 -- embedding_vector uses pgvector cosine similarity retrieval.
 -- =============================================
-CREATE TABLE a12_resource_index_chunk (
+CREATE TABLE IF NOT EXISTS a12_resource_index_chunk (
   chunk_id TEXT PRIMARY KEY,
   resource_key TEXT NOT NULL REFERENCES a12_resource_index(resource_key) ON DELETE CASCADE,
   source_type TEXT NOT NULL,
@@ -192,9 +185,9 @@ CREATE TABLE a12_resource_index_chunk (
 
 COMMENT ON TABLE a12_resource_index_chunk IS 'Parsed resource chunks used by RAG retrieval';
 
-CREATE INDEX idx_a12_resource_chunk_resource ON a12_resource_index_chunk (resource_key, chunk_index);
-CREATE INDEX idx_a12_resource_chunk_metadata_gin ON a12_resource_index_chunk USING GIN (metadata);
-CREATE INDEX idx_a12_resource_chunk_embedding_hnsw
+CREATE INDEX IF NOT EXISTS idx_a12_resource_chunk_resource ON a12_resource_index_chunk (resource_key, chunk_index);
+CREATE INDEX IF NOT EXISTS idx_a12_resource_chunk_metadata_gin ON a12_resource_index_chunk USING GIN (metadata);
+CREATE INDEX IF NOT EXISTS idx_a12_resource_chunk_embedding_hnsw
   ON a12_resource_index_chunk
   USING hnsw (embedding_vector vector_cosine_ops);
 
@@ -202,7 +195,7 @@ CREATE INDEX idx_a12_resource_chunk_embedding_hnsw
 -- RAG retrieval audit log
 -- Stores direct index searches and outline-generation RAG calls.
 -- =============================================
-CREATE TABLE a12_retrieval_log (
+CREATE TABLE IF NOT EXISTS a12_retrieval_log (
   id BIGSERIAL PRIMARY KEY,
   query TEXT NOT NULL,
   resource_ids JSONB NOT NULL DEFAULT '[]'::jsonb,
@@ -217,5 +210,31 @@ CREATE TABLE a12_retrieval_log (
 COMMENT ON TABLE a12_retrieval_log IS 'A12-PY RAG retrieval log for observability and evaluation';
 COMMENT ON COLUMN a12_retrieval_log.metadata IS 'Top match summaries, fallback mode, embedding/postgres status';
 
-CREATE INDEX idx_a12_retrieval_log_created ON a12_retrieval_log (created_at DESC);
-CREATE INDEX idx_a12_retrieval_log_metadata_gin ON a12_retrieval_log USING GIN (metadata);
+CREATE INDEX IF NOT EXISTS idx_a12_retrieval_log_created ON a12_retrieval_log (created_at DESC);
+CREATE INDEX IF NOT EXISTS idx_a12_retrieval_log_metadata_gin ON a12_retrieval_log USING GIN (metadata);
+
+-- AI feedback loop and runtime observability
+CREATE TABLE IF NOT EXISTS a12_ai_feedback (
+  id BIGSERIAL PRIMARY KEY, user_id VARCHAR(64) NOT NULL, session_id VARCHAR(80), project_id VARCHAR(80),
+  action VARCHAR(32) NOT NULL, target_type VARCHAR(32) NOT NULL DEFAULT 'presentation',
+  instruction TEXT, change_summary TEXT, before_data JSONB NOT NULL DEFAULT '{}'::jsonb,
+  after_data JSONB NOT NULL DEFAULT '{}'::jsonb, metadata JSONB NOT NULL DEFAULT '{}'::jsonb,
+  created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+CREATE INDEX IF NOT EXISTS idx_a12_ai_feedback_user ON a12_ai_feedback(user_id, created_at DESC);
+
+CREATE TABLE IF NOT EXISTS a12_ai_run_log (
+  id BIGSERIAL PRIMARY KEY, run_id VARCHAR(64) NOT NULL, user_id VARCHAR(64), operation VARCHAR(80) NOT NULL,
+  model VARCHAR(120), model_profile VARCHAR(32), reasoning_effort VARCHAR(32), status VARCHAR(32) NOT NULL,
+  latency_ms INT NOT NULL DEFAULT 0, input_tokens INT NOT NULL DEFAULT 0, output_tokens INT NOT NULL DEFAULT 0,
+  fallback_reason TEXT, metadata JSONB NOT NULL DEFAULT '{}'::jsonb, created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+CREATE INDEX IF NOT EXISTS idx_a12_ai_run_created ON a12_ai_run_log(created_at DESC);
+
+CREATE TABLE IF NOT EXISTS a12_classroom_event (
+  id BIGSERIAL PRIMARY KEY, user_id VARCHAR(64) NOT NULL, project_id VARCHAR(80) NOT NULL,
+  session_id VARCHAR(80), student_key VARCHAR(128), event_type VARCHAR(32) NOT NULL,
+  question_id VARCHAR(128), answer TEXT, correct BOOLEAN, response_ms INT,
+  metadata JSONB NOT NULL DEFAULT '{}'::jsonb, created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+CREATE INDEX IF NOT EXISTS idx_a12_classroom_project ON a12_classroom_event(user_id, project_id, created_at DESC);

@@ -4,9 +4,10 @@ import { onBeforeRouteLeave, useRoute, useRouter } from 'vue-router'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import { Aim, ArrowDown, ArrowUp, Plus, Promotion } from '@element-plus/icons-vue'
 import MarkdownRender from 'markstream-vue'
-import { addProjectPermission, archiveProject, batchSaveProjectPages, copyProject, createCommunitySubmission, createProject, createProjectPage, deleteProject, deleteProjectPage, downloadResource, exportLessonPlanDocx, exportPresentationPptx, findUserByEmail, findUserByUsername, generateInteractiveModule, generateLessonPlan, generatePresentation, getAiPlan, getProject, getProjectPage, getProjectVersionDiff, listProjectPages, listProjectVersions, listProjects, listResources, modifyPresentation, modifyPresentationSlide, patchProject, recognizeIntent, restoreProject, restoreProjectVersion, reviseProjectWithAi, saveCommunitySubmissionVersion, saveProjectPage, saveProjectVersion, sendAiSessionAudioMessage, sendAiSessionMessage, streamGeneralChat, submitCommunitySubmission, transcribeAudio, uploadResource, validatePresentationHtml, validateProjectComponent } from '../apis/teacher'
+import { addProjectPermission, archiveProject, batchSaveProjectPages, copyProject, createCommunitySubmission, createProject, createProjectPage, deleteProject, deleteProjectPage, downloadResource, exportLessonPlanDocx, exportPresentationPptx, findUserByEmail, findUserByUsername, generateInteractiveModule, generateLessonPlan, generatePresentationStream, getAiPlan, getProject, getProjectPage, getProjectVersionDiff, listProjectPages, listProjectVersions, listProjects, listResources, modifyPresentation, modifyPresentationSlide, patchProject, recognizeIntent, recordAiFeedback, restoreProject, restoreProjectVersion, reviseProjectWithAi, saveCommunitySubmissionVersion, saveProjectPage, saveProjectVersion, sendAiSessionAudioMessage, sendAiSessionMessage, streamGeneralChat, submitCommunitySubmission, transcribeAudio, uploadResource, validatePresentationHtml, validateProjectComponent } from '../apis/teacher'
 import { secureHtmlForSandbox } from '../utils/htmlSecurity'
 import { bindSubjectInteractions } from '../utils/subjectInteraction'
+import { canLandPptDirectEdit, placeLandPptCaret, serializeLandPptEditableDocument, shouldCommitLandPptInlineEdit } from '../utils/landpptQuickEdit'
 import IntentClarificationDialog from './IntentClarificationDialog.vue'
 import CreationWorkspaceToolbar from './CreationWorkspaceToolbar.vue'
 import WorkspaceProjectActions from './WorkspaceProjectActions.vue'
@@ -1036,19 +1037,7 @@ const parseCssRotation = (value) => {
   }
   return 0
 }
-const serializeHtmlSlide = (document) => {
-  const root = document.documentElement.cloneNode(true)
-  root.querySelector('#a12-html-drag-style')?.remove()
-  root.querySelector('.a12-html-editor-overlay')?.remove()
-  root.querySelectorAll('.a12-html-element-proxy').forEach((element) => element.remove())
-  root.querySelectorAll('[data-a12-drag-selected]').forEach((element) => element.removeAttribute('data-a12-drag-selected'))
-  root.querySelectorAll('[data-a12-html-editing]').forEach((element) => {
-    element.removeAttribute('data-a12-html-editing')
-    element.removeAttribute('contenteditable')
-    element.removeAttribute('spellcheck')
-  })
-  return `<!DOCTYPE html>\n${root.outerHTML}`
-}
+const serializeHtmlSlide = (document) => serializeLandPptEditableDocument(document)
 const htmlHistoryForSlide = (slide) => {
   if (!htmlSlideHistories.has(slide)) htmlSlideHistories.set(slide, { undo: [], redo: [] })
   return htmlSlideHistories.get(slide)
@@ -1975,7 +1964,9 @@ const attachHtmlDragEditor = (iframe, { structuredMode = false, onCommit = null 
   const handlePointerDown = (event) => {
     if (event.button !== 0) return
     if (event.target.closest?.('[data-subject-point]')) return
-    if (event.target.closest?.('.a12-html-editor-overlay') || event.target.closest?.('[data-a12-html-editing]')) return
+    if (event.target.closest?.('.a12-html-editor-overlay')) return
+    if (event.target.closest?.('[data-a12-html-editing]')) return
+    if (shouldCommitLandPptInlineEdit(editing?.element, event.target)) finishTextEditing(true)
     const element = resolveTarget(event.target)
     if (!element) {
       clearSelection()
@@ -2115,7 +2106,7 @@ const attachHtmlDragEditor = (iframe, { structuredMode = false, onCommit = null 
     const subjectOwner = event.target.closest?.('[data-ppt-type="subject"],.a12-subject-tool')
     if (subjectOwner) { select(subjectOwner); return }
     const textElement = event.target.closest?.(htmlTextTargetSelector)
-    if (!textElement || textElement.closest('.a12-html-editor-overlay')) return
+    if (!textElement || textElement.closest('.a12-html-editor-overlay') || !canLandPptDirectEdit(textElement)) return
     const element = structuredMode ? textElement.closest?.('[data-ppt-element]') || textElement : textElement
     if (!element || element.closest('.a12-html-editor-overlay')) return
     // 结构化页面需要选中外层元素来完成拖动和属性同步，但编辑时只修改实际的文字节点。
@@ -2127,9 +2118,7 @@ const attachHtmlDragEditor = (iframe, { structuredMode = false, onCommit = null 
     editableElement.setAttribute('spellcheck', 'false')
     editableElement.setAttribute('data-a12-html-editing', '')
     editableElement.focus()
-    const selection = frameWindow.getSelection()
-    selection?.selectAllChildren(editableElement)
-    selection?.collapseToEnd()
+    placeLandPptCaret(editableElement, event)
     event.preventDefault()
     event.stopPropagation()
   }
@@ -2220,7 +2209,7 @@ const attachHtmlDragEditor = (iframe, { structuredMode = false, onCommit = null 
       finishTextEditing(false)
       return
     }
-    if (editing && modifier && event.key === 'Enter') {
+    if (editing && event.key === 'Enter' && !event.shiftKey) {
       event.preventDefault()
       finishTextEditing(true)
       return
@@ -2624,6 +2613,7 @@ const attachHtmlDragEditor = (iframe, { structuredMode = false, onCommit = null 
     deleteSelected: (id) => { const element = findElement(id); if (element) { select(element); deleteSelected() } },
   }
   const cleanup = () => {
+    if (editing) finishTextEditing(true)
     cleanupSubjectInteractions()
     document.removeEventListener('pointerdown', handlePointerDown)
     document.removeEventListener('pointermove', handlePointerMove)
@@ -5886,9 +5876,25 @@ const startRun = async () => {
       ...(selectedTheme ? { theme: selectedTheme } : {}),
       aspect_ratio: '16:9',
       language: 'zh-CN',
-      asset_policy: 'placeholder',
+      // 由服务端结合用户原始要求、学科和逐页内容自动判断无图/占位/AI 配图。
+      asset_policy: 'auto',
     }
-    const response = await generatePresentation(payload)
+    const streamedSlides = []
+    const response = await generatePresentationStream(payload, {
+      onSlide: ({ slide, completed, total }) => {
+        if (!slide) return
+        streamedSlides.push(slide)
+        const ordered = [...streamedSlides].sort((a, b) => Number(a.slide_no || 0) - Number(b.slide_no || 0))
+        applyGeneratedPresentation({ data: { title: payload.title, slides: ordered } }, { persist: false, notify: false })
+        const progress = 22 + Math.round((Number(completed || ordered.length) / Math.max(1, Number(total || ordered.length))) * 58)
+        setClientRunStage({
+          id: 'presentation-generate',
+          label: `正在生成 HTML 页面（${completed || ordered.length}/${total || ordered.length}）`,
+          status: 'running',
+          progress,
+        })
+      },
+    })
     upsertClientToolCall({
       id: 'presentation-generate',
       name: 'HTML PPT 生成服务',
@@ -6161,7 +6167,21 @@ const applyDeckRevision = async (instruction, conversationTranscript) => {
   return pendingDeckRevision.value
 }
 
+const sendRevisionFeedback = (action, preview, extra = {}) => recordAiFeedback({
+  session_id: sessionId.value ? String(sessionId.value) : null,
+  project_id: projectId.value ? String(projectId.value) : null,
+  action,
+  target_type: 'presentation',
+  instruction: preview?.instruction || '',
+  change_summary: preview?.summary || '',
+  before_data: { slide_count: preview?.before?.length || 0 },
+  after_data: { slide_count: preview?.after?.length || 0 },
+  metadata: { ...extra, theme: current.value?.theme || '' },
+}).catch(() => null)
+
 const rejectDeckRevision = () => {
+  const preview = pendingDeckRevision.value
+  if (preview) sendRevisionFeedback('reject', preview)
   pendingDeckRevision.value = null
   revisionPreviewVisible.value = false
   messages.push({ role: 'assistant', text: '已取消这次整套课件修改，当前页面保持不变。', includeInContext: false, kind: 'revision-preview-rejected' })
@@ -6190,6 +6210,7 @@ const acceptDeckRevision = async () => {
       kind: 'revision-result',
     })
     WorkspaceMessage.success('整套课件修改已确认并保存')
+    sendRevisionFeedback('accept', preview)
     pendingDeckRevision.value = null
   } catch (error) {
     revisionPreviewVisible.value = true
@@ -6221,6 +6242,7 @@ const undoLastAiRevision = async () => {
     revisionUndoSnapshot.value = null
     messages.push({ role: 'assistant', text: '已撤销最近一次 AI 整套修改，恢复到修改前版本。', includeInContext: false, kind: 'revision-undo' })
     WorkspaceMessage.success('已撤销本次 AI 修改')
+    sendRevisionFeedback('undo', { before: snapshot, after: slides, summary: '撤销最近一次AI整套修改' })
   } catch (error) {
     WorkspaceMessage.error(error?.message || '撤销失败，请稍后重试')
   }
@@ -7359,9 +7381,9 @@ const quickExportPptx = async () => {
     }
     const title = String(project.value?.project_name || current.value?.title || 'A12 HTML PPT')
     const filename = `${safeExportFilename(title, 'A12 HTML PPT')}.pptx`
-    const response = await exportPresentationPptx({ title, filename, slides: payload, fidelity: 'high_fidelity' })
+    const response = await exportPresentationPptx({ title, filename, slides: payload, fidelity: 'dom_editable' })
     downloadExportBlob(response, filename)
-    WorkspaceMessage.success('PPTX 已开始下载')
+    WorkspaceMessage.success('可编辑 PPTX 已开始下载')
   } catch (error) { WorkspaceMessage.error(error?.message || 'PPTX 导出失败') }
   finally { quickExportLoading.value = '' }
 }

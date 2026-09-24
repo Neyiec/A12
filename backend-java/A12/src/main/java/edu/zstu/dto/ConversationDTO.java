@@ -21,4 +21,6 @@ public class ConversationDTO {
     private Boolean enable_web;
     private Integer slide_count;
     private String known_context;
+    private String model_profile;
+    private String reasoning_effort;
 }

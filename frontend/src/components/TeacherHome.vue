@@ -511,11 +511,13 @@ const openKnowledgeDialog = async () => {
 const triggerResourceUpload = () => resourceFileInput.value?.click()
 const uploadLocalFiles = async (rawFiles) => {
   const supportedExtensions = [
-    'pdf', 'doc', 'docx', 'ppt', 'pptx', 'xls', 'xlsx', 'csv', 'tsv', 'txt', 'md',
-    'jpg', 'jpeg', 'png', 'gif', 'webp', 'svg',
-    'mp3', 'wav', 'm4a', 'ogg', 'mp4', 'avi', 'mov', 'mkv', 'webm',
+    'pdf', 'doc', 'docx', 'ppt', 'pptx', 'txt', 'md', 'csv', 'srt', 'vtt', 'ass',
+    'jpg', 'jpeg', 'png', 'gif', 'bmp', 'webp',
+    'mp3', 'wav', 'm4a', 'aac', 'ogg', 'mp4', 'avi', 'mov', 'mkv', 'webm', 'wmv', 'flv',
   ]
-  const files = Array.from(rawFiles || []).filter((file) => supportedExtensions.includes(file.name.split('.').pop()?.toLowerCase()))
+  const candidates = Array.from(rawFiles || [])
+  const files = candidates.filter((file) => supportedExtensions.includes(file.name.split('.').pop()?.toLowerCase()))
+  if (files.length !== candidates.length) ElMessage.warning('已忽略不支持的文件格式')
   if (!files.length) return
   resourceUploading.value = true; resourceUploadProgress.value = 0
   try {
@@ -552,9 +554,7 @@ const dropResourceFiles = async (event) => {
   uploadDragging.value = false
   const files = Array.from(event.dataTransfer?.files || [])
   if (!files.length) return
-  const supported = files.filter((file) => /\.(pdf|docx?|pptx?|txt|md)$/i.test(file.name))
-  if (supported.length !== files.length) ElMessage.warning('已忽略不支持的文件格式')
-  await uploadLocalFiles(supported)
+  await uploadLocalFiles(files)
 }
 const openProjectManager = async () => {
   projectManagerVisible.value = true; projectManagerLoading.value = true
@@ -748,7 +748,7 @@ onMounted(() => {
 
     <!-- 资料上传 / 知识库 / 语音对话框（欢迎视图和聊天视图共用）-->
     <el-dialog v-model="uploadDialogVisible" title="添加资料" width="min(560px, 92vw)">
-      <input ref="resourceFileInput" class="resource-file-input" type="file" multiple accept=".pdf,.doc,.docx,.ppt,.pptx,.xls,.xlsx,.csv,.tsv,.txt,.md,.jpg,.jpeg,.png,.gif,.webp,.svg,.mp3,.wav,.m4a,.ogg,.mp4,.avi,.mov,.mkv,.webm" @change="uploadPickedResource" />
+      <input ref="resourceFileInput" class="resource-file-input" type="file" multiple accept=".pdf,.doc,.docx,.ppt,.pptx,.txt,.md,.csv,.srt,.vtt,.ass,.jpg,.jpeg,.png,.gif,.bmp,.webp,.mp3,.wav,.m4a,.aac,.ogg,.mp4,.avi,.mov,.mkv,.webm,.wmv,.flv" @change="uploadPickedResource" />
       <button
         type="button"
         :class="['upload-dropzone', { 'is-dragging': uploadDragging, 'is-touch': isMobile }]"
@@ -762,7 +762,7 @@ onMounted(() => {
         <el-icon><Paperclip /></el-icon>
         <strong class="dropzone-title-default">{{ uploadDragging ? '松开即可添加资料' : '点击选择或拖入本地资料' }}</strong>
         <strong class="dropzone-title-touch">选择文件</strong>
-        <span>支持文档、表格、演示文稿、图片、音频和视频，可多选</span>
+        <span>支持文档、图片、音视频与字幕文件，可多选</span>
       </button>
       <el-progress v-if="resourceUploading" :percentage="resourceUploadProgress" :show-text="true" />
       <div v-if="uploadedResourceNames.length" class="uploaded-resource-list"><span>已自动引用</span><p v-for="name in uploadedResourceNames" :key="name">{{ name }}</p></div>

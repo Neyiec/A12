@@ -25,6 +25,10 @@ class Settings:
     openai_api_key: str
     openai_base_url: str
     openai_model: str
+    openai_model_fast: str
+    openai_model_standard: str
+    openai_model_deep: str
+    openai_model_vision: str
     embedding_api_key: str
     embedding_base_url: str
     embedding_model: str
@@ -46,6 +50,15 @@ class Settings:
     tool_call_timeout_seconds: float
     mcp_discovery_timeout_seconds: float
     mcp_tool_cache_ttl_seconds: float
+    image_generation_api_key: str
+    image_generation_base_url: str
+    image_generation_model: str
+    image_generation_timeout_seconds: float
+    image_generation_poll_interval_seconds: float
+    max_generated_images: int
+    retrieval_min_score: float
+    tts_model: str
+    tts_voice: str
 
 
 @lru_cache
@@ -68,6 +81,10 @@ def get_settings() -> Settings:
         openai_api_key=os.getenv("OPENAI_API_KEY", ""),
         openai_base_url=os.getenv("OPENAI_BASE_URL", "https://api.openai.com/v1"),
         openai_model=os.getenv("OPENAI_MODEL", "gpt-4o-mini"),
+        openai_model_fast=os.getenv("OPENAI_MODEL_FAST", ""),
+        openai_model_standard=os.getenv("OPENAI_MODEL_STANDARD", ""),
+        openai_model_deep=os.getenv("OPENAI_MODEL_DEEP", ""),
+        openai_model_vision=os.getenv("OPENAI_MODEL_VISION", ""),
         embedding_api_key=os.getenv("EMBEDDING_API_KEY") or os.getenv("OPENAI_API_KEY", ""),
         embedding_base_url=os.getenv("EMBEDDING_BASE_URL") or "https://dashscope.aliyuncs.com/compatible-mode/v1",
         embedding_model=os.getenv("EMBEDDING_MODEL", "text-embedding-v4"),
@@ -94,4 +111,17 @@ def get_settings() -> Settings:
         tool_call_timeout_seconds=float(os.getenv("TOOL_CALL_TIMEOUT_SECONDS", "30")),
         mcp_discovery_timeout_seconds=float(os.getenv("MCP_DISCOVERY_TIMEOUT_SECONDS", "15")),
         mcp_tool_cache_ttl_seconds=float(os.getenv("MCP_TOOL_CACHE_TTL_SECONDS", "300")),
+        image_generation_api_key=(
+            os.getenv("IMAGE_GENERATION_API_KEY")
+            or os.getenv("DASHSCOPE_API_KEY")
+            or os.getenv("EMBEDDING_API_KEY", "")
+        ),
+        image_generation_base_url=(os.getenv("IMAGE_GENERATION_BASE_URL") or "https://dashscope.aliyuncs.com/api/v1").rstrip("/"),
+        image_generation_model=os.getenv("IMAGE_GENERATION_MODEL", "wan2.2-t2i-flash"),
+        image_generation_timeout_seconds=float(os.getenv("IMAGE_GENERATION_TIMEOUT_SECONDS", "150")),
+        image_generation_poll_interval_seconds=float(os.getenv("IMAGE_GENERATION_POLL_INTERVAL_SECONDS", "5")),
+        max_generated_images=max(0, int(os.getenv("MAX_GENERATED_IMAGES", "4"))),
+        retrieval_min_score=max(0.0, min(1.0, float(os.getenv("RETRIEVAL_MIN_SCORE", "0.18")))),
+        tts_model=os.getenv("TTS_MODEL", "tts-1"),
+        tts_voice=os.getenv("TTS_VOICE", "alloy"),
     )

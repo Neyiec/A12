@@ -12,14 +12,20 @@ def create_chat_model(
     base_url: str,
     timeout_seconds: float,
     temperature: float,
-    reasoning_effort: str | None = None,
+    reasoning_effort: str = "medium",
 ) -> ChatOpenAI:
-    kwargs = dict(
+    kwargs = {}
+    if "dashscope.aliyuncs.com" in (base_url or ""):
+        kwargs["extra_body"] = {"enable_thinking": reasoning_effort in {"medium", "high"}}
+    elif "api.openai.com" in (base_url or "") and reasoning_effort in {"low", "medium", "high"}:
+        kwargs["reasoning_effort"] = reasoning_effort
+    return ChatOpenAI(
         model=model,
         api_key=api_key,
         base_url=base_url.rstrip("/") if base_url else None,
         timeout=timeout_seconds,
         temperature=temperature,
+        **kwargs,
     )
     # 百炼 Qwen 的 OpenAI 兼容接口使用 enable_thinking / thinking_budget。
     if reasoning_effort and ("dashscope" in (base_url or "").lower() or model.lower().startswith("qwen")):
@@ -44,7 +50,7 @@ def create_chat_model_from_settings(
         base_url=settings.openai_base_url,
         timeout_seconds=settings.request_timeout_seconds,
         temperature=temperature,
-        reasoning_effort=reasoning_effort,
+        reasoning_effort="medium",
     )
 
 

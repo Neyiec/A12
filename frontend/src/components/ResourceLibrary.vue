@@ -87,9 +87,9 @@ const handleMobileMediaChange = (event) => {
 const MAX_UPLOAD_FILES = 20
 const MAX_UPLOAD_FILE_SIZE = 500 * 1024 * 1024
 const SUPPORTED_UPLOAD_EXTENSIONS = new Set([
-  'pdf', 'doc', 'docx', 'ppt', 'pptx', 'xls', 'xlsx', 'txt', 'zip',
-  'jpg', 'jpeg', 'png', 'gif', 'webp', 'mp3', 'wav', 'm4a',
-  'mp4', 'avi', 'mov', 'mkv',
+  'pdf', 'doc', 'docx', 'ppt', 'pptx', 'xls', 'xlsx', 'txt', 'md', 'csv', 'srt', 'vtt', 'ass', 'zip',
+  'jpg', 'jpeg', 'png', 'gif', 'bmp', 'webp', 'mp3', 'wav', 'm4a', 'aac', 'ogg',
+  'mp4', 'avi', 'mov', 'mkv', 'webm', 'wmv', 'flv',
 ])
 
 const completedUploadCount = computed(() => uploadQueue.value.filter((file) => file.status === 'success').length)
@@ -653,6 +653,12 @@ const runIndexSearch = async () => {
   } catch (error) { ElMessage.error(error?.message || '索引检索失败，请稍后重试') } finally { indexSearchLoading.value = false }
 }
 
+const indexResultTimeRange = (item) => {
+  const start = item?.start_timestamp || item?.metadata?.start_timestamp
+  const end = item?.end_timestamp || item?.metadata?.end_timestamp
+  return start ? `${start}${end ? `–${end}` : ''}` : ''
+}
+
 onMounted(() => {
   void loadResources()
   void loadTaxonomy()
@@ -777,7 +783,7 @@ onBeforeUnmount(() => {
         class="visually-hidden"
         type="file"
         multiple
-        accept=".pdf,.doc,.docx,.ppt,.pptx,.xls,.xlsx,.txt,.zip,.jpg,.jpeg,.png,.gif,.webp,.mp3,.wav,.m4a,.mp4,.avi,.mov,.mkv,image/*,audio/*,video/*"
+        accept=".pdf,.doc,.docx,.ppt,.pptx,.xls,.xlsx,.txt,.md,.csv,.srt,.vtt,.ass,.zip,.jpg,.jpeg,.png,.gif,.bmp,.webp,.mp3,.wav,.m4a,.aac,.ogg,.mp4,.avi,.mov,.mkv,.webm,.wmv,.flv,image/*,audio/*,video/*"
         @change="handleUploadInputChange"
       >
 
@@ -795,7 +801,7 @@ onBeforeUnmount(() => {
           <Upload v-else />
         </el-icon>
         <strong>{{ uploading ? '正在上传文件，请稍候…' : '拖拽文件到这里，或点击选择文件' }}</strong>
-        <span>支持 PDF、Word、PPT、TXT、图片、音频和视频，单文件最大 500MB，最多 20 个文件</span>
+        <span>支持文档、图片、音视频与字幕文件，单文件最大 500MB，最多 20 个文件</span>
       </div>
 
       <section v-if="uploadQueue.length" class="upload-queue" aria-label="待上传文件列表">
@@ -928,7 +934,7 @@ onBeforeUnmount(() => {
           <div class="index-panel">
             <div class="index-search-bar"><el-input v-model="indexSearchQuery" clearable placeholder="输入关键词测试知识库检索，例如：光合作用实验设计" @keyup.enter="runIndexSearch" /><el-button type="primary" :loading="indexSearchLoading" @click="runIndexSearch">开始检索</el-button></div>
             <el-empty v-if="!indexSearchResults.length && !indexSearchLoading" description="输入关键词后查看检索结果" />
-            <div v-else class="index-result-list"><article v-for="(item, index) in indexSearchResults" :key="item.chunk_id || `${item.resource_id}-${index}`"><div><strong>#{{ item.rank || index + 1 }} · {{ item.resource_id }}</strong><span>得分 {{ Number(item.score || item.rerank_score || 0).toFixed(3) }} · {{ item.match_type || 'hybrid' }}</span></div><p>{{ item.content }}</p></article></div>
+            <div v-else class="index-result-list"><article v-for="(item, index) in indexSearchResults" :key="item.chunk_id || `${item.resource_id}-${index}`"><div><strong>#{{ item.rank || index + 1 }} · {{ item.resource_id }} <em v-if="indexResultTimeRange(item)">{{ indexResultTimeRange(item) }}</em></strong><span>得分 {{ Number(item.score || item.rerank_score || 0).toFixed(3) }} · {{ item.match_type || 'hybrid' }}</span></div><p>{{ item.content }}</p></article></div>
           </div>
         </el-tab-pane>
         <el-tab-pane label="检索日志" name="logs">
@@ -1057,6 +1063,7 @@ onBeforeUnmount(() => {
 .index-result-list article { padding: 12px 14px; border: 1px solid var(--zh-line-border); border-radius: var(--zh-radius8); background: var(--zh-background-light); }
 .index-result-list article > div { display: flex; justify-content: space-between; gap: 12px; }
 .index-result-list strong { color: var(--zh-text-primary); font-size: 13px; }
+.index-result-list strong em { display: inline-flex; margin-left: 6px; padding: 1px 7px; border-radius: 999px; background: var(--zh-primary-soft); color: var(--zh-primary); font-size: 11px; font-style: normal; font-weight: 600; }
 .index-result-list span { color: var(--zh-text-caption); font-size: 11px; }
 .index-result-list p { margin: 8px 0 0; color: var(--zh-text-secondary); font-size: 12px; line-height: 1.65; white-space: pre-wrap; }
 /* 平板（768–1023.98）与手机（<768）共用：布局收单列、知识库 header 转单列 */
