@@ -268,7 +268,7 @@ public class ExportServiceImpl implements ExportService {
             payload.put("title", stringValue(config.get("title"), project.getProject_name()));
             payload.put("filename", stringValue(config.get("filename"), defaultFilename(project, task, "pptx")));
             payload.put("slides", slides);
-            payload.put("fidelity", stringValue(config.get("fidelity"), "high_fidelity"));
+            payload.put("fidelity", stringValue(config.get("fidelity"), "dom_editable"));
             payload.put("package_static_assets", !Boolean.FALSE.equals(config.get("package_static_assets")));
             result = pythonPptClient.exportPresentationFile(payload);
         }

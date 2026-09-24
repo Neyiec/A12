@@ -32,6 +32,9 @@ class OutlineGenerateRequest(BaseModel):
     language: str = "zh-CN"
     regenerate_instruction: str | None = None
     interactive_policy: dict[str, Any] = Field(default_factory=dict)
+    model_profile: Literal["fast", "standard", "deep"] = "standard"
+    reasoning_effort: Literal["low", "medium", "high"] = "medium"
+    classroom_insights: dict[str, Any] = Field(default_factory=dict)
 
 
 class PresentationGenerateRequest(BaseModel):
@@ -42,7 +45,10 @@ class PresentationGenerateRequest(BaseModel):
     theme: str | None = None
     aspect_ratio: Literal["16:9", "4:3"] = "16:9"
     language: str = "zh-CN"
-    asset_policy: Literal["none", "placeholder", "generate"] = "placeholder"
+    # auto 会根据用户要求、学科和逐页内容在 none / placeholder / generate 间选择。
+    asset_policy: Literal["auto", "none", "placeholder", "generate"] = "auto"
+    model_profile: Literal["fast", "standard", "deep"] = "standard"
+    reasoning_effort: Literal["low", "medium", "high"] = "medium"
 
 
 class SlideModifyRequest(BaseModel):
@@ -95,6 +101,8 @@ class OutlineChatStreamRequest(BaseModel):
     enable_rag: bool = False
     slide_count: int | None = Field(default=8, ge=1, le=30)
     language: str = "zh-CN"
+    model_profile: Literal["fast", "standard", "deep"] = "standard"
+    reasoning_effort: Literal["low", "medium", "high"] = "medium"
 
 
 class IntentRecognizeRequest(BaseModel):
@@ -125,7 +133,7 @@ class PresentationExportRequest(BaseModel):
     title: str = "A12 PPT"
     slides: list[dict[str, Any]]
     filename: str | None = None
-    fidelity: Literal["high_fidelity", "editable_text"] = "high_fidelity"
+    fidelity: Literal["dom_editable", "high_fidelity", "editable_text"] = "dom_editable"
     package_static_assets: bool = True
 
 
@@ -195,3 +203,35 @@ class ResourceIndexSearchRequest(BaseModel):
     limit: int = Field(default=12000, ge=1000, le=30000)
     top_k: int = Field(default=8, ge=1, le=30)
     source_type: Literal["public", "personal"] | None = None
+    min_score: float | None = Field(default=None, ge=0, le=1)
+
+
+class TeacherFeedbackRequest(BaseModel):
+    user_id: str = Field(..., min_length=1)
+    session_id: str | None = None
+    project_id: str | None = None
+    action: Literal["accept", "reject", "undo", "manual_edit", "regenerate"]
+    target_type: Literal["presentation", "slide", "outline", "lesson_plan", "interactive"] = "presentation"
+    instruction: str | None = None
+    change_summary: str | None = None
+    before_data: dict[str, Any] = Field(default_factory=dict)
+    after_data: dict[str, Any] = Field(default_factory=dict)
+    metadata: dict[str, Any] = Field(default_factory=dict)
+
+
+class TextToSpeechRequest(BaseModel):
+    text: str = Field(..., min_length=1, max_length=5000)
+    voice: str | None = None
+
+
+class ClassroomEventRequest(BaseModel):
+    user_id: str = Field(..., min_length=1)
+    project_id: str = Field(..., min_length=1)
+    session_id: str | None = None
+    student_key: str | None = None
+    event_type: Literal["answer", "confusion", "engagement", "exit_ticket", "resource_open"]
+    question_id: str | None = None
+    answer: str | None = None
+    correct: bool | None = None
+    response_ms: int | None = Field(default=None, ge=0)
+    metadata: dict[str, Any] = Field(default_factory=dict)

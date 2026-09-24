@@ -90,7 +90,8 @@ def validate_html(html: str, strict: bool = False) -> dict:
     if "1280" not in lowered and "aspect-ratio" not in lowered and "16 / 9" not in lowered and "16/9" not in lowered:
         errors.append("缺少 1280x720 或 16:9 固定画布约束")
     if "overflow:hidden" not in lowered.replace(" ", "") and "overflow: hidden" not in lowered:
-        warnings.append("建议给 body 或主 slide 容器设置 overflow:hidden")
+        message = "缺少 overflow:hidden，页面可能出现滚动或内容溢出"
+        (errors if strict else warnings).append(message)
     if "height: 100vh" in lowered and "1280" not in lowered:
         warnings.append("仅使用 100vh 可能导致不同设备比例漂移，建议固定 1280x720 或 aspect-ratio")
 
@@ -99,8 +100,10 @@ def validate_html(html: str, strict: bool = False) -> dict:
         errors.append("发现格式错误的 HTML 标签")
 
     if strict:
+        if re.search(r"<(?:script|link)\b[^>]+(?:src|href)\s*=\s*['\"]https?://", lowered):
+            errors.append("禁止依赖外部 CDN 脚本或样式资源")
         if "http://" in lowered:
-            warnings.append("严格模式建议避免非 HTTPS 资源")
+            errors.append("严格模式禁止加载非 HTTPS 资源")
         if len(html) < 1800:
             warnings.append("HTML 较短，可能视觉完成度不足")
         if "<style" not in lowered:

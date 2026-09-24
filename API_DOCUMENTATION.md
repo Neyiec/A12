@@ -44,7 +44,7 @@ RAG 索引现已支持语义分块、学科感知窗口、混合重排、直接�
 
 | 接口 | 变更说明 |
 |---|---|
-| `POST /api/v1/python/presentations/export/pptx` | 将最终页面 JSON/HTML 转为 `.pptx`；高保真图片模式失败时降级为可编辑文本模式。 |
+| `POST /api/v1/python/presentations/export/pptx` | 将最终页面 JSON/HTML 转为 `.pptx`；默认以 LandPPT DOM 转换器和 PptxGenJS 生成可编辑对象，复杂 CSS 装饰局部栅格化。 |
 | `POST /api/v1/python/lesson-plans/export/docx` | 将教案 JSON 转为带固定教案章节和页脚的 `.docx`。 |
 | `POST /api/v1/export-tasks` | Java 导出任务调用 Python，在 `a12.export.local-dir` 保存真实文件，填充 `file_size/file_url/download_url` 并写入 `quality_report`。 |
 | `/exports/**` | Java 通过静态资源处理器提供本地导出文件。 |
@@ -1471,7 +1471,7 @@ Java 任务模式支持的导出配置键：`slides`、`lesson_plan`、`outline`
 | `outline` | Object | 生成 Word 教案时作为大纲输入 |
 | `title` | String | 导出标题 |
 | `filename` | String | 文件名 |
-| `fidelity` | String | PPTX 导出模式：`high_fidelity` / `editable_text` |
+| `fidelity` | String | PPTX 导出模式：`dom_editable`（默认）/ `high_fidelity` / `editable_text`（兼容值） |
 | `package_static_assets` | Boolean | 是否打包互动资源 |
 | `subject/grade/duration_minutes/teaching_goals/requirements/reference_text` | Mixed | 生成 Word 教案时传给 Python |
 
@@ -2522,7 +2522,7 @@ Java 任务模式支持的导出配置键：`slides`、`lesson_plan`、`outline`
 8. 然后调用 API-138，把 API-136、API-137 或 API-137A 返回的 `data.outline` 原样放入 `outline`，并传入前端选中的 `theme`
 9. 如果用户要整体修改课件，调用 API-139A，把当前整套 `slides` 和修改要求传入
 10. 如果用户只要改某一页，调用 API-139，把该页 `html` 放入 `current_html`
-11. 用户在线编辑完成后，调用 API-141 导出 PPTX 下载文件，默认 `high_fidelity`
+11. 用户在线编辑完成后，调用 API-141 导出 PPTX 下载文件，默认 `dom_editable`
 
 **主题 theme 可填值**
 `theme` 应从 API-134 返回的模板列表中选择，建议直接使用 `theme` 字段（即模板 JSON 文件名，不含 `.json`）。不传默认使用 `素白风`。
@@ -3294,7 +3294,7 @@ while (true) {
   "theme": "科技风",
   "aspect_ratio": "16:9",
   "language": "zh-CN",
-  "asset_policy": "placeholder"
+  "asset_policy": "auto"
 }
 ```
 
@@ -3308,7 +3308,7 @@ while (true) {
 | `theme` | String | 否 | 模板主题，必须优先使用 API-134 返回的 `templates[n].theme`；不传默认 `素白风` |
 | `aspect_ratio` | String | 否 | 页面比例: 当前建议固定填 `16:9` |
 | `language` | String | 否 | 输出语言，默认 `zh-CN` |
-| `asset_policy` | String | 否 | 素材策略: `none` / `placeholder` / `generate`；当前建议填 `placeholder` |
+| `asset_policy` | String | 否 | 素材策略：`auto` / `none` / `placeholder` / `generate`，默认并建议使用 `auto`。`auto` 会根据用户要求、学科和逐页内容自动选择；图片服务不可用时安全降级为占位，不中断课件生成 |
 
 **后端 DTO**: `PresentationGenerateDTO { session_id, outline_id, title, outline, theme, aspect_ratio, language, asset_policy }`
 
@@ -3322,6 +3322,10 @@ while (true) {
 | `slides` | List<PptSlideHtmlVO> | 每页 PPT HTML |
 | `html` | String | 可选，整套 PPT 合并后的 HTML 字符串 |
 | `metadata.interactive_assets` | List<Object> | 可选，动画/小游戏等额外资源规划；前端导出时应保留在 slides metadata 中 |
+| `metadata.requested_asset_policy` | String | 请求的素材策略 |
+| `metadata.selected_asset_policy` | String | 自动判断后的整套课件素材策略 |
+| `metadata.asset_policy_reason` | String | 自动判断原因，便于前端解释和排查 |
+| `metadata.generated_image_count` | int | 实际成功生成并嵌入的图片数量 |
 
 | PptSlideHtmlVO 字段 | 类型 | 说明 |
 |---|---|---|
@@ -3461,7 +3465,7 @@ while (true) {
 
 ## API-141 POST /api/v1/python/presentations/export/pptx
 
-**功能**: 将前端最终确认/编辑后的 HTML PPT slides 导出为 PPTX 或 ZIP 文件下载。默认使用高保真导出：通过浏览器把每页 HTML 渲染为整页图片，再写入 PPTX，以最大程度保留 HTML 视觉效果、复杂 CSS、背景、图表和互动模块的静态首屏。若浏览器运行时不可用，会自动降级为可编辑文本版导出。若 slides 中包含动画、小游戏、HTML5、GIF、MP4 等额外资源，服务会返回 ZIP：PPTX 放在压缩包根目录，额外资源放在 `static/` 目录。
+**功能**: 将前端最终确认/编辑后的 HTML PPT slides 导出为 PPTX 或 ZIP 文件下载。默认通过 Playwright 渲染 HTML，并复用 LandPPT 的 `dom-to-pptx` 与 PptxGenJS，把浏览器 DOM 坐标、计算样式和图层转换为 PowerPoint 原生对象；PowerPoint 无法准确表达的复杂 CSS 装饰仅做局部栅格化，文字仍覆盖为可编辑文本框。若主转换器不可用，会依次降级为 A12 元素级导出和基础文本版。若 slides 中包含动画、小游戏、HTML5、GIF、MP4 等额外资源，服务会返回 ZIP：PPTX 放在压缩包根目录，额外资源放在 `static/` 目录。
 
 **请求体 (JSON)**
 | 字段 | 类型 | 必填 | 说明 |
@@ -3469,7 +3473,7 @@ while (true) {
 | `title` | String | 否 | PPT 标题，默认 `A12 PPT` |
 | `filename` | String | 否 | 下载文件名，例如 `光合作用.pptx` |
 | `slides` | List<Object> | **是** | 最终 slides 列表，每项至少包含 `html`，建议包含 `title`；如含 `interactive_assets` 或 `metadata.interactive_assets`，导出会自动打包静态资源 |
-| `fidelity` | String | 否 | `high_fidelity` 或 `editable_text`，默认 `high_fidelity` |
+| `fidelity` | String | 否 | `dom_editable`、`high_fidelity` 或兼容值 `editable_text`，默认 `dom_editable` |
 | `package_static_assets` | Boolean | 否 | 是否打包 `interactive_assets/static_assets`，默认 `true` |
 
 **响应**: 文件流。无额外资源时为 `application/vnd.openxmlformats-officedocument.presentationml.presentation`；有额外资源时为 `application/zip`。Java 代理会透传 Python 返回的 `Content-Type` 和下载文件名。
@@ -3477,8 +3481,9 @@ while (true) {
 **导出模式说明**:
 | fidelity | 说明 | 优点 | 限制 |
 |---|---|---|---|
+| `dom_editable` | 浏览器测量 DOM，通过 PptxGenJS 重建文字、基础形状、表格和媒体；复杂装饰局部栅格化 | 默认模式，版式接近 HTML，文字及多数元素可在 PowerPoint 中继续编辑 | 浏览器与 PowerPoint 字体度量可能略有差异；滤镜、复杂渐变等装饰是局部图片 |
 | `high_fidelity` | Chromium 渲染 HTML 截图，每页作为整页图片写入 PPTX | 视觉最接近前端 HTML 预览，适合最终交付 | PPTX 内文字不可逐字编辑，动画/小游戏导出为静态首屏 |
-| `editable_text` | 从 HTML 抽取标题和文本，用 PowerPoint 文本框重建 | 文本可编辑 | 视觉还原度较低 |
+| `editable_text` | 兼容旧调用，当前同样优先进入 `dom_editable` 管线 | 旧客户端无需立即修改 | 建议新调用显式使用 `dom_editable` |
 
 **ZIP 结构**
 ```text
@@ -3492,7 +3497,7 @@ while (true) {
 
 **互动资源说明**: MP4 资源有真实文件时会尽量作为视频放入 PPT；HTML5/GIF/小游戏不直接嵌入 PPT，而是在 PPT 中提供相对链接和文字说明，并把资源放入 ZIP 的 `static/` 目录。
 
-**部署说明**: 高保真导出依赖 Python 包 `playwright` 和 Chromium 运行时。部署后需执行 `python -m playwright install chromium`。如果没有安装浏览器，接口不会失败，会退回 `editable_text`。
+**部署说明**: `dom_editable` 和 `high_fidelity` 均依赖 Python 包 `playwright` 与 Chromium 运行时。部署后需执行 `python -m playwright install chromium`。`dom-to-pptx.bundle.js` 已随服务本地部署，导出过程不依赖前端 CDN；许可证与来源说明位于 `a12_ppt/presentation/vendor/`。浏览器不可用时接口会退回基础文本版。
 
 ---
 
@@ -3680,7 +3685,7 @@ const pptResp = await fetch("http://127.0.0.1:8001/api/v1/python/presentations/g
     outline: finalOutline,
     theme: selectedTheme,
     aspect_ratio: "16:9",
-    asset_policy: "placeholder"
+    asset_policy: "auto"
   })
 }).then(res => res.json());
 
@@ -3732,3 +3737,19 @@ const pptxBlob = await fetch("http://127.0.0.1:8001/api/v1/python/presentations/
 | 50002 | `presentation_generate_failed` | PPT 生成失败 |
 | 50003 | `slide_modify_failed` | 单页 PPT 修改失败 |
 | 50301 | `model_unavailable` | 模型服务不可用或超时 |
+
+## AI 教学能力增强接口
+
+以下接口均应由前端调用 Java 网关（`http://127.0.0.1:8088/api/v1/python/...`），不要在浏览器中直接暴露 Python 服务地址。Java 会绑定当前登录用户，Python 原始接口仍保留用于内部联调和 API 文档展示。
+
+| Java 网关接口 | 方法 | 简体中文说明 |
+|---|---|---|
+| `/api/v1/python/teacher-style/feedback` | POST | 记录教师对生成结果的采纳、拒绝或人工修改，用于更新教学风格记忆 |
+| `/api/v1/python/ai/metrics` | GET | 查询模型调用次数、成功率、平均耗时、令牌用量和降级次数 |
+| `/api/v1/python/classroom/events` | POST | 记录课堂正确率、参与度、困惑点等教学效果数据 |
+| `/api/v1/python/classroom/insights/{projectId}` | GET | 汇总指定项目的课堂反馈，为下一次课件生成提供依据 |
+| `/api/v1/python/audio/tts` | POST | 将课件讲解文本合成为语音，返回音频流 |
+
+大纲与 PPT 生成请求支持 `model_profile=fast|standard|deep` 和 `reasoning_effort=low|medium|high`。这两个字段会实际影响后端模型路由和推理配置，而不是仅作为前端展示。生成结果中的 `generation_status` 会明确标识 `model` 或 `fallback`；RAG 结果包含 `citation_id`、`grounding_confidence` 和 `grounding_status`，用于逐页引用和低置信度提示。
+
+知识库概览返回 `ready_for_rag` 与 `readiness_message`。为空时应先上传资料或执行资源索引同步，系统不会把“可调用检索接口”等同于“已经拥有真实教学语料”。

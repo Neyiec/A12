@@ -1,6 +1,7 @@
 import asyncio
 import json
 import logging
+import re
 import time
 from dataclasses import asdict
 from datetime import datetime, timezone
@@ -10,9 +11,9 @@ from typing import Any
 from ..config import get_settings
 from ..llm import EmbeddingClient
 from ..models import ResourceIndexMetadataRequest, ResourceIndexSyncRequest
-from .chunks import chunk_text
+from .chunks import chunk_records
 from .downloader import download_and_parse_resource
-from .identity import resource_key
+from .identity import resource_fingerprint, resource_key
 from .records import IndexedChunk
 from .similarity import cosine_similarity, embedding_to_pgvector, keyword_score
 
@@ -134,42 +135,50 @@ class ResourceIndexStore:
         started_at = time.perf_counter()
         metadata = self._build_metadata(request)
         key = resource_key(request.source_type, request.resource_id)
-        fingerprint = ""
+        # 请求指纹只用于下载/解析失败时留下可诊断标识；成功后会用文件内容
+        # SHA-256 覆盖它，避免签名 URL 变化或同尺寸文件替换造成误判。
+        fingerprint = resource_fingerprint(request)
         existing = self._load_resource_meta(key)
         if not self.available:
             logger.warning("sync_resource 于降级模式执行（PG 不可用，仅写本地文件） resource_key=%s", key)
-        should_parse = (
-            request.force_reparse
-            or not existing
-            or existing.get("file_fingerprint") != fingerprint
-            or existing.get("parse_status") != "completed"
-        )
-        if not should_parse:
-            self.update_metadata(ResourceIndexMetadataRequest(
-                source_type=request.source_type,
-                resource_id=request.resource_id,
-                available=request.available,
-                allow_ai=request.allow_ai,
-                metadata=metadata,
-            ))
-            return {
-                "resource_key": key,
-                "status": "skipped",
-                "reason": "already_indexed",
-                "chunk_count": existing.get("chunk_count", 0),
-            }
-
         try:
+            existing_metadata = (existing or {}).get("metadata") or {}
+            existing_parse = existing_metadata.get("parse") if isinstance(existing_metadata.get("parse"), dict) else {}
+            previous_digest = None
+            if not request.force_reparse and existing and existing.get("parse_status") == "completed":
+                previous_digest = existing_parse.get("content_sha256") or existing.get("file_fingerprint")
             # 下载+解析整体限时：大文件解析卡死时按超时转为 failed，而不是无限挂起拖垮调用方
             parsed = await asyncio.wait_for(
-                download_and_parse_resource(request),
+                download_and_parse_resource(request, previous_digest=previous_digest),
                 timeout=self.settings.index_parse_timeout_seconds,
             )
+            if parsed.metadata.get("unchanged") and existing and existing.get("parse_status") == "completed":
+                # 保留上次解析元数据和内容摘要，只刷新授权及业务元数据。
+                metadata["parse"] = {**existing_parse, **parsed.metadata}
+                self.update_metadata(ResourceIndexMetadataRequest(
+                    source_type=request.source_type,
+                    resource_id=request.resource_id,
+                    available=request.available,
+                    allow_ai=request.allow_ai,
+                    metadata=metadata,
+                ))
+                elapsed = round((time.perf_counter() - started_at) * 1000)
+                return {
+                    "resource_key": key,
+                    "status": "skipped",
+                    "reason": "content_sha256_unchanged",
+                    "content_sha256": previous_digest,
+                    "chunk_count": existing.get("chunk_count", 0),
+                    "latency_ms": elapsed,
+                }
             metadata["parse"] = parsed.metadata
+            fingerprint = str(parsed.metadata.get("content_sha256") or fingerprint)
             text = parsed.text
             if not text.strip():
                 raise ValueError("资料未解析出有效文本，请检查格式、OCR、视觉模型或语音转写服务")
-            chunks = chunk_text(text, metadata=metadata)
+            chunk_items = chunk_records(text, metadata=metadata)
+            chunks = [item["content"] for item in chunk_items]
+            chunk_metadata = [self._compact_chunk_metadata(metadata, item.get("metadata") or {}) for item in chunk_items]
             # 向量化失败必须显式 failed：静默返回空向量会产生「假 indexed」（有分块无向量，RAG 永远查不到）
             try:
                 embeddings = await self.embedding_client.embed_documents(chunks)
@@ -182,7 +191,7 @@ class ResourceIndexStore:
                     "status": "failed",
                     "error_message": message,
                 }
-            self._replace_index(request, metadata, fingerprint, text, chunks, embeddings)
+            self._replace_index(request, metadata, fingerprint, text, chunks, embeddings, chunk_metadata)
             elapsed = round((time.perf_counter() - started_at) * 1000)
             logger.info(
                 "sync_resource 完成 resource_key=%s status=indexed text_length=%d chunks=%d embeddings=%d 耗时=%dms",
@@ -237,6 +246,7 @@ class ResourceIndexStore:
 
         available = bool(metadata.get("available", existing.get("available", True)))
         allow_ai = bool(metadata.get("allow_ai", existing.get("allow_ai", True)))
+        chunk_updates = self._compact_chunk_metadata(metadata, {})
         if self.available:
             with self._connect() as conn:
                 with conn.cursor() as cur:
@@ -249,8 +259,8 @@ class ResourceIndexStore:
                         (json.dumps(metadata, ensure_ascii=False), available, allow_ai, key),
                     )
                     cur.execute(
-                        "UPDATE a12_resource_index_chunk SET metadata = %s::jsonb WHERE resource_key = %s",
-                        (json.dumps(metadata, ensure_ascii=False), key),
+                        "UPDATE a12_resource_index_chunk SET metadata = metadata || %s::jsonb WHERE resource_key = %s",
+                        (json.dumps(chunk_updates, ensure_ascii=False), key),
                     )
         else:
             data = self._read_fallback()
@@ -259,7 +269,7 @@ class ResourceIndexStore:
                 data["resources"][key]["available"] = available
                 data["resources"][key]["allow_ai"] = allow_ai
                 for chunk in data.get("chunks", {}).get(key, []):
-                    chunk["metadata"] = metadata
+                    chunk["metadata"] = {**(chunk.get("metadata") or {}), **chunk_updates}
                 self._write_fallback(data)
         return {"resource_key": key, "status": "updated", "available": available, "allow_ai": allow_ai}
 
@@ -283,6 +293,7 @@ class ResourceIndexStore:
         limit: int = 12000,
         top_k: int = 8,
         source_type: str | None = None,
+        min_score: float | None = None,
     ) -> dict[str, Any]:
         started_at = time.perf_counter()
         search_mode = "empty"
@@ -294,10 +305,23 @@ class ResourceIndexStore:
         if self.available and len(query_embedding) == self.embedding_dimensions:
             try:
                 vector_result = self._search_pgvector(resource_ids, query, query_embedding, limit, max(top_k * 4, top_k), source_type)
+                keyword_matches = self._search_keyword_postgres(resource_ids, query, max(top_k * 4, top_k), source_type)
+                merged = {item["chunk_id"]: item for item in vector_result.get("matches", [])}
+                for item in keyword_matches:
+                    if item["chunk_id"] in merged:
+                        merged[item["chunk_id"]]["match_type"] = "pgvector_cosine+keyword_candidate"
+                    else:
+                        merged[item["chunk_id"]] = item
+                vector_result["matches"] = list(merged.values())
             except Exception:
                 vector_result = {"context": "", "matches": []}
             if vector_result.get("matches"):
                 matches = self._rerank_matches(vector_result["matches"], query, top_k)
+                threshold = self.settings.retrieval_min_score if min_score is None else min_score
+                matches = [item for item in matches if float(item.get("score") or 0) >= threshold]
+                for item in matches:
+                    item["grounding_confidence"] = round(min(1.0, max(0.0, float(item.get("score") or 0))), 4)
+                    item["citation_id"] = f"{item.get('resource_id')}#{item.get('chunk_id')}"
                 search_mode = "pgvector_hybrid_rerank"
                 result = self._build_search_result(query, matches, limit, search_mode)
                 result["latency_ms"] = self._elapsed_ms(started_at)
@@ -336,12 +360,21 @@ class ResourceIndexStore:
                 "chunk_id": chunk.chunk_id,
                 "content": chunk.content[:1500],
                 "metadata": chunk.metadata,
+                "start_seconds": chunk.metadata.get("start_seconds"),
+                "end_seconds": chunk.metadata.get("end_seconds"),
+                "start_timestamp": chunk.metadata.get("start_timestamp"),
+                "end_timestamp": chunk.metadata.get("end_timestamp"),
                 "score": round(score, 6),
                 "match_type": match_type,
             }
             for score, match_type, chunk in selected
         ]
         matches = self._rerank_matches(matches, query, top_k)
+        threshold = self.settings.retrieval_min_score if min_score is None else min_score
+        matches = [item for item in matches if float(item.get("score") or 0) >= threshold]
+        for item in matches:
+            item["grounding_confidence"] = round(min(1.0, max(0.0, float(item.get("score") or 0))), 4)
+            item["citation_id"] = f"{item.get('resource_id')}#{item.get('chunk_id')}"
         search_mode = "fallback_hybrid_rerank"
         result = self._build_search_result(query, matches, limit, search_mode)
         result["latency_ms"] = self._elapsed_ms(started_at)
@@ -397,12 +430,50 @@ class ResourceIndexStore:
                 "chunk_index": row[3],
                 "content": row[4][:1500],
                 "metadata": row[5] or {},
+                "start_seconds": (row[5] or {}).get("start_seconds"),
+                "end_seconds": (row[5] or {}).get("end_seconds"),
+                "start_timestamp": (row[5] or {}).get("start_timestamp"),
+                "end_timestamp": (row[5] or {}).get("end_timestamp"),
                 "score": round(float(row[6] or 0.0), 6),
                 "match_type": "pgvector_cosine",
             }
             for row in rows
         ]
         return {"query": query, "matches": matches}
+
+    def _search_keyword_postgres(self, resource_ids: list[str], query: str, top_k: int,
+                                 source_type: str | None = None) -> list[dict[str, Any]]:
+        keys = [resource_id for resource_id in resource_ids if ":" in resource_id]
+        chinese = re.sub(r"\s+", "", query or "")
+        terms = re.findall(r"[A-Za-z0-9_-]{2,}|[\u4e00-\u9fff]{2,6}", chinese)
+        if len(chinese) >= 4:
+            terms.extend(chinese[index:index + 2] for index in range(0, min(len(chinese) - 1, 20), 2))
+        terms = list(dict.fromkeys(term.lower() for term in terms if term.strip()))[:12]
+        if not terms:
+            return []
+        filters = ["embedding_vector IS NOT NULL", "COALESCE((metadata->>'available')::boolean, TRUE) IS TRUE",
+                   "COALESCE((metadata->>'allow_ai')::boolean, TRUE) IS TRUE"]
+        params: list[Any] = []
+        if keys:
+            filters.append("resource_key = ANY(%s)")
+            params.append(keys)
+        if source_type:
+            filters.append("source_type = %s")
+            params.append(source_type)
+        filters.append("(" + " OR ".join("LOWER(content) LIKE %s" for _ in terms) + ")")
+        params.extend([f"%{term}%" for term in terms])
+        params.append(top_k)
+        with self._connect() as conn:
+            with conn.cursor() as cur:
+                cur.execute(f"""SELECT chunk_id,source_type,resource_id,chunk_index,content,metadata
+                                 FROM a12_resource_index_chunk WHERE {' AND '.join(filters)} LIMIT %s""", tuple(params))
+                rows = cur.fetchall()
+        return [{"resource_id": f"{row[1]}:{row[2]}", "chunk_id": row[0], "chunk_index": row[3],
+                 "content": row[4][:1500], "metadata": row[5] or {}, "score": keyword_score(row[4], query),
+                 "match_type": "keyword_candidate", "start_seconds": (row[5] or {}).get("start_seconds"),
+                 "end_seconds": (row[5] or {}).get("end_seconds"),
+                 "start_timestamp": (row[5] or {}).get("start_timestamp"),
+                 "end_timestamp": (row[5] or {}).get("end_timestamp")} for row in rows]
 
     def overview(self) -> dict[str, Any]:
         if self.available:
@@ -431,11 +502,18 @@ class ResourceIndexStore:
                     ]
                     cur.execute("SELECT COUNT(*) FROM a12_retrieval_log")
                     retrieval_log_count = cur.fetchone()[0]
+            ready_for_rag = total_resources > 0 and total_chunks > 0
             return {
                 "postgres_available": True,
                 "embedding_dimensions": self.embedding_dimensions,
                 "resource_count": total_resources,
                 "chunk_count": total_chunks,
+                "ready_for_rag": ready_for_rag,
+                "readiness_message": (
+                    "知识库已可用于检索增强生成。"
+                    if ready_for_rag
+                    else "知识库当前为空，请先上传资料或执行资源索引同步。"
+                ),
                 "retrieval_log_count": retrieval_log_count,
                 "groups": groups,
                 "fallback_path": str(FALLBACK_INDEX_PATH),
@@ -443,11 +521,19 @@ class ResourceIndexStore:
 
         data = self._read_fallback()
         resources = list(data.get("resources", {}).values())
+        chunk_count = sum(len(items) for items in data.get("chunks", {}).values())
+        ready_for_rag = len(resources) > 0 and chunk_count > 0
         return {
             "postgres_available": False,
             "embedding_dimensions": self.embedding_dimensions,
             "resource_count": len(resources),
-            "chunk_count": sum(len(items) for items in data.get("chunks", {}).values()),
+            "chunk_count": chunk_count,
+            "ready_for_rag": ready_for_rag,
+            "readiness_message": (
+                "本地降级知识库已可用于检索。"
+                if ready_for_rag
+                else "PostgreSQL 不可用且本地知识库为空，请检查数据库后同步资源。"
+            ),
             "retrieval_log_count": self._fallback_log_count(),
             "groups": self._fallback_groups(resources),
             "fallback_path": str(FALLBACK_INDEX_PATH),
@@ -632,7 +718,11 @@ class ResourceIndexStore:
 
     def _build_search_result(self, query: str, matches: list[dict[str, Any]], limit: int, search_mode: str) -> dict[str, Any]:
         context = "\n\n".join(
-            f"[{item['resource_id']}#{item['chunk_id']} score={item.get('score', 0)}]\n{item['content']}"
+            (
+                f"[UNTRUSTED_EVIDENCE citation={item.get('citation_id') or (str(item['resource_id']) + '#' + str(item['chunk_id']))} score={item.get('score', 0)}"
+                + (f" time={item.get('start_timestamp')}-{item.get('end_timestamp')}" if item.get("start_timestamp") else "")
+                + f"]\n{item['content']}\n[/UNTRUSTED_EVIDENCE]"
+            )
             for item in matches
         )[:limit]
         return {
@@ -640,6 +730,13 @@ class ResourceIndexStore:
             "context": context,
             "matches": matches,
             "search_mode": search_mode,
+            "citations": [
+                {"citation_id": item.get("citation_id"), "resource_id": item.get("resource_id"),
+                 "chunk_id": item.get("chunk_id"), "score": item.get("score"),
+                 "start_timestamp": item.get("start_timestamp"), "end_timestamp": item.get("end_timestamp")}
+                for item in matches
+            ],
+            "grounding_status": "grounded" if matches else "insufficient_evidence",
         }
 
     def _record_retrieval_log(
@@ -729,6 +826,7 @@ class ResourceIndexStore:
         text: str,
         chunks: list[str],
         embeddings: list[list[float]] | None = None,
+        chunk_metadata: list[dict[str, Any]] | None = None,
     ) -> None:
         key = resource_key(request.source_type, request.resource_id)
         if self.available:
@@ -775,7 +873,7 @@ class ResourceIndexStore:
                                 index,
                                 chunk,
                                 embedding_to_pgvector(self._embedding_at(embeddings, index)),
-                                json.dumps(metadata, ensure_ascii=False),
+                                json.dumps(self._metadata_at(chunk_metadata, index, metadata), ensure_ascii=False),
                             ),
                         )
         else:
@@ -801,7 +899,7 @@ class ResourceIndexStore:
                     resource_id=request.resource_id,
                     chunk_index=index,
                     content=chunk,
-                    metadata=metadata,
+                    metadata=self._metadata_at(chunk_metadata, index, metadata),
                     embedding=self._embedding_at(embeddings, index),
                 ))
                 for index, chunk in enumerate(chunks)
@@ -832,6 +930,53 @@ class ResourceIndexStore:
                             error_message[:2000],
                         ),
                     )
+        else:
+            data = self._read_fallback()
+            previous = data.get("resources", {}).get(key, {})
+            data.setdefault("resources", {})[key] = {
+                **previous,
+                "resource_key": key,
+                "source_type": request.source_type,
+                "resource_id": request.resource_id,
+                "file_url": (request.file_url or "").split("?", 1)[0],
+                "file_fingerprint": fingerprint,
+                "title": request.title,
+                "metadata": metadata,
+                "available": request.available,
+                "allow_ai": request.allow_ai,
+                "parse_status": "failed",
+                "error_message": error_message[:2000],
+                "text_length": previous.get("text_length", 0),
+                "chunk_count": previous.get("chunk_count", 0),
+                "updated_at": datetime.now(timezone.utc).isoformat(),
+            }
+            self._write_fallback(data)
+
+    def _compact_chunk_metadata(self, metadata: dict[str, Any], specific: dict[str, Any]) -> dict[str, Any]:
+        """避免把完整视频时间轴复制到每个向量块，同时保留权限和定位字段。"""
+        keys = (
+            "source", "source_type", "resource_id", "resource_key", "uploaded_by", "owner_user_id",
+            "available", "allow_ai", "file_type", "file_size", "title", "description", "subject", "grade",
+            "categories", "tags", "access_type",
+        )
+        compact = {key: metadata.get(key) for key in keys if key in metadata}
+        parse_metadata = metadata.get("parse") if isinstance(metadata.get("parse"), dict) else {}
+        compact["parse"] = {
+            key: value for key, value in parse_metadata.items()
+            if key not in {"timeline", "keyframes"}
+        }
+        compact.update(specific)
+        return compact
+
+    @staticmethod
+    def _metadata_at(
+        chunk_metadata: list[dict[str, Any]] | None,
+        index: int,
+        fallback: dict[str, Any],
+    ) -> dict[str, Any]:
+        if chunk_metadata and index < len(chunk_metadata):
+            return chunk_metadata[index]
+        return fallback
 
     def _load_resource_meta(self, resource_key: str) -> dict[str, Any] | None:
         if self.available:

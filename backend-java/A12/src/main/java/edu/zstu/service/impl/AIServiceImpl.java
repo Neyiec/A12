@@ -325,6 +325,8 @@ public class AIServiceImpl implements AIService {
         payload.put("enable_web", requestBoolean(dto.getEnable_web(), task, "enable_web"));
         payload.put("slide_count", requestSlideCount(dto, task));
         payload.put("known_context", buildKnownContext(task, dto.getKnown_context()));
+        payload.put("model_profile", firstNotBlank(dto.getModel_profile(), "standard"));
+        payload.put("reasoning_effort", firstNotBlank(dto.getReasoning_effort(), "medium"));
         return payload;
     }
 

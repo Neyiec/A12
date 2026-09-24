@@ -43,6 +43,10 @@ const emit = defineEmits(['back', 'open-workspace', 'planning-request', 'session
 
 const userStore = useUserStore()
 const isGeneralChat = computed(() => props.mode === 'general')
+const selectedModelProfile = ref(localStorage.getItem('a12:model-profile') || 'standard')
+const selectedReasoningEffort = ref(localStorage.getItem('a12:reasoning-effort') || 'medium')
+watch(selectedModelProfile, (value) => localStorage.setItem('a12:model-profile', value))
+watch(selectedReasoningEffort, (value) => localStorage.setItem('a12:reasoning-effort', value))
 
 // ========== 响应式断点（design.md §9.3：手机档 <768px） ==========
 /** 手机档断点：补充信息表单由 display:table 降级为卡片堆叠渲染。 */
@@ -784,6 +788,8 @@ async function sendMessageToBackend(message, { includeContinuation = false } = {
     resource_ids: JSON.stringify(props.resourceIds || []),
     enable_rag: props.resourceIds.length > 0,
     enable_web: false,
+    model_profile: selectedModelProfile.value,
+    reasoning_effort: selectedReasoningEffort.value,
     known_context: JSON.stringify({
       title: infoForm.courseName.trim(),
       subject: infoForm.subject,
@@ -1133,7 +1139,9 @@ async function requestOutlineRepairWithModel(response) {
   const modelResponse = await streamGeneralChat({
     mode: 'outline-repair',
     user_id: String(userStore.userInfo?.user_id || '10001'),
-    messages: [{ role: 'user', content: outlineRepairPrompt(response) }],
+      messages: [{ role: 'user', content: outlineRepairPrompt(response) }],
+      model_profile: selectedModelProfile.value,
+      reasoning_effort: selectedReasoningEffort.value,
   })
   if (!modelResponse.ok) {
     let message = ''
@@ -1188,6 +1196,8 @@ async function requestGeneralChatReply() {
     const response = await streamGeneralChat({
       user_id: String(userStore.userInfo?.user_id || '10001'),
       messages: history,
+      model_profile: selectedModelProfile.value,
+      reasoning_effort: selectedReasoningEffort.value,
     })
     if (!response.ok) {
       let message = ''
@@ -1853,6 +1863,16 @@ async function restoreSession() {
           @keydown.enter="handleComposerKeydown"
         />
         <span class="composer-actions">
+          <el-select v-model="selectedModelProfile" class="ai-option-select" size="small" aria-label="模型模式">
+            <el-option label="快速" value="fast" />
+            <el-option label="标准" value="standard" />
+            <el-option label="深度" value="deep" />
+          </el-select>
+          <el-select v-model="selectedReasoningEffort" class="ai-option-select" size="small" aria-label="推理强度">
+            <el-option label="轻度推理" value="low" />
+            <el-option label="标准推理" value="medium" />
+            <el-option label="深度推理" value="high" />
+          </el-select>
           <VoiceRecorderButton
             :disabled="isRequesterLoading || (!isGeneralChat && !['info', 'clarifying'].includes(phase))"
             :busy="voiceSubmitting"
@@ -2291,6 +2311,8 @@ async function restoreSession() {
   background: var(--zh-background-light);
 }
 .composer-actions { display: inline-flex; align-items: center; gap: 3px; flex: none; }
+.ai-option-select { width: 96px; }
+.ai-option-select + .ai-option-select { width: 112px; }
 .composer-input-row :deep(.el-textarea__inner) {
   min-height: 52px !important;
   padding: 6px 8px;
@@ -2347,6 +2369,8 @@ async function restoreSession() {
   .chat-composer {
     padding-bottom: calc(16px + var(--zh-safe-bottom));
   }
+  .ai-option-select { width: 78px; }
+  .ai-option-select + .ai-option-select { width: 92px; }
   .user-bubble {
     max-width: 92%;
   }

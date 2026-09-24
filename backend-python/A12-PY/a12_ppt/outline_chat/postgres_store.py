@@ -1,5 +1,6 @@
 import json
 import uuid
+from datetime import datetime, timezone
 from typing import Any
 
 from ..config import get_settings
@@ -206,10 +207,106 @@ class PostgresOutlineMemoryStore:
                         (user_id,),
                     )
                     row = cur.fetchone()
-                    return dict(row) if row else None
+                    if not row:
+                        return None
+                    result = dict(row)
+                    cur.execute("""SELECT action,target_type,instruction,change_summary,metadata,created_at
+                                   FROM a12_ai_feedback WHERE user_id=%s
+                                   ORDER BY created_at DESC LIMIT 20""", (user_id,))
+                    result["recent_feedback"] = [dict(item) for item in cur.fetchall()]
+                    # Confidence decays slowly when a profile has not received evidence for a long time.
+                    age_days = (datetime.now(timezone.utc) - result["updated_at"]).days if result.get("updated_at") else 0
+                    result["effective_confidence"] = round(float(result.get("confidence") or 0) * 0.995 ** min(365, max(0, age_days)), 4)
+                    return result
         except Exception:
             self.available = False
             return None
+
+    def record_feedback(self, payload: dict[str, Any]) -> dict[str, Any]:
+        """Store explicit/implicit teacher feedback and update a bounded preference summary."""
+        user_id = str(payload.get("user_id") or "").strip()
+        action = str(payload.get("action") or "").strip()
+        metadata = dict(payload.get("metadata") or {})
+        saved = self._execute(
+            """INSERT INTO a12_ai_feedback
+              (user_id,session_id,project_id,action,target_type,instruction,change_summary,before_data,after_data,metadata)
+              VALUES (%s,%s,%s,%s,%s,%s,%s,%s::jsonb,%s::jsonb,%s::jsonb)""",
+            (user_id, payload.get("session_id"), payload.get("project_id"), action,
+             payload.get("target_type") or "presentation", payload.get("instruction"),
+             payload.get("change_summary"), json.dumps(payload.get("before_data") or {}, ensure_ascii=False),
+             json.dumps(payload.get("after_data") or {}, ensure_ascii=False), json.dumps(metadata, ensure_ascii=False)),
+        )
+        # Only accepted/manual changes become positive long-term evidence. Rejections are retained as
+        # negative evidence in the feedback table and can be used by the next request.
+        if saved and action in {"accept", "manual_edit"}:
+            preference = {
+                "last_positive_action": action,
+                "last_change_summary": str(payload.get("change_summary") or "")[:500],
+                "last_instruction": str(payload.get("instruction") or "")[:500],
+                "subject": metadata.get("subject"), "grade": metadata.get("grade"),
+            }
+            self._execute(
+                """INSERT INTO a12_teacher_style_profile(user_id,style_summary,profile,evidence_count,confidence)
+                   VALUES (%s,%s,%s::jsonb,1,0.55)
+                   ON CONFLICT(user_id) DO UPDATE SET profile=a12_teacher_style_profile.profile || EXCLUDED.profile,
+                   style_summary=EXCLUDED.style_summary,evidence_count=a12_teacher_style_profile.evidence_count+1,
+                   confidence=LEAST(0.98, a12_teacher_style_profile.confidence + 0.03),updated_at=NOW()""",
+                (user_id, preference["last_change_summary"] or preference["last_instruction"],
+                 json.dumps(preference, ensure_ascii=False)),
+            )
+        return {"stored": bool(saved), "action": action, "profile_updated": bool(saved and action in {"accept", "manual_edit"})}
+
+    def ai_metrics(self, limit: int = 50) -> dict[str, Any]:
+        try:
+            import psycopg
+            from psycopg.rows import dict_row
+            with psycopg.connect(self.settings.postgres_dsn, row_factory=dict_row) as conn:
+                with conn.cursor() as cur:
+                    cur.execute("""SELECT operation,status,model,COUNT(*) runs,
+                              ROUND(AVG(latency_ms)) avg_latency_ms,SUM(input_tokens) input_tokens,
+                              SUM(output_tokens) output_tokens
+                              FROM a12_ai_run_log GROUP BY operation,status,model ORDER BY runs DESC LIMIT %s""", (limit,))
+                    runs = [dict(row) for row in cur.fetchall()]
+                    cur.execute("SELECT action, COUNT(*) count FROM a12_ai_feedback GROUP BY action ORDER BY count DESC")
+                    feedback = [dict(row) for row in cur.fetchall()]
+            return {"runs": runs, "feedback": feedback, "postgres_available": True}
+        except Exception as exc:
+            self.available = False
+            return {"runs": [], "feedback": [], "postgres_available": False, "error": str(exc)[:300]}
+
+    def record_classroom_event(self, payload: dict[str, Any]) -> bool:
+        return self._execute("""INSERT INTO a12_classroom_event
+          (user_id,project_id,session_id,student_key,event_type,question_id,answer,correct,response_ms,metadata)
+          VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s::jsonb)""", (
+            payload.get("user_id"), payload.get("project_id"), payload.get("session_id"),
+            payload.get("student_key"), payload.get("event_type"), payload.get("question_id"),
+            payload.get("answer"), payload.get("correct"), payload.get("response_ms"),
+            json.dumps(payload.get("metadata") or {}, ensure_ascii=False),
+        ))
+
+    def classroom_insights(self, user_id: str, project_id: str) -> dict[str, Any]:
+        try:
+            import psycopg
+            from psycopg.rows import dict_row
+            with psycopg.connect(self.settings.postgres_dsn, row_factory=dict_row) as conn:
+                with conn.cursor() as cur:
+                    cur.execute("""SELECT question_id,COUNT(*) responses,
+                              COUNT(*) FILTER (WHERE correct IS TRUE) correct_count,
+                              ROUND(AVG(response_ms)) avg_response_ms
+                              FROM a12_classroom_event WHERE user_id=%s AND project_id=%s AND event_type='answer'
+                              GROUP BY question_id
+                              ORDER BY (COUNT(*) FILTER (WHERE correct IS TRUE))::float / NULLIF(COUNT(*),0) ASC""",
+                                (user_id, project_id))
+                    questions = [dict(row) for row in cur.fetchall()]
+                    cur.execute("""SELECT event_type,COUNT(*) count FROM a12_classroom_event
+                              WHERE user_id=%s AND project_id=%s GROUP BY event_type""", (user_id, project_id))
+                    events = [dict(row) for row in cur.fetchall()]
+            for item in questions:
+                item["accuracy"] = round(int(item.get("correct_count") or 0) / max(1, int(item.get("responses") or 0)), 4)
+            return {"project_id": project_id, "questions": questions, "events": events,
+                    "weak_question_ids": [item.get("question_id") for item in questions if item.get("accuracy", 1) < 0.6]}
+        except Exception as exc:
+            return {"project_id": project_id, "questions": [], "events": [], "error": str(exc)[:300]}
 
     def _fetch_session(self, user_id: str, session_id: str) -> dict[str, Any] | None:
         try:

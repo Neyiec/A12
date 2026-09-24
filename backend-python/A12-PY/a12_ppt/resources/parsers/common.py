@@ -17,7 +17,7 @@ def normalize_file_type(path: Path, file_type: str | None = None) -> str:
     known = {
         "doc", "docx", "word", "ppt", "pptx", "powerpoint", "jpg", "jpeg", "png", "gif", "bmp", "webp",
         "image", "mp4", "mov", "avi", "mkv", "webm", "wmv", "flv", "video", "mp3", "wav", "m4a", "aac",
-        "ogg", "audio", "pdf", "txt", "text", "md", "markdown", "csv",
+        "ogg", "audio", "pdf", "txt", "text", "md", "markdown", "csv", "srt", "vtt", "ass",
     }
     value = raw if raw in known else suffix
     if value in {"doc", "docx", "word"}:
@@ -30,9 +30,9 @@ def normalize_file_type(path: Path, file_type: str | None = None) -> str:
         return "video"
     if value in {"mp3", "wav", "m4a", "aac", "ogg", "audio"}:
         return "audio"
-    if value in {"pdf", "txt", "text", "md", "markdown", "csv"}:
-        return "txt" if value in {"text", "md", "markdown", "csv"} else value
-    if suffix:
+    if value in {"pdf", "txt", "text", "md", "markdown", "csv", "srt", "vtt", "ass"}:
+        return "txt" if value in {"text", "md", "markdown", "csv", "srt", "vtt", "ass"} else value
+    if suffix and raw != suffix:
         return normalize_file_type(path, suffix)
     return "other"
 
