@@ -27,11 +27,25 @@ def create_chat_model(
         temperature=temperature,
         **kwargs,
     )
+    # 百炼 Qwen 的 OpenAI 兼容接口使用 enable_thinking / thinking_budget。
+    if reasoning_effort and ("dashscope" in (base_url or "").lower() or model.lower().startswith("qwen")):
+        budgets = {"none": 0, "low": 1024, "medium": 4096, "high": 8192}
+        budget = budgets.get(reasoning_effort, 1024)
+        kwargs["extra_body"] = {
+            "enable_thinking": budget > 0,
+            **({"thinking_budget": budget} if budget > 0 else {}),
+        }
+    return ChatOpenAI(**kwargs)
 
 
-def create_chat_model_from_settings(settings: Settings, temperature: float = 0.45) -> ChatOpenAI:
+def create_chat_model_from_settings(
+    settings: Settings,
+    temperature: float = 0.45,
+    model: str | None = None,
+    reasoning_effort: str | None = None,
+) -> ChatOpenAI:
     return create_chat_model(
-        model=settings.openai_model,
+        model=model or settings.openai_model,
         api_key=settings.openai_api_key,
         base_url=settings.openai_base_url,
         timeout_seconds=settings.request_timeout_seconds,

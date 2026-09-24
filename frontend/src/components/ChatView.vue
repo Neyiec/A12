@@ -10,11 +10,11 @@
 <script setup>
 import { computed, nextTick, onMounted, onUnmounted, reactive, ref, watch } from 'vue'
 import { ElMessage } from 'element-plus'
-import { Brush, Document, Promotion } from '@element-plus/icons-vue'
+import { ArrowDown, Brush, Check, Close, Document, Paperclip, Plus, Promotion } from '@element-plus/icons-vue'
 import MarkdownRender from 'markstream-vue'
 import { useUserStore } from '../storage/user.js'
 import { readOutlineDraft, saveOutlineDraft } from '../utils/presentationDraft.js'
-import { confirmAiPlan, getAiPlan, getAiSession, listPptTemplates, sendAiSessionAudioMessage, streamGeneralChat, streamSendAiSessionMessage, transcribeAudio } from '../apis/teacher.js'
+import { confirmAiPlan, getAiPlan, getAiSession, listPptTemplates, sendAiSessionAudioMessage, streamGeneralChat, streamSendAiSessionMessage, transcribeAudio, uploadResource } from '../apis/teacher.js'
 import {
   CHAT_COMPOSER, CLASS_LEVEL_OPTIONS, CLARIFICATION_LABELS,
   extractPlanningContext, GRADE_OPTIONS, CHAT_RESUME, DESIGN_ACTION_BAR, GEN_RESOURCE_DEFAULTS, INFO_FORM_DEFAULTS,
@@ -35,6 +35,10 @@ const props = defineProps({
   continuationHistory: { type: Array, default: () => [] },
   /** 普通主对话不进入备课补充信息流程；默认仍为备课工作流。 */
   mode: { type: String, default: 'planning' },
+  /** 欢迎页已选定的模型、推理强度和任务类型，进入对话后保持一致。 */
+  initialModel: { type: String, default: '' },
+  initialReasoning: { type: String, default: '' },
+  initialTaskMode: { type: String, default: 'general' },
   /** 是否为恢复历史会话（来自侧栏历史对话），开启时挂载后拉取消息回显 */
   resume: { type: Boolean, default: false },
 })
@@ -107,6 +111,148 @@ const infoForm = reactive({ ...INFO_FORM_DEFAULTS })
 const lastClarification = ref('')
 /** 澄清/修改输入框内容 */
 const composerInput = ref('')
+const chatModelOptions = [
+  { value: 'qwen3.7-max', label: 'Qwen 3.7 Max', description: '复杂教学与内容创作' },
+  { value: 'qwen-plus', label: 'Qwen Plus', description: '日常任务，速度均衡' },
+  { value: 'qwen-turbo', label: 'Qwen Turbo', description: '快速问答与整理' },
+]
+const reasoningOptions = [
+  { value: 'none', label: '快速回答' },
+  { value: 'low', label: '轻度推理' },
+  { value: 'medium', label: '中度推理' },
+  { value: 'high', label: '深度推理' },
+]
+const taskModeOptions = [
+  { value: 'general', label: '自由对话', hint: '问答、建议与通用协作' },
+  { value: 'lesson_design', label: '课件与教案', hint: '进入结构化教学设计流程' },
+  { value: 'content', label: '内容创作', hint: '讲稿、通知、文案与学习材料' },
+  { value: 'assessment', label: '题目与测验', hint: '试题、答案、解析与评价量规' },
+  { value: 'research', label: '研究与总结', hint: '调研、归纳、对比与报告' },
+  { value: 'data_analysis', label: '资料分析', hint: '提取重点并形成结论' },
+  { value: 'interactive', label: '互动与代码', hint: '小游戏、HTML 与互动组件' },
+]
+const selectedChatModel = ref(props.initialModel || window.localStorage.getItem('a12:chat-model') || chatModelOptions[0].value)
+const reasoningEffort = ref(props.initialReasoning || window.localStorage.getItem('a12:reasoning-effort') || 'low')
+const taskMode = ref(props.initialTaskMode || 'general')
+const currentModelLabel = computed(() => chatModelOptions.find((item) => item.value === selectedChatModel.value)?.label || '系统模型')
+const currentReasoningLabel = computed(() => reasoningOptions.find((item) => item.value === reasoningEffort.value)?.label || '轻度推理')
+const currentTaskMode = computed(() => taskModeOptions.find((item) => item.value === taskMode.value) || taskModeOptions[0])
+watch(selectedChatModel, value => window.localStorage.setItem('a12:chat-model', value))
+watch(reasoningEffort, value => window.localStorage.setItem('a12:reasoning-effort', value))
+
+const attachmentInputRef = ref(null)
+const attachedFiles = ref([])
+const supportedAttachmentExtensions = [
+  'pdf', 'doc', 'docx', 'ppt', 'pptx', 'xls', 'xlsx', 'csv', 'tsv', 'txt', 'md',
+  'jpg', 'jpeg', 'png', 'gif', 'webp', 'svg',
+  'mp3', 'wav', 'm4a', 'ogg', 'mp4', 'avi', 'mov', 'mkv', 'webm',
+]
+const attachmentAccept = supportedAttachmentExtensions.map((extension) => `.${extension}`).join(',')
+const completedAttachments = computed(() => attachedFiles.value.filter((item) => item.status === 'done' && item.resourceId))
+const activeResourceIds = computed(() => [...new Set([
+  ...(props.resourceIds || []).map(String),
+  ...completedAttachments.value.map((item) => String(item.resourceId)),
+])])
+
+const inferTaskModeFromConversation = () => {
+  if (taskMode.value !== 'general') return taskMode.value
+  const latestUserMessage = [...messages].reverse().find((message) => message.role === 'user')
+  const text = String(latestUserMessage?.content || '').trim()
+  if (!text) return 'general'
+  if (/试题|题目|测验|练习|考试|评价量规|评分标准/.test(text)) return 'assessment'
+  if (/代码|HTML|网页|互动|小游戏|游戏|动画|可视化/.test(text)) return 'interactive'
+  if (/分析|提取|对比|数据|表格|附件|资料|文件/.test(text) || activeResourceIds.value.length) return 'data_analysis'
+  if (/调研|研究|综述|报告|总结|归纳/.test(text)) return 'research'
+  if (/生成|制作|创建|编写|撰写|写一份|整理成|输出一份|设计一份/.test(text)) return 'content'
+  return 'general'
+}
+const effectiveTaskMode = computed(inferTaskModeFromConversation)
+const showTaskProgress = computed(() => !isGeneralChat.value || effectiveTaskMode.value !== 'general')
+
+const taskProgressSteps = computed(() => {
+  if (isGeneralChat.value) {
+    const labelsByMode = {
+      content: ['明确要求', '生成内容', '完成输出'],
+      assessment: ['明确考查目标', '生成题目', '校验答案'],
+      research: ['明确研究范围', '归纳材料', '形成结论'],
+      data_analysis: ['读取资料', '分析信息', '输出结论'],
+      interactive: ['明确交互目标', '生成实现', '检查结果'],
+    }
+    const labels = labelsByMode[effectiveTaskMode.value] || []
+    const latestUserIndex = messages.map((message) => message.role).lastIndexOf('user')
+    const hasTaskRequest = latestUserIndex >= 0 && labels.length > 0
+    const hasSuccessfulReply = hasTaskRequest && messages.slice(latestUserIndex + 1).some((message) => message.role === 'assistant'
+      && String(message.content || '').trim()
+      && !String(message.content).startsWith('大模型暂时无法回复'))
+    return labels.map((label, index) => ({
+      label,
+      done: index === 0 ? hasTaskRequest : hasSuccessfulReply && !isRequesterLoading.value,
+    }))
+  }
+  const phaseRank = {
+    info: 0,
+    clarifying: 1,
+    generating_outline: 1,
+    outline_ready: 2,
+    resource_ready: 3,
+    generating_resource: 3,
+  }[phase.value] ?? 0
+  return [
+    { label: '补充需求', done: phaseRank >= 1 },
+    { label: '生成大纲', done: phaseRank >= 2 },
+    { label: '确认方案', done: phaseRank >= 3 },
+    { label: '生成课件', done: false },
+  ]
+})
+
+const triggerAttachmentPicker = () => attachmentInputRef.value?.click()
+const removeAttachment = (key) => {
+  attachedFiles.value = attachedFiles.value.filter((item) => item.key !== key)
+}
+const handleComposerAddCommand = (command) => {
+  if (command === 'upload_files') {
+    triggerAttachmentPicker()
+    return
+  }
+  taskMode.value = command
+}
+const uploadComposerFiles = async (rawFiles) => {
+  const selectedFiles = Array.from(rawFiles || [])
+  const supportedFiles = selectedFiles.filter((file) => supportedAttachmentExtensions.includes(file.name.split('.').pop()?.toLowerCase()))
+  if (supportedFiles.length !== selectedFiles.length) ElMessage.warning('已跳过暂不支持的文件格式')
+  for (const file of supportedFiles) {
+    const key = `${Date.now()}-${Math.random().toString(36).slice(2)}`
+    const item = {
+      key,
+      name: file.name,
+      size: file.size,
+      type: file.type || file.name.split('.').pop()?.toLowerCase() || '',
+      progress: 0,
+      status: 'uploading',
+      resourceId: '',
+      error: '',
+    }
+    attachedFiles.value = [...attachedFiles.value, item]
+    try {
+      const resource = await uploadResource(file, (progress) => { item.progress = progress })
+      item.resourceId = String(resource?.id || resource?.resource_id || '')
+      if (!item.resourceId) throw new Error('素材入库结果缺少资源编号')
+      item.progress = 100
+      item.status = 'done'
+    } catch (error) {
+      item.status = 'error'
+      item.error = error?.message || '上传失败'
+    }
+  }
+  const failedCount = attachedFiles.value.filter((item) => item.status === 'error').length
+  if (supportedFiles.length && !failedCount) ElMessage.success(`${supportedFiles.length} 个文件已上传并加入对话`)
+  else if (failedCount) ElMessage.error('部分文件上传失败，请移除后重试')
+}
+const handleAttachmentPicked = async (event) => {
+  const files = Array.from(event.target.files || [])
+  event.target.value = ''
+  await uploadComposerFiles(files)
+}
 /** 后端 Agent 返回复杂澄清问题时使用的结构化征询弹窗。首次信息直接在内嵌卡片中填写。 */
 const planningClarificationVisible = ref(false)
 const planningClarificationQuestion = ref(null)
@@ -1195,6 +1341,15 @@ async function requestGeneralChatReply() {
   try {
     const response = await streamGeneralChat({
       user_id: String(userStore.userInfo?.user_id || '10001'),
+      model: selectedChatModel.value,
+      reasoning_effort: reasoningEffort.value,
+      task_mode: effectiveTaskMode.value,
+      attachments: completedAttachments.value.map((item) => ({
+        resource_id: String(item.resourceId),
+        file_name: item.name,
+        file_type: item.type,
+        file_size: item.size,
+      })),
       messages: history,
       model_profile: selectedModelProfile.value,
       reasoning_effort: selectedReasoningEffort.value,
@@ -1229,10 +1384,31 @@ async function handleGeneralMessage() {
 
   // 普通聊天中途明确提出制作课件/备课时，交给父级创建真正的备课会话，
   // 保证后续进入结构化征询，而不是继续让普通模型用文字追问。
-  if (isPlanningPrompt(text)) {
+  if (taskMode.value === 'lesson_design' || isPlanningPrompt(text)) {
     emit('planning-request', {
       prompt: text,
-      resourceIds: [...(props.resourceIds || [])],
+      resourceIds: activeResourceIds.value,
+      uploadedResources: completedAttachments.value.map((item) => ({
+        resource_id: String(item.resourceId),
+        id: String(item.resourceId),
+        file_name: item.name,
+        file_type: item.type,
+        file_size: item.size,
+        source: 'chat_upload',
+      })),
+      workspaceContext: {
+        ...(props.workspaceContext || {}),
+        resourceIds: activeResourceIds.value,
+        resource_ids: activeResourceIds.value,
+        uploadedResources: completedAttachments.value.map((item) => ({
+          resource_id: String(item.resourceId),
+          id: String(item.resourceId),
+          file_name: item.name,
+          file_type: item.type,
+          file_size: item.size,
+          source: 'chat_upload',
+        })),
+      },
       // 当前这条备课请求由父级作为新流程的首条消息传入，这里只传切换前的历史。
       history: getGeneralChatHistory().slice(0, -1),
     })
@@ -1609,6 +1785,8 @@ async function restoreSession() {
 
           <!-- AI 消息：根据 type 不同渲染 -->
           <template v-else-if="msg.role === 'assistant'">
+            <div class="assistant-response">
+              <div class="assistant-content">
             <!-- 补充信息卡片（表格样式表单） -->
             <div v-if="msg.type === 'info_form'" class="info-card">
               <div class="info-card-header">
@@ -1801,6 +1979,8 @@ async function restoreSession() {
                 />
               </div>
             </div>
+              </div>
+            </div>
           </template>
         </article>
       </TransitionGroup>
@@ -1851,14 +2031,49 @@ async function restoreSession() {
 
     <!-- 底部输入区（flex 布局固定在页面底部，不随消息滚动）
          澄清阶段启用输入框，供教师补充回复后端提出的澄清问题 -->
+    <section v-if="showTaskProgress" class="task-progress" aria-label="任务进度">
+      <span class="task-progress-title">任务进度</span>
+      <ol class="task-progress-list">
+        <li v-for="(step, index) in taskProgressSteps" :key="step.label" :class="{ done: step.done }">
+          <span class="task-progress-dot">
+            <el-icon v-if="step.done"><Check /></el-icon>
+          </span>
+          <span class="task-progress-label">{{ step.label }}</span>
+          <span v-if="index < taskProgressSteps.length - 1" class="task-progress-line" aria-hidden="true"></span>
+        </li>
+      </ol>
+    </section>
     <footer class="chat-composer">
-      <div class="composer-input-row" :class="{ 'is-editable': isGeneralChat || phase === 'info' || phase === 'clarifying' }">
+      <div class="composer-shell" :class="{ 'is-editable': isGeneralChat || phase === 'info' || phase === 'clarifying' }">
+        <input
+          ref="attachmentInputRef"
+          class="attachment-file-input"
+          type="file"
+          multiple
+          :accept="attachmentAccept"
+          @change="handleAttachmentPicked"
+        />
+        <div v-if="attachedFiles.length" class="composer-attachments" aria-label="已添加文件">
+          <article v-for="file in attachedFiles" :key="file.key" class="attachment-chip" :class="`is-${file.status}`">
+            <span class="attachment-icon"><el-icon><Document /></el-icon></span>
+            <span class="attachment-copy">
+              <strong :title="file.name">{{ file.name }}</strong>
+              <small v-if="file.status === 'uploading'">上传中 {{ file.progress }}%</small>
+              <small v-else-if="file.status === 'error'">{{ file.error }}</small>
+              <small v-else>已加入对话</small>
+            </span>
+            <button type="button" class="attachment-remove" :aria-label="`移除 ${file.name}`" @click="removeAttachment(file.key)">
+              <el-icon><Close /></el-icon>
+            </button>
+            <span v-if="file.status === 'uploading'" class="attachment-progress" :style="{ width: `${file.progress}%` }"></span>
+          </article>
+        </div>
         <el-input
           v-model="composerInput"
           type="textarea"
-          :autosize="{ minRows: 2, maxRows: 5 }"
+          :autosize="{ minRows: 2, maxRows: 8 }"
           resize="none"
-          :placeholder="isGeneralChat ? CHAT_COMPOSER.generalPlaceholder : (phase === 'clarifying' ? CHAT_COMPOSER.clarificationPlaceholder : CHAT_COMPOSER.placeholder)"
+          :placeholder="isGeneralChat ? `${currentTaskMode.hint}，描述你想完成的事情…` : (phase === 'clarifying' ? CHAT_COMPOSER.clarificationPlaceholder : CHAT_COMPOSER.placeholder)"
           :readonly="isRequesterLoading || (!isGeneralChat && phase !== 'clarifying')"
           @keydown.enter="handleComposerKeydown"
         />
@@ -1947,7 +2162,7 @@ async function restoreSession() {
   display: flex;
   flex-direction: column;
   height: calc(100dvh - 68px); /* 减去 topbar 高度 */
-  max-width: 880px;
+  max-width: 960px;
   margin: 0 auto;
   padding: 0 24px;
 }
@@ -1986,29 +2201,39 @@ async function restoreSession() {
 
 /* ===== 用户气泡 ===== */
 .user-bubble {
-  max-width: 75%;
-  margin: 20px 0 20px auto;
-  padding: 12px 18px;
-  border-radius: var(--zh-radius18) var(--zh-radius18) var(--zh-radius8) var(--zh-radius18);
-  background: var(--zh-background-user-query);
+  width: fit-content;
+  min-width: 0;
+  max-width: min(78%, 720px);
+  margin: 22px 0 28px auto;
+  padding: 11px 16px;
+  border: 1px solid var(--zh-line-parting);
+  border-radius: 20px 20px 6px 20px;
+  background: var(--zh-background-light-gray);
   color: var(--zh-text-primary);
   font-size: var(--zh-font-size14);
   line-height: 1.65;
   white-space: pre-wrap;
   word-break: break-word;
+  overflow-wrap: anywhere;
 }
+
+.assistant-response {
+  display: block;
+  margin: 22px 0 32px;
+}
+.assistant-content { min-width: 0; }
 
 /* ===== AI 气泡（全宽，无头像） ===== */
 .ai-bubble {
   width: 100%;
-  margin: 20px 0;
+  margin: 0;
 }
 /* Markdown 渲染内容容器：全宽展示 */
 .ai-markdown-body {
   width: 100%;
-  padding: 12px 18px;
-  border-radius: var(--zh-radius18) var(--zh-radius18) var(--zh-radius18) var(--zh-radius8);
-  background: var(--zh-background-answer-card);
+  padding: 1px 4px 0;
+  border-radius: 0;
+  background: transparent;
   color: var(--zh-text-primary);
   font-size: var(--zh-font-size14);
   line-height: 1.65;
@@ -2283,32 +2508,87 @@ async function restoreSession() {
 }
 
 /* ===== 底部输入区（flex 布局固定在页面底部，不随消息滚动） ===== */
+.task-progress {
+  display: flex;
+  min-width: 0;
+  align-items: center;
+  gap: 14px;
+  padding: 8px 14px 2px;
+  color: var(--zh-text-caption);
+}
+.task-progress-title {
+  flex: none;
+  color: var(--zh-text-secondary);
+  font-size: 12px;
+  font-weight: 650;
+  white-space: nowrap;
+}
+.task-progress-list {
+  display: flex;
+  min-width: 0;
+  flex: 1;
+  align-items: center;
+  gap: 0;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+  overflow-x: auto;
+  scrollbar-width: none;
+}
+.task-progress-list::-webkit-scrollbar { display: none; }
+.task-progress-list li {
+  display: flex;
+  min-width: 0;
+  align-items: center;
+  color: var(--zh-text-caption);
+  font-size: 11px;
+  white-space: nowrap;
+}
+.task-progress-dot {
+  display: grid;
+  width: 18px;
+  height: 18px;
+  flex: none;
+  place-items: center;
+  border: 1.5px solid var(--zh-line-heavier);
+  border-radius: 50%;
+  background: #fff;
+}
+.task-progress-dot .el-icon { color: #16a34a; font-size: 13px; font-weight: 800; }
+.task-progress-list li.done { color: var(--zh-text-secondary); }
+.task-progress-list li.done .task-progress-dot { border-color: #22c55e; }
+.task-progress-label { margin-left: 6px; }
+.task-progress-line {
+  width: clamp(14px, 2.5vw, 34px);
+  height: 1px;
+  flex: none;
+  margin: 0 8px;
+  background: var(--zh-line-border);
+}
 .chat-composer {
   flex-shrink: 0;
-  padding: 12px 0 16px;
-  border-top: 1px solid var(--zh-line-parting);
-  background: var(--zh-background-primary);
+  padding: 6px 0 14px;
+  border-top: 0;
+  background: linear-gradient(180deg, transparent, var(--zh-background-primary) 18%);
 }
-.composer-input-row {
-  display: flex;
-  align-items: flex-end;
-  gap: 10px;
-  padding: 9px 10px 10px;
-  border: 1px solid var(--zh-line-parting);
-  border-radius: var(--zh-radius16);
-  background: var(--zh-background-light-gray);
-  box-shadow: none;
+.composer-shell {
+  padding: 13px 13px 10px;
+  border: 1px solid var(--zh-line-heavier);
+  border-radius: 24px;
+  background: var(--zh-background-capsule);
+  box-shadow: 0 12px 35px rgb(15 23 42 / 9%), 0 2px 8px rgb(15 23 42 / 5%);
   opacity: 0.6;
   cursor: not-allowed;
   pointer-events: none;
+  transition: border-color .18s ease, box-shadow .18s ease;
 }
 /* 澄清阶段启用输入框 */
-.composer-input-row.is-editable {
+.composer-shell.is-editable {
   opacity: 1;
   cursor: text;
   pointer-events: auto;
   border-color: var(--zh-line-heavier);
-  background: var(--zh-background-light);
+  background: var(--zh-background-capsule);
 }
 .composer-actions { display: inline-flex; align-items: center; gap: 3px; flex: none; }
 .ai-option-select { width: 96px; }
@@ -2320,11 +2600,38 @@ async function restoreSession() {
   background: transparent;
   box-shadow: none;
   color: var(--zh-text-primary);
-  font-size: var(--zh-font-size14);
+  font-size: 15px;
   line-height: 1.6;
 }
+.composer-toolbar { display: flex; align-items: center; justify-content: space-between; gap: 10px; }
+.composer-tools { display: flex; min-width: 0; align-items: center; flex-wrap: wrap; gap: 5px; }
+.composer-tool {
+  display: inline-flex;
+  min-height: 30px;
+  align-items: center;
+  gap: 5px;
+  padding: 0 9px;
+  border: 0;
+  border-radius: 9px;
+  color: var(--zh-text-secondary);
+  font: inherit;
+  font-size: 12px;
+  white-space: nowrap;
+  cursor: pointer;
+  background: transparent;
+}
+.composer-tool:hover { color: var(--zh-text-primary); background: var(--zh-background-option); }
+.composer-add { width: 32px; justify-content: center; padding: 0; border: 1px solid var(--zh-line-border); border-radius: 50%; }
+.composer-add span { display: none; }
+.active-mode-pill { display: inline-flex; min-height: 28px; align-items: center; padding: 0 10px; border-radius: 999px; color: var(--zh-text-theme); font-size: 12px; font-weight: 600; white-space: nowrap; background: var(--zh-background-option-on); }
+.composer-actions { display: inline-flex; align-items: center; gap: 4px; flex: none; }
+.composer-send { width: 34px; height: 34px; background: #172033; border-color: #172033; }
+.mode-menu-item { display: grid; min-width: 210px; gap: 2px; padding: 3px 0; }
+.mode-menu-item strong { color: var(--zh-text-primary); font-size: 13px; }
+.mode-menu-item small { color: var(--zh-text-caption); font-size: 11px; }
+.add-file-item strong { display: inline-flex; align-items: center; gap: 7px; }
 .composer-hint {
-  margin: 8px 0 0;
+  margin: 7px 0 0;
   color: var(--zh-text-caption);
   font-size: var(--zh-font-size11);
   text-align: center;
@@ -2374,6 +2681,18 @@ async function restoreSession() {
   .user-bubble {
     max-width: 92%;
   }
+  .task-progress { gap: 9px; padding-inline: 4px; }
+  .task-progress-title { display: none; }
+  .task-progress-label { font-size: 10px; }
+  .task-progress-line { width: 12px; margin-inline: 5px; }
+  .composer-shell { padding: 11px 10px 9px; border-radius: 20px; }
+  .composer-toolbar { align-items: flex-end; flex-wrap: wrap; }
+  .composer-tools { width: 100%; flex-wrap: nowrap; gap: 3px; overflow-x: auto; scrollbar-width: none; }
+  .composer-tools::-webkit-scrollbar { display: none; }
+  .composer-tool { max-width: 118px; overflow: hidden; padding: 0 7px; text-overflow: ellipsis; }
+  .active-mode-pill { max-width: 92px; overflow: hidden; text-overflow: ellipsis; }
+  .composer-actions { margin-left: auto; }
+  .attachment-chip { min-width: 190px; max-width: 230px; }
   .outline-actions-bar {
     flex-direction: column;
     align-items: stretch;

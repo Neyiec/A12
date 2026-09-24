@@ -47,6 +47,14 @@ class LLMClient:
             return content
         return "".join(str(part) for part in content)
 
+    async def complete_stream(
+        self,
+        system_prompt: str,
+        user_prompt: str,
+        temperature: float = 0.45,
+        model: str | None = None,
+        reasoning_effort: str | None = None,
+    ) -> AsyncIterator[str]:
     async def invoke_tools(
         self,
         messages: list[BaseMessage],
