@@ -30,8 +30,19 @@ class LLMClient:
 
         runtime = current_runtime()
         model_name = routed_model()
+        message_text = "\n".join(str(message.content) for message in messages).lower()
+        wants_json = "json" in message_text
+        wants_html = "html" in message_text
+        # JSON/HTML 都有严格机器可校验的目标。轻度推理时关闭思考模式，由校验与修复环节兜底，
+        # 比让模型输出长思维链更稳定、更快；中度和高度推理仍保留思考能力。
+        effective_effort = (
+            "none" if (wants_json or wants_html) and runtime.reasoning_effort == "low"
+            else runtime.reasoning_effort
+        )
         model = create_chat_model(model_name, self.settings.openai_api_key, self.settings.openai_base_url,
-                                  self.settings.request_timeout_seconds, temperature, runtime.reasoning_effort)
+                                  self.settings.request_timeout_seconds, temperature, effective_effort)
+        if wants_json:
+            model = model.bind(response_format={"type": "json_object"})
         started = time.perf_counter()
         try:
             response = await model.ainvoke(messages)
@@ -41,20 +52,13 @@ class LLMClient:
         usage = getattr(response, "usage_metadata", None) or {}
         record_run("success", round((time.perf_counter() - started) * 1000), model_name,
                    input_tokens=int(usage.get("input_tokens") or 0), output_tokens=int(usage.get("output_tokens") or 0),
-                   metadata={"reasoning_effort": runtime.reasoning_effort})
+                   metadata={"reasoning_effort": effective_effort,
+                             "structured_output": wants_json, "html_task": wants_html})
         content = response.content
         if isinstance(content, str):
             return content
         return "".join(str(part) for part in content)
 
-    async def complete_stream(
-        self,
-        system_prompt: str,
-        user_prompt: str,
-        temperature: float = 0.45,
-        model: str | None = None,
-        reasoning_effort: str | None = None,
-    ) -> AsyncIterator[str]:
     async def invoke_tools(
         self,
         messages: list[BaseMessage],
@@ -72,13 +76,21 @@ class LLMClient:
             return response
         return AIMessage(content=response.content or "")
 
-    async def complete_stream(self, system_prompt: str, user_prompt: str, temperature: float = 0.45) -> AsyncIterator[str]:
+    async def complete_stream(
+        self,
+        system_prompt: str,
+        user_prompt: str,
+        temperature: float = 0.45,
+        model: str | None = None,
+        reasoning_effort: str | None = None,
+    ) -> AsyncIterator[str]:
         """流式补全：逐 token 产出文本片段。模型不可用时直接结束（不产出任何片段）。"""
         if not self.available:
             return
-        model_name = routed_model()
+        model_name = model or routed_model()
+        effort = reasoning_effort or current_runtime().reasoning_effort
         model = create_chat_model(model_name, self.settings.openai_api_key, self.settings.openai_base_url,
-                                  self.settings.request_timeout_seconds, temperature, current_runtime().reasoning_effort)
+                                  self.settings.request_timeout_seconds, temperature, effort)
         started = time.perf_counter()
         messages = [SystemMessage(content=system_prompt), HumanMessage(content=user_prompt)]
         try:

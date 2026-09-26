@@ -613,8 +613,11 @@ const syncIndexResource = async (row, forceReparse = false) => {
   if (!payload) return ElMessage.warning('该资源缺少可供 Python 解析的文件地址，暂时无法同步')
   indexActionLoading.value = true
   try {
-    await syncResourceIndex({ ...payload, force_reparse: forceReparse })
-    ElMessage.success(forceReparse ? '资源索引已重建' : '资源索引已同步')
+    const result = unwrapResponse(await syncResourceIndex({ ...payload, force_reparse: forceReparse })) || {}
+    const queued = result.accepted === true || result.status === 'indexing'
+    ElMessage.success(queued
+      ? `${forceReparse ? '资源重建' : '资源索引'}任务已提交`
+      : (forceReparse ? '资源索引已重建' : '资源索引已同步'))
     await loadIndexPanel()
   } catch (error) { ElMessage.error(error?.message || '资源索引同步失败，请稍后重试') } finally { indexActionLoading.value = false }
 }

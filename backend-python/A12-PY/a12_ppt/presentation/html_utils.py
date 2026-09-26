@@ -53,8 +53,23 @@ def clean_html_response(raw_content: str) -> str:
     ]
     best = pick_best_document(candidates)
     if best:
-        return best.strip()
-    return content if looks_like_markup(content) else ""
+        return sanitize_external_dependencies(best.strip())
+    return sanitize_external_dependencies(content) if looks_like_markup(content) else ""
+
+
+def sanitize_external_dependencies(html: str) -> str:
+    """移除课件中的外部脚本/样式依赖，保证离线预览和PPTX导出稳定。"""
+    if not html:
+        return html
+    html = re.sub(
+        r"<link\b[^>]*href\s*=\s*['\"]https?://[^>]*>", "", html,
+        flags=re.IGNORECASE,
+    )
+    html = re.sub(
+        r"<script\b[^>]*src\s*=\s*['\"]https?://[^>]*>\s*</script>", "", html,
+        flags=re.IGNORECASE,
+    )
+    return html
 
 
 def auto_close_basic_tags(html: str) -> str:
@@ -102,7 +117,8 @@ def validate_html(html: str, strict: bool = False) -> dict:
     if strict:
         if re.search(r"<(?:script|link)\b[^>]+(?:src|href)\s*=\s*['\"]https?://", lowered):
             errors.append("禁止依赖外部 CDN 脚本或样式资源")
-        if "http://" in lowered:
+        namespace_safe = lowered.replace("http://www.w3.org/2000/svg", "")
+        if "http://" in namespace_safe:
             errors.append("严格模式禁止加载非 HTTPS 资源")
         if len(html) < 1800:
             warnings.append("HTML 较短，可能视觉完成度不足")

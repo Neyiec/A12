@@ -77,7 +77,7 @@ async def probe_model() -> dict[str, Any]:
         from .llm.model_factory import create_chat_model
         model_name = routed_model("fast")
         model = create_chat_model(model_name, settings.openai_api_key, settings.openai_base_url,
-                                  min(settings.request_timeout_seconds, 15), 0.0, "low")
+                                  min(settings.request_timeout_seconds, 15), 0.0, "none")
         response = await model.ainvoke("仅回复OK")
         return {"configured": True, "available": bool(response.content), "status": "available",
                 "model": model_name, "latency_ms": round((time.perf_counter() - started) * 1000)}

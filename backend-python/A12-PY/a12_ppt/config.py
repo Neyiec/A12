@@ -59,6 +59,21 @@ class Settings:
     retrieval_min_score: float
     tts_model: str
     tts_voice: str
+    redis_url: str
+    redis_key_prefix: str
+    embedding_cache_ttl_seconds: int
+    rag_cache_ttl_seconds: int
+    ai_rate_limit_per_minute: int
+    ai_global_concurrency: int
+    ai_user_concurrency: int
+    kafka_enabled: bool
+    kafka_bootstrap_servers: str
+    kafka_consumer_group: str
+    kafka_resource_index_request_topic: str
+    kafka_resource_index_result_topic: str
+    kafka_classroom_event_topic: str
+    kafka_teacher_feedback_topic: str
+    kafka_dead_letter_topic: str
 
 
 @lru_cache
@@ -124,4 +139,23 @@ def get_settings() -> Settings:
         retrieval_min_score=max(0.0, min(1.0, float(os.getenv("RETRIEVAL_MIN_SCORE", "0.18")))),
         tts_model=os.getenv("TTS_MODEL", "tts-1"),
         tts_voice=os.getenv("TTS_VOICE", "alloy"),
+        redis_url=os.getenv("REDIS_URL", "redis://127.0.0.1:6379/0"),
+        redis_key_prefix=os.getenv("REDIS_KEY_PREFIX", "a12"),
+        embedding_cache_ttl_seconds=max(60, int(os.getenv("EMBEDDING_CACHE_TTL_SECONDS", "604800"))),
+        rag_cache_ttl_seconds=max(10, int(os.getenv("RAG_CACHE_TTL_SECONDS", "900"))),
+        ai_rate_limit_per_minute=max(1, int(os.getenv("AI_RATE_LIMIT_PER_MINUTE", "30"))),
+        ai_global_concurrency=max(1, int(os.getenv("AI_GLOBAL_CONCURRENCY", "8"))),
+        ai_user_concurrency=max(1, int(os.getenv("AI_USER_CONCURRENCY", "2"))),
+        kafka_enabled=os.getenv("KAFKA_ENABLED", "false").lower() == "true",
+        kafka_bootstrap_servers=os.getenv("KAFKA_BOOTSTRAP_SERVERS", "127.0.0.1:9092"),
+        kafka_consumer_group=os.getenv("KAFKA_CONSUMER_GROUP", "a12-python-ai"),
+        kafka_resource_index_request_topic=os.getenv(
+            "KAFKA_RESOURCE_INDEX_REQUEST_TOPIC", "a12.resource.index.requested"),
+        kafka_resource_index_result_topic=os.getenv(
+            "KAFKA_RESOURCE_INDEX_RESULT_TOPIC", "a12.resource.index.result"),
+        kafka_classroom_event_topic=os.getenv(
+            "KAFKA_CLASSROOM_EVENT_TOPIC", "a12.classroom.events"),
+        kafka_teacher_feedback_topic=os.getenv(
+            "KAFKA_TEACHER_FEEDBACK_TOPIC", "a12.teacher.feedback"),
+        kafka_dead_letter_topic=os.getenv("KAFKA_DEAD_LETTER_TOPIC", "a12.dead-letter"),
     )

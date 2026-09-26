@@ -1,5 +1,6 @@
 """工作台讨论、操作分类和大纲修复；仅由 Java 网关调用。"""
 import json
+import inspect
 from typing import Literal
 
 from pydantic import BaseModel, Field
@@ -29,7 +30,6 @@ class WorkspaceChatRequest(BaseModel):
     attachments: list[WorkspaceAttachment] = Field(default_factory=list, max_length=20)
     messages: list[WorkspaceMessage] = Field(min_length=1, max_length=60)
     model_profile: Literal["fast", "standard", "deep"] = "standard"
-    reasoning_effort: Literal["low", "medium", "high"] = "medium"
 
 
 async def stream_workspace_chat(request: WorkspaceChatRequest):
@@ -79,12 +79,14 @@ async def stream_workspace_chat(request: WorkspaceChatRequest):
     transcript = json.dumps([m.model_dump() for m in request.messages[-30:]], ensure_ascii=False)
     try:
         produced = False
+        stream_parameters = inspect.signature(client.complete_stream).parameters
+        stream_options = {}
+        if "model" in stream_parameters and request.model:
+            stream_options["model"] = request.model
+        if "reasoning_effort" in stream_parameters:
+            stream_options["reasoning_effort"] = request.reasoning_effort
         async for token in client.complete_stream(
-            system,
-            transcript,
-            0.15 if request.mode == "workbench-intent" else 0.45,
-            model=request.model,
-            reasoning_effort=request.reasoning_effort,
+            system, transcript, 0.15 if request.mode == "workbench-intent" else 0.45, **stream_options
         ):
             produced = True
             yield "data: " + json.dumps({"choices": [{"delta": {"content": token}}]}, ensure_ascii=False) + "\n\n"

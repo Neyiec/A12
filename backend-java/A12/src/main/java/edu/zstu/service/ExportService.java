@@ -5,6 +5,7 @@ import edu.zstu.dto.ExportTaskDTO;
 import edu.zstu.dto.TaskQueryDTO;
 import edu.zstu.utils.PageResult;
 import edu.zstu.vo.ExportTaskVO;
+import org.springframework.web.servlet.mvc.method.annotation.SseEmitter;
 
 import java.util.Map;
 
@@ -24,6 +25,7 @@ public interface ExportService {
     Map<String, Object> createPreviewUrl(String id);
     Map<String, Object> createDownloadUrl(String id);
     ExportFileResult getExportFile(String id);
+    SseEmitter streamProgress(String id, String lastEventId);
 
     /** 成果文件流式下载结果 */
     record ExportFileResult(String filename, String contentType, byte[] bytes) {

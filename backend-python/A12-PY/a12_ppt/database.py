@@ -38,7 +38,7 @@ def ensure_ai_schema() -> bool:
           created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
           FOREIGN KEY(user_id, session_id) REFERENCES a12_outline_chat_session(user_id, session_id) ON DELETE CASCADE)""",
         """CREATE TABLE IF NOT EXISTS a12_ai_feedback (
-          id BIGSERIAL PRIMARY KEY, user_id VARCHAR(64) NOT NULL, session_id VARCHAR(80), project_id VARCHAR(80),
+          id BIGSERIAL PRIMARY KEY, event_id VARCHAR(64), user_id VARCHAR(64) NOT NULL, session_id VARCHAR(80), project_id VARCHAR(80),
           action VARCHAR(32) NOT NULL, target_type VARCHAR(32) NOT NULL DEFAULT 'presentation',
           instruction TEXT, change_summary TEXT, before_data JSONB NOT NULL DEFAULT '{}'::jsonb,
           after_data JSONB NOT NULL DEFAULT '{}'::jsonb, metadata JSONB NOT NULL DEFAULT '{}'::jsonb,
@@ -49,16 +49,20 @@ def ensure_ai_schema() -> bool:
           latency_ms INT NOT NULL DEFAULT 0, input_tokens INT NOT NULL DEFAULT 0, output_tokens INT NOT NULL DEFAULT 0,
           fallback_reason TEXT, metadata JSONB NOT NULL DEFAULT '{}'::jsonb, created_at TIMESTAMPTZ NOT NULL DEFAULT NOW())""",
         """CREATE TABLE IF NOT EXISTS a12_classroom_event (
-          id BIGSERIAL PRIMARY KEY, user_id VARCHAR(64) NOT NULL, project_id VARCHAR(80) NOT NULL,
+          id BIGSERIAL PRIMARY KEY, event_id VARCHAR(64), user_id VARCHAR(64) NOT NULL, project_id VARCHAR(80) NOT NULL,
           session_id VARCHAR(80), student_key VARCHAR(128), event_type VARCHAR(32) NOT NULL,
           question_id VARCHAR(128), answer TEXT, correct BOOLEAN, response_ms INT,
           metadata JSONB NOT NULL DEFAULT '{}'::jsonb, created_at TIMESTAMPTZ NOT NULL DEFAULT NOW())""",
+        "ALTER TABLE a12_ai_feedback ADD COLUMN IF NOT EXISTS event_id VARCHAR(64)",
+        "ALTER TABLE a12_classroom_event ADD COLUMN IF NOT EXISTS event_id VARCHAR(64)",
         "CREATE INDEX IF NOT EXISTS idx_a12_chat_session_user ON a12_outline_chat_session(user_id, updated_at DESC)",
         "CREATE INDEX IF NOT EXISTS idx_a12_chat_message_session ON a12_outline_chat_message(user_id, session_id, created_at)",
         "CREATE INDEX IF NOT EXISTS idx_a12_teacher_memory_user ON a12_teacher_style_memory(user_id, created_at DESC)",
         "CREATE INDEX IF NOT EXISTS idx_a12_ai_feedback_user ON a12_ai_feedback(user_id, created_at DESC)",
         "CREATE INDEX IF NOT EXISTS idx_a12_ai_run_created ON a12_ai_run_log(created_at DESC)",
         "CREATE INDEX IF NOT EXISTS idx_a12_classroom_project ON a12_classroom_event(user_id, project_id, created_at DESC)",
+        "CREATE UNIQUE INDEX IF NOT EXISTS uq_a12_ai_feedback_event ON a12_ai_feedback(event_id) WHERE event_id IS NOT NULL",
+        "CREATE UNIQUE INDEX IF NOT EXISTS uq_a12_classroom_event_id ON a12_classroom_event(event_id) WHERE event_id IS NOT NULL",
     ]
     try:
         import psycopg

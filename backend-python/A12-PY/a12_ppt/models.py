@@ -16,6 +16,7 @@ class TemplateMutationRequest(BaseModel):
 
 
 class OutlineGenerateRequest(BaseModel):
+    user_id: str | None = None
     session_id: int | None = None
     title: str
     subject: str
@@ -38,6 +39,7 @@ class OutlineGenerateRequest(BaseModel):
 
 
 class PresentationGenerateRequest(BaseModel):
+    user_id: str | None = None
     session_id: int | None = None
     outline_id: str | None = None
     title: str
@@ -138,6 +140,7 @@ class PresentationExportRequest(BaseModel):
 
 
 class LessonPlanGenerateRequest(BaseModel):
+    user_id: str | None = None
     title: str
     subject: str | None = None
     grade: str | None = None

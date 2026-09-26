@@ -201,7 +201,7 @@ scaffolding, feedback_strategy。
                         if not asset_error:
                             asset_error = "图片生成服务未配置，已自动降级为智能占位"
                 working_slide["asset_decision"] = asset_status
-                slide_markup = await self._generate_slide_html(
+                generated = await self._generate_slide_html(
                     title=req.title,
                     slide=working_slide,
                     slide_no=slide_no,
@@ -213,6 +213,12 @@ scaffolding, feedback_strategy。
                     all_slides=slides,
                     quality_assets=quality_assets,
                 )
+                if isinstance(generated, tuple):
+                    slide_markup, model_used = generated
+                else:
+                    # 兼容测试替身和旧扩展实现；真实生成器始终返回 (html, model_used)。
+                    slide_markup = generated
+                    model_used = bool(self.llm.available and self.settings.enable_quality_pipeline)
                 if generated_image:
                     slide_markup = self._embed_generated_image(slide_markup, generated_image)
                 return {
@@ -228,6 +234,8 @@ scaffolding, feedback_strategy。
                         "missing_template": missing_template,
                         "aspect_ratio": req.aspect_ratio,
                         "quality_pipeline": self.llm.available and self.settings.enable_quality_pipeline,
+                        "model_used": model_used,
+                        "generation_source": "model" if model_used else "fallback",
                         "quality_preset": self.settings.quality_preset,
                         "interactive_assets": working_slide.get("interactive_assets", []),
                         "learning_phase": working_slide.get("learning_phase"),
@@ -735,7 +743,7 @@ JSON 格式:
         request_context: dict[str, Any],
         all_slides: list[dict[str, Any]],
         quality_assets: dict[str, Any],
-    ) -> str:
+    ) -> tuple[str, bool]:
         if self.llm.available and self.settings.enable_quality_pipeline:
             prompt = slide_html_prompt(
                 title=title,
@@ -753,8 +761,8 @@ JSON 格式:
             )
             slide_markup = await self._complete_html_with_retry(prompt, self._html_system_prompt(), slide, slide_no, total)
             if slide_markup:
-                return slide_markup
-        return self._fallback_slide_html(title, slide, slide_no, total, theme)
+                return slide_markup, True
+        return self._fallback_slide_html(title, slide, slide_no, total, theme), False
 
     async def _complete_html_with_retry(self, prompt: str, system_prompt: str, slide: dict[str, Any], slide_no: int, total: int) -> str:
         current_prompt = prompt
@@ -771,7 +779,8 @@ JSON 格式:
                 return slide_markup
             last_html = slide_markup
             current_prompt = repair_html_prompt(prompt, slide_markup, validation["errors"], validation["warnings"])
-        return last_html if last_html and validate_html(last_html)["valid"] else ""
+        # 严格校验仍不通过时使用本地模板，避免把依赖CDN或可能溢出的页面标成模型成功。
+        return last_html if last_html and validate_html(last_html, strict=True)["valid"] else ""
 
     async def _generate_outline_with_model(self, req: OutlineGenerateRequest, slide_count: int) -> dict[str, Any]:
         prompt = self._outline_prompt(req, slide_count)

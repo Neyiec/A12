@@ -35,7 +35,41 @@ async def export_html_slides_to_pptx(
         output = await _export_editable_elements_safe(title, slides, filename)
     if not output:
         output = _export_editable_text(title, slides, filename)
+    _repair_missing_content_type_targets(output)
     return _package_if_needed(title, output, static_assets, filename)
+
+
+def _repair_missing_content_type_targets(output: Path) -> None:
+    """移除 [Content_Types].xml 中指向不存在OOXML部件的多余声明。
+
+    部分 dom-to-pptx/PptxGenJS 组合会为每页登记一个 slideMaster，但最终包只写入
+    slideMaster1。PowerPoint会尝试修复这类文件，严格OOXML校验也会失败。
+    """
+    if output.suffix.lower() != ".pptx" or not output.is_file():
+        return
+    repaired = output.with_name(f"{output.stem}.repairing.pptx")
+    try:
+        with zipfile.ZipFile(output, "r") as source:
+            names = set(source.namelist())
+            content_types = source.read("[Content_Types].xml").decode("utf-8")
+
+            def keep_existing(match: re.Match[str]) -> str:
+                tag = match.group(0)
+                part_match = re.search(r'PartName=["\']([^"\']+)["\']', tag, re.IGNORECASE)
+                if not part_match:
+                    return tag
+                return tag if part_match.group(1).lstrip("/") in names else ""
+
+            fixed = re.sub(r"<Override\b[^>]*/>", keep_existing, content_types, flags=re.IGNORECASE)
+            if fixed == content_types:
+                return
+            with zipfile.ZipFile(repaired, "w") as target:
+                for info in source.infolist():
+                    payload = fixed.encode("utf-8") if info.filename == "[Content_Types].xml" else source.read(info.filename)
+                    target.writestr(info, payload)
+        repaired.replace(output)
+    finally:
+        repaired.unlink(missing_ok=True)
 
 
 def export_html_slides_to_pptx_sync(title: str, slides: list[dict[str, Any]], filename: str | None = None) -> Path:

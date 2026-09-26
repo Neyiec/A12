@@ -3753,3 +3753,58 @@ const pptxBlob = await fetch("http://127.0.0.1:8001/api/v1/python/presentations/
 大纲与 PPT 生成请求支持 `model_profile=fast|standard|deep` 和 `reasoning_effort=low|medium|high`。这两个字段会实际影响后端模型路由和推理配置，而不是仅作为前端展示。生成结果中的 `generation_status` 会明确标识 `model` 或 `fallback`；RAG 结果包含 `citation_id`、`grounding_confidence` 和 `grounding_status`，用于逐页引用和低置信度提示。
 
 知识库概览返回 `ready_for_rag` 与 `readiness_message`。为空时应先上传资料或执行资源索引同步，系统不会把“可调用检索接口”等同于“已经拥有真实教学语料”。
+
+## Redis AI 任务与缓存扩展
+
+### 创建 PPT 后台生成任务
+
+`POST /api/v1/ai/engine/generation-jobs/presentations`
+
+请求体沿用 PPT 生成参数。Java 网关会覆盖 `user_id` 为当前登录用户，任务写入 Redis Stream 后立即返回 `job_id`。
+
+### 创建教案后台生成任务
+
+`POST /api/v1/ai/engine/generation-jobs/lesson-plans`
+
+请求体沿用教案生成参数，返回排队状态和 `job_id`。
+
+### 查询后台生成任务
+
+`GET /api/v1/ai/engine/generation-jobs/{jobId}`
+
+任务完成时，响应 `data.result` 包含最终生成结果。任务仅允许创建者访问。
+
+### 订阅后台生成进度
+
+`GET /api/v1/ai/engine/generation-jobs/{jobId}/events?after={eventId}`
+
+返回 `text/event-stream`。每条 `progress` 事件包含 `status`、`progress`、`message` 和时间戳；PPT 每页完成事件还包含 `slide`、`completed`、`total`，因此前端可继续逐页预览。客户端可通过 `Last-Event-ID` 请求头或 `after` 参数断点续传。
+
+### 订阅成果导出进度
+
+`GET /api/v1/export-tasks/{id}/events?after={eventId}`
+
+成果导出任务创建后状态先为 `queued`，由 Redis 队列后台执行。进度事件覆盖 `queued`、`generating`、`checking`、`success`、`failed` 和 `cancelled`。
+
+### Redis 缓存与流控说明
+
+- Embedding 缓存键包含模型、维度和文本摘要，默认保存 7 天。
+- RAG 缓存键包含查询条件、Embedding 模型和资源索引版本，默认保存 15 分钟。
+- 资源同步、批量重建、元数据修改或删除后自动递增索引版本，旧 RAG 缓存自然失效。
+- 大纲、PPT、教案和流式对话使用 Redis 原子限流与全局/用户并发租约。
+- 前端 PPT 与教案生成默认提交后台任务；只有 Redis 队列不可用时才调用原同步/流式接口降级执行。
+- Redis 暂时不可用时，同步 AI 接口和导出任务会降级执行；跨进程缓存、队列进度和流控暂时失效。
+
+## Kafka AI 事件总线
+
+Kafka 默认关闭，通过 Java、Python 两端共同设置 `KAFKA_ENABLED=true` 开启。它不替代 Redis，而是承载需要长期保存、跨服务消费和故障后回放的业务事件。
+
+| Topic | 分区键 | 生产者 | 消费者 | 用途 |
+|---|---|---|---|---|
+| `a12.resource.index.requested` | `source_type:resource_id` | Java | Python | 下载、解析、OCR/ASR、切块、Embedding 与 pgvector 入库 |
+| `a12.resource.index.result` | `source_type:resource_id` | Python | Java | 回写 MySQL 的 `ai_index_status/ai_index_error` |
+| `a12.classroom.events` | `project_id` | Java | Python | 持久化课堂正确率、参与度和困惑事件 |
+| `a12.teacher.feedback` | `user_id` | Java | Python | 持久化采纳/拒绝/修改反馈并更新教师风格画像 |
+| `a12.dead-letter` | `event_id` | Python | 运维/管理工具 | 保存校验或处理失败的原事件及错误原因 |
+
+事件公共字段为 `event_id`、`event_type`、`schema_version`、`occurred_at`、`payload`。课堂事件与教师反馈使用 `event_id` 唯一索引保证幂等；Python 消费者处理成功或写入 DLQ 后才提交 offset。Kafka 发布失败时 Java 自动调用原 Python HTTP 接口，不影响未部署 Kafka 的本地环境。

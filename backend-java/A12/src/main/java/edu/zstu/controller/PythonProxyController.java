@@ -1,8 +1,10 @@
 package edu.zstu.controller;
 
 import edu.zstu.service.PythonPptClient;
+import edu.zstu.service.KafkaEventPublisher;
 import edu.zstu.utils.CurrentHolder;
 import edu.zstu.utils.OssUtil;
+import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.http.ContentDisposition;
 import org.springframework.http.HttpHeaders;
 import org.springframework.http.MediaType;
@@ -13,6 +15,7 @@ import org.springframework.web.bind.annotation.PatchMapping;
 import org.springframework.web.bind.annotation.PathVariable;
 import org.springframework.web.bind.annotation.PostMapping;
 import org.springframework.web.bind.annotation.RequestBody;
+import org.springframework.web.bind.annotation.RequestHeader;
 import org.springframework.web.bind.annotation.RequestMapping;
 import org.springframework.web.bind.annotation.RequestParam;
 import org.springframework.web.bind.annotation.RestController;
@@ -29,10 +32,19 @@ import java.util.concurrent.CompletableFuture;
 public class PythonProxyController {
     private final PythonPptClient pythonPptClient;
     private final OssUtil ossUtil;
+    private final KafkaEventPublisher kafkaEventPublisher;
 
-    public PythonProxyController(PythonPptClient pythonPptClient, OssUtil ossUtil) {
+    @Autowired
+    public PythonProxyController(PythonPptClient pythonPptClient, OssUtil ossUtil,
+                                 KafkaEventPublisher kafkaEventPublisher) {
         this.pythonPptClient = pythonPptClient;
         this.ossUtil = ossUtil;
+        this.kafkaEventPublisher = kafkaEventPublisher;
+    }
+
+    /** 保留独立 MockMvc/旧调用构造方式；生产环境由上方构造器注入 Kafka publisher。 */
+    public PythonProxyController(PythonPptClient pythonPptClient, OssUtil ossUtil) {
+        this(pythonPptClient, ossUtil, null);
     }
 
     @GetMapping("/health")
@@ -59,6 +71,10 @@ public class PythonProxyController {
     @PostMapping("/resources/index/sync")
     public Map<String, Object> syncResourceIndex(@RequestBody Map<String, Object> payload) {
         signPayloadFileUrl(payload);
+        if (kafkaEventPublisher != null) {
+            KafkaEventPublisher.PublishResult published = kafkaEventPublisher.publishResourceIndex(payload);
+            if (published.accepted()) return acceptedEvent(published.eventId(), "indexing");
+        }
         return callJson(() -> pythonPptClient.syncResourceIndex(payload));
     }
 
@@ -120,6 +136,7 @@ public class PythonProxyController {
 
     @PostMapping("/outlines/generate")
     public Map<String, Object> generateOutline(@RequestBody Map<String, Object> payload) {
+        bindCurrentUser(payload);
         return callJson(() -> pythonPptClient.generateOutline(payload));
     }
 
@@ -194,12 +211,47 @@ public class PythonProxyController {
 
     @PostMapping("/presentations/generate")
     public Map<String, Object> generatePresentation(@RequestBody Map<String, Object> payload) {
+        bindCurrentUser(payload);
         return callJson(() -> pythonPptClient.generatePresentation(payload));
+    }
+
+    @PostMapping("/generation-jobs/presentations")
+    public Map<String, Object> enqueuePresentationJob(@RequestBody Map<String, Object> payload) {
+        bindCurrentUser(payload);
+        return callJson(() -> pythonPptClient.enqueuePresentationJob(payload));
+    }
+
+    @PostMapping("/generation-jobs/lesson-plans")
+    public Map<String, Object> enqueueLessonPlanJob(@RequestBody Map<String, Object> payload) {
+        bindCurrentUser(payload);
+        return callJson(() -> pythonPptClient.enqueueLessonPlanJob(payload));
+    }
+
+    @GetMapping("/generation-jobs/{jobId}")
+    public Map<String, Object> getGenerationJob(@PathVariable String jobId) {
+        return callJson(() -> pythonPptClient.getGenerationJob(jobId, currentUserId()));
+    }
+
+    @GetMapping(value = "/generation-jobs/{jobId}/events", produces = "text/event-stream;charset=UTF-8")
+    public SseEmitter streamGenerationJobEvents(
+            @PathVariable String jobId,
+            @RequestHeader(value = "Last-Event-ID", required = false) String lastEventId,
+            @RequestParam(value = "after", required = false) String after) {
+        String offset = lastEventId == null || lastEventId.isBlank() ? after : lastEventId;
+        String userId = currentUserId();
+        SseEmitter emitter = newGatewayEmitter();
+        CompletableFuture.runAsync(() -> pythonPptClient.streamGenerationJobEvents(
+                jobId, userId, offset, emitter));
+        return emitter;
     }
 
     @PostMapping("/teacher-style/feedback")
     public Map<String, Object> recordTeacherFeedback(@RequestBody Map<String, Object> payload) {
         bindCurrentUser(payload);
+        if (kafkaEventPublisher != null) {
+            KafkaEventPublisher.PublishResult published = kafkaEventPublisher.publishTeacherFeedback(payload);
+            if (published.accepted()) return acceptedEvent(published.eventId(), "accepted");
+        }
         return callJson(() -> pythonPptClient.recordTeacherFeedback(payload));
     }
 
@@ -217,6 +269,10 @@ public class PythonProxyController {
     @PostMapping("/classroom/events")
     public Map<String, Object> recordClassroomEvent(@RequestBody Map<String, Object> payload) {
         bindCurrentUser(payload);
+        if (kafkaEventPublisher != null) {
+            KafkaEventPublisher.PublishResult published = kafkaEventPublisher.publishClassroomEvent(payload);
+            if (published.accepted()) return acceptedEvent(published.eventId(), "accepted");
+        }
         return callJson(() -> pythonPptClient.recordClassroomEvent(payload));
     }
 
@@ -227,6 +283,7 @@ public class PythonProxyController {
 
     @PostMapping(value = "/presentations/generate/stream", produces = "text/event-stream;charset=UTF-8")
     public SseEmitter streamPresentation(@RequestBody Map<String, Object> payload) {
+        bindCurrentUser(payload);
         SseEmitter emitter = newGatewayEmitter();
         CompletableFuture.runAsync(() -> pythonPptClient.streamPresentationToEmitter(payload, emitter));
         return emitter;
@@ -256,6 +313,7 @@ public class PythonProxyController {
 
     @PostMapping("/lesson-plans/generate")
     public Map<String, Object> generateLessonPlan(@RequestBody Map<String, Object> payload) {
+        bindCurrentUser(payload);
         return callJson(() -> pythonPptClient.generateLessonPlan(payload));
     }
 
@@ -293,6 +351,14 @@ public class PythonProxyController {
     private void bindCurrentUser(Map<String, Object> payload) {
         // 在请求线程读取身份；异步 SSE 线程没有 CurrentHolder 的 ThreadLocal。
         payload.put("user_id", currentUserId());
+    }
+
+    private Map<String, Object> acceptedEvent(String eventId, String status) {
+        return Map.of(
+                "code", 200,
+                "message", "事件已进入 Kafka",
+                "data", Map.of("accepted", true, "event_id", eventId, "status", status)
+        );
     }
 
     private Map<String, Object> callJson(JsonCall call) {

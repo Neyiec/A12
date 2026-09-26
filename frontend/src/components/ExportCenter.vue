@@ -11,7 +11,7 @@ import { ElMessage, ElMessageBox } from 'element-plus'
 import { CircleCheck, CircleClose, DocumentChecked, Download, Files, FolderOpened, MoreFilled, Refresh, Search, Timer, View, Warning } from '@element-plus/icons-vue'
 import { EXPORT_PAGE } from '../config/teacherPages.config.js'
 import { useUserStore } from '../storage/user.js'
-import { cancelExportTask, createExportPreviewUrl, createExportTask, downloadExportArtifact, getExportArtifact, getExportQualityReport, getExportTask, getProject, listExportTasks, listProjects, listProjectVersions, precheckProjectExport, retryExportTask, saveProjectVersion } from '../apis/teacher'
+import { cancelExportTask, createExportPreviewUrl, createExportTask, downloadExportArtifact, getExportArtifact, getExportQualityReport, getExportTask, getProject, listExportTasks, listProjects, listProjectVersions, precheckProjectExport, retryExportTask, saveProjectVersion, streamExportTaskEvents } from '../apis/teacher'
 
 const route = useRoute()
 const router = useRouter()
@@ -235,10 +235,28 @@ const scheduleTaskPolling = () => {
 }
 
 const pollTask = async (taskId) => {
-  // 真实导出可能等待 Python 文件服务，轮询窗口与创建请求保持一致。
+  // 优先订阅 Redis Stream；网络或 Redis 降级时再回退数据库轮询。
   const timeoutAt = Date.now() + 210_000
   activePoll = true
   try {
+    let terminal = null
+    try {
+      await streamExportTaskEvents(taskId, {
+        onProgress: (event) => {
+          const progress = Number(event.progress || 0)
+          flow.value.progress = progress
+          flow.value.status = event.status || flow.value.status
+          flow.value.message = event.message || flow.value.message
+          if (['success', 'failed', 'cancelled'].includes(event.status)) terminal = event.status
+        },
+      })
+      const latest = normalizeTask(unwrap(await getExportTask(taskId)), project.value || {})
+      mergeTask(latest)
+      if (terminal === 'success') return latest
+      if (['failed', 'cancelled'].includes(terminal)) throw new Error(latest.error_msg || `导出任务${terminal}`)
+    } catch (streamError) {
+      console.warn('导出进度流不可用，回退轮询', streamError)
+    }
     while (Date.now() < timeoutAt) {
       const latest = normalizeTask(unwrap(await getExportTask(taskId)), project.value || {})
       mergeTask(latest)

@@ -52,6 +52,12 @@
             <artifactId>spring-boot-starter-data-redis</artifactId>
         </dependency>
 
+        <!-- Kafka：资源解析流水线、课堂事件与教师反馈事件总线 -->
+        <dependency>
+            <groupId>org.springframework.kafka</groupId>
+            <artifactId>spring-kafka</artifactId>
+        </dependency>
+
         <!-- Java Mail：QQ 邮箱发送验证码 -->
         <dependency>
             <groupId>org.springframework.boot</groupId>

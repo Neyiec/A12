@@ -155,3 +155,23 @@ Current package layout:
 - 课堂正确率、参与度与困惑点写入 `a12_classroom_event`，可在后续生成中作为补救教学依据。
 - 视频解析输出关键帧、字幕/ASR 分段、说话人（供应商提供时）和可检索时间轴；语音输出由 `/audio/tts` 提供。
 - 离线回归评测位于 `evals/`，执行 `.venv\Scripts\python.exe evals/run_offline_evals.py` 不消耗外部模型额度。
+
+## Redis AI 加速与任务队列
+
+Python 服务通过 `REDIS_URL` 使用与 Java 相同的 Redis，负责 PPT/教案后台生成队列、任务进度 Stream、Embedding/RAG 缓存以及 AI 限流和并发控制。主要配置见 `.env.example`。
+
+后台任务统一通过 Java 网关访问：
+
+- `POST /api/v1/ai/engine/generation-jobs/presentations`
+- `POST /api/v1/ai/engine/generation-jobs/lesson-plans`
+- `GET /api/v1/ai/engine/generation-jobs/{jobId}`
+- `GET /api/v1/ai/engine/generation-jobs/{jobId}/events`
+
+原有同步与流式生成接口继续保留，便于兼容旧前端和 Redis 故障时降级。
+PPT 进度事件会携带当前完成的页面，前端仍可边生成边预览；任务状态和最终结果默认保留 24 小时。
+
+## Kafka AI 事件消费者
+
+设置 `KAFKA_ENABLED=true` 后，Python 会通过三个独立消费组分别处理资料索引、课堂数据和教师反馈，避免耗时的视频解析阻塞轻量事件，并向 `a12.resource.index.result` 回传索引终态。消费者断线后每 5 秒自动重连；无法处理的事件写入 `a12.dead-letter`。课堂事件和教师反馈以 `event_id` 幂等写入 PostgreSQL，重复投递不会重复累计教师画像。
+
+`GET /api/v1/python/health` 中的 `kafka_enabled` 表示配置开关，`kafka_ready` 表示当前 producer/consumer 是否已连通 broker。

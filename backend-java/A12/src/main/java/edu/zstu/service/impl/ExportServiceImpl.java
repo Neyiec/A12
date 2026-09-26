@@ -14,14 +14,20 @@ import edu.zstu.mapper.WsPageMapper;
 import edu.zstu.mapper.WsProjectMapper;
 import edu.zstu.service.BusinessLogService;
 import edu.zstu.service.ExportService;
+import edu.zstu.service.ExportProgressService;
 import edu.zstu.service.PythonPptClient;
+import edu.zstu.service.RedisExportTaskQueue;
 import edu.zstu.utils.CurrentHolder;
 import edu.zstu.utils.PageResult;
 import edu.zstu.vo.ExportTaskVO;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.beans.factory.annotation.Value;
+import org.springframework.beans.factory.annotation.Qualifier;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
+import org.springframework.transaction.support.TransactionSynchronization;
+import org.springframework.transaction.support.TransactionSynchronizationManager;
+import org.springframework.web.servlet.mvc.method.annotation.SseEmitter;
 
 import java.io.IOException;
 import java.nio.file.Files;
@@ -31,7 +37,9 @@ import java.util.ArrayList;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.Objects;
 import java.util.UUID;
+import java.util.concurrent.Executor;
 
 @Slf4j
 @Service
@@ -44,6 +52,9 @@ public class ExportServiceImpl implements ExportService {
     private final ObjectMapper objectMapper;
     private final Path exportDir;
     private final String publicPrefix;
+    private final RedisExportTaskQueue exportTaskQueue;
+    private final ExportProgressService progressService;
+    private final Executor exportTaskExecutor;
 
     public ExportServiceImpl(ExpTaskMapper taskMapper,
                              WsProjectMapper projectMapper,
@@ -51,6 +62,9 @@ public class ExportServiceImpl implements ExportService {
                              BusinessLogService businessLogService,
                              PythonPptClient pythonPptClient,
                              ObjectMapper objectMapper,
+                             RedisExportTaskQueue exportTaskQueue,
+                             ExportProgressService progressService,
+                             @Qualifier("exportTaskExecutor") Executor exportTaskExecutor,
                              @Value("${a12.export.local-dir:data/exports}") String exportDir,
                              @Value("${a12.export.public-prefix:/exports}") String publicPrefix) {
         this.taskMapper = taskMapper;
@@ -59,6 +73,9 @@ public class ExportServiceImpl implements ExportService {
         this.businessLogService = businessLogService;
         this.pythonPptClient = pythonPptClient;
         this.objectMapper = objectMapper;
+        this.exportTaskQueue = exportTaskQueue;
+        this.progressService = progressService;
+        this.exportTaskExecutor = exportTaskExecutor;
         this.exportDir = Path.of(exportDir).toAbsolutePath().normalize();
         this.publicPrefix = publicPrefix == null || publicPrefix.isBlank() ? "/exports" : publicPrefix.replaceAll("/+$", "");
     }
@@ -103,18 +120,45 @@ public class ExportServiceImpl implements ExportService {
         task.setProject_id(dto.getProject_id());
         task.setSnapshot_version(dto.getSnapshot_version() == null ? project.getCurrent_version() : dto.getSnapshot_version());
         task.setExport_type(exportType);
-        task.setStatus("generating");
+        task.setStatus("queued");
         task.setConfig(dto.getConfig() == null ? "{}" : dto.getConfig());
-        task.setProgress(10);
+        task.setProgress(0);
         task.setRetry_count(0);
-        task.setWorker_id("java-python-sync");
-        task.setStarted_at(LocalDateTime.now());
+        task.setWorker_id("redis-export-queue");
+        task.setStarted_at(null);
         task.setFile_status("generating");
         task.setQuality_report("{}");
         taskMapper.insert(task);
 
+        dispatchAfterCommit(task.getId());
+        progressService.publish(task.getId(), "queued", 0, "导出任务已进入队列");
+        businessLogService.record("operation", "export", "create_task", "export_task", task.getId(),
+                Map.of("project_id", dto.getProject_id(), "export_type", exportType, "status", task.getStatus()));
+        return toVO(taskMapper.findById(task.getId()));
+    }
+
+    /** 由 Redis 队列 Worker 调用，不依赖请求线程中的 CurrentHolder。 */
+    @Transactional
+    public void processQueuedTask(int taskId) {
+        Exp_Task task = taskMapper.findById(taskId);
+        if (task == null || !"queued".equals(task.getStatus())) return;
+        Ws_Project project = requireProject(task.getProject_id());
+        task.setStatus("generating");
+        task.setProgress(10);
+        task.setStarted_at(LocalDateTime.now());
+        task.setWorker_id("redis-export-worker");
+        taskMapper.update(task);
+        progressService.publish(taskId, "generating", 10, "正在准备课件页面和导出参数");
         try {
-            ExportedFile exported = generateFile(project, task, parseConfig(dto.getConfig()));
+            progressService.publish(taskId, "generating", 35, "正在调用 Python 导出引擎");
+            ExportedFile exported = generateFile(project, task, parseConfig(task.getConfig()));
+            // 生成调用本身无法强制中断，但取消后的任务绝不能被 Worker 再覆盖为成功。
+            Exp_Task latest = taskMapper.findById(taskId);
+            if (latest == null || "cancelled".equals(latest.getStatus())) return;
+            task.setStatus("checking");
+            task.setProgress(90);
+            taskMapper.update(task);
+            progressService.publish(taskId, "checking", 90, "正在检查文件结构与质量报告");
             task.setStatus("success");
             task.setProgress(100);
             task.setFile_name(exported.filename());
@@ -126,19 +170,35 @@ public class ExportServiceImpl implements ExportService {
             task.setQuality_report(buildQualityReport(true, List.of(), exported, task));
             task.setError_msg("");
             task.setCompleted_at(LocalDateTime.now());
+            taskMapper.update(task);
+            progressService.publish(taskId, "success", 100, "导出完成");
         } catch (Exception e) {
-            log.warn("createExportTask generation failed taskId={}", task.getId(), e);
+            log.warn("Queued export generation failed taskId={}", taskId, e);
             task.setStatus("failed");
             task.setProgress(100);
             task.setFile_status("unavailable");
             task.setError_msg(e.getMessage());
             task.setQuality_report(buildFailureReport(e));
             task.setCompleted_at(LocalDateTime.now());
+            taskMapper.update(task);
+            progressService.publish(taskId, "failed", 100,
+                    e.getMessage() == null ? "导出失败" : e.getMessage());
         }
-        taskMapper.update(task);
-        businessLogService.record("operation", "export", "create_task", "export_task", task.getId(),
-                Map.of("project_id", dto.getProject_id(), "export_type", exportType, "status", task.getStatus()));
-        return toVO(taskMapper.findById(task.getId()));
+    }
+
+    private void dispatchAfterCommit(int taskId) {
+        Runnable dispatch = () -> {
+            if (!exportTaskQueue.enqueue(taskId)) {
+                exportTaskExecutor.execute(() -> processQueuedTask(taskId));
+            }
+        };
+        if (TransactionSynchronizationManager.isActualTransactionActive()) {
+            TransactionSynchronizationManager.registerSynchronization(new TransactionSynchronization() {
+                @Override public void afterCommit() { dispatch.run(); }
+            });
+        } else {
+            dispatch.run();
+        }
     }
 
     @Override
@@ -172,6 +232,7 @@ public class ExportServiceImpl implements ExportService {
         task.setFile_status("unavailable");
         task.setCompleted_at(LocalDateTime.now());
         taskMapper.update(task);
+        progressService.publish(task.getId(), "cancelled", 0, "任务已取消");
         businessLogService.record("operation", "export", "cancel_task", "export_task", task.getId());
         return toVO(taskMapper.findById(task.getId()));
     }
@@ -249,6 +310,12 @@ public class ExportServiceImpl implements ExportService {
         }
     }
 
+    @Override
+    public SseEmitter streamProgress(String id, String lastEventId) {
+        Exp_Task task = requireOwnedTask(id);
+        return progressService.stream(task.getId(), lastEventId);
+    }
+
     private ExportedFile generateFile(Ws_Project project, Exp_Task task, Map<String, Object> config) throws Exception {
         List<Map<String, Object>> slides = buildSlides(project, config);
         String exportType = task.getExport_type();
@@ -285,6 +352,7 @@ public class ExportServiceImpl implements ExportService {
         }
         Map<String, Object> payload = new LinkedHashMap<>();
         payload.put("title", stringValue(config.get("title"), project.getProject_name()));
+        payload.put("user_id", String.valueOf(task.getUser_id()));
         payload.put("subject", stringValue(config.get("subject"), ""));
         payload.put("grade", stringValue(config.get("grade"), ""));
         payload.put("duration_minutes", config.get("duration_minutes"));
@@ -404,7 +472,7 @@ public class ExportServiceImpl implements ExportService {
         report.put("file_size", exported.size());
         report.put("content_type", exported.contentType());
         report.put("export_type", task.getExport_type());
-        report.put("generated_by", "java-python-sync");
+        report.put("generated_by", "redis-export-worker");
         return toJson(report);
     }
 
@@ -420,7 +488,9 @@ public class ExportServiceImpl implements ExportService {
     private Exp_Task requireOwnedTask(String id) {
         Exp_Task task = taskMapper.findById(parseId(id));
         if (task == null) throw new RuntimeException("Export task not found");
-        if (task.getUser_id() != requireLogin()) throw new RuntimeException("No permission to access this export task");
+        if (!Objects.equals(task.getUser_id(), requireLogin())) {
+            throw new RuntimeException("No permission to access this export task");
+        }
         return task;
     }
 
@@ -432,7 +502,7 @@ public class ExportServiceImpl implements ExportService {
 
     private void assertProjectReadable(Ws_Project project) {
         Integer userId = requireLogin();
-        if (project.getUser_id() == userId) return;
+        if (Objects.equals(project.getUser_id(), userId)) return;
         String permissions = project.getPermissions();
         if (permissions != null && permissions.contains(String.valueOf(userId))) return;
         throw new RuntimeException("No permission to access this project");
