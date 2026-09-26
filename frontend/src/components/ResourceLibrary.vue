@@ -614,7 +614,7 @@ const syncIndexResource = async (row, forceReparse = false) => {
   indexActionLoading.value = true
   try {
     await syncResourceIndex({ ...payload, force_reparse: forceReparse })
-    ElMessage.success(forceReparse ? '资源索引已重建' : '资源索引已同步')
+    ElMessage.success(forceReparse ? '资源重建任务已提交' : '资源索引任务已提交')
     await loadIndexPanel()
   } catch (error) { ElMessage.error(error?.message || '资源索引同步失败，请稍后重试') } finally { indexActionLoading.value = false }
 }

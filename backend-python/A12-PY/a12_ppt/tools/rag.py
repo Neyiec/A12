@@ -1,10 +1,24 @@
+import hashlib
+import json
 import re
 
 from ..resources import build_rag_context, resource_index_store
 from ..resources.similarity import keyword_score
+from ..config import get_settings
+from ..redis_support import redis_support
 
 
 async def rag_search(resource_ids: list[str], query: str, limit: int = 12000) -> dict:
+    settings = get_settings()
+    version = await redis_support.get_version("resource-index")
+    material = json.dumps({"resource_ids": sorted(resource_ids), "query": query.strip(), "limit": limit,
+                           "version": version, "embedding_model": settings.embedding_model},
+                          ensure_ascii=False, sort_keys=True)
+    cache_key = redis_support.key("cache", "rag", hashlib.sha256(material.encode("utf-8")).hexdigest())
+    cached = await redis_support.get_json(cache_key)
+    if isinstance(cached, dict):
+        cached["cache_hit"] = True
+        return cached
     # Uploaded references enrich the retrieval query; they are not the retrieval scope.
     local_ids = [resource_id for resource_id in resource_ids if ":" not in resource_id]
     local_context = build_rag_context(local_ids, limit=limit)
@@ -21,7 +35,7 @@ async def rag_search(resource_ids: list[str], query: str, limit: int = 12000) ->
     if indexed_context:
         context_parts.append("[RAG knowledge base matches]\n" + indexed_context)
     context = "\n\n".join(part for part in context_parts if part)[:limit]
-    return {
+    result = {
         "query": query,
         "enriched_query": enriched_query,
         "resource_ids": resource_ids,
@@ -31,7 +45,10 @@ async def rag_search(resource_ids: list[str], query: str, limit: int = 12000) ->
         "context": context,
         "matches": structured_matches,
         "reference_matches": reference_matches,
+        "cache_hit": False,
     }
+    await redis_support.set_json(cache_key, result, settings.rag_cache_ttl_seconds)
+    return result
 
 
 def _build_enriched_query(query: str, reference_context: str, max_reference_chars: int = 4000) -> str:

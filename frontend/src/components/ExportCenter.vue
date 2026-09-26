@@ -11,7 +11,7 @@ import { ElMessage, ElMessageBox } from 'element-plus'
 import { CircleCheck, CircleClose, DocumentChecked, Download, Files, FolderOpened, MoreFilled, Refresh, Search, Timer, View, Warning } from '@element-plus/icons-vue'
 import { EXPORT_PAGE } from '../config/teacherPages.config.js'
 import { useUserStore } from '../storage/user.js'
-import { cancelExportTask, createExportPreviewUrl, createExportTask, downloadExportArtifact, getExportArtifact, getExportQualityReport, getExportTask, getProject, listExportTasks, listProjects, listProjectVersions, precheckProjectExport, retryExportTask, saveProjectVersion } from '../apis/teacher'
+import { cancelExportTask, createExportPreviewUrl, createExportTask, downloadExportArtifact, getExportArtifact, getExportQualityReport, getExportTask, getProject, listExportTasks, listProjects, listProjectVersions, precheckProjectExport, retryExportTask, saveProjectVersion, streamExportTaskEvents } from '../apis/teacher'
 
 const route = useRoute()
 const router = useRouter()
@@ -235,10 +235,32 @@ const scheduleTaskPolling = () => {
 }
 
 const pollTask = async (taskId) => {
-  // 真实导出可能等待 Python 文件服务，轮询窗口与创建请求保持一致。
+  // 优先订阅 Redis Stream 进度；代理或连接不支持 SSE 时再退回数据库轮询。
   const timeoutAt = Date.now() + 210_000
   activePoll = true
   try {
+    const controller = new AbortController()
+    const timer = window.setTimeout(() => controller.abort(), 210_000)
+    try {
+      await streamExportTaskEvents(taskId, {
+        signal: controller.signal,
+        onEvent: ({ data }) => {
+          if (!data || typeof data !== 'object') return
+          flow.value.progress = Number(data.progress || 0)
+          flow.value.status = data.status || flow.value.status
+          flow.value.message = data.message || flow.value.message
+        },
+      })
+      const latest = normalizeTask(unwrap(await getExportTask(taskId)), project.value || {})
+      mergeTask(latest)
+      if (latest.apiStatus === 'success' || latest.apiStatus === 'partial') return latest
+      if (['failed', 'cancelled'].includes(latest.apiStatus)) throw new Error(latest.error_msg || `导出任务${latest.status}`)
+    } catch (error) {
+      if (Date.now() >= timeoutAt) throw error
+      // 连接中断后继续从数据库读取最终状态，避免浏览器/代理不支持长连接时卡住。
+    } finally {
+      window.clearTimeout(timer)
+    }
     while (Date.now() < timeoutAt) {
       const latest = normalizeTask(unwrap(await getExportTask(taskId)), project.value || {})
       mergeTask(latest)

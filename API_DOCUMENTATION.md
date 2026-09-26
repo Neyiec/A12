@@ -51,6 +51,30 @@ RAG 索引现已支持语义分块、学科感知窗口、混合重排、直接�
 
 Java 任务模式支持的导出配置键：`slides`、`lesson_plan`、`outline`、`title`、`filename`、`subject`、`grade`、`duration_minutes`、`teaching_goals`、`requirements`、`reference_text`、`fidelity`、`package_static_assets`。
 
+### Redis 异步生成与进度接口
+
+| Java 网关接口 | 说明 |
+|---|---|
+| `POST /api/v1/ai/engine/generation-jobs/presentations` | 提交 PPT 生成任务，返回 `job_id`。 |
+| `POST /api/v1/ai/engine/generation-jobs/lesson-plans` | 提交教案生成任务，返回 `job_id`。 |
+| `GET /api/v1/ai/engine/generation-jobs/{jobId}` | 查询本人生成任务状态和最终结果。 |
+| `GET /api/v1/ai/engine/generation-jobs/{jobId}/events` | SSE 订阅逐页进度，支持 `Last-Event-ID` 或 `after` 断线续传。 |
+| `GET /api/v1/export-tasks/{id}/events` | SSE 订阅 Java 导出队列进度。 |
+
+Python 同路径接口保留为内部实现，不供浏览器直连。Redis 同时缓存 Embedding 和 RAG 检索结果；资源索引发生变化时版本号递增，使旧检索缓存自然失效。
+
+### Kafka 事件主题
+
+| 主题 | 方向 | 用途 |
+|---|---|---|
+| `a12.resource.index.requested` | Java → Python | 异步解析并向量化个人/公共资源。 |
+| `a12.resource.index.result` | Python → Java | 回写 MySQL 索引完成或失败状态。 |
+| `a12.classroom.events` | Java → Python | 异步持久化课堂行为事件。 |
+| `a12.teacher.feedback` | Java → Python | 异步持久化教师反馈并更新风格画像。 |
+| `a12.dead-letter` | Python → 运维 | 保存消费失败事件及错误信息，便于重放和排查。 |
+
+Kafka 默认关闭；启用后 Java 发布失败自动回退 HTTP，避免消息基础设施故障阻断核心业务。
+
 ## 3. 创作工作台页面 JSON 接口
 
 | 接口 | 变更说明 |

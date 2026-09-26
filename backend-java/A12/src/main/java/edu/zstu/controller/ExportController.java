@@ -13,6 +13,7 @@ import org.springframework.http.HttpStatus;
 import org.springframework.http.MediaType;
 import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.annotation.*;
+import org.springframework.web.servlet.mvc.method.annotation.SseEmitter;
 
 import java.nio.charset.StandardCharsets;
 
@@ -89,6 +90,15 @@ public class ExportController {
         try {
             return Result.success(exportService.getExportTask(id));
         } catch (RuntimeException e) { return Result.error(400, e.getMessage()); }
+    }
+
+    /** 实时订阅导出进度；支持 Last-Event-ID 断线续传。 */
+    @GetMapping(value = "/export-tasks/{id}/events", produces = MediaType.TEXT_EVENT_STREAM_VALUE)
+    public SseEmitter streamExportProgress(@PathVariable String id,
+                                           @RequestHeader(value = "Last-Event-ID", required = false) String lastEventId,
+                                           @RequestParam(value = "after", required = false) String after) {
+        return exportService.streamProgress(id,
+                lastEventId == null || lastEventId.isBlank() ? after : lastEventId);
     }
 
     /**

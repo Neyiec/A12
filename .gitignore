@@ -7,3 +7,11 @@ doc/
 .ui-workflow/
 *-service.out.log
 *-service.err.log
+
+# Codex/本地构建、评测和预览产物，不进入功能分支
+.codex-build/
+.codex-finalizer/
+artifacts/
+output/
+tmp/
+**/node_modules/

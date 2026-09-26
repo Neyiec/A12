@@ -2,11 +2,15 @@ package edu.zstu.service.impl;
 
 import edu.zstu.mapper.AdmResourceMapper;
 import edu.zstu.service.PythonPptClient;
+import edu.zstu.service.KafkaEventPublisher;
 import lombok.extern.slf4j.Slf4j;
-import org.springframework.scheduling.annotation.Async;
+import org.springframework.beans.factory.annotation.Qualifier;
 import org.springframework.stereotype.Service;
+import org.springframework.transaction.support.TransactionSynchronization;
+import org.springframework.transaction.support.TransactionSynchronizationManager;
 
 import java.util.Map;
+import java.util.concurrent.Executor;
 
 /**
  * [数据交互说明]
@@ -29,10 +33,16 @@ public class PublicResourceIndexSyncService {
 
     private final AdmResourceMapper resourceMapper;
     private final PythonPptClient pythonPptClient;
+    private final KafkaEventPublisher kafkaEventPublisher;
+    private final Executor resourceIndexExecutor;
 
-    public PublicResourceIndexSyncService(AdmResourceMapper resourceMapper, PythonPptClient pythonPptClient) {
+    public PublicResourceIndexSyncService(AdmResourceMapper resourceMapper, PythonPptClient pythonPptClient,
+                                          KafkaEventPublisher kafkaEventPublisher,
+                                          @Qualifier("resourceIndexExecutor") Executor resourceIndexExecutor) {
         this.resourceMapper = resourceMapper;
         this.pythonPptClient = pythonPptClient;
+        this.kafkaEventPublisher = kafkaEventPublisher;
+        this.resourceIndexExecutor = resourceIndexExecutor;
     }
 
     /**
@@ -42,11 +52,15 @@ public class PublicResourceIndexSyncService {
      * @param resourceId 资源 ID（= adm_resource.id）
      * @param payload    AdminResourceServiceImpl.publicResourcePayload 组装的同步载荷
      */
-    @Async("resourceIndexExecutor")
     public void syncPublicResourceIndex(Integer resourceId, Map<String, Object> payload) {
+        dispatchAfterCommit(() -> doSyncPublicResourceIndex(resourceId, payload));
+    }
+
+    private void doSyncPublicResourceIndex(Integer resourceId, Map<String, Object> payload) {
         resourceMapper.updateAiIndexStatus(resourceId, "indexing", null);
         try {
             log.info("async sync public resource index start, resourceId={}", resourceId);
+            if (kafkaEventPublisher.publishResourceIndex(payload).accepted()) return;
             Map<String, Object> response = pythonPptClient.syncResourceIndex(payload);
             Object data = response.get("data");
             String status = extractPythonStatus(data);
@@ -61,6 +75,15 @@ public class PublicResourceIndexSyncService {
             log.warn("async sync public resource index failed, resourceId={}", resourceId, e);
             resourceMapper.updateAiIndexStatus(resourceId, "failed", e.getMessage());
         }
+    }
+
+    private void dispatchAfterCommit(Runnable task) {
+        Runnable async = () -> resourceIndexExecutor.execute(task);
+        if (TransactionSynchronizationManager.isActualTransactionActive()) {
+            TransactionSynchronizationManager.registerSynchronization(new TransactionSynchronization() {
+                @Override public void afterCommit() { async.run(); }
+            });
+        } else async.run();
     }
 
     /** 从 Python 响应 data 中提取 status 字段 */

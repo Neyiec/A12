@@ -32,7 +32,13 @@ MAX_SLIDE_CONCURRENCY=8
 MAX_HTML_RETRIES=1
 ENABLE_QUALITY_PIPELINE=true
 QUALITY_PRESET=fast
+REDIS_URL=redis://127.0.0.1:6379/0
+KAFKA_ENABLED=false
+KAFKA_BOOTSTRAP_SERVERS=127.0.0.1:9092
 ```
+
+Redis 开启后提供生成任务队列、可断线续传的进度事件、Embedding/RAG 缓存、请求限流和分布式并发控制。
+Kafka 开启后消费资源索引、课堂事件和教师反馈主题，并把索引结果或失败事件写回结果主题/死信主题；Kafka 未开启时 Java 会沿用 HTTP 调用。
 
 百炼的 OpenAI 兼容 Embeddings 请求地址为
 `https://dashscope.aliyuncs.com/compatible-mode/v1/embeddings`。API Key 必须与所选地域和计费方案的 Base URL 匹配。

@@ -351,6 +351,60 @@ public class PythonPptClient {
         return postJson("/api/v1/python/presentations/generate", payload);
     }
 
+    public Map<String, Object> enqueuePresentationJob(Map<String, Object> payload) {
+        return postJson("/api/v1/python/generation-jobs/presentations", payload);
+    }
+
+    public Map<String, Object> enqueueLessonPlanJob(Map<String, Object> payload) {
+        return postJson("/api/v1/python/generation-jobs/lesson-plans", payload);
+    }
+
+    public Map<String, Object> getGenerationJob(String jobId, String userId) {
+        return getJson("/api/v1/python/generation-jobs/" + urlEncode(jobId), Map.of("user_id", userId));
+    }
+
+    public void streamGenerationJobEvents(String jobId, String userId, String after, SseEmitter emitter) {
+        String path = "/api/v1/python/generation-jobs/" + urlEncode(jobId) + "/events";
+        Map<String, Object> query = new LinkedHashMap<>();
+        query.put("user_id", userId);
+        query.put("after", after == null || after.isBlank() ? "0-0" : after);
+        String event = "message";
+        String id = null;
+        StringBuilder data = new StringBuilder();
+        try {
+            HttpRequest request = HttpRequest.newBuilder()
+                    .uri(URI.create(baseUrl + path + toQueryString(query)))
+                    .timeout(Duration.ofSeconds(requestTimeoutSeconds))
+                    .GET().build();
+            HttpResponse<Stream<String>> response = httpClient.send(request, HttpResponse.BodyHandlers.ofLines());
+            if (response.statusCode() < 200 || response.statusCode() >= 300) {
+                response.body().close();
+                throw new RuntimeException("Python服务调用失败，HTTP " + response.statusCode());
+            }
+            try (Stream<String> lines = response.body()) {
+                for (java.util.Iterator<String> iterator = lines.iterator(); iterator.hasNext(); ) {
+                    String line = iterator.next();
+                    if (line.isEmpty()) {
+                        sendSseEvent(emitter, id, event, data);
+                        event = "message"; id = null; data.setLength(0);
+                    } else if (line.startsWith("id:")) {
+                        id = line.substring(3).trim();
+                    } else if (line.startsWith("event:")) {
+                        event = line.substring(6).trim();
+                    } else if (line.startsWith("data:")) {
+                        if (data.length() > 0) data.append('\n');
+                        data.append(line.substring(5).trim());
+                    }
+                }
+            }
+            sendSseEvent(emitter, id, event, data);
+            emitter.complete();
+        } catch (Exception e) {
+            log.warn("streamGenerationJobEvents failed jobId={}", jobId, e);
+            emitter.completeWithError(e);
+        }
+    }
+
     public Map<String, Object> modifySlide(Map<String, Object> payload) {
         log.info("modifySlide presentationId={}, slideNo={}", payload.get("presentation_id"), payload.get("slide_no"));
         return postJson("/api/v1/python/presentations/slides/modify", payload);
@@ -727,6 +781,15 @@ public class PythonPptClient {
         emitter.send(SseEmitter.event()
                 .name(event == null || event.isBlank() ? "message" : event)
                 .data(data.toString(), org.springframework.http.MediaType.APPLICATION_JSON));
+    }
+
+    private void sendSseEvent(SseEmitter emitter, String id, String event, StringBuilder data) throws IOException {
+        if (data == null || data.length() == 0) return;
+        SseEmitter.SseEventBuilder builder = SseEmitter.event()
+                .name(event == null || event.isBlank() ? "message" : event)
+                .data(data.toString(), org.springframework.http.MediaType.APPLICATION_JSON);
+        if (id != null && !id.isBlank()) builder.id(id);
+        emitter.send(builder);
     }
 
     public String toJson(Object value) {

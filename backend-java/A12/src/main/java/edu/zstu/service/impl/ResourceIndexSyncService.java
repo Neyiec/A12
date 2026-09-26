@@ -3,13 +3,17 @@ package edu.zstu.service.impl;
 import edu.zstu.entity.Res_Material;
 import edu.zstu.mapper.ResMaterialMapper;
 import edu.zstu.service.PythonPptClient;
+import edu.zstu.service.KafkaEventPublisher;
 import edu.zstu.utils.OssUtil;
 import lombok.extern.slf4j.Slf4j;
-import org.springframework.scheduling.annotation.Async;
+import org.springframework.beans.factory.annotation.Qualifier;
 import org.springframework.stereotype.Service;
+import org.springframework.transaction.support.TransactionSynchronization;
+import org.springframework.transaction.support.TransactionSynchronizationManager;
 
 import java.util.LinkedHashMap;
 import java.util.Map;
+import java.util.concurrent.Executor;
 
 /**
  * [数据交互说明]
@@ -33,11 +37,17 @@ public class ResourceIndexSyncService {
     private final ResMaterialMapper materialMapper;
     private final PythonPptClient pythonPptClient;
     private final OssUtil ossUtil;
+    private final KafkaEventPublisher kafkaEventPublisher;
+    private final Executor resourceIndexExecutor;
 
-    public ResourceIndexSyncService(ResMaterialMapper materialMapper, PythonPptClient pythonPptClient, OssUtil ossUtil) {
+    public ResourceIndexSyncService(ResMaterialMapper materialMapper, PythonPptClient pythonPptClient, OssUtil ossUtil,
+                                    KafkaEventPublisher kafkaEventPublisher,
+                                    @Qualifier("resourceIndexExecutor") Executor resourceIndexExecutor) {
         this.materialMapper = materialMapper;
         this.pythonPptClient = pythonPptClient;
         this.ossUtil = ossUtil;
+        this.kafkaEventPublisher = kafkaEventPublisher;
+        this.resourceIndexExecutor = resourceIndexExecutor;
     }
 
     /**
@@ -45,7 +55,6 @@ public class ResourceIndexSyncService {
      * 前置条件：调用方已把 MySQL `ai_index_status` 标记为 indexing 并提交事务。
      * Python 侧返回 failed 时把错误信息写入 `ai_index_error`。
      */
-    @Async("resourceIndexExecutor")
     public void syncPersonalResourceIndex(Res_Material material) {
         syncPersonalResourceIndex(material, false);
     }
@@ -54,14 +63,19 @@ public class ResourceIndexSyncService {
      * 异步同步个人素材索引（可指定 force_reparse）。
      * force_reparse=true 用于管理端「重解析/重试」：绕过 file_fingerprint 短路，强制重新解析并重建向量。
      */
-    @Async("resourceIndexExecutor")
     public void syncPersonalResourceIndex(Res_Material material, boolean forceReparse) {
+        dispatchAfterCommit(() -> doSyncPersonalResourceIndex(material, forceReparse));
+    }
+
+    private void doSyncPersonalResourceIndex(Res_Material material, boolean forceReparse) {
         if (material == null || material.getFile_url() == null || material.getFile_url().isBlank()) {
             return;
         }
 
         try {
-            Map<String, Object> response = pythonPptClient.syncResourceIndex(personalResourcePayload(material, forceReparse));
+            Map<String, Object> payload = personalResourcePayload(material, forceReparse);
+            if (kafkaEventPublisher.publishResourceIndex(payload).accepted()) return;
+            Map<String, Object> response = pythonPptClient.syncResourceIndex(payload);
             Object data = response.get("data");
             String status = extractPythonStatus(data);
             if ("failed".equals(status)) {
@@ -79,8 +93,11 @@ public class ResourceIndexSyncService {
      * 异步更新个人素材索引可用性（关闭 AI 引用等场景）。
      * 仅 PATCH Python 元数据（available/allow_ai），不触发重新解析；MySQL 状态由调用方提前置为 disabled。
      */
-    @Async("resourceIndexExecutor")
     public void updatePersonalResourceAvailability(Res_Material material) {
+        dispatchAfterCommit(() -> doUpdatePersonalResourceAvailability(material));
+    }
+
+    private void doUpdatePersonalResourceAvailability(Res_Material material) {
         if (material == null) return;
         try {
             boolean available = material.getStatus() == 1 && material.getAllow_ai() == 1;
@@ -99,6 +116,15 @@ public class ResourceIndexSyncService {
         } catch (Exception e) {
             log.warn("async update personal resource index metadata failed, materialId={}", material.getId(), e);
         }
+    }
+
+    private void dispatchAfterCommit(Runnable task) {
+        Runnable async = () -> resourceIndexExecutor.execute(task);
+        if (TransactionSynchronizationManager.isActualTransactionActive()) {
+            TransactionSynchronizationManager.registerSynchronization(new TransactionSynchronization() {
+                @Override public void afterCommit() { async.run(); }
+            });
+        } else async.run();
     }
 
     /** 构建 Python 资源索引同步载荷（file_url 为 60 分钟预签名下载 URL） */

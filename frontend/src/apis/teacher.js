@@ -92,8 +92,8 @@ export const getCommunityReport = (id) => get(`/api/v1/community/reports/${id}`)
 
 export const listExportTasks = (params) => get('/api/v1/export-tasks', params)
 export const getExportTask = (id) => get(`/api/v1/export-tasks/${id}`)
-// 导出接口会等待文件生成服务返回成果，单独放宽超时，避免大课件被默认 10 秒超时误判失败。
-const EXPORT_TASK_TIMEOUT = 210000
+// 创建接口只负责入队，不再同步等待 Python 生成文件。
+const EXPORT_TASK_TIMEOUT = 30000
 export const retryExportTask = (id) => apiRequest({ url: `/api/v1/export-tasks/${id}/retry`, method: 'post', timeout: EXPORT_TASK_TIMEOUT })
 export const downloadExportArtifact = (id) => post(`/api/v1/export-artifacts/${id}/download-url`)
 export const createExportTask = (data) => apiRequest({ url: '/api/v1/export-tasks', method: 'post', data, timeout: EXPORT_TASK_TIMEOUT })
@@ -102,6 +102,52 @@ export const cancelExportTask = (id) => post(`/api/v1/export-tasks/${id}/cancel`
 export const getExportQualityReport = (id) => get(`/api/v1/export-tasks/${id}/quality-report`)
 export const getExportArtifact = (id) => get(`/api/v1/export-artifacts/${id}`)
 export const createExportPreviewUrl = (id) => post(`/api/v1/export-artifacts/${id}/preview-url`)
+
+const authHeaders = () => {
+  const userStore = useUserStore()
+  return userStore.token ? { Authorization: `Bearer ${userStore.token}` } : {}
+}
+
+async function consumeSse(response, onEvent) {
+  if (!response.ok) throw new Error(`订阅任务进度失败 (${response.status})`)
+  const reader = response.body.getReader()
+  const decoder = new TextDecoder('utf-8')
+  let buffer = ''
+  const consume = (block) => {
+    let event = 'message'
+    let id = ''
+    const dataLines = []
+    for (const line of block.split(/\r?\n/)) {
+      if (line.startsWith('id:')) id = line.slice(3).trim()
+      else if (line.startsWith('event:')) event = line.slice(6).trim()
+      else if (line.startsWith('data:')) dataLines.push(line.slice(5).trimStart())
+    }
+    if (!dataLines.length) return
+    const raw = dataLines.join('\n')
+    let data = raw
+    try { data = JSON.parse(raw) } catch { /* 非 JSON 消息原样保留 */ }
+    onEvent?.({ id, event, data })
+  }
+  while (true) {
+    const { value, done } = await reader.read()
+    buffer += decoder.decode(value || new Uint8Array(), { stream: !done })
+    const blocks = buffer.split(/\r?\n\r?\n/)
+    buffer = blocks.pop() || ''
+    blocks.filter(Boolean).forEach(consume)
+    if (done) break
+  }
+  if (buffer.trim()) consume(buffer)
+}
+
+/** 订阅 Java Redis Stream 中的导出进度，断线时可传 lastEventId 续传。 */
+export async function streamExportTaskEvents(id, options = {}) {
+  const query = options.lastEventId ? `?after=${encodeURIComponent(options.lastEventId)}` : ''
+  const response = await fetch(`${import.meta.env.VITE_API_BASE_URL || ''}/api/v1/export-tasks/${id}/events${query}`, {
+    headers: { Accept: 'text/event-stream', ...authHeaders() },
+    signal: options.signal,
+  })
+  return consumeSse(response, options.onEvent)
+}
 
 export const patchProject = (id, data) => apiRequest({ url: `/api/v1/projects/${id}`, method: 'patch', data })
 export const createAiSession = (data) => post('/api/v1/ai/sessions', data)
@@ -299,8 +345,8 @@ export const generatePresentation = (data) => apiRequest({
   timeout: PYTHON_PPT_REQUEST_TIMEOUT
 })
 
-/** 经 Java 网关流式生成 HTML PPT；每完成一页即调用 onSlide，最终返回完整 presentation。 */
-export async function generatePresentationStream(data, options = {}) {
+/** Redis 不可用时使用的原始直连流式生成通道。 */
+async function generatePresentationStreamDirect(data, options = {}) {
   const userStore = useUserStore()
   const response = await fetch(`${import.meta.env.VITE_API_BASE_URL || ''}/api/v1/ai/engine/presentations/generate/stream`, {
     method: 'POST',
@@ -345,19 +391,88 @@ export async function generatePresentationStream(data, options = {}) {
   return final
 }
 
+const unwrapGenerationResponse = (response) => {
+  if (response && response.code != null && ![0, 200].includes(Number(response.code))) {
+    throw new Error(response.message || '生成服务请求失败')
+  }
+  return response?.data ?? response
+}
+
+const enqueueGenerationJob = (kind, data) => apiRequest({
+  url: `/api/v1/ai/engine/generation-jobs/${kind}`,
+  method: 'post',
+  data,
+  timeout: 30000,
+})
+
+export const getGenerationJob = (jobId) => get(`/api/v1/ai/engine/generation-jobs/${jobId}`)
+
+export async function streamGenerationJobEvents(jobId, options = {}) {
+  const query = options.lastEventId ? `?after=${encodeURIComponent(options.lastEventId)}` : ''
+  const response = await fetch(`${import.meta.env.VITE_API_BASE_URL || ''}/api/v1/ai/engine/generation-jobs/${jobId}/events${query}`, {
+    headers: { Accept: 'text/event-stream', ...authHeaders() },
+    signal: options.signal,
+  })
+  return consumeSse(response, options.onEvent)
+}
+
+const queueUnavailable = (error) => {
+  const status = error?.response?.status
+  const message = String(error?.response?.data?.message || error?.message || '')
+  return status === 503 || /Redis|队列|HTTP 503/i.test(message)
+}
+
+async function waitForGenerationJob(jobId, options = {}) {
+  let terminal = null
+  await streamGenerationJobEvents(jobId, {
+    signal: options.signal,
+    onEvent: ({ data: eventData }) => {
+      options.onProgress?.(eventData)
+      if (eventData?.slide) options.onSlide?.({ slide: eventData.slide, completed: eventData.completed, total: eventData.total })
+      if (['success', 'failed', 'cancelled'].includes(eventData?.status)) terminal = eventData
+    },
+  })
+  const state = unwrapGenerationResponse(await getGenerationJob(jobId))
+  const status = state?.status || terminal?.status
+  if (status !== 'success') throw new Error(state?.message || terminal?.message || '生成任务未完成')
+  return state.result
+}
+
+/** 默认经 Java 网关进入 Redis 队列；每完成一页即调用 onSlide。 */
+export async function generatePresentationStream(data, options = {}) {
+  try {
+    const queued = unwrapGenerationResponse(await enqueueGenerationJob('presentations', data))
+    if (!queued?.job_id) throw new Error('生成队列未返回任务编号')
+    return await waitForGenerationJob(queued.job_id, options)
+  } catch (error) {
+    if (!queueUnavailable(error)) throw error
+    return generatePresentationStreamDirect(data, options)
+  }
+}
+
 /** 记录教师对 AI 生成结果的接受、拒绝、撤销和手工修改，供个性化学习使用。 */
 export const recordAiFeedback = (data) => post('/api/v1/ai/engine/teacher-style/feedback', data)
 
 /** 获取 AI 运行质量、耗时、Token 与反馈指标。 */
 export const getAiMetrics = (params) => get('/api/v1/ai/engine/ai/metrics', params)
 
-/** 生成可在线编辑的结构化教案（API-142）。 */
-export const generateLessonPlan = (data) => apiRequest({
-  url: '/api/v1/ai/engine/lesson-plans/generate',
-  method: 'post',
-  data,
-  timeout: PYTHON_PPT_REQUEST_TIMEOUT,
-})
+/** 生成可在线编辑的结构化教案；优先使用 Redis 队列，保留同步接口降级。 */
+export async function generateLessonPlan(data, options = {}) {
+  try {
+    const queued = unwrapGenerationResponse(await enqueueGenerationJob('lesson-plans', data))
+    if (!queued?.job_id) throw new Error('生成队列未返回任务编号')
+    const result = await waitForGenerationJob(queued.job_id, options)
+    return { code: 200, message: 'success', data: result }
+  } catch (error) {
+    if (!queueUnavailable(error)) throw error
+    return apiRequest({
+      url: '/api/v1/ai/engine/lesson-plans/generate',
+      method: 'post',
+      data,
+      timeout: PYTHON_PPT_REQUEST_TIMEOUT,
+    })
+  }
+}
 
 /** 直接导出当前 HTML PPT 为 PPTX/ZIP（API-141）。 */
 export const exportPresentationPptx = (data) => apiRequest({

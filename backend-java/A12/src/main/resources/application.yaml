@@ -2,6 +2,11 @@ server:
   port: 8088
 
 spring:
+  task:
+    scheduling:
+      pool:
+        size: 2
+
   datasource:
     url: jdbc:mysql://localhost:3306/a12?useUnicode=true&characterEncoding=utf-8&serverTimezone=Asia/Shanghai&useSSL=false&allowPublicKeyRetrieval=true
     username: root
@@ -18,6 +23,22 @@ spring:
     redis:
       host: 127.0.0.1
       port: 6379
+
+  kafka:
+    bootstrap-servers: ${KAFKA_BOOTSTRAP_SERVERS:127.0.0.1:9092}
+    producer:
+      key-serializer: org.apache.kafka.common.serialization.StringSerializer
+      value-serializer: org.apache.kafka.common.serialization.StringSerializer
+      acks: all
+      properties:
+        enable.idempotence: true
+    consumer:
+      key-deserializer: org.apache.kafka.common.serialization.StringDeserializer
+      value-deserializer: org.apache.kafka.common.serialization.StringDeserializer
+      auto-offset-reset: earliest
+      enable-auto-commit: false
+    listener:
+      ack-mode: record
 
   mail:
     host: smtp.qq.com
@@ -69,3 +90,13 @@ a12:
   export:
     local-dir: data/exports
     public-prefix: /exports
+    queue-poll-ms: 500
+  kafka:
+    enabled: ${KAFKA_ENABLED:false}
+    publish-timeout-seconds: ${KAFKA_PUBLISH_TIMEOUT_SECONDS:3}
+    topics:
+      resource-index-request: ${KAFKA_RESOURCE_INDEX_REQUEST_TOPIC:a12.resource.index.requested}
+      resource-index-result: ${KAFKA_RESOURCE_INDEX_RESULT_TOPIC:a12.resource.index.result}
+      classroom-event: ${KAFKA_CLASSROOM_EVENT_TOPIC:a12.classroom.events}
+      teacher-feedback: ${KAFKA_TEACHER_FEEDBACK_TOPIC:a12.teacher.feedback}
+      dead-letter: ${KAFKA_DEAD_LETTER_TOPIC:a12.dead-letter}

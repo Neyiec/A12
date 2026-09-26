@@ -7,6 +7,7 @@ import edu.zstu.utils.PageResult;
 import edu.zstu.vo.ExportTaskVO;
 
 import java.util.Map;
+import org.springframework.web.servlet.mvc.method.annotation.SseEmitter;
 
 /**
  * 成果导出中心 Service 接口<br>提供导出预检、导出任务管理、成果文件获取等导出相关业务方法。
@@ -24,6 +25,7 @@ public interface ExportService {
     Map<String, Object> createPreviewUrl(String id);
     Map<String, Object> createDownloadUrl(String id);
     ExportFileResult getExportFile(String id);
+    SseEmitter streamProgress(String id, String lastEventId);
 
     /** 成果文件流式下载结果 */
     record ExportFileResult(String filename, String contentType, byte[] bytes) {

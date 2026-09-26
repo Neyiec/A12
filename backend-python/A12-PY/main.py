@@ -1,4 +1,5 @@
 from fastapi import FastAPI, File, Form, HTTPException, Query, UploadFile
+import hashlib
 import json
 import logging
 import tempfile
@@ -54,6 +55,9 @@ from a12_ppt.outline_chat.postgres_store import postgres_memory_store
 from a12_ppt.outline_chat.session_store import outline_session_store
 from a12_ppt.database import ensure_ai_schema
 from a12_ppt.ai_runtime import probe_model, use_runtime_options
+from a12_ppt.redis_support import ai_request_guard, redis_support
+from a12_ppt.generation_jobs import generation_job_manager
+from a12_ppt.kafka_runtime import kafka_runtime
 
 
 settings = get_settings()
@@ -72,6 +76,14 @@ outline_chat_workflow = OutlineChatWorkflow(generator)
 @app.on_event("startup")
 async def initialize_ai_database() -> None:
     ensure_ai_schema()
+    await generation_job_manager.start(generator, lesson_plan_generator)
+    await kafka_runtime.start(resource_index_store, postgres_memory_store)
+
+
+@app.on_event("shutdown")
+async def shutdown_background_workers() -> None:
+    await kafka_runtime.stop()
+    await generation_job_manager.stop()
 
 
 @app.post("/api/v1/python/workspace/chat/stream")
@@ -101,6 +113,9 @@ async def health(probe: bool = Query(default=False)) -> Result:
         "quality_preset": settings.quality_preset,
         "max_slide_concurrency": settings.max_slide_concurrency,
         "max_html_retries": settings.max_html_retries,
+        "redis_ready": await redis_support.ping(),
+        "kafka_enabled": settings.kafka_enabled,
+        "kafka_ready": kafka_runtime.ready,
     })
 
 
@@ -138,17 +153,25 @@ async def upload_resource(file: UploadFile = File(...)) -> Result:
 
 @app.post("/api/v1/python/resources/index/sync")
 async def sync_resource_index(request: ResourceIndexSyncRequest) -> Result:
-    return Result(data=await resource_index_store.sync_resource(request))
+    data = await resource_index_store.sync_resource(request)
+    if data.get("status") in {"indexed", "updated", "deleted"}:
+        await redis_support.increment_version("resource-index")
+    return Result(data=data)
 
 
 @app.post("/api/v1/python/resources/index/bootstrap")
 async def bootstrap_resource_index(request: ResourceIndexBootstrapRequest) -> Result:
-    return Result(data=await resource_index_store.bootstrap(request.resources, request.force_reparse))
+    data = await resource_index_store.bootstrap(request.resources, request.force_reparse)
+    if request.resources:
+        await redis_support.increment_version("resource-index")
+    return Result(data=data)
 
 
 @app.patch("/api/v1/python/resources/index/metadata")
 async def update_resource_index_metadata(request: ResourceIndexMetadataRequest) -> Result:
-    return Result(data=resource_index_store.update_metadata(request))
+    data = resource_index_store.update_metadata(request)
+    await redis_support.increment_version("resource-index")
+    return Result(data=data)
 
 
 @app.get("/api/v1/python/resources/index/overview")
@@ -190,19 +213,32 @@ async def list_resource_index_logs(
 
 @app.post("/api/v1/python/resources/index/search")
 async def search_resource_index(request: ResourceIndexSearchRequest) -> Result:
-    return Result(data=await resource_index_store.search_context(
+    version = await redis_support.get_version("resource-index")
+    material = json.dumps({**request.model_dump(), "index_version": version,
+                           "embedding_model": settings.embedding_model}, ensure_ascii=False, sort_keys=True)
+    cache_key = redis_support.key("cache", "resource-search", hashlib.sha256(material.encode()).hexdigest())
+    cached = await redis_support.get_json(cache_key)
+    if isinstance(cached, dict):
+        cached["cache_hit"] = True
+        return Result(data=cached)
+    data = await resource_index_store.search_context(
         request.resource_ids,
         request.query,
         request.limit,
         request.top_k,
         request.source_type,
         request.min_score,
-    ))
+    )
+    data["cache_hit"] = False
+    await redis_support.set_json(cache_key, data, settings.rag_cache_ttl_seconds)
+    return Result(data=data)
 
 
 @app.delete("/api/v1/python/resources/index/{source_type}/{resource_id}")
 async def delete_resource_index(source_type: str, resource_id: str) -> Result:
-    return Result(data=resource_index_store.delete_resource(source_type, resource_id))
+    data = resource_index_store.delete_resource(source_type, resource_id)
+    await redis_support.increment_version("resource-index")
+    return Result(data=data)
 
 
 @app.get("/api/v1/python/templates")
@@ -259,8 +295,9 @@ async def download_ppt_template_file(theme: str):
 
 @app.post("/api/v1/python/outlines/generate")
 async def generate_outline(request: OutlineGenerateRequest) -> Result:
-    with use_runtime_options(None, "outline_generate", request.model_profile, request.reasoning_effort):
-        return Result(data=await generator.generate_outline(request))
+    async with ai_request_guard(request.user_id, "outline"):
+        with use_runtime_options(request.user_id, "outline_generate", request.model_profile, request.reasoning_effort):
+            return Result(data=await generator.generate_outline(request))
 
 
 @app.post("/api/v1/python/intent/recognize")
@@ -271,11 +308,12 @@ async def recognize_intent(request: IntentRecognizeRequest) -> Result:
 @app.post("/api/v1/python/outlines/chat/stream")
 async def stream_outline_chat(request: OutlineChatStreamRequest):
     async def event_source():
-        with use_runtime_options(request.user_id, "outline_chat", request.model_profile, request.reasoning_effort):
-            async for item in outline_chat_workflow.stream(request):
-                event = item.get("event", "message")
-                data = json.dumps(item.get("data", {}), ensure_ascii=False)
-                yield f"event: {event}\ndata: {data}\n\n"
+        async with ai_request_guard(request.user_id, "outline-chat"):
+            with use_runtime_options(request.user_id, "outline_chat", request.model_profile, request.reasoning_effort):
+                async for item in outline_chat_workflow.stream(request):
+                    event = item.get("event", "message")
+                    data = json.dumps(item.get("data", {}), ensure_ascii=False)
+                    yield f"event: {event}\ndata: {data}\n\n"
 
     return StreamingResponse(event_source(), media_type="text/event-stream")
 
@@ -354,19 +392,62 @@ async def update_outline(request: OutlineUpdateRequest) -> Result:
 
 @app.post("/api/v1/python/presentations/generate")
 async def generate_presentation(request: PresentationGenerateRequest) -> Result:
-    with use_runtime_options(None, "presentation_generate", request.model_profile, request.reasoning_effort):
-        return Result(data=await generator.generate_presentation(request))
+    async with ai_request_guard(request.user_id, "presentation"):
+        with use_runtime_options(request.user_id, "presentation_generate", request.model_profile, request.reasoning_effort):
+            return Result(data=await generator.generate_presentation(request))
+
+
+@app.post("/api/v1/python/generation-jobs/presentations", status_code=202)
+async def enqueue_presentation(request: PresentationGenerateRequest) -> Result:
+    try:
+        return Result(data=await generation_job_manager.enqueue("presentation", request.model_dump(), request.user_id))
+    except RuntimeError as exc:
+        raise HTTPException(status_code=503, detail=str(exc))
+
+
+@app.post("/api/v1/python/generation-jobs/lesson-plans", status_code=202)
+async def enqueue_lesson_plan(request: LessonPlanGenerateRequest) -> Result:
+    try:
+        return Result(data=await generation_job_manager.enqueue("lesson-plan", request.model_dump(), request.user_id))
+    except RuntimeError as exc:
+        raise HTTPException(status_code=503, detail=str(exc))
+
+
+@app.get("/api/v1/python/generation-jobs/{job_id}")
+async def get_generation_job(job_id: str, user_id: str = Query(..., min_length=1)) -> Result:
+    state = await generation_job_manager.get(job_id)
+    if not state:
+        raise HTTPException(status_code=404, detail="Generation job not found")
+    if str(state.get("user_id")) != user_id:
+        raise HTTPException(status_code=403, detail="No permission to access this generation job")
+    return Result(data=state)
+
+
+@app.get("/api/v1/python/generation-jobs/{job_id}/events")
+async def stream_generation_job_events(job_id: str, user_id: str = Query(...), after: str = Query("0-0")):
+    state = await generation_job_manager.get(job_id, include_result=False)
+    if not state:
+        raise HTTPException(status_code=404, detail="Generation job not found")
+    if str(state.get("user_id")) != user_id:
+        raise HTTPException(status_code=403, detail="No permission to access this generation job")
+    async def event_source():
+        async for item in generation_job_manager.events(job_id, after):
+            yield (f"id: {item['id']}\nevent: {item['event']}\n"
+                   f"data: {json.dumps(item['data'], ensure_ascii=False)}\n\n")
+    return StreamingResponse(event_source(), media_type="text/event-stream",
+                             headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"})
 
 
 @app.post("/api/v1/python/presentations/generate/stream")
 async def stream_presentation(request: PresentationGenerateRequest):
     async def event_source():
         try:
-            with use_runtime_options(None, "presentation_stream", request.model_profile, request.reasoning_effort):
-                async for item in generator.stream_presentation(request):
-                    event = "presentation_slide" if item.get("type") == "slide" else "final"
-                    payload = item.get("response") if event == "final" else item
-                    yield f"event: {event}\ndata: {json.dumps(payload or {}, ensure_ascii=False)}\n\n"
+            async with ai_request_guard(request.user_id, "presentation"):
+                with use_runtime_options(request.user_id, "presentation_stream", request.model_profile, request.reasoning_effort):
+                    async for item in generator.stream_presentation(request):
+                        event = "presentation_slide" if item.get("type") == "slide" else "final"
+                        payload = item.get("response") if event == "final" else item
+                        yield f"event: {event}\ndata: {json.dumps(payload or {}, ensure_ascii=False)}\n\n"
             yield "event: done\ndata: {\"status\":\"completed\"}\n\n"
         except Exception as exc:
             payload = json.dumps({"message": str(exc)}, ensure_ascii=False)
@@ -408,7 +489,8 @@ async def generate_interactive_module(request: InteractiveModuleGenerateRequest)
 
 @app.post("/api/v1/python/lesson-plans/generate")
 async def generate_lesson_plan(request: LessonPlanGenerateRequest) -> Result:
-    return Result(data=await lesson_plan_generator.generate(request))
+    async with ai_request_guard(request.user_id, "lesson-plan"):
+        return Result(data=await lesson_plan_generator.generate(request))
 
 
 @app.post("/api/v1/python/audio/tts")

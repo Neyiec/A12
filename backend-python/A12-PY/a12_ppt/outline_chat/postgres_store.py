@@ -227,34 +227,42 @@ class PostgresOutlineMemoryStore:
         user_id = str(payload.get("user_id") or "").strip()
         action = str(payload.get("action") or "").strip()
         metadata = dict(payload.get("metadata") or {})
-        saved = self._execute(
-            """INSERT INTO a12_ai_feedback
-              (user_id,session_id,project_id,action,target_type,instruction,change_summary,before_data,after_data,metadata)
-              VALUES (%s,%s,%s,%s,%s,%s,%s,%s::jsonb,%s::jsonb,%s::jsonb)""",
-            (user_id, payload.get("session_id"), payload.get("project_id"), action,
-             payload.get("target_type") or "presentation", payload.get("instruction"),
-             payload.get("change_summary"), json.dumps(payload.get("before_data") or {}, ensure_ascii=False),
-             json.dumps(payload.get("after_data") or {}, ensure_ascii=False), json.dumps(metadata, ensure_ascii=False)),
-        )
-        # Only accepted/manual changes become positive long-term evidence. Rejections are retained as
-        # negative evidence in the feedback table and can be used by the next request.
-        if saved and action in {"accept", "manual_edit"}:
-            preference = {
-                "last_positive_action": action,
-                "last_change_summary": str(payload.get("change_summary") or "")[:500],
-                "last_instruction": str(payload.get("instruction") or "")[:500],
-                "subject": metadata.get("subject"), "grade": metadata.get("grade"),
-            }
-            self._execute(
-                """INSERT INTO a12_teacher_style_profile(user_id,style_summary,profile,evidence_count,confidence)
-                   VALUES (%s,%s,%s::jsonb,1,0.55)
-                   ON CONFLICT(user_id) DO UPDATE SET profile=a12_teacher_style_profile.profile || EXCLUDED.profile,
-                   style_summary=EXCLUDED.style_summary,evidence_count=a12_teacher_style_profile.evidence_count+1,
-                   confidence=LEAST(0.98, a12_teacher_style_profile.confidence + 0.03),updated_at=NOW()""",
-                (user_id, preference["last_change_summary"] or preference["last_instruction"],
-                 json.dumps(preference, ensure_ascii=False)),
-            )
-        return {"stored": bool(saved), "action": action, "profile_updated": bool(saved and action in {"accept", "manual_edit"})}
+        try:
+            import psycopg
+            with psycopg.connect(self.settings.postgres_dsn) as conn:
+                with conn.cursor() as cur:
+                    cur.execute(
+                        """INSERT INTO a12_ai_feedback
+                          (event_id,user_id,session_id,project_id,action,target_type,instruction,change_summary,before_data,after_data,metadata)
+                          VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s::jsonb,%s::jsonb,%s::jsonb)
+                          ON CONFLICT DO NOTHING RETURNING id""",
+                        (payload.get("event_id"), user_id, payload.get("session_id"), payload.get("project_id"), action,
+                         payload.get("target_type") or "presentation", payload.get("instruction"),
+                         payload.get("change_summary"), json.dumps(payload.get("before_data") or {}, ensure_ascii=False),
+                         json.dumps(payload.get("after_data") or {}, ensure_ascii=False), json.dumps(metadata, ensure_ascii=False)),
+                    )
+                    inserted = cur.fetchone() is not None
+                    if inserted and action in {"accept", "manual_edit"}:
+                        preference = {
+                            "last_positive_action": action,
+                            "last_change_summary": str(payload.get("change_summary") or "")[:500],
+                            "last_instruction": str(payload.get("instruction") or "")[:500],
+                            "subject": metadata.get("subject"), "grade": metadata.get("grade"),
+                        }
+                        cur.execute(
+                            """INSERT INTO a12_teacher_style_profile(user_id,style_summary,profile,evidence_count,confidence)
+                               VALUES (%s,%s,%s::jsonb,1,0.55)
+                               ON CONFLICT(user_id) DO UPDATE SET profile=a12_teacher_style_profile.profile || EXCLUDED.profile,
+                               style_summary=EXCLUDED.style_summary,evidence_count=a12_teacher_style_profile.evidence_count+1,
+                               confidence=LEAST(0.98, a12_teacher_style_profile.confidence + 0.03),updated_at=NOW()""",
+                            (user_id, preference["last_change_summary"] or preference["last_instruction"],
+                             json.dumps(preference, ensure_ascii=False)),
+                        )
+            return {"stored": True, "duplicate": not inserted, "action": action,
+                    "profile_updated": bool(inserted and action in {"accept", "manual_edit"})}
+        except Exception as exc:
+            self.available = False
+            return {"stored": False, "action": action, "profile_updated": False, "error": str(exc)[:300]}
 
     def ai_metrics(self, limit: int = 50) -> dict[str, Any]:
         try:
@@ -276,9 +284,9 @@ class PostgresOutlineMemoryStore:
 
     def record_classroom_event(self, payload: dict[str, Any]) -> bool:
         return self._execute("""INSERT INTO a12_classroom_event
-          (user_id,project_id,session_id,student_key,event_type,question_id,answer,correct,response_ms,metadata)
-          VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s::jsonb)""", (
-            payload.get("user_id"), payload.get("project_id"), payload.get("session_id"),
+          (event_id,user_id,project_id,session_id,student_key,event_type,question_id,answer,correct,response_ms,metadata)
+          VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s::jsonb) ON CONFLICT DO NOTHING""", (
+            payload.get("event_id"), payload.get("user_id"), payload.get("project_id"), payload.get("session_id"),
             payload.get("student_key"), payload.get("event_type"), payload.get("question_id"),
             payload.get("answer"), payload.get("correct"), payload.get("response_ms"),
             json.dumps(payload.get("metadata") or {}, ensure_ascii=False),
