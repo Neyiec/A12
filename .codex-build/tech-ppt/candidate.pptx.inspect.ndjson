@@ -1,0 +1,1384 @@
+{"kind":"deck","id":"pr/brfl9r","name":"Deck"}
+{"kind":"layout","layoutId":"/ppt/slideMasters/slideMaster1.xml","name":"","type":"master"}
+{"kind":"layout","layoutId":"/ppt/slideLayouts/slideLayout1.xml","name":"DEFAULT"}
+{"kind":"slide","id":"sl/y90nupkv","slide":1,"title":"智核","textShapes":5}
+{"kind":"shape","id":"sh/547294r6","slide":1,"name":"Shape 0","bbox":[0,0,960,42.24]}
+{"kind":"shape","id":"sh/k3yl0zql","slide":1,"name":"Shape 1","bbox":[0,42.24,960,6.72]}
+{"kind":"textbox","id":"sh/7qp4be9c","slide":1,"name":"Text 2","text":"智核","textPreview":"智核","textChars":2,"textLines":1,"bbox":[52.8,91.2,499.2,163.2]}
+{"kind":"textbox","id":"sh/65g3298r","slide":1,"name":"Text 3","text":"多模态AI互动式教学智能体","textPreview":"多模态AI互动式教学智能体","textChars":13,"textLines":1,"bbox":[57.6,261.12,729.6,59.52]}
+{"kind":"shape","id":"sh/ts7md4r2","slide":1,"name":"Shape 4","bbox":[57.6,336,456,34.56]}
+{"kind":"textbox","id":"sh/sryl4zqx","slide":1,"name":"Text 5","text":"MULTI-MODAL AI INTERACTIVE TEACHING AGENT","textPreview":"MULTI-MODAL AI INTERACTIVE TEACHING AGENT","textChars":41,"textLines":1,"bbox":[57.6,336,456,34.56]}
+{"kind":"shape","id":"sh/fu94fe98","slide":1,"name":"Shape 6","bbox":[57.6,401.28,518.4,0]}
+{"kind":"textbox","id":"sh/utg3698n","slide":1,"name":"Text 7","text":"智核项目组","textPreview":"智核项目组","textChars":5,"textLines":1,"bbox":[57.6,414.72,518.4,38.4]}
+{"kind":"textbox","id":"sh/wn6dc7eh","slide":1,"name":"Text 8","text":"ZHIHE PROJECT TEAM","textPreview":"ZHIHE PROJECT TEAM","textChars":18,"textLines":1,"bbox":[57.6,458.88,384,24]}
+{"kind":"shape","id":"sh/hofulsf2","slide":1,"name":"Shape 9","bbox":[628.8,314.88,331.2,192]}
+{"kind":"image","id":"im/5cze9svq","slide":1,"name":"Image 0","bbox":[827.52,69.12,100.8,100.8]}
+{"kind":"notes","id":"nt/y90nupkv","slide":1,"text":""}
+{"kind":"slide","id":"sl/hwbqtkby","slide":2,"title":"目录","textShapes":14}
+{"kind":"shape","id":"sh/9072xkry","slide":2,"name":"Shape 0","bbox":[0,0,244.8,540]}
+{"kind":"textbox","id":"sh/ozy1ofad","slide":2,"name":"Text 1","text":"目录","textPreview":"目录","textChars":2,"textLines":1,"bbox":[28.8,72,187.2,91.2]}
+{"kind":"shape","id":"sh/b29kza94","slide":2,"name":"Shape 2","bbox":[28.8,187.2,40.32,40.32]}
+{"kind":"textbox","id":"sh/a10jqpsj","slide":2,"name":"Text 3","text":"CONTENTS","textPreview":"CONTENTS","textChars":8,"textLines":1,"bbox":[28.8,244.8,192,28.8]}
+{"kind":"shape","id":"sh/w3i1sfa9","slide":2,"name":"Shape 5","bbox":[187.2,28.8,19.2,19.2]}
+{"kind":"textbox","id":"sh/r65knqtk","slide":2,"name":"Text 6","text":"01","textPreview":"01","textChars":2,"textLines":1,"bbox":[288,55.68,81.6,48]}
+{"kind":"textbox","id":"sh/q5wjelsz","slide":2,"name":"Text 7","text":"项目背景","textPreview":"项目背景","textChars":4,"textLines":1,"bbox":[379.2,51.84,432,40.32]}
+{"kind":"textbox","id":"sh/ove9o7yd","slide":2,"name":"Text 8","text":"PROJECT BACKGROUND","textPreview":"PROJECT BACKGROUND","textChars":18,"textLines":1,"bbox":[381.12,92.16,432,26.88]}
+{"kind":"shape","id":"sh/9wnqhczy","slide":2,"name":"Shape 9","bbox":[288,132.48,624,0]}
+{"kind":"shape","id":"sh/mtwrmxg7","slide":2,"name":"Shape 10","bbox":[878.4,74.88,13.44,13.44]}
+{"kind":"textbox","id":"sh/nu58f2hs","slide":2,"name":"Text 11","text":"02","textPreview":"02","textChars":2,"textLines":1,"bbox":[288,146.88,81.6,48]}
+{"kind":"textbox","id":"sh/wjy9sry9","slide":2,"name":"Text 12","text":"业务实现","textPreview":"业务实现","textChars":4,"textLines":1,"bbox":[379.2,143.04,432,40.32]}
+{"kind":"textbox","id":"sh/xk7qlczu","slide":2,"name":"Text 13","text":"BUSINESS IMPLEMENTATION","textPreview":"BUSINESS IMPLEMENTATION","textChars":23,"textLines":1,"bbox":[381.12,183.36,432,26.88]}
+{"kind":"shape","id":"sh/ahwrqhgj","slide":2,"name":"Shape 14","bbox":[288,223.68,624,0]}
+{"kind":"shape","id":"sh/bip8jmho","slide":2,"name":"Shape 15","bbox":[878.4,166.08,13.44,13.44]}
+{"kind":"textbox","id":"sh/cnupgny5","slide":2,"name":"Text 16","text":"03","textPreview":"03","textChars":2,"textLines":1,"bbox":[288,238.08,81.6,48]}
+{"kind":"textbox","id":"sh/do3q9szq","slide":2,"name":"Text 17","text":"技术实现","textPreview":"技术实现","textChars":4,"textLines":1,"bbox":[379.2,234.24,432,40.32]}
+{"kind":"textbox","id":"sh/t8byxkn2","slide":2,"name":"Text 18","text":"TECHNICAL IMPLEMENTATION","textPreview":"TECHNICAL IMPLEMENTATION","textChars":24,"textLines":1,"bbox":[381.12,274.56,432,26.88]}
+{"kind":"shape","id":"sh/s72xofmh","slide":2,"name":"Shape 19","bbox":[288,314.88,624,0]}
+{"kind":"shape","id":"sh/76twva5c","slide":2,"name":"Shape 20","bbox":[878.4,257.28,13.44,13.44]}
+{"kind":"textbox","id":"sh/65kfmpor","slide":2,"name":"Text 21","text":"04","textPreview":"04","textChars":2,"textLines":1,"bbox":[288,329.28,81.6,48]}
+{"kind":"textbox","id":"sh/hcvy14ne","slide":2,"name":"Text 22","text":"组织管理","textPreview":"组织管理","textChars":4,"textLines":1,"bbox":[379.2,325.44,432,40.32]}
+{"kind":"textbox","id":"sh/gbmxszmt","slide":2,"name":"Text 23","text":"ORGANIZATION & MANAGEMENT","textPreview":"ORGANIZATION & MANAGEMENT","textChars":25,"textLines":1,"bbox":[381.12,365.76,432,26.88]}
+{"kind":"shape","id":"sh/fadgzu58","slide":2,"name":"Shape 24","bbox":[288,406.08,624,0]}
+{"kind":"shape","id":"sh/u94fqp4n","slide":2,"name":"Shape 25","bbox":[878.4,348.48,13.44,13.44]}
+{"kind":"shape","id":"sh/9o7ulg3y","slide":2,"name":"Shape 31","bbox":[892.8,0,67.2,48]}
+{"kind":"notes","id":"nt/hwbqtkby","slide":2,"text":""}
+{"kind":"slide","id":"sl/ofy9wn61","slide":3,"title":"PART 01 / 05","textShapes":5}
+{"kind":"shape","id":"sh/cza94vmx","slide":3,"name":"Shape 0","bbox":[604.8,249.6,355.2,257.28]}
+{"kind":"textbox","id":"sh/d0jax03i","slide":3,"name":"Text 1","text":"PART 01 / 05","textPreview":"PART 01 / 05","textChars":12,"textLines":1,"bbox":[633.6,475.2,297.6,30.72]}
+{"kind":"textbox","id":"sh/3ah8rqlg","slide":3,"name":"Text 3","text":"01","textPreview":"01","textChars":2,"textLines":1,"bbox":[48,52.8,355.2,220.8]}
+{"kind":"textbox","id":"sh/obq90bml","slide":3,"name":"Text 4","text":"项目背景","textPreview":"项目背景","textChars":4,"textLines":1,"bbox":[52.8,283.2,441.6,81.6]}
+{"kind":"shape","id":"sh/pcjqtg36","slide":3,"name":"Shape 5","bbox":[54.72,369.6,307.2,5.76]}
+{"kind":"textbox","id":"sh/m5cra54z","slide":3,"name":"Text 6","text":"PROJECT BACKGROUND","textPreview":"PROJECT BACKGROUND","textChars":18,"textLines":1,"bbox":[54.72,384,451.2,28.8]}
+{"kind":"textbox","id":"sh/n6ls3alk","slide":3,"name":"Text 7","text":"本章内容：项目背景 · 存在问题 · 项目目标","textPreview":"本章内容：项目背景 · 存在问题 · 项目目标","textChars":23,"textLines":1,"bbox":[54.72,422.4,499.2,26.88]}
+{"kind":"shape","id":"sh/n2l4fq98","slide":3,"name":"Shape 8","bbox":[54.72,484.8,19.2,19.2]}
+{"kind":"shape","id":"sh/m1c3mlsn","slide":3,"name":"Shape 9","bbox":[83.52,484.8,19.2,19.2]}
+{"kind":"shape","id":"sh/943mhgre","slide":3,"name":"Shape 10","bbox":[112.32,484.8,19.2,19.2]}
+{"kind":"shape","id":"sh/83ulovat","slide":3,"name":"Shape 11","bbox":[141.12,484.8,19.2,19.2]}
+{"kind":"shape","id":"sh/v6l4jq94","slide":3,"name":"Shape 12","bbox":[169.92,484.8,19.2,19.2]}
+{"kind":"notes","id":"nt/ofy9wn61","slide":3,"text":""}
+{"kind":"slide","id":"sl/jyx0ra1s","slide":4,"title":"01","textShapes":18}
+{"kind":"shape","id":"sh/1cj2d8b6","slide":4,"name":"Shape 0","bbox":[48,38.4,53.76,53.76]}
+{"kind":"textbox","id":"sh/0ba143al","slide":4,"name":"Text 1","text":"01","textPreview":"01","textChars":2,"textLines":1,"bbox":[48,38.4,53.76,53.76]}
+{"kind":"textbox","id":"sh/rm1k7yt4","slide":4,"name":"Text 2","text":"项目背景","textPreview":"项目背景","textChars":4,"textLines":1,"bbox":[119.04,33.6,432,24.96]}
+{"kind":"textbox","id":"sh/ql8jytsj","slide":4,"name":"Text 3","text":"创新需求与备课负担的矛盾","textPreview":"创新需求与备课负担的矛盾","textChars":12,"textLines":1,"bbox":[119.04,57.6,662.4,48]}
+{"kind":"textbox","id":"sh/doj29oba","slide":4,"name":"Text 4","text":"01 · BACKGROUND","textPreview":"01 · BACKGROUND","textChars":15,"textLines":1,"bbox":[739.2,40.32,172.8,23.04]}
+{"kind":"shape","id":"sh/sna103ap","slide":4,"name":"Shape 5","bbox":[119.04,109.44,792.96,4.8]}
+{"kind":"shape","id":"sh/3ihk3et8","slide":4,"name":"Shape 6","bbox":[119.04,109.44,105.6,4.8]}
+{"kind":"shape","id":"sh/ih8ju9sn","slide":4,"name":"Shape 7","bbox":[48,144,417.6,155.52]}
+{"kind":"shape","id":"sh/kbm987y5","slide":4,"name":"Shape 8","bbox":[48,144,11.52,155.52]}
+{"kind":"textbox","id":"sh/5cva1cfq","slide":4,"name":"Text 9","text":"政策驱动","textPreview":"政策驱动","textChars":4,"textLines":1,"bbox":[78.72,159.36,288,32.64]}
+{"kind":"textbox","id":"sh/i94r6xgz","slide":4,"name":"Text 10","text":"01","textPreview":"01","textChars":2,"textLines":1,"bbox":[408,157.44,43.2,28.8]}
+{"kind":"textbox","id":"sh/jadsz2xk","slide":4,"name":"Text 11","text":"教育信息化 2.0 深入推进，人工智能成为重塑教学模式的核心驱动力","textPreview":"教育信息化 2.0 深入推进，人工智能成为重塑教学模式的核心驱动力","textChars":33,"textLines":1,"bbox":[78.72,196.8,369.6,91.2]}
+{"kind":"shape","id":"sh/w72947yt","slide":4,"name":"Shape 12","bbox":[494.4,144,417.6,155.52]}
+{"kind":"shape","id":"sh/x8vaxsfe","slide":4,"name":"Shape 13","bbox":[494.4,144,11.52,155.52]}
+{"kind":"textbox","id":"sh/a5kr2xg3","slide":4,"name":"Text 14","text":"核心矛盾","textPreview":"核心矛盾","textChars":4,"textLines":1,"bbox":[525.12,159.36,288,32.64]}
+{"kind":"textbox","id":"sh/v6tsv2xo","slide":4,"name":"Text 15","text":"02","textPreview":"02","textChars":2,"textLines":1,"bbox":[854.4,157.44,43.2,28.8]}
+{"kind":"textbox","id":"sh/g36tgryd","slide":4,"name":"Text 16","text":"教学内容日益强调个性化与互动性，课件制作、资料整理、格式调整等事务性工作却占用教师大量时间","textPreview":"教学内容日益强调个性化与互动性，课件制作、资料整理、格式调整等事务性工作却占用教师大量时间","textChars":45,"textLines":1,"bbox":[525.12,196.8,369.6,91.2]}
+{"kind":"shape","id":"sh/h4fa9wfy","slide":4,"name":"Shape 17","bbox":[48,314.88,417.6,155.52]}
+{"kind":"shape","id":"sh/p0batw72","slide":4,"name":"Shape 18","bbox":[48,314.88,11.52,155.52]}
+{"kind":"textbox","id":"sh/oz29krqh","slide":4,"name":"Text 19","text":"技术机遇","textPreview":"技术机遇","textChars":4,"textLines":1,"bbox":[78.72,330.24,288,32.64]}
+{"kind":"textbox","id":"sh/3ytsrmpw","slide":4,"name":"Text 20","text":"03","textPreview":"03","textChars":2,"textLines":1,"bbox":[408,328.32,43.2,28.8]}
+{"kind":"textbox","id":"sh/2xkrih8b","slide":4,"name":"Text 21","text":"生成式 AI 与多模态理解技术日趋成熟，「教学智能体」成为破解矛盾的新技术路径","textPreview":"生成式 AI 与多模态理解技术日趋成熟，「教学智能体」成为破解矛盾的新技术路径","textChars":39,"textLines":1,"bbox":[78.72,367.68,369.6,91.2]}
+{"kind":"shape","id":"sh/1wbapc7q","slide":4,"name":"Shape 22","bbox":[494.4,314.88,417.6,155.52]}
+{"kind":"shape","id":"sh/gv29g7q5","slide":4,"name":"Shape 23","bbox":[494.4,314.88,11.52,155.52]}
+{"kind":"textbox","id":"sh/fu9sn2p0","slide":4,"name":"Text 24","text":"价值定位","textPreview":"价值定位","textChars":4,"textLines":1,"bbox":[525.12,330.24,288,32.64]}
+{"kind":"textbox","id":"sh/et0reh8f","slide":4,"name":"Text 25","text":"04","textPreview":"04","textChars":2,"textLines":1,"bbox":[854.4,328.32,43.2,28.8]}
+{"kind":"textbox","id":"sh/tsrqlc7u","slide":4,"name":"Text 26","text":"将教师从繁琐的课件制作中解放出来，回归「教学设计师」角色","textPreview":"将教师从繁琐的课件制作中解放出来，回归「教学设计师」角色","textChars":28,"textLines":1,"bbox":[525.12,367.68,369.6,91.2]}
+{"kind":"shape","id":"sh/sri9s7q9","slide":4,"name":"Shape 27","bbox":[48,508.8,864,0]}
+{"kind":"textbox","id":"sh/jm5gze1g","slide":4,"name":"Text 28","text":"智核 · 多模态AI互动式教学智能体","textPreview":"智核 · 多模态AI互动式教学智能体","textChars":18,"textLines":1,"bbox":[78.72,513.6,345.6,19.2]}
+{"kind":"shape","id":"sh/knex8j21","slide":4,"name":"Shape 29","bbox":[861.12,516.96,7.68,7.68]}
+{"kind":"textbox","id":"sh/5ony1oj6","slide":4,"name":"Text 30","text":"4","textPreview":"4","textChars":1,"textLines":1,"bbox":[871.68,513.6,40.32,19.2]}
+{"kind":"shape","id":"sh/axcf29kj","slide":4,"name":"Shape 31","bbox":[913.92,441.6,46.08,42.24]}
+{"kind":"image","id":"im/grytg7mp","slide":4,"name":"Image 0","bbox":[48,510.72,23.04,23.04]}
+{"kind":"notes","id":"nt/jyx0ra1s","slide":4,"text":""}
+{"kind":"slide","id":"sl/i107q5of","slide":5,"title":"01","textShapes":18}
+{"kind":"shape","id":"sh/dgbulwnm","slide":5,"name":"Shape 0","bbox":[48,38.4,53.76,53.76]}
+{"kind":"textbox","id":"sh/cf2tcr61","slide":5,"name":"Text 1","text":"01","textPreview":"01","textChars":2,"textLines":1,"bbox":[48,38.4,53.76,53.76]}
+{"kind":"textbox","id":"sh/z2tcnm5s","slide":5,"name":"Text 2","text":"存在问题","textPreview":"存在问题","textChars":4,"textLines":1,"bbox":[119.04,33.6,432,24.96]}
+{"kind":"textbox","id":"sh/yhkbe1o7","slide":5,"name":"Text 3","text":"现有 AI 教学工具的四大痛点","textPreview":"现有 AI 教学工具的四大痛点","textChars":15,"textLines":1,"bbox":[119.04,57.6,662.4,48]}
+{"kind":"textbox","id":"sh/l4bupwny","slide":5,"name":"Text 4","text":"01 · BACKGROUND","textPreview":"01 · BACKGROUND","textChars":15,"textLines":1,"bbox":[739.2,40.32,172.8,23.04]}
+{"kind":"shape","id":"sh/032tgr6d","slide":5,"name":"Shape 5","bbox":[119.04,109.44,792.96,4.8]}
+{"kind":"shape","id":"sh/n6dcr65o","slide":5,"name":"Shape 6","bbox":[119.04,109.44,105.6,4.8]}
+{"kind":"shape","id":"sh/m5kbi1oj","slide":5,"name":"Shape 7","bbox":[48,139.2,417.6,165.12]}
+{"kind":"textbox","id":"sh/w32dkbuh","slide":5,"name":"Text 8","text":"01","textPreview":"01","textChars":2,"textLines":1,"bbox":[72,158.4,57.6,48]}
+{"kind":"textbox","id":"sh/x4vedgvm","slide":5,"name":"Text 9","text":"功能碎片化","textPreview":"功能碎片化","textChars":5,"textLines":1,"bbox":[139.2,160.32,230.4,33.6]}
+{"kind":"textbox","id":"sh/ahkvi1cb","slide":5,"name":"Text 10","text":"教学设计、PPT 制作、讲义撰写分散于不同工具，流程割裂，教师需在多个软件间频繁切换","textPreview":"教学设计、PPT 制作、讲义撰写分散于不同工具，流程割裂，教师需在多个软件间频繁切换","textChars":42,"textLines":1,"bbox":[139.2,200.64,235.2,91.2]}
+{"kind":"shape","id":"sh/sb6xsvu9","slide":5,"name":"Shape 16","bbox":[494.4,139.2,417.6,165.12]}
+{"kind":"textbox","id":"sh/tcfel0vu","slide":5,"name":"Text 17","text":"02","textPreview":"02","textChars":2,"textLines":1,"bbox":[518.4,158.4,57.6,48]}
+{"kind":"textbox","id":"sh/hgrmpwj2","slide":5,"name":"Text 18","text":"意图理解浅层化","textPreview":"意图理解浅层化","textChars":7,"textLines":1,"bbox":[585.6,160.32,230.4,33.6]}
+{"kind":"textbox","id":"sh/gfi5grih","slide":5,"name":"Text 19","text":"只能执行单次简单指令，无法多轮深入对话，难以把握复杂教学思路与个性化要求","textPreview":"只能执行单次简单指令，无法多轮深入对话，难以把握复杂教学思路与个性化要求","textChars":36,"textLines":1,"bbox":[585.6,200.64,235.2,91.2]}
+{"kind":"shape","id":"sh/ud0ne10b","slide":5,"name":"Text 21","bbox":[835.2,154.56,57.6,57.6]}
+{"kind":"shape","id":"sh/pkr6tgjy","slide":5,"name":"Shape 22","bbox":[48,316.8,417.6,165.12]}
+{"kind":"textbox","id":"sh/4ji5kbid","slide":5,"name":"Text 23","text":"03","textPreview":"03","textChars":2,"textLines":1,"bbox":[72,336,57.6,48]}
+{"kind":"textbox","id":"sh/3i94r61s","slide":5,"name":"Text 24","text":"互动内容制作门槛高","textPreview":"互动内容制作门槛高","textChars":9,"textLines":1,"bbox":[139.2,337.92,230.4,33.6]}
+{"kind":"textbox","id":"sh/2h0ni107","slide":5,"name":"Text 25","text":"知识点动画、互动小游戏依赖专业技术，普通教师难以独立完成","textPreview":"知识点动画、互动小游戏依赖专业技术，普通教师难以独立完成","textChars":28,"textLines":1,"bbox":[139.2,378.24,235.2,91.2]}
+{"kind":"shape","id":"sh/wve1knyx","slide":5,"name":"Shape 30","bbox":[494.4,316.8,417.6,165.12]}
+{"kind":"textbox","id":"sh/xwn2dszi","slide":5,"name":"Text 31","text":"04","textPreview":"04","textChars":2,"textLines":1,"bbox":[518.4,336,57.6,48]}
+{"kind":"textbox","id":"sh/ihw3mxg3","slide":5,"name":"Text 32","text":"生成内容不可溯源","textPreview":"生成内容不可溯源","textChars":8,"textLines":1,"bbox":[585.6,337.92,230.4,33.6]}
+{"kind":"textbox","id":"sh/ji5kf2ho","slide":5,"name":"Text 33","text":"通用大模型缺乏教育领域权威知识支撑，易产生内容「幻觉」，结果难以核对来源","textPreview":"通用大模型缺乏教育领域权威知识支撑，易产生内容「幻觉」，结果难以核对来源","textChars":36,"textLines":1,"bbox":[585.6,378.24,235.2,91.2]}
+{"kind":"shape","id":"sh/zmlk3yhk","slide":5,"name":"Shape 37","bbox":[48,508.8,864,0]}
+{"kind":"textbox","id":"sh/ehkzepsn","slide":5,"name":"Text 38","text":"智核 · 多模态AI互动式教学智能体","textPreview":"智核 · 多模态AI互动式教学智能体","textChars":18,"textLines":1,"bbox":[78.72,513.6,345.6,19.2]}
+{"kind":"shape","id":"sh/1kvi94re","slide":5,"name":"Shape 39","bbox":[861.12,516.96,7.68,7.68]}
+{"kind":"textbox","id":"sh/gjmhgzqt","slide":5,"name":"Text 40","text":"5","textPreview":"5","textChars":1,"textLines":1,"bbox":[871.68,513.6,40.32,19.2]}
+{"kind":"shape","id":"sh/3md0bu94","slide":5,"name":"Shape 41","bbox":[913.92,441.6,46.08,42.24]}
+{"kind":"image","id":"im/p0j25ob6","slide":5,"name":"Image 0","bbox":[48,510.72,23.04,23.04]}
+{"kind":"notes","id":"nt/i107q5of","slide":5,"text":""}
+{"kind":"slide","id":"sl/x8f69ofe","slide":6,"title":"01","textShapes":17}
+{"kind":"shape","id":"sh/yhg7epsj","slide":6,"name":"Shape 0","bbox":[48,38.4,53.76,53.76]}
+{"kind":"textbox","id":"sh/zi98nu94","slide":6,"name":"Text 1","text":"01","textPreview":"01","textChars":2,"textLines":1,"bbox":[48,38.4,53.76,53.76]}
+{"kind":"textbox","id":"sh/87ipkzal","slide":6,"name":"Text 2","text":"项目目标","textPreview":"项目目标","textChars":4,"textLines":1,"bbox":[119.04,33.6,432,24.96]}
+{"kind":"textbox","id":"sh/98rqt4r6","slide":6,"name":"Text 3","text":"五大目标，备课从数小时到分钟级","textPreview":"五大目标，备课从数小时到分钟级","textChars":15,"textLines":1,"bbox":[119.04,57.6,662.4,48]}
+{"kind":"textbox","id":"sh/ml07i9sv","slide":6,"name":"Text 4","text":"01 · BACKGROUND","textPreview":"01 · BACKGROUND","textChars":15,"textLines":1,"bbox":[739.2,40.32,172.8,23.04]}
+{"kind":"shape","id":"sh/7m98ru9g","slide":6,"name":"Shape 5","bbox":[119.04,109.44,792.96,4.8]}
+{"kind":"shape","id":"sh/oryp8fah","slide":6,"name":"Shape 6","bbox":[119.04,109.44,105.6,4.8]}
+{"kind":"shape","id":"sh/pc76hkr2","slide":6,"name":"Shape 7","bbox":[48,136.32,864,122.88]}
+{"kind":"shape","id":"sh/h4bupgn6","slide":6,"name":"Shape 8","bbox":[48,136.32,13.44,122.88]}
+{"kind":"textbox","id":"sh/w32twb6l","slide":6,"name":"Text 9","text":"总述 ｜ 围绕「感知—决策—执行—反馈」Agent 闭环，构建「懂教学、能听懂、会干活」的多模态 AI 互动式教学智能体——一句话 + 参考资料，即可生成 PPT 课件、Word 教案与互动组件。","textPreview":"总述 ｜ 围绕「感知—决策—执行—反馈」Agent 闭环，构建「懂教学、能听懂、会干活」的多模态 AI 互动式教学智能体——一句话 + 参考资料，即可生成 PPT 课件、Word 教案与互动组件。","textChars":98,"textLines":1,"bbox":[78.72,149.76,816,96]}
+{"kind":"shape","id":"sh/v2tcn650","slide":6,"name":"Shape 10","bbox":[48,278.4,30.72,30.72]}
+{"kind":"textbox","id":"sh/u1kbu1ov","slide":6,"name":"Text 11","text":"1","textPreview":"1","textChars":1,"textLines":1,"bbox":[48,278.4,30.72,30.72]}
+{"kind":"textbox","id":"sh/5svutgni","slide":6,"name":"Text 12","text":"多模态意图理解，破除单次指令执行","textPreview":"多模态意图理解，破除单次指令执行","textChars":16,"textLines":1,"bbox":[94.08,278.4,470.4,30.72]}
+{"kind":"shape","id":"sh/47mt0b6x","slide":6,"name":"Shape 13","bbox":[48,321.6,30.72,30.72]}
+{"kind":"textbox","id":"sh/j6dcr65c","slide":6,"name":"Text 14","text":"2","textPreview":"2","textChars":1,"textLines":1,"bbox":[48,321.6,30.72,30.72]}
+{"kind":"textbox","id":"sh/i54bylor","slide":6,"name":"Text 15","text":"思维链驱动决策，精准拆解教学任务","textPreview":"思维链驱动决策，精准拆解教学任务","textChars":16,"textLines":1,"bbox":[94.08,321.6,470.4,30.72]}
+{"kind":"shape","id":"sh/twfux0ne","slide":6,"name":"Shape 16","bbox":[48,364.8,30.72,30.72]}
+{"kind":"textbox","id":"sh/svmt4v6t","slide":6,"name":"Text 17","text":"3","textPreview":"3","textChars":1,"textLines":1,"bbox":[48,364.8,30.72,30.72]}
+{"kind":"textbox","id":"sh/cbe5g3ih","slide":6,"name":"Text 18","text":"双流生成引擎，标准与互动并行输出","textPreview":"双流生成引擎，标准与互动并行输出","textChars":16,"textLines":1,"bbox":[94.08,364.8,470.4,30.72]}
+{"kind":"shape","id":"sh/dcnm98zm","slide":6,"name":"Shape 19","bbox":[48,408,30.72,30.72]}
+{"kind":"textbox","id":"sh/qpwnet0b","slide":6,"name":"Text 20","text":"4","textPreview":"4","textChars":1,"textLines":1,"bbox":[48,408,30.72,30.72]}
+{"kind":"textbox","id":"sh/bq547yhw","slide":6,"name":"Text 21","text":"多模态 RAG 知识库，抑制内容幻觉","textPreview":"多模态 RAG 知识库，抑制内容幻觉","textChars":18,"textLines":1,"bbox":[94.08,408,470.4,30.72]}
+{"kind":"shape","id":"sh/0fy5k3id","slide":6,"name":"Shape 22","bbox":[48,451.2,30.72,30.72]}
+{"kind":"textbox","id":"sh/lg76d8zy","slide":6,"name":"Text 23","text":"5","textPreview":"5","textChars":1,"textLines":1,"bbox":[48,451.2,30.72,30.72]}
+{"kind":"textbox","id":"sh/ydgnit07","slide":6,"name":"Text 24","text":"互动—生成—反馈闭环，持续进化","textPreview":"互动—生成—反馈闭环，持续进化","textChars":15,"textLines":1,"bbox":[94.08,451.2,470.4,30.72]}
+{"kind":"shape","id":"sh/wbipc72l","slide":6,"name":"Shape 35","bbox":[48,508.8,864,0]}
+{"kind":"textbox","id":"sh/m5076xkj","slide":6,"name":"Text 36","text":"智核 · 多模态AI互动式教学智能体","textPreview":"智核 · 多模态AI互动式教学智能体","textChars":18,"textLines":1,"bbox":[78.72,513.6,345.6,19.2]}
+{"kind":"shape","id":"sh/2dkbalg3","slide":6,"name":"Shape 37","bbox":[861.12,516.96,7.68,7.68]}
+{"kind":"textbox","id":"sh/netcjqxo","slide":6,"name":"Text 38","text":"6","textPreview":"6","textChars":1,"textLines":1,"bbox":[871.68,513.6,40.32,19.2]}
+{"kind":"shape","id":"sh/of2tcvy9","slide":6,"name":"Shape 39","bbox":[913.92,441.6,46.08,42.24]}
+{"kind":"image","id":"im/exw3a9on","slide":6,"name":"Image 0","bbox":[48,510.72,23.04,23.04]}
+{"kind":"notes","id":"nt/x8f69ofe","slide":6,"text":""}
+{"kind":"slide","id":"sl/gnmp4jqx","slide":7,"title":"PART 02","textShapes":5}
+{"kind":"shape","id":"sh/cb2tkvap","slide":7,"name":"Shape 0","bbox":[0,0,374.4,278.4]}
+{"kind":"textbox","id":"sh/dcbud0ra","slide":7,"name":"Text 1","text":"PART 02","textPreview":"PART 02","textChars":7,"textLines":1,"bbox":[43.2,110.4,144,28.8]}
+{"kind":"shape","id":"sh/ydkbm5sv","slide":7,"name":"Shape 2","bbox":[48,48,48,48]}
+{"kind":"textbox","id":"sh/eh0ba1sr","slide":7,"name":"Text 6","text":"02","textPreview":"02","textChars":2,"textLines":1,"bbox":[422.4,81.6,355.2,220.8]}
+{"kind":"textbox","id":"sh/fi9c369c","slide":7,"name":"Text 7","text":"业务实现","textPreview":"业务实现","textChars":4,"textLines":1,"bbox":[427.2,312,441.6,81.6]}
+{"kind":"shape","id":"sh/baxkjqlk","slide":7,"name":"Shape 8","bbox":[429.12,398.4,307.2,5.76]}
+{"kind":"textbox","id":"sh/a9ojq5kz","slide":7,"name":"Text 9","text":"BUSINESS IMPLEMENTATION","textPreview":"BUSINESS IMPLEMENTATION","textChars":23,"textLines":1,"bbox":[429.12,412.8,451.2,28.8]}
+{"kind":"textbox","id":"sh/xcz2l03q","slide":7,"name":"Text 10","text":"本章内容：服务模型 · 业务流程 · 功能亮点①—⑥","textPreview":"本章内容：服务模型 · 业务流程 · 功能亮点①—⑥","textChars":26,"textLines":1,"bbox":[429.12,451.2,499.2,26.88]}
+{"kind":"shape","id":"sh/cbq1sv25","slide":7,"name":"Shape 11","bbox":[424.32,484.8,19.2,19.2]}
+{"kind":"shape","id":"sh/n6x0fqlo","slide":7,"name":"Shape 12","bbox":[453.12,484.8,19.2,19.2]}
+{"kind":"shape","id":"sh/25ojml43","slide":7,"name":"Shape 13","bbox":[481.92,484.8,19.2,19.2]}
+{"kind":"shape","id":"sh/p8fih03e","slide":7,"name":"Shape 14","bbox":[510.72,484.8,19.2,19.2]}
+{"kind":"shape","id":"sh/o761ov2t","slide":7,"name":"Shape 15","bbox":[539.52,484.8,19.2,19.2]}
+{"kind":"notes","id":"nt/gnmp4jqx","slide":7,"text":""}
+{"kind":"slide","id":"sl/fu1gfa1s","slide":8,"title":"02","textShapes":22}
+{"kind":"shape","id":"sh/18byd4zy","slide":8,"name":"Shape 0","bbox":[48,38.4,53.76,53.76]}
+{"kind":"textbox","id":"sh/g72x4zyd","slide":8,"name":"Text 1","text":"02","textPreview":"02","textChars":2,"textLines":1,"bbox":[48,38.4,53.76,53.76]}
+{"kind":"textbox","id":"sh/ri9g7uhw","slide":8,"name":"Text 2","text":"服务模型","textPreview":"服务模型","textChars":4,"textLines":1,"bbox":[119.04,33.6,432,24.96]}
+{"kind":"textbox","id":"sh/6h0fypgb","slide":8,"name":"Text 3","text":"三类用户，三大子系统","textPreview":"三类用户，三大子系统","textChars":10,"textLines":1,"bbox":[119.04,57.6,662.4,48]}
+{"kind":"textbox","id":"sh/tkby9kzm","slide":8,"name":"Text 4","text":"02 · BUSINESS","textPreview":"02 · BUSINESS","textChars":13,"textLines":1,"bbox":[739.2,40.32,172.8,23.04]}
+{"kind":"shape","id":"sh/sjix0zy1","slide":8,"name":"Shape 5","bbox":[119.04,109.44,792.96,4.8]}
+{"kind":"shape","id":"sh/je9g3ahk","slide":8,"name":"Shape 6","bbox":[119.04,109.44,105.6,4.8]}
+{"kind":"shape","id":"sh/id0fu50z","slide":8,"name":"Shape 7","bbox":[48,136.32,412.8,49.92]}
+{"kind":"textbox","id":"sh/o7ydoret","slide":8,"name":"Text 8","text":"一线教师（核心用户）","textPreview":"一线教师（核心用户）","textChars":10,"textLines":1,"bbox":[48,136.32,412.8,49.92]}
+{"kind":"shape","id":"sh/98rehwve","slide":8,"name":"Shape 9","bbox":[240,192,28.8,26.88]}
+{"kind":"shape","id":"sh/m5gvmhwn","slide":8,"name":"Shape 10","bbox":[48,226.56,412.8,241.92]}
+{"kind":"shape","id":"sh/n6pwfmd8","slide":8,"name":"Shape 11","bbox":[48,226.56,412.8,40.32]}
+{"kind":"textbox","id":"sh/0jydkreh","slide":8,"name":"Text 12","text":"教师网页端 / 移动端 · 六大模块","textPreview":"教师网页端 / 移动端 · 六大模块","textChars":18,"textLines":1,"bbox":[48,226.56,412.8,40.32]}
+{"kind":"shape","id":"sh/1k7edwv2","slide":8,"name":"Shape 13","bbox":[61.44,280.32,123.84,82.56]}
+{"kind":"textbox","id":"sh/ehgvihwr","slide":8,"name":"Text 14","text":"AI 教学引擎","textPreview":"AI 教学引擎","textChars":7,"textLines":1,"bbox":[61.44,280.32,123.84,82.56]}
+{"kind":"shape","id":"sh/zipwbmdc","slide":8,"name":"Shape 15","bbox":[191.04,280.32,123.84,82.56]}
+{"kind":"textbox","id":"sh/kfixwbe1","slide":8,"name":"Text 16","text":"创作工作台","textPreview":"创作工作台","textChars":5,"textLines":1,"bbox":[191.04,280.32,123.84,82.56]}
+{"kind":"shape","id":"sh/lgbepgvm","slide":8,"name":"Shape 17","bbox":[320.64,280.32,123.84,82.56]}
+{"kind":"textbox","id":"sh/tw7e9gnq","slide":8,"name":"Text 18","text":"个人资源库","textPreview":"个人资源库","textChars":5,"textLines":1,"bbox":[320.64,280.32,123.84,82.56]}
+{"kind":"shape","id":"sh/svydgb65","slide":8,"name":"Shape 19","bbox":[61.44,372.48,123.84,82.56]}
+{"kind":"textbox","id":"sh/7u5w765k","slide":8,"name":"Text 20","text":"智能知识库","textPreview":"智能知识库","textChars":5,"textLines":1,"bbox":[61.44,372.48,123.84,82.56]}
+{"kind":"shape","id":"sh/6twve1oz","slide":8,"name":"Shape 21","bbox":[191.04,372.48,123.84,82.56]}
+{"kind":"textbox","id":"sh/5sne5wne","slide":8,"name":"Text 22","text":"成果导出中心","textPreview":"成果导出中心","textChars":6,"textLines":1,"bbox":[191.04,372.48,123.84,82.56]}
+{"kind":"shape","id":"sh/kredcr6t","slide":8,"name":"Shape 23","bbox":[320.64,372.48,123.84,82.56]}
+{"kind":"textbox","id":"sh/jq5w365o","slide":8,"name":"Text 24","text":"社区模块","textPreview":"社区模块","textChars":4,"textLines":1,"bbox":[320.64,372.48,123.84,82.56]}
+{"kind":"shape","id":"sh/i5wva1o3","slide":8,"name":"Shape 25","bbox":[499.2,136.32,199.68,49.92]}
+{"kind":"textbox","id":"sh/x4ne1wni","slide":8,"name":"Text 26","text":"系统管理员","textPreview":"系统管理员","textChars":5,"textLines":1,"bbox":[499.2,136.32,199.68,49.92]}
+{"kind":"shape","id":"sh/w3ed8r6x","slide":8,"name":"Shape 27","bbox":[712.32,136.32,199.68,49.92]}
+{"kind":"textbox","id":"sh/m9sb2x4v","slide":8,"name":"Text 28","text":"内容审核员","textPreview":"内容审核员","textChars":5,"textLines":1,"bbox":[712.32,136.32,199.68,49.92]}
+{"kind":"shape","id":"sh/na1sb2lg","slide":8,"name":"Shape 29","bbox":[691.2,192,28.8,26.88]}
+{"kind":"shape","id":"sh/8bat47ml","slide":8,"name":"Shape 30","bbox":[499.2,226.56,412.8,241.92]}
+{"kind":"shape","id":"sh/9w3uds36","slide":8,"name":"Shape 31","bbox":[499.2,226.56,412.8,40.32]}
+{"kind":"textbox","id":"sh/y5sbed4j","slide":8,"name":"Text 32","text":"平台后台管理端 · 四大模块","textPreview":"平台后台管理端 · 四大模块","textChars":14,"textLines":1,"bbox":[499.2,226.56,412.8,40.32]}
+{"kind":"shape","id":"sh/z61s7il4","slide":8,"name":"Shape 33","bbox":[512.64,280.32,191.04,82.56]}
+{"kind":"textbox","id":"sh/07atgnmp","slide":8,"name":"Text 34","text":"用户与权限中心","textPreview":"用户与权限中心","textChars":7,"textLines":1,"bbox":[512.64,280.32,191.04,82.56]}
+{"kind":"shape","id":"sh/l8ja9s3a","slide":8,"name":"Shape 35","bbox":[711.36,280.32,191.04,82.56]}
+{"kind":"textbox","id":"sh/q18bad4n","slide":8,"name":"Text 36","text":"内容审核与社区治理","textPreview":"内容审核与社区治理","textChars":9,"textLines":1,"bbox":[711.36,280.32,191.04,82.56]}
+{"kind":"shape","id":"sh/b2hs3il8","slide":8,"name":"Shape 37","bbox":[512.64,372.48,191.04,82.56]}
+{"kind":"textbox","id":"sh/3u18fepo","slide":8,"name":"Text 38","text":"公共资源与知识库维护","textPreview":"公共资源与知识库维护","textChars":10,"textLines":1,"bbox":[512.64,372.48,191.04,82.56]}
+{"kind":"shape","id":"sh/2ts769o3","slide":8,"name":"Shape 39","bbox":[711.36,372.48,191.04,82.56]}
+{"kind":"textbox","id":"sh/pwjqho7u","slide":8,"name":"Text 40","text":"系统配置与数据看板","textPreview":"系统配置与数据看板","textChars":9,"textLines":1,"bbox":[711.36,372.48,191.04,82.56]}
+{"kind":"textbox","id":"sh/4vap8j69","slide":8,"name":"Text 41","text":"三类用户 × 两大端 × 十大功能模块 —— 全场景覆盖教学生产与平台治理","textPreview":"三类用户 × 两大端 × 十大功能模块 —— 全场景覆盖教学生产与平台治理","textChars":37,"textLines":1,"bbox":[48,478.08,864,26.88]}
+{"kind":"shape","id":"sh/fq1obeps","slide":8,"name":"Shape 42","bbox":[48,508.8,864,0]}
+{"kind":"textbox","id":"sh/hsjqd47y","slide":8,"name":"Text 43","text":"智核 · 多模态AI互动式教学智能体","textPreview":"智核 · 多模态AI互动式教学智能体","textChars":18,"textLines":1,"bbox":[78.72,513.6,345.6,19.2]}
+{"kind":"shape","id":"sh/grap4zqd","slide":8,"name":"Shape 44","bbox":[861.12,516.96,7.68,7.68]}
+{"kind":"textbox","id":"sh/72ho7upg","slide":8,"name":"Text 45","text":"8","textPreview":"8","textChars":1,"textLines":1,"bbox":[871.68,513.6,40.32,19.2]}
+{"kind":"image","id":"im/5gvmpkny","slide":8,"name":"Image 0","bbox":[48,510.72,23.04,23.04]}
+{"kind":"notes","id":"nt/fu1gfa1s","slide":8,"text":""}
+{"kind":"slide","id":"sl/udsvah03","slide":9,"title":"02","textShapes":21}
+{"kind":"shape","id":"sh/1cfmhgne","slide":9,"name":"Rectangle 1","bbox":[48,38.4,53.76,53.76]}
+{"kind":"textbox","id":"sh/0b65obm9","slide":9,"name":"TextBox 2","text":"02","textPreview":"02","textChars":2,"textLines":1,"bbox":[48,38.4,53.76,53.76]}
+{"kind":"textbox","id":"sh/nex4jq5k","slide":9,"name":"TextBox 3","text":"业务流程","textPreview":"业务流程","textChars":4,"textLines":1,"bbox":[119.04,33.6,432,24.96]}
+{"kind":"textbox","id":"sh/mdonql4z","slide":9,"name":"TextBox 4","text":"对话备课七步全链路","textPreview":"对话备课七步全链路","textChars":9,"textLines":1,"bbox":[119.04,57.6,662.4,48]}
+{"kind":"textbox","id":"sh/9gzml0nq","slide":9,"name":"TextBox 5","text":"02 · BUSINESS","textPreview":"02 · BUSINESS","textChars":13,"textLines":1,"bbox":[824.67,45.01,87.33,13.67]}
+{"kind":"shape","id":"sh/ofq5svm5","slide":9,"name":"Rectangle 6","bbox":[119.04,109.44,792.96,4.8]}
+{"kind":"shape","id":"sh/bih4na5w","slide":9,"name":"Rectangle 7","bbox":[119.04,109.44,105.6,4.8]}
+{"kind":"textbox","id":"sh/p0ji9kf2","slide":9,"name":"TextBox 10","text":"教师在与智能体的多轮对话中走完备课全流程，七个节点环环相扣","textPreview":"教师在与智能体的多轮对话中走完备课全流程，七个节点环环相扣","textChars":29,"textLines":1,"bbox":[119.04,122.88,792.96,28.8]}
+{"kind":"shape","id":"sh/2xsjepgb","slide":9,"name":"Rectangle 11","bbox":[72,285.6,820.8,1.15]}
+{"kind":"shape","id":"sh/3y107axw","slide":9,"name":"Connector 12","bbox":[892.8,286.08,30.72,0]}
+{"kind":"shape","id":"sh/cnu1kzyd","slide":9,"name":"Oval 13","bbox":[75.84,261.12,49.92,49.92]}
+{"kind":"textbox","id":"sh/do3id4fy","slide":9,"name":"TextBox 14","text":"01","textPreview":"01","textChars":2,"textLines":1,"bbox":[72,261.12,57.6,49.92]}
+{"kind":"textbox","id":"sh/qlcjipgn","slide":9,"name":"TextBox 15","text":"需求输入","textPreview":"需求输入","textChars":4,"textLines":1,"bbox":[19.2,197.76,163.2,30.72]}
+{"kind":"shape","id":"sh/bml0buxs","slide":9,"name":"Isosceles Triangle 16","bbox":[96,236.16,9.6,9.6]}
+{"kind":"shape","id":"sh/0ru1ozyp","slide":9,"name":"Oval 17","bbox":[202.24,261.12,49.92,49.92]}
+{"kind":"textbox","id":"sh/lsn2h4fa","slide":9,"name":"TextBox 18","text":"02","textPreview":"02","textChars":2,"textLines":1,"bbox":[198.4,261.12,57.6,49.92]}
+{"kind":"textbox","id":"sh/98ji147e","slide":9,"name":"TextBox 19","text":"意图理解与澄清","textPreview":"意图理解与澄清","textChars":7,"textLines":1,"bbox":[145.6,347.52,163.2,30.72]}
+{"kind":"shape","id":"sh/87a18zqt","slide":9,"name":"Isosceles Triangle 20","bbox":[222.4,328.32,9.6,9.6]}
+{"kind":"shape","id":"sh/76h0zup8","slide":9,"name":"Oval 21","bbox":[328.64,261.12,49.92,49.92]}
+{"kind":"textbox","id":"sh/ml8j6p8n","slide":9,"name":"TextBox 22","text":"03","textPreview":"03","textChars":2,"textLines":1,"bbox":[324.8,261.12,57.6,49.92]}
+{"kind":"textbox","id":"sh/hcji5o7a","slide":9,"name":"TextBox 23","text":"大纲生成","textPreview":"大纲生成","textChars":4,"textLines":1,"bbox":[272,197.76,163.2,30.72]}
+{"kind":"shape","id":"sh/wba1cjqp","slide":9,"name":"Isosceles Triangle 24","bbox":[348.8,236.16,9.6,9.6]}
+{"kind":"shape","id":"sh/va103ep4","slide":9,"name":"Oval 25","bbox":[455.04,261.12,49.92,49.92]}
+{"kind":"textbox","id":"sh/u9sja98z","slide":9,"name":"TextBox 26","text":"04","textPreview":"04","textChars":2,"textLines":1,"bbox":[451.2,261.12,57.6,49.92]}
+{"kind":"textbox","id":"sh/xgzitk76","slide":9,"name":"TextBox 27","text":"教师确认","textPreview":"教师确认","textChars":4,"textLines":1,"bbox":[398.4,347.52,163.2,30.72]}
+{"kind":"shape","id":"sh/cf6h0fql","slide":9,"name":"Isosceles Triangle 28","bbox":[475.2,328.32,9.6,9.6]}
+{"kind":"shape","id":"sh/2l4faloj","slide":9,"name":"Oval 29","bbox":[581.44,261.12,49.92,49.92]}
+{"kind":"textbox","id":"sh/nmdg3q54","slide":9,"name":"TextBox 30","text":"05","textPreview":"05","textChars":2,"textLines":1,"bbox":[577.6,261.12,57.6,49.92]}
+{"kind":"textbox","id":"sh/onmxcv69","slide":9,"name":"TextBox 31","text":"内容生成","textPreview":"内容生成","textChars":4,"textLines":1,"bbox":[524.8,197.76,163.2,30.72]}
+{"kind":"shape","id":"sh/pofy50nu","slide":9,"name":"Isosceles Triangle 32","bbox":[601.6,236.16,9.6,9.6]}
+{"kind":"shape","id":"sh/apofe5of","slide":9,"name":"Oval 33","bbox":[707.84,261.12,49.92,49.92]}
+{"kind":"textbox","id":"sh/bqxg7q50","slide":9,"name":"TextBox 34","text":"06","textPreview":"06","textChars":2,"textLines":1,"bbox":[704,261.12,57.6,49.92]}
+{"kind":"textbox","id":"sh/cr6xgv6l","slide":9,"name":"TextBox 35","text":"编辑精调","textPreview":"编辑精调","textChars":4,"textLines":1,"bbox":[651.2,347.52,163.2,30.72]}
+{"kind":"shape","id":"sh/xcfy90n6","slide":9,"name":"Isosceles Triangle 36","bbox":[728,328.32,9.6,9.6]}
+{"kind":"shape","id":"sh/qtkf21ob","slide":9,"name":"Oval 37","bbox":[834.24,261.12,49.92,49.92]}
+{"kind":"textbox","id":"sh/rutwv65w","slide":9,"name":"TextBox 38","text":"07","textPreview":"07","textChars":2,"textLines":1,"bbox":[830.4,261.12,57.6,49.92]}
+{"kind":"textbox","id":"sh/7y14jyd8","slide":9,"name":"TextBox 39","text":"成果导出","textPreview":"成果导出","textChars":4,"textLines":1,"bbox":[777.6,197.76,163.2,30.72]}
+{"kind":"shape","id":"sh/mdsnatcn","slide":9,"name":"Isosceles Triangle 40","bbox":[854.4,236.16,9.6,9.6]}
+{"kind":"shape","id":"sh/8zu5c3ut","slide":9,"name":"Rectangle 42","bbox":[48,508.8,864,0.48]}
+{"kind":"textbox","id":"sh/u1cnedcz","slide":9,"name":"TextBox 44","text":"智核 · 多模态AI互动式教学智能体","textPreview":"智核 · 多模态AI互动式教学智能体","textChars":18,"textLines":1,"bbox":[78.72,513.6,345.6,19.2]}
+{"kind":"shape","id":"sh/h43mp8ba","slide":9,"name":"Rectangle 45","bbox":[861.12,516.48,7.68,7.68]}
+{"kind":"textbox","id":"sh/w3u5g3u5","slide":9,"name":"TextBox 46","text":"9","textPreview":"9","textChars":1,"textLines":1,"bbox":[871.68,513.6,40.32,19.2]}
+{"kind":"image","id":"im/wvyxk7ix","slide":9,"name":"Picture 43","bbox":[48,510.72,23.04,23.04]}
+{"kind":"notes","id":"nt/udsvah03","slide":9,"text":""}
+{"kind":"slide","id":"sl/m90b6t0r","slide":10,"title":"02","textShapes":21}
+{"kind":"shape","id":"sh/xc3mho32","slide":10,"name":"Rectangle 1","bbox":[48,38.4,53.76,53.76]}
+{"kind":"textbox","id":"sh/cbu58j2h","slide":10,"name":"TextBox 2","text":"02","textPreview":"02","textChars":2,"textLines":1,"bbox":[48,38.4,53.76,53.76]}
+{"kind":"textbox","id":"sh/zelojyl8","slide":10,"name":"TextBox 3","text":"业务流程","textPreview":"业务流程","textChars":4,"textLines":1,"bbox":[119.04,33.6,432,24.96]}
+{"kind":"textbox","id":"sh/ydcnatkn","slide":10,"name":"TextBox 4","text":"对话备课七步全链路","textPreview":"对话备课七步全链路","textChars":9,"textLines":1,"bbox":[119.04,57.6,662.4,48]}
+{"kind":"textbox","id":"sh/l036l83y","slide":10,"name":"TextBox 5","text":"02 · BUSINESS","textPreview":"02 · BUSINESS","textChars":13,"textLines":1,"bbox":[824.67,45.01,87.33,13.67]}
+{"kind":"shape","id":"sh/kzu5c32t","slide":10,"name":"Rectangle 6","bbox":[119.04,109.44,792.96,4.8]}
+{"kind":"shape","id":"sh/725onyl4","slide":10,"name":"Rectangle 7","bbox":[119.04,109.44,105.6,4.8]}
+{"kind":"textbox","id":"sh/d87uxg3m","slide":10,"name":"TextBox 10","text":"教师在与智能体的多轮对话中走完备课全流程，七个节点环环相扣","textPreview":"教师在与智能体的多轮对话中走完备课全流程，七个节点环环相扣","textChars":29,"textLines":1,"bbox":[119.04,122.88,792.96,28.8]}
+{"kind":"shape","id":"sh/q5gb21kb","slide":10,"name":"Rectangle 11","bbox":[72,285.6,820.8,1.15]}
+{"kind":"shape","id":"sh/r6pcv6lw","slide":10,"name":"Connector 12","bbox":[892.8,286.08,30.72,0]}
+{"kind":"shape","id":"sh/0bit8b2d","slide":10,"name":"Oval 13","bbox":[65.28,250.56,71.04,71.04]}
+{"kind":"shape","id":"sh/1cru1g3y","slide":10,"name":"Oval 14","bbox":[75.84,261.12,49.92,49.92]}
+{"kind":"textbox","id":"sh/e9gb61k7","slide":10,"name":"TextBox 15","text":"01","textPreview":"01","textChars":2,"textLines":1,"bbox":[72,261.12,57.6,49.92]}
+{"kind":"textbox","id":"sh/fapcz6ls","slide":10,"name":"TextBox 16","text":"需求输入","textPreview":"需求输入","textChars":4,"textLines":1,"bbox":[19.2,197.76,163.2,30.72]}
+{"kind":"shape","id":"sh/ozitcv29","slide":10,"name":"Isosceles Triangle 17","bbox":[96,236.16,9.6,9.6]}
+{"kind":"shape","id":"sh/p0ru503u","slide":10,"name":"Oval 18","bbox":[202.24,261.12,49.92,49.92]}
+{"kind":"textbox","id":"sh/xwnupgvy","slide":10,"name":"TextBox 19","text":"02","textPreview":"02","textChars":2,"textLines":1,"bbox":[198.4,261.12,57.6,49.92]}
+{"kind":"textbox","id":"sh/wvetgbud","slide":10,"name":"TextBox 20","text":"意图理解与澄清","textPreview":"意图理解与澄清","textChars":7,"textLines":1,"bbox":[145.6,347.52,163.2,30.72]}
+{"kind":"shape","id":"sh/bu5cnqd8","slide":10,"name":"Isosceles Triangle 21","bbox":[222.4,328.32,9.6,9.6]}
+{"kind":"shape","id":"sh/atwbelcn","slide":10,"name":"Oval 22","bbox":[328.64,261.12,49.92,49.92]}
+{"kind":"textbox","id":"sh/lk7ut0va","slide":10,"name":"TextBox 23","text":"03","textPreview":"03","textChars":2,"textLines":1,"bbox":[324.8,261.12,57.6,49.92]}
+{"kind":"textbox","id":"sh/kjytkvup","slide":10,"name":"TextBox 24","text":"大纲生成","textPreview":"大纲生成","textChars":4,"textLines":1,"bbox":[272,197.76,163.2,30.72]}
+{"kind":"shape","id":"sh/jypcrqd4","slide":10,"name":"Isosceles Triangle 25","bbox":[348.8,236.16,9.6,9.6]}
+{"kind":"shape","id":"sh/yxgbilcj","slide":10,"name":"Oval 26","bbox":[455.04,261.12,49.92,49.92]}
+{"kind":"textbox","id":"sh/1o3ahwvq","slide":10,"name":"TextBox 27","text":"04","textPreview":"04","textChars":2,"textLines":1,"bbox":[451.2,261.12,57.6,49.92]}
+{"kind":"textbox","id":"sh/0nut8rul","slide":10,"name":"TextBox 28","text":"教师确认","textPreview":"教师确认","textChars":4,"textLines":1,"bbox":[398.4,347.52,163.2,30.72]}
+{"kind":"shape","id":"sh/q9srixs3","slide":10,"name":"Isosceles Triangle 29","bbox":[475.2,328.32,9.6,9.6]}
+{"kind":"shape","id":"sh/ru18r2to","slide":10,"name":"Oval 30","bbox":[581.44,261.12,49.92,49.92]}
+{"kind":"textbox","id":"sh/cva9k7a9","slide":10,"name":"TextBox 31","text":"05","textPreview":"05","textChars":2,"textLines":1,"bbox":[577.6,261.12,57.6,49.92]}
+{"kind":"textbox","id":"sh/dwjqtcbu","slide":10,"name":"TextBox 32","text":"内容生成","textPreview":"内容生成","textChars":4,"textLines":1,"bbox":[524.8,197.76,163.2,30.72]}
+{"kind":"shape","id":"sh/exsrmhsf","slide":10,"name":"Isosceles Triangle 33","bbox":[601.6,236.16,9.6,9.6]}
+{"kind":"shape","id":"sh/zyl8vmt0","slide":10,"name":"Oval 34","bbox":[707.84,261.12,49.92,49.92]}
+{"kind":"textbox","id":"sh/0zu9ora5","slide":10,"name":"TextBox 35","text":"06","textPreview":"06","textChars":2,"textLines":1,"bbox":[704,261.12,57.6,49.92]}
+{"kind":"textbox","id":"sh/103qxcbq","slide":10,"name":"TextBox 36","text":"编辑精调","textPreview":"编辑精调","textChars":4,"textLines":1,"bbox":[651.2,347.52,163.2,30.72]}
+{"kind":"shape","id":"sh/u187adsv","slide":10,"name":"Isosceles Triangle 37","bbox":[728,328.32,9.6,9.6]}
+{"kind":"shape","id":"sh/f2h8jitg","slide":10,"name":"Oval 38","bbox":[834.24,261.12,49.92,49.92]}
+{"kind":"textbox","id":"sh/bmpgrah8","slide":10,"name":"TextBox 39","text":"07","textPreview":"07","textChars":2,"textLines":1,"bbox":[830.4,261.12,57.6,49.92]}
+{"kind":"textbox","id":"sh/algfy50n","slide":10,"name":"TextBox 40","text":"成果导出","textPreview":"成果导出","textChars":4,"textLines":1,"bbox":[777.6,197.76,163.2,30.72]}
+{"kind":"shape","id":"sh/xo7ytkzy","slide":10,"name":"Isosceles Triangle 41","bbox":[854.4,236.16,9.6,9.6]}
+{"kind":"shape","id":"sh/jq9gvuh4","slide":10,"name":"Rectangle 43","bbox":[48,508.8,864,0.48]}
+{"kind":"textbox","id":"sh/5cryx4za","slide":10,"name":"TextBox 45","text":"智核 · 多模态AI互动式教学智能体","textPreview":"智核 · 多模态AI互动式教学智能体","textChars":18,"textLines":1,"bbox":[78.72,513.6,345.6,19.2]}
+{"kind":"shape","id":"sh/kbix4zyp","slide":10,"name":"Rectangle 46","bbox":[861.12,516.48,7.68,7.68]}
+{"kind":"textbox","id":"sh/7e9gzuhg","slide":10,"name":"TextBox 47","text":"10","textPreview":"10","textChars":2,"textLines":1,"bbox":[871.68,513.6,40.32,19.2]}
+{"kind":"image","id":"im/p03ilob6","slide":10,"name":"Picture 44","bbox":[48,510.72,23.04,23.04]}
+{"kind":"notes","id":"nt/m90b6t0r","slide":10,"text":""}
+{"kind":"slide","id":"sl/jetc3ut0","slide":11,"title":"02","textShapes":11}
+{"kind":"shape","id":"sh/xcryxg7y","slide":11,"name":"Rectangle 1","bbox":[48,38.4,53.76,53.76]}
+{"kind":"textbox","id":"sh/wbih4b6d","slide":11,"name":"TextBox 2","text":"02","textPreview":"02","textChars":2,"textLines":1,"bbox":[48,38.4,53.76,53.76]}
+{"kind":"textbox","id":"sh/n69grmpw","slide":11,"name":"TextBox 3","text":"业务流程 · 节点1","textPreview":"业务流程 · 节点1","textChars":10,"textLines":1,"bbox":[119.04,33.6,432,24.96]}
+{"kind":"textbox","id":"sh/250zy18b","slide":11,"name":"TextBox 4","text":"需求输入","textPreview":"需求输入","textChars":4,"textLines":1,"bbox":[119.04,57.6,662.4,48]}
+{"kind":"textbox","id":"sh/98rytw72","slide":11,"name":"TextBox 5","text":"02 · BUSINESS","textPreview":"02 · BUSINESS","textChars":13,"textLines":1,"bbox":[824.67,45.01,87.33,13.67]}
+{"kind":"shape","id":"sh/o7ih0r6h","slide":11,"name":"Rectangle 6","bbox":[119.04,109.44,792.96,4.8]}
+{"kind":"shape","id":"sh/72t03qp0","slide":11,"name":"Rectangle 7","bbox":[119.04,109.44,105.6,4.8]}
+{"kind":"textbox","id":"sh/9gza9sze","slide":11,"name":"TextBox 10","text":"01","textPreview":"01","textChars":2,"textLines":1,"bbox":[48,139.2,124.8,81.6]}
+{"kind":"textbox","id":"sh/mdobedg3","slide":11,"name":"TextBox 11","text":"STEP 1 / 7","textPreview":"STEP 1 / 7","textChars":10,"textLines":1,"bbox":[49.92,222.72,249.6,26.88]}
+{"kind":"textbox","id":"sh/nehs7iho","slide":11,"name":"TextBox 12","text":"需求输入","textPreview":"需求输入","textChars":4,"textLines":1,"bbox":[48,255.36,278.4,52.8]}
+{"kind":"shape","id":"sh/0b6tc3yx","slide":11,"name":"Rectangle 13","bbox":[49.92,316.8,52.8,4.8]}
+{"kind":"textbox","id":"sh/1cfa58zi","slide":11,"name":"TextBox 14","text":"语音 / 文字指令 + PDF / Word / PPT / 图片 / 视频参考资料","textPreview":"语音 / 文字指令 + PDF / Word / PPT / 图片 / 视频参考资料","textChars":42,"textLines":1,"bbox":[48,336,273.6,134.4]}
+{"kind":"shape","id":"sh/epobatgr","slide":11,"name":"Rectangle 15","bbox":[340.8,139.2,571.2,355.2]}
+{"kind":"shape","id":"sh/87ehgv6d","slide":11,"name":"Rectangle 20","bbox":[48,508.8,864,0.48]}
+{"kind":"textbox","id":"sh/65wzelo7","slide":11,"name":"TextBox 22","text":"智核 · 多模态AI互动式教学智能体","textPreview":"智核 · 多模态AI互动式教学智能体","textChars":18,"textLines":1,"bbox":[78.72,513.6,345.6,19.2]}
+{"kind":"shape","id":"sh/l43ilgn2","slide":11,"name":"Rectangle 23","bbox":[861.12,516.48,7.68,7.68]}
+{"kind":"textbox","id":"sh/k3uhcb6h","slide":11,"name":"TextBox 24","text":"11","textPreview":"11","textChars":2,"textLines":1,"bbox":[871.68,513.6,40.32,19.2]}
+{"kind":"textbox","id":"sh/tsnip0ny","slide":11,"name":"Rectangle 19","text":"产品界面 · 教师端","textPreview":"产品界面 · 教师端","textChars":10,"textLines":1,"bbox":[535.2,441.6,182.4,34.56]}
+{"kind":"image","id":"im/sj29szm9","slide":11,"name":"Picture 21","bbox":[48,510.72,23.04,23.04]}
+{"kind":"image","id":"im/tkva143e","slide":11,"name":"Picture 25","bbox":[348.48,176.25,555.84,281.1]}
+{"kind":"notes","id":"nt/jetc3ut0","slide":11,"text":""}
+{"kind":"slide","id":"sl/8f2psfyx","slide":12,"title":"02","textShapes":21}
+{"kind":"shape","id":"sh/1gbm9s3a","slide":12,"name":"Rectangle 1","bbox":[48,38.4,53.76,53.76]}
+{"kind":"textbox","id":"sh/0f2lgnmp","slide":12,"name":"TextBox 2","text":"02","textPreview":"02","textChars":2,"textLines":1,"bbox":[48,38.4,53.76,53.76]}
+{"kind":"textbox","id":"sh/ra943il8","slide":12,"name":"TextBox 3","text":"业务流程","textPreview":"业务流程","textChars":4,"textLines":1,"bbox":[119.04,33.6,432,24.96]}
+{"kind":"textbox","id":"sh/q903ad4n","slide":12,"name":"TextBox 4","text":"对话备课七步全链路","textPreview":"对话备课七步全链路","textChars":9,"textLines":1,"bbox":[119.04,57.6,662.4,48]}
+{"kind":"textbox","id":"sh/dcbm583y","slide":12,"name":"TextBox 5","text":"02 · BUSINESS","textPreview":"02 · BUSINESS","textChars":13,"textLines":1,"bbox":[835.33,45.01,76.67,13.67]}
+{"kind":"shape","id":"sh/sb2lcnmd","slide":12,"name":"Rectangle 6","bbox":[119.04,109.44,792.96,4.8]}
+{"kind":"shape","id":"sh/b6d4f2lc","slide":12,"name":"Rectangle 7","bbox":[119.04,109.44,105.6,4.8]}
+{"kind":"textbox","id":"sh/xw3q94ne","slide":12,"name":"TextBox 10","text":"教师在与智能体的多轮对话中走完备课全流程，七个节点环环相扣","textPreview":"教师在与智能体的多轮对话中走完备课全流程，七个节点环环相扣","textChars":29,"textLines":1,"bbox":[119.04,122.88,792.96,28.8]}
+{"kind":"shape","id":"sh/atc7epon","slide":12,"name":"Rectangle 11","bbox":[72,285.6,820.8,1.15]}
+{"kind":"shape","id":"sh/bulo7u58","slide":12,"name":"Connector 12","bbox":[892.8,286.08,30.72,0]}
+{"kind":"shape","id":"sh/orapcf6h","slide":12,"name":"Oval 13","bbox":[75.84,261.12,49.92,49.92]}
+{"kind":"textbox","id":"sh/9sj65kn2","slide":12,"name":"TextBox 14","text":"01","textPreview":"01","textChars":2,"textLines":1,"bbox":[72,261.12,57.6,49.92]}
+{"kind":"textbox","id":"sh/mps7a5or","slide":12,"name":"TextBox 15","text":"需求输入","textPreview":"需求输入","textChars":4,"textLines":1,"bbox":[19.2,197.76,163.2,30.72]}
+{"kind":"shape","id":"sh/nq1o3a5w","slide":12,"name":"Isosceles Triangle 16","bbox":[96,236.16,9.6,9.6]}
+{"kind":"shape","id":"sh/0nap8f6l","slide":12,"name":"Oval 17","bbox":[191.68,250.56,71.04,71.04]}
+{"kind":"shape","id":"sh/1oj61kn6","slide":12,"name":"Oval 18","bbox":[202.24,261.12,49.92,49.92]}
+{"kind":"textbox","id":"sh/hkbm5wzu","slide":12,"name":"TextBox 19","text":"02","textPreview":"02","textChars":2,"textLines":1,"bbox":[198.4,261.12,57.6,49.92]}
+{"kind":"textbox","id":"sh/gj25cry9","slide":12,"name":"TextBox 20","text":"意图理解与澄清","textPreview":"意图理解与澄清","textChars":7,"textLines":1,"bbox":[145.6,347.52,163.2,30.72]}
+{"kind":"shape","id":"sh/fit436ho","slide":12,"name":"Isosceles Triangle 21","bbox":[222.4,328.32,9.6,9.6]}
+{"kind":"shape","id":"sh/uh0na1g3","slide":12,"name":"Oval 22","bbox":[328.64,261.12,49.92,49.92]}
+{"kind":"textbox","id":"sh/tgrm1wzy","slide":12,"name":"TextBox 23","text":"03","textPreview":"03","textChars":2,"textLines":1,"bbox":[324.8,261.12,57.6,49.92]}
+{"kind":"textbox","id":"sh/sfi58ryd","slide":12,"name":"TextBox 24","text":"大纲生成","textPreview":"大纲生成","textChars":4,"textLines":1,"bbox":[272,197.76,163.2,30.72]}
+{"kind":"shape","id":"sh/7u94zmhs","slide":12,"name":"Isosceles Triangle 25","bbox":[348.8,236.16,9.6,9.6]}
+{"kind":"shape","id":"sh/6t0n6hg7","slide":12,"name":"Oval 26","bbox":[455.04,261.12,49.92,49.92]}
+{"kind":"textbox","id":"sh/dcv6dgz2","slide":12,"name":"TextBox 27","text":"04","textPreview":"04","textChars":2,"textLines":1,"bbox":[451.2,261.12,57.6,49.92]}
+{"kind":"textbox","id":"sh/cbm5kbyh","slide":12,"name":"TextBox 28","text":"教师确认","textPreview":"教师确认","textChars":4,"textLines":1,"bbox":[398.4,347.52,163.2,30.72]}
+{"kind":"shape","id":"sh/alwbitsn","slide":12,"name":"Isosceles Triangle 29","bbox":[475.2,328.32,9.6,9.6]}
+{"kind":"shape","id":"sh/bm5sryt8","slide":12,"name":"Oval 30","bbox":[581.44,261.12,49.92,49.92]}
+{"kind":"textbox","id":"sh/wnetkjat","slide":12,"name":"TextBox 31","text":"05","textPreview":"05","textChars":2,"textLines":1,"bbox":[577.6,261.12,57.6,49.92]}
+{"kind":"textbox","id":"sh/xonutobe","slide":12,"name":"TextBox 32","text":"内容生成","textPreview":"内容生成","textChars":4,"textLines":1,"bbox":[524.8,197.76,163.2,30.72]}
+{"kind":"shape","id":"sh/mhcbe9sr","slide":12,"name":"Isosceles Triangle 33","bbox":[601.6,236.16,9.6,9.6]}
+{"kind":"shape","id":"sh/nilsnetc","slide":12,"name":"Oval 34","bbox":[707.84,261.12,49.92,49.92]}
+{"kind":"textbox","id":"sh/ojutgjah","slide":12,"name":"TextBox 35","text":"06","textPreview":"06","textChars":2,"textLines":1,"bbox":[704,261.12,57.6,49.92]}
+{"kind":"textbox","id":"sh/9k3apob2","slide":12,"name":"TextBox 36","text":"编辑精调","textPreview":"编辑精调","textChars":4,"textLines":1,"bbox":[651.2,347.52,163.2,30.72]}
+{"kind":"shape","id":"sh/6dgbqdsv","slide":12,"name":"Isosceles Triangle 37","bbox":[728,328.32,9.6,9.6]}
+{"kind":"shape","id":"sh/7epczitg","slide":12,"name":"Oval 38","bbox":[834.24,261.12,49.92,49.92]}
+{"kind":"textbox","id":"sh/r6l8vaxw","slide":12,"name":"TextBox 39","text":"07","textPreview":"07","textChars":2,"textLines":1,"bbox":[830.4,261.12,57.6,49.92]}
+{"kind":"textbox","id":"sh/q5c7m5wb","slide":12,"name":"TextBox 40","text":"成果导出","textPreview":"成果导出","textChars":4,"textLines":1,"bbox":[777.6,197.76,163.2,30.72]}
+{"kind":"shape","id":"sh/d8nqxkf2","slide":12,"name":"Isosceles Triangle 41","bbox":[854.4,236.16,9.6,9.6]}
+{"kind":"shape","id":"sh/j2lorqxk","slide":12,"name":"Rectangle 43","bbox":[48,508.8,864,0.48]}
+{"kind":"textbox","id":"sh/5436t0fq","slide":12,"name":"TextBox 45","text":"智核 · 多模态AI互动式教学智能体","textPreview":"智核 · 多模态AI互动式教学智能体","textChars":18,"textLines":1,"bbox":[78.72,513.6,345.6,19.2]}
+{"kind":"shape","id":"sh/43upkve5","slide":12,"name":"Rectangle 46","bbox":[861.12,516.48,7.68,7.68]}
+{"kind":"textbox","id":"sh/nyp83ud4","slide":12,"name":"TextBox 47","text":"12","textPreview":"12","textChars":2,"textLines":1,"bbox":[871.68,513.6,40.32,19.2]}
+{"kind":"image","id":"im/dkb2ps7y","slide":12,"name":"Picture 44","bbox":[48,510.72,23.04,23.04]}
+{"kind":"notes","id":"nt/8f2psfyx","slide":12,"text":""}
+{"kind":"slide","id":"sl/hgzapcr6","slide":13,"title":"02","textShapes":11}
+{"kind":"shape","id":"sh/q50nydsj","slide":13,"name":"Rectangle 1","bbox":[48,38.4,53.76,53.76]}
+{"kind":"textbox","id":"sh/bq9orito","slide":13,"name":"TextBox 2","text":"02","textPreview":"02","textChars":2,"textLines":1,"bbox":[48,38.4,53.76,53.76]}
+{"kind":"textbox","id":"sh/o3i5w3ad","slide":13,"name":"TextBox 3","text":"业务流程 · 节点2","textPreview":"业务流程 · 节点2","textChars":10,"textLines":1,"bbox":[119.04,33.6,432,24.96]}
+{"kind":"textbox","id":"sh/p4r6p8by","slide":13,"name":"TextBox 4","text":"意图理解与澄清","textPreview":"意图理解与澄清","textChars":7,"textLines":1,"bbox":[119.04,57.6,662.4,48]}
+{"kind":"textbox","id":"sh/21gnuts7","slide":13,"name":"TextBox 5","text":"02 · BUSINESS","textPreview":"02 · BUSINESS","textChars":13,"textLines":1,"bbox":[824.67,45.01,87.33,13.67]}
+{"kind":"shape","id":"sh/32ponyts","slide":13,"name":"Rectangle 6","bbox":[119.04,109.44,792.96,4.8]}
+{"kind":"shape","id":"sh/gzy5s3a1","slide":13,"name":"Rectangle 7","bbox":[119.04,109.44,105.6,4.8]}
+{"kind":"textbox","id":"sh/gb6x0zm9","slide":13,"name":"TextBox 10","text":"02","textPreview":"02","textChars":2,"textLines":1,"bbox":[48,139.2,124.8,81.6]}
+{"kind":"textbox","id":"sh/vaxg7ulo","slide":13,"name":"TextBox 11","text":"STEP 2 / 7","textPreview":"STEP 2 / 7","textChars":10,"textLines":1,"bbox":[49.92,222.72,249.6,26.88]}
+{"kind":"textbox","id":"sh/u9ofyp43","slide":13,"name":"TextBox 12","text":"意图理解与澄清","textPreview":"意图理解与澄清","textChars":7,"textLines":1,"bbox":[48,255.36,278.4,52.8]}
+{"kind":"shape","id":"sh/t8fy5k3i","slide":13,"name":"Rectangle 13","bbox":[49.92,316.8,52.8,4.8]}
+{"kind":"textbox","id":"sh/876xwfmx","slide":13,"name":"TextBox 14","text":"识别主题、年级、学科等要素，缺失即主动追问","textPreview":"识别主题、年级、学科等要素，缺失即主动追问","textChars":21,"textLines":1,"bbox":[48,336,273.6,134.4]}
+{"kind":"shape","id":"sh/7mdg3als","slide":13,"name":"Rectangle 15","bbox":[340.8,139.2,571.2,355.2]}
+{"kind":"shape","id":"sh/xozyhkbi","slide":13,"name":"Rectangle 20","bbox":[48,508.8,864,0.48]}
+{"kind":"textbox","id":"sh/bmhgfatc","slide":13,"name":"TextBox 22","text":"智核 · 多模态AI互动式教学智能体","textPreview":"智核 · 多模态AI互动式教学智能体","textChars":18,"textLines":1,"bbox":[78.72,513.6,345.6,19.2]}
+{"kind":"shape","id":"sh/oz6x4vul","slide":13,"name":"Rectangle 23","bbox":[861.12,516.48,7.68,7.68]}
+{"kind":"textbox","id":"sh/p0zyd0b6","slide":13,"name":"TextBox 24","text":"13","textPreview":"13","textChars":2,"textLines":1,"bbox":[871.68,513.6,40.32,19.2]}
+{"kind":"textbox","id":"sh/cnqh8fux","slide":13,"name":"Rectangle 19","text":"产品界面 · 教师端","textPreview":"产品界面 · 教师端","textChars":10,"textLines":1,"bbox":[535.2,441.6,182.4,34.56]}
+{"kind":"image","id":"im/dgfy5wry","slide":13,"name":"Picture 21","bbox":[48,510.72,23.04,23.04]}
+{"kind":"image","id":"im/cf6xwrad","slide":13,"name":"Picture 25","bbox":[348.48,165.29,555.84,303.03]}
+{"kind":"notes","id":"nt/hgzapcr6","slide":13,"text":""}
+{"kind":"slide","id":"sl/6lsnupw7","slide":14,"title":"02","textShapes":21}
+{"kind":"shape","id":"sh/xc7eds76","slide":14,"name":"Rectangle 1","bbox":[48,38.4,53.76,53.76]}
+{"kind":"textbox","id":"sh/wbydknq1","slide":14,"name":"TextBox 2","text":"02","textPreview":"02","textChars":2,"textLines":1,"bbox":[48,38.4,53.76,53.76]}
+{"kind":"textbox","id":"sh/jepwf2pc","slide":14,"name":"TextBox 3","text":"业务流程","textPreview":"业务流程","textChars":4,"textLines":1,"bbox":[119.04,33.6,432,24.96]}
+{"kind":"textbox","id":"sh/idgvmx8r","slide":14,"name":"TextBox 4","text":"对话备课七步全链路","textPreview":"对话备课七步全链路","textChars":9,"textLines":1,"bbox":[119.04,57.6,662.4,48]}
+{"kind":"textbox","id":"sh/5grehs7i","slide":14,"name":"TextBox 5","text":"02 · BUSINESS","textPreview":"02 · BUSINESS","textChars":13,"textLines":1,"bbox":[824.67,45.01,87.33,13.67]}
+{"kind":"shape","id":"sh/kfidonqx","slide":14,"name":"Rectangle 6","bbox":[119.04,109.44,792.96,4.8]}
+{"kind":"shape","id":"sh/zi5c3y98","slide":14,"name":"Rectangle 7","bbox":[119.04,109.44,105.6,4.8]}
+{"kind":"textbox","id":"sh/x4ni9ofy","slide":14,"name":"TextBox 10","text":"教师在与智能体的多轮对话中走完备课全流程，七个节点环环相扣","textPreview":"教师在与智能体的多轮对话中走完备课全流程，七个节点环环相扣","textChars":29,"textLines":1,"bbox":[119.04,122.88,792.96,28.8]}
+{"kind":"shape","id":"sh/a1wze9g7","slide":14,"name":"Rectangle 11","bbox":[72,285.6,820.8,1.15]}
+{"kind":"shape","id":"sh/b2507exs","slide":14,"name":"Connector 12","bbox":[892.8,286.08,30.72,0]}
+{"kind":"shape","id":"sh/kre1k3y9","slide":14,"name":"Oval 13","bbox":[75.84,261.12,49.92,49.92]}
+{"kind":"textbox","id":"sh/ls7idofu","slide":14,"name":"TextBox 14","text":"01","textPreview":"01","textChars":2,"textLines":1,"bbox":[72,261.12,57.6,49.92]}
+{"kind":"textbox","id":"sh/y5wjitgj","slide":14,"name":"TextBox 15","text":"需求输入","textPreview":"需求输入","textChars":4,"textLines":1,"bbox":[19.2,197.76,163.2,30.72]}
+{"kind":"shape","id":"sh/z650byxo","slide":14,"name":"Isosceles Triangle 16","bbox":[96,236.16,9.6,9.6]}
+{"kind":"shape","id":"sh/0buh8zy5","slide":14,"name":"Oval 17","bbox":[202.24,261.12,49.92,49.92]}
+{"kind":"textbox","id":"sh/1w3i14fq","slide":14,"name":"TextBox 18","text":"02","textPreview":"02","textChars":2,"textLines":1,"bbox":[198.4,261.12,57.6,49.92]}
+{"kind":"textbox","id":"sh/hsvy50re","slide":14,"name":"TextBox 19","text":"意图理解与澄清","textPreview":"意图理解与澄清","textChars":7,"textLines":1,"bbox":[145.6,347.52,163.2,30.72]}
+{"kind":"shape","id":"sh/grmxwvqt","slide":14,"name":"Isosceles Triangle 20","bbox":[222.4,328.32,9.6,9.6]}
+{"kind":"shape","id":"sh/fqdg3q98","slide":14,"name":"Oval 21","bbox":[318.08,250.56,71.04,71.04]}
+{"kind":"shape","id":"sh/up4fal83","slide":14,"name":"Oval 22","bbox":[328.64,261.12,49.92,49.92]}
+{"kind":"textbox","id":"sh/pwvy90rq","slide":14,"name":"TextBox 23","text":"03","textPreview":"03","textChars":2,"textLines":1,"bbox":[324.8,261.12,57.6,49.92]}
+{"kind":"textbox","id":"sh/4vmh0vq5","slide":14,"name":"TextBox 24","text":"大纲生成","textPreview":"大纲生成","textChars":4,"textLines":1,"bbox":[272,197.76,163.2,30.72]}
+{"kind":"shape","id":"sh/3udg7q9k","slide":14,"name":"Isosceles Triangle 25","bbox":[348.8,236.16,9.6,9.6]}
+{"kind":"shape","id":"sh/2t4fyl8z","slide":14,"name":"Oval 26","bbox":[455.04,261.12,49.92,49.92]}
+{"kind":"textbox","id":"sh/d0fydk7m","slide":14,"name":"TextBox 27","text":"04","textPreview":"04","textChars":2,"textLines":1,"bbox":[451.2,261.12,57.6,49.92]}
+{"kind":"textbox","id":"sh/cz6h4fq1","slide":14,"name":"TextBox 28","text":"教师确认","textPreview":"教师确认","textChars":4,"textLines":1,"bbox":[398.4,347.52,163.2,30.72]}
+{"kind":"shape","id":"sh/atg3idk7","slide":14,"name":"Isosceles Triangle 29","bbox":[475.2,328.32,9.6,9.6]}
+{"kind":"shape","id":"sh/bup4rils","slide":14,"name":"Oval 30","bbox":[581.44,261.12,49.92,49.92]}
+{"kind":"textbox","id":"sh/cvylkn2d","slide":14,"name":"TextBox 31","text":"05","textPreview":"05","textChars":2,"textLines":1,"bbox":[577.6,261.12,57.6,49.92]}
+{"kind":"textbox","id":"sh/xw7mts3y","slide":14,"name":"TextBox 32","text":"内容生成","textPreview":"内容生成","textChars":4,"textLines":1,"bbox":[524.8,197.76,163.2,30.72]}
+{"kind":"shape","id":"sh/yxgnmxkj","slide":14,"name":"Isosceles Triangle 33","bbox":[601.6,236.16,9.6,9.6]}
+{"kind":"shape","id":"sh/jyp4fil4","slide":14,"name":"Oval 34","bbox":[707.84,261.12,49.92,49.92]}
+{"kind":"textbox","id":"sh/kzy5on2p","slide":14,"name":"TextBox 35","text":"06","textPreview":"06","textChars":2,"textLines":1,"bbox":[704,261.12,57.6,49.92]}
+{"kind":"textbox","id":"sh/lkrmhsju","slide":14,"name":"TextBox 36","text":"编辑精调","textPreview":"编辑精调","textChars":4,"textLines":1,"bbox":[651.2,347.52,163.2,30.72]}
+{"kind":"shape","id":"sh/6l0nqxkf","slide":14,"name":"Isosceles Triangle 37","bbox":[728,328.32,9.6,9.6]}
+{"kind":"shape","id":"sh/7m94j210","slide":14,"name":"Oval 38","bbox":[834.24,261.12,49.92,49.92]}
+{"kind":"textbox","id":"sh/fi5432t4","slide":14,"name":"TextBox 39","text":"07","textPreview":"07","textChars":2,"textLines":1,"bbox":[830.4,261.12,57.6,49.92]}
+{"kind":"textbox","id":"sh/uhw3axcj","slide":14,"name":"TextBox 40","text":"成果导出","textPreview":"成果导出","textChars":4,"textLines":1,"bbox":[777.6,197.76,163.2,30.72]}
+{"kind":"shape","id":"sh/h4nm5sba","slide":14,"name":"Isosceles Triangle 41","bbox":[854.4,236.16,9.6,9.6]}
+{"kind":"shape","id":"sh/365472tg","slide":14,"name":"Rectangle 43","bbox":[48,508.8,864,0.48]}
+{"kind":"textbox","id":"sh/p87m9cb6","slide":14,"name":"TextBox 45","text":"智核 · 多模态AI互动式教学智能体","textPreview":"智核 · 多模态AI互动式教学智能体","textChars":18,"textLines":1,"bbox":[78.72,513.6,345.6,19.2]}
+{"kind":"shape","id":"sh/47y5g7u1","slide":14,"name":"Rectangle 46","bbox":[861.12,516.48,7.68,7.68]}
+{"kind":"textbox","id":"sh/jal4vidw","slide":14,"name":"TextBox 47","text":"14","textPreview":"14","textChars":2,"textLines":1,"bbox":[871.68,513.6,40.32,19.2]}
+{"kind":"image","id":"im/9czul0b2","slide":14,"name":"Picture 44","bbox":[48,510.72,23.04,23.04]}
+{"kind":"notes","id":"nt/6lsnupw7","slide":14,"text":""}
+{"kind":"slide","id":"sl/vaxsvy10","slide":15,"title":"02","textShapes":11}
+{"kind":"shape","id":"sh/547mhg3m","slide":15,"name":"Rectangle 1","bbox":[48,38.4,53.76,53.76]}
+{"kind":"textbox","id":"sh/k3y5ov21","slide":15,"name":"TextBox 2","text":"02","textPreview":"02","textChars":2,"textLines":1,"bbox":[48,38.4,53.76,53.76]}
+{"kind":"textbox","id":"sh/76p4jqls","slide":15,"name":"TextBox 3","text":"业务流程 · 节点3","textPreview":"业务流程 · 节点3","textChars":10,"textLines":1,"bbox":[119.04,33.6,432,24.96]}
+{"kind":"textbox","id":"sh/65gnqlk7","slide":15,"name":"TextBox 4","text":"大纲生成","textPreview":"大纲生成","textChars":4,"textLines":1,"bbox":[119.04,57.6,662.4,48]}
+{"kind":"textbox","id":"sh/t87ml0ji","slide":15,"name":"TextBox 5","text":"02 · BUSINESS","textPreview":"02 · BUSINESS","textChars":13,"textLines":1,"bbox":[824.67,45.01,87.33,13.67]}
+{"kind":"shape","id":"sh/s7y5sv2x","slide":15,"name":"Rectangle 6","bbox":[119.04,109.44,792.96,4.8]}
+{"kind":"shape","id":"sh/na5476l8","slide":15,"name":"Rectangle 7","bbox":[119.04,109.44,105.6,4.8]}
+{"kind":"textbox","id":"sh/hsvat0fa","slide":15,"name":"TextBox 10","text":"03","textPreview":"03","textChars":2,"textLines":1,"bbox":[48,139.2,124.8,81.6]}
+{"kind":"textbox","id":"sh/upkrilwj","slide":15,"name":"TextBox 11","text":"STEP 3 / 7","textPreview":"STEP 3 / 7","textChars":10,"textLines":1,"bbox":[49.92,222.72,249.6,26.88]}
+{"kind":"textbox","id":"sh/vqdsrqx4","slide":15,"name":"TextBox 12","text":"大纲生成","textPreview":"大纲生成","textChars":4,"textLines":1,"bbox":[48,255.36,278.4,52.8]}
+{"kind":"shape","id":"sh/4vm9ovel","slide":15,"name":"Rectangle 13","bbox":[49.92,316.8,52.8,4.8]}
+{"kind":"textbox","id":"sh/5wvax0f6","slide":15,"name":"TextBox 14","text":"思维链拆解为「情境导入—探究新知—巩固练习」结构化大纲，流式逐页呈现","textPreview":"思维链拆解为「情境导入—探究新知—巩固练习」结构化大纲，流式逐页呈现","textChars":34,"textLines":1,"bbox":[48,336,273.6,134.4]}
+{"kind":"shape","id":"sh/it4rm5wv","slide":15,"name":"Rectangle 15","bbox":[340.8,139.2,571.2,355.2]}
+{"kind":"shape","id":"sh/gjax03m9","slide":15,"name":"Rectangle 20","bbox":[48,508.8,864,0.48]}
+{"kind":"textbox","id":"sh/ehsfyt43","slide":15,"name":"TextBox 22","text":"智核 · 多模态AI互动式教学智能体","textPreview":"智核 · 多模态AI互动式教学智能体","textChars":18,"textLines":1,"bbox":[78.72,513.6,345.6,19.2]}
+{"kind":"shape","id":"sh/p8jyx83q","slide":15,"name":"Rectangle 23","bbox":[861.12,516.48,7.68,7.68]}
+{"kind":"textbox","id":"sh/o7ah4nm5","slide":15,"name":"TextBox 24","text":"15","textPreview":"15","textChars":2,"textLines":1,"bbox":[871.68,513.6,40.32,19.2]}
+{"kind":"textbox","id":"sh/1kjyt83e","slide":15,"name":"Rectangle 19","text":"产品界面 · 教师端","textPreview":"产品界面 · 教师端","textChars":10,"textLines":1,"bbox":[535.2,441.6,182.4,34.56]}
+{"kind":"image","id":"im/gve5crul","slide":15,"name":"Picture 21","bbox":[48,510.72,23.04,23.04]}
+{"kind":"image","id":"im/1wn65cb6","slide":15,"name":"Picture 25","bbox":[348.48,158.62,555.84,316.37]}
+{"kind":"notes","id":"nt/vaxsvy10","slide":15,"text":""}
+{"kind":"slide","id":"sl/gny5sjyp","slide":16,"title":"02","textShapes":21}
+{"kind":"shape","id":"sh/8z2h8bq1","slide":16,"name":"Rectangle 1","bbox":[48,38.4,53.76,53.76]}
+{"kind":"textbox","id":"sh/9kby1g7m","slide":16,"name":"TextBox 2","text":"02","textPreview":"02","textChars":2,"textLines":1,"bbox":[48,38.4,53.76,53.76]}
+{"kind":"textbox","id":"sh/ytkf2h8j","slide":16,"name":"TextBox 3","text":"业务流程","textPreview":"业务流程","textChars":4,"textLines":1,"bbox":[119.04,33.6,432,24.96]}
+{"kind":"textbox","id":"sh/zutgvm94","slide":16,"name":"TextBox 4","text":"对话备课七步全链路","textPreview":"对话备课七步全链路","textChars":9,"textLines":1,"bbox":[119.04,57.6,662.4,48]}
+{"kind":"textbox","id":"sh/kv2h4rqp","slide":16,"name":"TextBox 5","text":"02 · BUSINESS","textPreview":"02 · BUSINESS","textChars":13,"textLines":1,"bbox":[824.67,45.01,87.33,13.67]}
+{"kind":"shape","id":"sh/lwbyxwra","slide":16,"name":"Rectangle 6","bbox":[119.04,109.44,792.96,4.8]}
+{"kind":"shape","id":"sh/ip4zel83","slide":16,"name":"Rectangle 7","bbox":[119.04,109.44,105.6,4.8]}
+{"kind":"textbox","id":"sh/e1sf65o3","slide":16,"name":"TextBox 10","text":"教师在与智能体的多轮对话中走完备课全流程，七个节点环环相扣","textPreview":"教师在与智能体的多轮对话中走完备课全流程，七个节点环环相扣","textChars":29,"textLines":1,"bbox":[119.04,122.88,792.96,28.8]}
+{"kind":"shape","id":"sh/1ojy10ne","slide":16,"name":"Rectangle 11","bbox":[72,285.6,820.8,1.15]}
+{"kind":"shape","id":"sh/gnax8v6t","slide":16,"name":"Connector 12","bbox":[892.8,286.08,30.72,0]}
+{"kind":"shape","id":"sh/nqlg3a5k","slide":16,"name":"Oval 13","bbox":[75.84,261.12,49.92,49.92]}
+{"kind":"textbox","id":"sh/2pcfa5oz","slide":16,"name":"TextBox 14","text":"01","textPreview":"01","textChars":2,"textLines":1,"bbox":[72,261.12,57.6,49.92]}
+{"kind":"textbox","id":"sh/ps3y5knq","slide":16,"name":"TextBox 15","text":"需求输入","textPreview":"需求输入","textChars":4,"textLines":1,"bbox":[19.2,197.76,163.2,30.72]}
+{"kind":"shape","id":"sh/oruhcf65","slide":16,"name":"Isosceles Triangle 16","bbox":[96,236.16,9.6,9.6]}
+{"kind":"shape","id":"sh/bulg7u5g","slide":16,"name":"Oval 17","bbox":[202.24,261.12,49.92,49.92]}
+{"kind":"textbox","id":"sh/atczepob","slide":16,"name":"TextBox 18","text":"02","textPreview":"02","textChars":2,"textLines":1,"bbox":[198.4,261.12,57.6,49.92]}
+{"kind":"textbox","id":"sh/mpgj6t8j","slide":16,"name":"TextBox 19","text":"意图理解与澄清","textPreview":"意图理解与澄清","textChars":7,"textLines":1,"bbox":[145.6,347.52,163.2,30.72]}
+{"kind":"shape","id":"sh/7qp0zepo","slide":16,"name":"Isosceles Triangle 20","bbox":[222.4,328.32,9.6,9.6]}
+{"kind":"shape","id":"sh/8by18jq9","slide":16,"name":"Oval 21","bbox":[328.64,261.12,49.92,49.92]}
+{"kind":"textbox","id":"sh/9c7i1o7u","slide":16,"name":"TextBox 22","text":"03","textPreview":"03","textChars":2,"textLines":1,"bbox":[324.8,261.12,57.6,49.92]}
+{"kind":"textbox","id":"sh/ylwj2987","slide":16,"name":"TextBox 23","text":"大纲生成","textPreview":"大纲生成","textChars":4,"textLines":1,"bbox":[272,197.76,163.2,30.72]}
+{"kind":"shape","id":"sh/zm50veps","slide":16,"name":"Isosceles Triangle 24","bbox":[348.8,236.16,9.6,9.6]}
+{"kind":"shape","id":"sh/kne14jqd","slide":16,"name":"Oval 25","bbox":[444.48,250.56,71.04,71.04]}
+{"kind":"shape","id":"sh/lo7ixo7y","slide":16,"name":"Oval 26","bbox":[455.04,261.12,49.92,49.92]}
+{"kind":"textbox","id":"sh/ih0jedob","slide":16,"name":"TextBox 27","text":"04","textPreview":"04","textChars":2,"textLines":1,"bbox":[451.2,261.12,57.6,49.92]}
+{"kind":"textbox","id":"sh/ji9k7ypw","slide":16,"name":"TextBox 28","text":"教师确认","textPreview":"教师确认","textChars":4,"textLines":1,"bbox":[398.4,347.52,163.2,30.72]}
+{"kind":"shape","id":"sh/tcbmdcre","slide":16,"name":"Isosceles Triangle 29","bbox":[475.2,328.32,9.6,9.6]}
+{"kind":"shape","id":"sh/sb2l47at","slide":16,"name":"Oval 30","bbox":[581.44,261.12,49.92,49.92]}
+{"kind":"textbox","id":"sh/rat4b298","slide":16,"name":"TextBox 31","text":"05","textPreview":"05","textChars":2,"textLines":1,"bbox":[577.6,261.12,57.6,49.92]}
+{"kind":"textbox","id":"sh/69k32xsn","slide":16,"name":"TextBox 32","text":"内容生成","textPreview":"内容生成","textChars":4,"textLines":1,"bbox":[524.8,197.76,163.2,30.72]}
+{"kind":"shape","id":"sh/58bm9sr2","slide":16,"name":"Isosceles Triangle 33","bbox":[601.6,236.16,9.6,9.6]}
+{"kind":"shape","id":"sh/47il0nah","slide":16,"name":"Oval 34","bbox":[707.84,261.12,49.92,49.92]}
+{"kind":"textbox","id":"sh/j6947i9w","slide":16,"name":"TextBox 35","text":"06","textPreview":"06","textChars":2,"textLines":1,"bbox":[704,261.12,57.6,49.92]}
+{"kind":"textbox","id":"sh/i503ydsr","slide":16,"name":"TextBox 36","text":"编辑精调","textPreview":"编辑精调","textChars":4,"textLines":1,"bbox":[651.2,347.52,163.2,30.72]}
+{"kind":"shape","id":"sh/p4vmlwrm","slide":16,"name":"Isosceles Triangle 37","bbox":[728,328.32,9.6,9.6]}
+{"kind":"shape","id":"sh/o3m5crq1","slide":16,"name":"Oval 38","bbox":[834.24,261.12,49.92,49.92]}
+{"kind":"textbox","id":"sh/wnadcrqh","slide":16,"name":"TextBox 39","text":"07","textPreview":"07","textChars":2,"textLines":1,"bbox":[830.4,261.12,57.6,49.92]}
+{"kind":"textbox","id":"sh/xoju5wr2","slide":16,"name":"TextBox 40","text":"成果导出","textPreview":"成果导出","textChars":4,"textLines":1,"bbox":[777.6,197.76,163.2,30.72]}
+{"kind":"shape","id":"sh/alsbahsb","slide":16,"name":"Isosceles Triangle 41","bbox":[854.4,236.16,9.6,9.6]}
+{"kind":"shape","id":"sh/kbudgrqt","slide":16,"name":"Rectangle 43","bbox":[48,508.8,864,0.48]}
+{"kind":"textbox","id":"sh/i9sve18n","slide":16,"name":"TextBox 45","text":"智核 · 多模态AI互动式教学智能体","textPreview":"智核 · 多模态AI互动式教学智能体","textChars":18,"textLines":1,"bbox":[78.72,513.6,345.6,19.2]}
+{"kind":"shape","id":"sh/ja1c7m98","slide":16,"name":"Rectangle 46","bbox":[861.12,516.48,7.68,7.68]}
+{"kind":"textbox","id":"sh/sfudkbqp","slide":16,"name":"TextBox 47","text":"16","textPreview":"16","textChars":2,"textLines":1,"bbox":[871.68,513.6,40.32,19.2]}
+{"kind":"image","id":"im/q1s3ud4j","slide":16,"name":"Picture 44","bbox":[48,510.72,23.04,23.04]}
+{"kind":"notes","id":"nt/gny5sjyp","slide":16,"text":""}
+{"kind":"slide","id":"sl/14bup87q","slide":17,"title":"02","textShapes":11}
+{"kind":"shape","id":"sh/1c7e50ni","slide":17,"name":"Rectangle 1","bbox":[48,38.4,53.76,53.76]}
+{"kind":"textbox","id":"sh/gbedwfmx","slide":17,"name":"TextBox 2","text":"02","textPreview":"02","textChars":2,"textLines":1,"bbox":[48,38.4,53.76,53.76]}
+{"kind":"textbox","id":"sh/rm5czq50","slide":17,"name":"TextBox 3","text":"业务流程 · 节点4","textPreview":"业务流程 · 节点4","textChars":10,"textLines":1,"bbox":[119.04,33.6,432,24.96]}
+{"kind":"textbox","id":"sh/6lwvql4v","slide":17,"name":"TextBox 4","text":"教师确认","textPreview":"教师确认","textChars":4,"textLines":1,"bbox":[119.04,57.6,662.4,48]}
+{"kind":"textbox","id":"sh/t8ne10n6","slide":17,"name":"TextBox 5","text":"02 · BUSINESS","textPreview":"02 · BUSINESS","textChars":13,"textLines":1,"bbox":[824.67,45.01,87.33,13.67]}
+{"kind":"shape","id":"sh/snedsvml","slide":17,"name":"Rectangle 6","bbox":[119.04,109.44,792.96,4.8]}
+{"kind":"shape","id":"sh/jilcvq54","slide":17,"name":"Rectangle 7","bbox":[119.04,109.44,105.6,4.8]}
+{"kind":"textbox","id":"sh/pc7qhwn6","slide":17,"name":"TextBox 10","text":"04","textPreview":"04","textChars":2,"textLines":1,"bbox":[48,139.2,124.8,81.6]}
+{"kind":"textbox","id":"sh/29grm1of","slide":17,"name":"TextBox 11","text":"STEP 4 / 7","textPreview":"STEP 4 / 7","textChars":10,"textLines":1,"bbox":[49.92,222.72,249.6,26.88]}
+{"kind":"textbox","id":"sh/3ap8fm50","slide":17,"name":"TextBox 12","text":"教师确认","textPreview":"教师确认","textChars":4,"textLines":1,"bbox":[48,255.36,278.4,52.8]}
+{"kind":"shape","id":"sh/gnepkr69","slide":17,"name":"Rectangle 13","bbox":[49.92,316.8,52.8,4.8]}
+{"kind":"textbox","id":"sh/honqdwnu","slide":17,"name":"TextBox 14","text":"确认大纲或提出修改意见","textPreview":"确认大纲或提出修改意见","textChars":11,"textLines":1,"bbox":[48,336,273.6,134.4]}
+{"kind":"shape","id":"sh/ulw7ihoj","slide":17,"name":"Rectangle 15","bbox":[340.8,139.2,571.2,355.2]}
+{"kind":"shape","id":"sh/8ze9gbyx","slide":17,"name":"Rectangle 20","bbox":[48,508.8,864,0.48]}
+{"kind":"textbox","id":"sh/mxw7e1gr","slide":17,"name":"TextBox 22","text":"智核 · 多模态AI互动式教学智能体","textPreview":"智核 · 多模态AI互动式教学智能体","textChars":18,"textLines":1,"bbox":[78.72,513.6,345.6,19.2]}
+{"kind":"shape","id":"sh/lwnq5gf6","slide":17,"name":"Rectangle 23","bbox":[861.12,516.48,7.68,7.68]}
+{"kind":"textbox","id":"sh/0vepcbyl","slide":17,"name":"TextBox 24","text":"17","textPreview":"17","textChars":2,"textLines":1,"bbox":[871.68,513.6,40.32,19.2]}
+{"kind":"textbox","id":"sh/90nq9gfi","slide":17,"name":"Rectangle 19","text":"产品界面 · 教师端","textPreview":"产品界面 · 教师端","textChars":10,"textLines":1,"bbox":[535.2,441.6,182.4,34.56]}
+{"kind":"image","id":"im/svqto369","slide":17,"name":"Picture 21","bbox":[48,510.72,23.04,23.04]}
+{"kind":"image","id":"im/twzaxonu","slide":17,"name":"Picture 25","bbox":[348.48,162.77,555.84,308.06]}
+{"kind":"notes","id":"nt/14bup87q","slide":17,"text":""}
+{"kind":"slide","id":"sl/y5wne50z","slide":18,"title":"02","textShapes":21}
+{"kind":"shape","id":"sh/wrelszu9","slide":18,"name":"Rectangle 1","bbox":[48,38.4,53.76,53.76]}
+{"kind":"textbox","id":"sh/hsn2l4bu","slide":18,"name":"TextBox 2","text":"02","textPreview":"02","textChars":2,"textLines":1,"bbox":[48,38.4,53.76,53.76]}
+{"kind":"textbox","id":"sh/itw3upcf","slide":18,"name":"TextBox 3","text":"业务流程","textPreview":"业务流程","textChars":4,"textLines":1,"bbox":[119.04,33.6,432,24.96]}
+{"kind":"textbox","id":"sh/je5knut0","slide":18,"name":"TextBox 4","text":"对话备课七步全链路","textPreview":"对话备课七步全链路","textChars":9,"textLines":1,"bbox":[119.04,57.6,662.4,48]}
+{"kind":"textbox","id":"sh/4felwzu5","slide":18,"name":"TextBox 5","text":"02 · BUSINESS","textPreview":"02 · BUSINESS","textChars":13,"textLines":1,"bbox":[824.67,45.01,87.33,13.67]}
+{"kind":"shape","id":"sh/5gnmp4bq","slide":18,"name":"Rectangle 6","bbox":[119.04,109.44,792.96,4.8]}
+{"kind":"shape","id":"sh/6hw3y9sb","slide":18,"name":"Rectangle 7","bbox":[119.04,109.44,105.6,4.8]}
+{"kind":"textbox","id":"sh/upg3i18r","slide":18,"name":"TextBox 10","text":"教师在与智能体的多轮对话中走完备课全流程，七个节点环环相扣","textPreview":"教师在与智能体的多轮对话中走完备课全流程，七个节点环环相扣","textChars":29,"textLines":1,"bbox":[119.04,122.88,792.96,28.8]}
+{"kind":"shape","id":"sh/1cr2tg72","slide":18,"name":"Rectangle 11","bbox":[72,285.6,820.8,1.15]}
+{"kind":"shape","id":"sh/gbylkbqh","slide":18,"name":"Connector 12","bbox":[892.8,286.08,30.72,0]}
+{"kind":"shape","id":"sh/7mpknmp0","slide":18,"name":"Oval 13","bbox":[75.84,261.12,49.92,49.92]}
+{"kind":"textbox","id":"sh/6lg3e18f","slide":18,"name":"TextBox 14","text":"01","textPreview":"01","textChars":2,"textLines":1,"bbox":[72,261.12,57.6,49.92]}
+{"kind":"textbox","id":"sh/to72pw76","slide":18,"name":"TextBox 15","text":"需求输入","textPreview":"需求输入","textChars":4,"textLines":1,"bbox":[19.2,197.76,163.2,30.72]}
+{"kind":"shape","id":"sh/snylgrql","slide":18,"name":"Isosceles Triangle 16","bbox":[96,236.16,9.6,9.6]}
+{"kind":"shape","id":"sh/bi94zqp4","slide":18,"name":"Oval 17","bbox":[202.24,261.12,49.92,49.92]}
+{"kind":"textbox","id":"sh/qh03ql8j","slide":18,"name":"TextBox 18","text":"02","textPreview":"02","textChars":2,"textLines":1,"bbox":[198.4,261.12,57.6,49.92]}
+{"kind":"textbox","id":"sh/md4nipsr","slide":18,"name":"TextBox 19","text":"意图理解与澄清","textPreview":"意图理解与澄清","textChars":7,"textLines":1,"bbox":[145.6,347.52,163.2,30.72]}
+{"kind":"shape","id":"sh/nedoru9c","slide":18,"name":"Isosceles Triangle 20","bbox":[222.4,328.32,9.6,9.6]}
+{"kind":"shape","id":"sh/8zm5kzax","slide":18,"name":"Oval 21","bbox":[328.64,261.12,49.92,49.92]}
+{"kind":"textbox","id":"sh/90v6t4ri","slide":18,"name":"TextBox 22","text":"03","textPreview":"03","textChars":2,"textLines":1,"bbox":[324.8,261.12,57.6,49.92]}
+{"kind":"textbox","id":"sh/a14nm9s3","slide":18,"name":"TextBox 23","text":"大纲生成","textPreview":"大纲生成","textChars":4,"textLines":1,"bbox":[272,197.76,163.2,30.72]}
+{"kind":"shape","id":"sh/v2xovu9o","slide":18,"name":"Isosceles Triangle 24","bbox":[348.8,236.16,9.6,9.6]}
+{"kind":"shape","id":"sh/w36poza9","slide":18,"name":"Oval 25","bbox":[455.04,261.12,49.92,49.92]}
+{"kind":"textbox","id":"sh/x4f6x4re","slide":18,"name":"TextBox 26","text":"04","textPreview":"04","textChars":2,"textLines":1,"bbox":[451.2,261.12,57.6,49.92]}
+{"kind":"textbox","id":"sh/q5kna5sz","slide":18,"name":"TextBox 27","text":"教师确认","textPreview":"教师确认","textChars":4,"textLines":1,"bbox":[398.4,347.52,163.2,30.72]}
+{"kind":"shape","id":"sh/b6toja94","slide":18,"name":"Isosceles Triangle 28","bbox":[475.2,328.32,9.6,9.6]}
+{"kind":"shape","id":"sh/t0zqp8bm","slide":18,"name":"Oval 29","bbox":[570.88,250.56,71.04,71.04]}
+{"kind":"shape","id":"sh/szq9g3uh","slide":18,"name":"Oval 30","bbox":[581.44,261.12,49.92,49.92]}
+{"kind":"textbox","id":"sh/7yh8nytw","slide":18,"name":"TextBox 31","text":"05","textPreview":"05","textChars":2,"textLines":1,"bbox":[577.6,261.12,57.6,49.92]}
+{"kind":"textbox","id":"sh/6x8retcb","slide":18,"name":"TextBox 32","text":"内容生成","textPreview":"内容生成","textChars":4,"textLines":1,"bbox":[524.8,197.76,163.2,30.72]}
+{"kind":"shape","id":"sh/h4jqtsby","slide":18,"name":"Isosceles Triangle 33","bbox":[601.6,236.16,9.6,9.6]}
+{"kind":"shape","id":"sh/g3a9knud","slide":18,"name":"Oval 34","bbox":[707.84,261.12,49.92,49.92]}
+{"kind":"textbox","id":"sh/f218rits","slide":18,"name":"TextBox 35","text":"06","textPreview":"06","textChars":2,"textLines":1,"bbox":[704,261.12,57.6,49.92]}
+{"kind":"textbox","id":"sh/u1sridc7","slide":18,"name":"TextBox 36","text":"编辑精调","textPreview":"编辑精调","textChars":4,"textLines":1,"bbox":[651.2,347.52,163.2,30.72]}
+{"kind":"shape","id":"sh/x8fqhobu","slide":18,"name":"Isosceles Triangle 37","bbox":[728,328.32,9.6,9.6]}
+{"kind":"shape","id":"sh/w7698ju9","slide":18,"name":"Oval 38","bbox":[834.24,261.12,49.92,49.92]}
+{"kind":"textbox","id":"sh/0netwrex","slide":18,"name":"TextBox 39","text":"07","textPreview":"07","textChars":2,"textLines":1,"bbox":[830.4,261.12,57.6,49.92]}
+{"kind":"textbox","id":"sh/lonupwv2","slide":18,"name":"TextBox 40","text":"成果导出","textPreview":"成果导出","textChars":4,"textLines":1,"bbox":[777.6,197.76,163.2,30.72]}
+{"kind":"shape","id":"sh/ylwbuhwr","slide":18,"name":"Isosceles Triangle 41","bbox":[854.4,236.16,9.6,9.6]}
+{"kind":"shape","id":"sh/cjutsrel","slide":18,"name":"Rectangle 43","bbox":[48,508.8,864,0.48]}
+{"kind":"textbox","id":"sh/qxcbqhwf","slide":18,"name":"TextBox 45","text":"智核 · 多模态AI互动式教学智能体","textPreview":"智核 · 多模态AI互动式教学智能体","textChars":18,"textLines":1,"bbox":[78.72,513.6,345.6,19.2]}
+{"kind":"shape","id":"sh/bylcjmd0","slide":18,"name":"Rectangle 46","bbox":[861.12,516.48,7.68,7.68]}
+{"kind":"textbox","id":"sh/4vuto7ep","slide":18,"name":"TextBox 47","text":"18","textPreview":"18","textChars":2,"textLines":1,"bbox":[871.68,513.6,40.32,19.2]}
+{"kind":"image","id":"im/atc7ixc3","slide":18,"name":"Picture 44","bbox":[48,510.72,23.04,23.04]}
+{"kind":"notes","id":"nt/y5wne50z","slide":18,"text":""}
+{"kind":"slide","id":"sl/nid43ytk","slide":19,"title":"02","textShapes":11}
+{"kind":"shape","id":"sh/9gb6xgbi","slide":19,"name":"Rectangle 1","bbox":[48,38.4,53.76,53.76]}
+{"kind":"textbox","id":"sh/8v2pobax","slide":19,"name":"TextBox 2","text":"02","textPreview":"02","textChars":2,"textLines":1,"bbox":[48,38.4,53.76,53.76]}
+{"kind":"textbox","id":"sh/vitozqt8","slide":19,"name":"TextBox 3","text":"业务流程 · 节点5","textPreview":"业务流程 · 节点5","textChars":10,"textLines":1,"bbox":[119.04,33.6,432,24.96]}
+{"kind":"textbox","id":"sh/ahk7qls3","slide":19,"name":"TextBox 4","text":"内容生成","textPreview":"内容生成","textChars":4,"textLines":1,"bbox":[119.04,57.6,662.4,48]}
+{"kind":"textbox","id":"sh/xkbq10be","slide":19,"name":"TextBox 5","text":"02 · BUSINESS","textPreview":"02 · BUSINESS","textChars":13,"textLines":1,"bbox":[824.67,45.01,87.33,13.67]}
+{"kind":"shape","id":"sh/wj2psvat","slide":19,"name":"Rectangle 6","bbox":[119.04,109.44,792.96,4.8]}
+{"kind":"shape","id":"sh/jmd83atk","slide":19,"name":"Rectangle 7","bbox":[119.04,109.44,105.6,4.8]}
+{"kind":"textbox","id":"sh/dsri9sr6","slide":19,"name":"TextBox 10","text":"05","textPreview":"05","textChars":2,"textLines":1,"bbox":[48,139.2,124.8,81.6]}
+{"kind":"textbox","id":"sh/qpgjex8f","slide":19,"name":"TextBox 11","text":"STEP 5 / 7","textPreview":"STEP 5 / 7","textChars":10,"textLines":1,"bbox":[49.92,222.72,249.6,26.88]}
+{"kind":"textbox","id":"sh/rqp07290","slide":19,"name":"TextBox 12","text":"内容生成","textPreview":"内容生成","textChars":4,"textLines":1,"bbox":[48,255.36,278.4,52.8]}
+{"kind":"shape","id":"sh/0vi1k7qx","slide":19,"name":"Rectangle 13","bbox":[49.92,316.8,52.8,4.8]}
+{"kind":"textbox","id":"sh/1gridcr2","slide":19,"name":"TextBox 14","text":"课件、教案、互动组件并行生成","textPreview":"课件、教案、互动组件并行生成","textChars":14,"textLines":1,"bbox":[48,336,273.6,134.4]}
+{"kind":"shape","id":"sh/et0jix8r","slide":19,"name":"Rectangle 15","bbox":[340.8,139.2,571.2,355.2]}
+{"kind":"shape","id":"sh/wfy1s7ix","slide":19,"name":"Rectangle 20","bbox":[48,508.8,864,0.48]}
+{"kind":"textbox","id":"sh/adgjqx0r","slide":19,"name":"TextBox 22","text":"智核 · 多模态AI互动式教学智能体","textPreview":"智核 · 多模态AI互动式教学智能体","textChars":18,"textLines":1,"bbox":[78.72,513.6,345.6,19.2]}
+{"kind":"shape","id":"sh/54ri5wje","slide":19,"name":"Rectangle 23","bbox":[861.12,516.48,7.68,7.68]}
+{"kind":"textbox","id":"sh/k3y1wri9","slide":19,"name":"TextBox 24","text":"19","textPreview":"19","textChars":2,"textLines":1,"bbox":[871.68,513.6,40.32,19.2]}
+{"kind":"textbox","id":"sh/x07i1cji","slide":19,"name":"Rectangle 19","text":"产品界面 · 教师端","textPreview":"产品界面 · 教师端","textChars":10,"textLines":1,"bbox":[535.2,441.6,182.4,34.56]}
+{"kind":"image","id":"im/kfup07md","slide":19,"name":"Picture 21","bbox":[48,510.72,23.04,23.04]}
+{"kind":"image","id":"im/lg3qtc3y","slide":19,"name":"Picture 25","bbox":[348.48,176.25,555.84,281.1]}
+{"kind":"notes","id":"nt/nid43ytk","slide":19,"text":""}
+{"kind":"slide","id":"sl/zyxsni5k","slide":20,"title":"02","textShapes":21}
+{"kind":"shape","id":"sh/qpwjmh8n","slide":20,"name":"Rectangle 1","bbox":[48,38.4,53.76,53.76]}
+{"kind":"textbox","id":"sh/rq50vmp8","slide":20,"name":"TextBox 2","text":"02","textPreview":"02","textChars":2,"textLines":1,"bbox":[48,38.4,53.76,53.76]}
+{"kind":"textbox","id":"sh/4nu1krqh","slide":20,"name":"TextBox 3","text":"业务流程","textPreview":"业务流程","textChars":4,"textLines":1,"bbox":[119.04,33.6,432,24.96]}
+{"kind":"textbox","id":"sh/po3itc72","slide":20,"name":"TextBox 4","text":"对话备课七步全链路","textPreview":"对话备课七步全链路","textChars":9,"textLines":1,"bbox":[119.04,57.6,662.4,48]}
+{"kind":"textbox","id":"sh/2lczih8r","slide":20,"name":"TextBox 5","text":"02 · BUSINESS","textPreview":"02 · BUSINESS","textChars":13,"textLines":1,"bbox":[824.67,45.01,87.33,13.67]}
+{"kind":"shape","id":"sh/3ml0rmpw","slide":20,"name":"Rectangle 6","bbox":[119.04,109.44,792.96,4.8]}
+{"kind":"shape","id":"sh/gjuhg7ql","slide":20,"name":"Rectangle 7","bbox":[119.04,109.44,105.6,4.8]}
+{"kind":"textbox","id":"sh/cj65wzyd","slide":20,"name":"TextBox 10","text":"教师在与智能体的多轮对话中走完备课全流程，七个节点环环相扣","textPreview":"教师在与智能体的多轮对话中走完备课全流程，七个节点环环相扣","textChars":29,"textLines":1,"bbox":[119.04,122.88,792.96,28.8]}
+{"kind":"shape","id":"sh/rid4nuhs","slide":20,"name":"Rectangle 11","bbox":[72,285.6,820.8,1.15]}
+{"kind":"shape","id":"sh/qh4nupg7","slide":20,"name":"Connector 12","bbox":[892.8,286.08,30.72,0]}
+{"kind":"shape","id":"sh/pwvmlkzm","slide":20,"name":"Oval 13","bbox":[75.84,261.12,49.92,49.92]}
+{"kind":"textbox","id":"sh/4vm5sfy1","slide":20,"name":"TextBox 14","text":"01","textPreview":"01","textChars":2,"textLines":1,"bbox":[72,261.12,57.6,49.92]}
+{"kind":"textbox","id":"sh/3ud4juhg","slide":20,"name":"TextBox 15","text":"需求输入","textPreview":"需求输入","textChars":4,"textLines":1,"bbox":[19.2,197.76,163.2,30.72]}
+{"kind":"shape","id":"sh/2t4nqpgb","slide":20,"name":"Isosceles Triangle 16","bbox":[96,236.16,9.6,9.6]}
+{"kind":"shape","id":"sh/hsvmhkzq","slide":20,"name":"Oval 17","bbox":[202.24,261.12,49.92,49.92]}
+{"kind":"textbox","id":"sh/grm5ofy5","slide":20,"name":"TextBox 18","text":"02","textPreview":"02","textChars":2,"textLines":1,"bbox":[198.4,261.12,57.6,49.92]}
+{"kind":"textbox","id":"sh/8b654f61","slide":20,"name":"TextBox 19","text":"意图理解与澄清","textPreview":"意图理解与澄清","textChars":7,"textLines":1,"bbox":[145.6,347.52,163.2,30.72]}
+{"kind":"shape","id":"sh/tcz6dk7m","slide":20,"name":"Isosceles Triangle 20","bbox":[222.4,328.32,9.6,9.6]}
+{"kind":"shape","id":"sh/69on25ov","slide":20,"name":"Oval 21","bbox":[328.64,261.12,49.92,49.92]}
+{"kind":"textbox","id":"sh/7ax4bapg","slide":20,"name":"TextBox 22","text":"03","textPreview":"03","textChars":2,"textLines":1,"bbox":[324.8,261.12,57.6,49.92]}
+{"kind":"textbox","id":"sh/k7650f6p","slide":20,"name":"TextBox 23","text":"大纲生成","textPreview":"大纲生成","textChars":4,"textLines":1,"bbox":[272,197.76,163.2,30.72]}
+{"kind":"shape","id":"sh/l8fm907a","slide":20,"name":"Isosceles Triangle 24","bbox":[348.8,236.16,9.6,9.6]}
+{"kind":"shape","id":"sh/y5ony58z","slide":20,"name":"Oval 25","bbox":[455.04,261.12,49.92,49.92]}
+{"kind":"textbox","id":"sh/j6x47ap4","slide":20,"name":"TextBox 26","text":"04","textPreview":"04","textChars":2,"textLines":1,"bbox":[451.2,261.12,57.6,49.92]}
+{"kind":"textbox","id":"sh/43q5cz69","slide":20,"name":"TextBox 27","text":"教师确认","textPreview":"教师确认","textChars":4,"textLines":1,"bbox":[398.4,347.52,163.2,30.72]}
+{"kind":"shape","id":"sh/54j6l47e","slide":20,"name":"Isosceles Triangle 28","bbox":[475.2,328.32,9.6,9.6]}
+{"kind":"shape","id":"sh/za50r2ds","slide":20,"name":"Oval 29","bbox":[581.44,261.12,49.92,49.92]}
+{"kind":"textbox","id":"sh/e9wzyxcn","slide":20,"name":"TextBox 30","text":"05","textPreview":"05","textChars":2,"textLines":1,"bbox":[577.6,261.12,57.6,49.92]}
+{"kind":"textbox","id":"sh/1cnitsvy","slide":20,"name":"TextBox 31","text":"内容生成","textPreview":"内容生成","textChars":4,"textLines":1,"bbox":[524.8,197.76,163.2,30.72]}
+{"kind":"shape","id":"sh/0beh07ud","slide":20,"name":"Isosceles Triangle 32","bbox":[601.6,236.16,9.6,9.6]}
+{"kind":"shape","id":"sh/ny50v2d4","slide":20,"name":"Oval 33","bbox":[697.28,250.56,71.04,71.04]}
+{"kind":"shape","id":"sh/mdwz2xcj","slide":20,"name":"Oval 34","bbox":[707.84,261.12,49.92,49.92]}
+{"kind":"textbox","id":"sh/907ixcva","slide":20,"name":"TextBox 35","text":"06","textPreview":"06","textChars":2,"textLines":1,"bbox":[704,261.12,57.6,49.92]}
+{"kind":"textbox","id":"sh/8zeh47up","slide":20,"name":"TextBox 36","text":"编辑精调","textPreview":"编辑精调","textChars":4,"textLines":1,"bbox":[651.2,347.52,163.2,30.72]}
+{"kind":"shape","id":"sh/32lgjid0","slide":20,"name":"Isosceles Triangle 37","bbox":[728,328.32,9.6,9.6]}
+{"kind":"shape","id":"sh/2hczqdwf","slide":20,"name":"Oval 38","bbox":[834.24,261.12,49.92,49.92]}
+{"kind":"textbox","id":"sh/ulwz6d4b","slide":20,"name":"TextBox 39","text":"07","textPreview":"07","textChars":2,"textLines":1,"bbox":[830.4,261.12,57.6,49.92]}
+{"kind":"textbox","id":"sh/vmp0zilg","slide":20,"name":"TextBox 40","text":"成果导出","textPreview":"成果导出","textChars":4,"textLines":1,"bbox":[777.6,197.76,163.2,30.72]}
+{"kind":"shape","id":"sh/gnyh8nm1","slide":20,"name":"Isosceles Triangle 41","bbox":[854.4,236.16,9.6,9.6]}
+{"kind":"shape","id":"sh/ipgzadk7","slide":20,"name":"Rectangle 43","bbox":[48,508.8,864,0.48]}
+{"kind":"textbox","id":"sh/4ryhcn2d","slide":20,"name":"TextBox 45","text":"智核 · 多模态AI互动式教学智能体","textPreview":"智核 · 多模态AI互动式教学智能体","textChars":18,"textLines":1,"bbox":[78.72,513.6,345.6,19.2]}
+{"kind":"shape","id":"sh/5s7i5s3y","slide":20,"name":"Rectangle 46","bbox":[861.12,516.48,7.68,7.68]}
+{"kind":"textbox","id":"sh/qdgzexk3","slide":20,"name":"TextBox 47","text":"20","textPreview":"20","textChars":2,"textLines":1,"bbox":[871.68,513.6,40.32,19.2]}
+{"kind":"image","id":"im/0rmtszuh","slide":20,"name":"Picture 44","bbox":[48,510.72,23.04,23.04]}
+{"kind":"notes","id":"nt/zyxsni5k","slide":20,"text":""}
+{"kind":"slide","id":"sl/m1wvqtk3","slide":21,"title":"02","textShapes":11}
+{"kind":"shape","id":"sh/1gbmxs7a","slide":21,"name":"Rectangle 1","bbox":[48,38.4,53.76,53.76]}
+{"kind":"textbox","id":"sh/0f2lon6p","slide":21,"name":"TextBox 2","text":"02","textPreview":"02","textChars":2,"textLines":1,"bbox":[48,38.4,53.76,53.76]}
+{"kind":"textbox","id":"sh/ra9kryp8","slide":21,"name":"TextBox 3","text":"业务流程 · 节点6","textPreview":"业务流程 · 节点6","textChars":10,"textLines":1,"bbox":[119.04,33.6,432,24.96]}
+{"kind":"textbox","id":"sh/qp03yt8n","slide":21,"name":"TextBox 4","text":"编辑精调","textPreview":"编辑精调","textChars":4,"textLines":1,"bbox":[119.04,57.6,662.4,48]}
+{"kind":"textbox","id":"sh/dcb2t87y","slide":21,"name":"TextBox 5","text":"02 · BUSINESS","textPreview":"02 · BUSINESS","textChars":13,"textLines":1,"bbox":[824.67,45.01,87.33,13.67]}
+{"kind":"shape","id":"sh/sb2lk36t","slide":21,"name":"Rectangle 6","bbox":[119.04,109.44,792.96,4.8]}
+{"kind":"shape","id":"sh/b6d432pc","slide":21,"name":"Rectangle 7","bbox":[119.04,109.44,105.6,4.8]}
+{"kind":"textbox","id":"sh/5kjydsri","slide":21,"name":"TextBox 10","text":"06","textPreview":"06","textChars":2,"textLines":1,"bbox":[48,139.2,124.8,81.6]}
+{"kind":"textbox","id":"sh/ixsf2d87","slide":21,"name":"TextBox 11","text":"STEP 6 / 7","textPreview":"STEP 6 / 7","textChars":10,"textLines":1,"bbox":[49.92,222.72,249.6,26.88]}
+{"kind":"textbox","id":"sh/jy1gbi9s","slide":21,"name":"TextBox 12","text":"编辑精调","textPreview":"编辑精调","textChars":4,"textLines":1,"bbox":[48,255.36,278.4,52.8]}
+{"kind":"shape","id":"sh/wvax03q1","slide":21,"name":"Rectangle 13","bbox":[49.92,316.8,52.8,4.8]}
+{"kind":"textbox","id":"sh/hwjy98rm","slide":21,"name":"TextBox 14","text":"自然语言修改 + 可视化精调","textPreview":"自然语言修改 + 可视化精调","textChars":14,"textLines":1,"bbox":[48,336,273.6,134.4]}
+{"kind":"shape","id":"sh/utsfyt8v","slide":21,"name":"Rectangle 15","bbox":[340.8,139.2,571.2,355.2]}
+{"kind":"shape","id":"sh/onid0f2t","slide":21,"name":"Rectangle 20","bbox":[48,508.8,864,0.48]}
+{"kind":"textbox","id":"sh/2l0vypkn","slide":21,"name":"TextBox 22","text":"智核 · 多模态AI互动式教学智能体","textPreview":"智核 · 多模态AI互动式教学智能体","textChars":18,"textLines":1,"bbox":[78.72,513.6,345.6,19.2]}
+{"kind":"shape","id":"sh/1kru5kj2","slide":21,"name":"Rectangle 23","bbox":[861.12,516.48,7.68,7.68]}
+{"kind":"textbox","id":"sh/0jidwf2x","slide":21,"name":"TextBox 24","text":"21","textPreview":"21","textChars":2,"textLines":1,"bbox":[871.68,513.6,40.32,19.2]}
+{"kind":"textbox","id":"sh/porutkje","slide":21,"name":"Rectangle 19","text":"产品界面 · 教师端","textPreview":"产品界面 · 教师端","textChars":10,"textLines":1,"bbox":[535.2,441.6,182.4,34.56]}
+{"kind":"image","id":"im/oj65onix","slide":21,"name":"Picture 21","bbox":[48,510.72,23.04,23.04]}
+{"kind":"image","id":"im/9kf6hsji","slide":21,"name":"Picture 25","bbox":[348.48,176.25,555.84,281.1]}
+{"kind":"notes","id":"nt/m1wvqtk3","slide":21,"text":""}
+{"kind":"slide","id":"sl/5onypobq","slide":22,"title":"02","textShapes":21}
+{"kind":"shape","id":"sh/6987itcr","slide":22,"name":"Rectangle 1","bbox":[48,38.4,53.76,53.76]}
+{"kind":"textbox","id":"sh/7a18rydc","slide":22,"name":"TextBox 2","text":"02","textPreview":"02","textChars":2,"textLines":1,"bbox":[48,38.4,53.76,53.76]}
+{"kind":"textbox","id":"sh/k7qpgjul","slide":22,"name":"TextBox 3","text":"业务流程","textPreview":"业务流程","textChars":4,"textLines":1,"bbox":[119.04,33.6,432,24.96]}
+{"kind":"textbox","id":"sh/58zqpov6","slide":22,"name":"TextBox 4","text":"对话备课七步全链路","textPreview":"对话备课七步全链路","textChars":9,"textLines":1,"bbox":[119.04,57.6,662.4,48]}
+{"kind":"textbox","id":"sh/il87etcv","slide":22,"name":"TextBox 5","text":"02 · BUSINESS","textPreview":"02 · BUSINESS","textChars":13,"textLines":1,"bbox":[824.67,45.01,87.33,13.67]}
+{"kind":"shape","id":"sh/jmh8nyd0","slide":22,"name":"Rectangle 6","bbox":[119.04,109.44,792.96,4.8]}
+{"kind":"shape","id":"sh/43u9snu5","slide":22,"name":"Rectangle 7","bbox":[119.04,109.44,105.6,4.8]}
+{"kind":"textbox","id":"sh/436507qx","slide":22,"name":"TextBox 10","text":"教师在与智能体的多轮对话中走完备课全流程，七个节点环环相扣","textPreview":"教师在与智能体的多轮对话中走完备课全流程，七个节点环环相扣","textChars":29,"textLines":1,"bbox":[119.04,122.88,792.96,28.8]}
+{"kind":"shape","id":"sh/3ixor29c","slide":22,"name":"Rectangle 11","bbox":[72,285.6,820.8,1.15]}
+{"kind":"shape","id":"sh/2honyx8r","slide":22,"name":"Connector 12","bbox":[892.8,286.08,30.72,0]}
+{"kind":"shape","id":"sh/hgf6pcr6","slide":22,"name":"Oval 13","bbox":[75.84,261.12,49.92,49.92]}
+{"kind":"textbox","id":"sh/gf65w7ql","slide":22,"name":"TextBox 14","text":"01","textPreview":"01","textChars":2,"textLines":1,"bbox":[72,261.12,57.6,49.92]}
+{"kind":"textbox","id":"sh/fexon290","slide":22,"name":"TextBox 15","text":"需求输入","textPreview":"需求输入","textChars":4,"textLines":1,"bbox":[19.2,197.76,163.2,30.72]}
+{"kind":"shape","id":"sh/udonux8v","slide":22,"name":"Isosceles Triangle 16","bbox":[96,236.16,9.6,9.6]}
+{"kind":"shape","id":"sh/1cj61w7q","slide":22,"name":"Oval 17","bbox":[202.24,261.12,49.92,49.92]}
+{"kind":"textbox","id":"sh/0bap8rq5","slide":22,"name":"TextBox 18","text":"02","textPreview":"02","textChars":2,"textLines":1,"bbox":[198.4,261.12,57.6,49.92]}
+{"kind":"textbox","id":"sh/krihkz2d","slide":22,"name":"TextBox 19","text":"意图理解与澄清","textPreview":"意图理解与澄清","textChars":7,"textLines":1,"bbox":[145.6,347.52,163.2,30.72]}
+{"kind":"shape","id":"sh/lsrit4jy","slide":22,"name":"Isosceles Triangle 20","bbox":[222.4,328.32,9.6,9.6]}
+{"kind":"shape","id":"sh/yp0zipk7","slide":22,"name":"Oval 21","bbox":[328.64,261.12,49.92,49.92]}
+{"kind":"textbox","id":"sh/jq90ru1s","slide":22,"name":"TextBox 22","text":"03","textPreview":"03","textChars":2,"textLines":1,"bbox":[324.8,261.12,57.6,49.92]}
+{"kind":"textbox","id":"sh/wnihgf2h","slide":22,"name":"TextBox 23","text":"大纲生成","textPreview":"大纲生成","textChars":4,"textLines":1,"bbox":[272,197.76,163.2,30.72]}
+{"kind":"shape","id":"sh/xoripkj2","slide":22,"name":"Isosceles Triangle 24","bbox":[348.8,236.16,9.6,9.6]}
+{"kind":"shape","id":"sh/al0zepkb","slide":22,"name":"Oval 25","bbox":[455.04,261.12,49.92,49.92]}
+{"kind":"textbox","id":"sh/bm9gnu1w","slide":22,"name":"TextBox 26","text":"04","textPreview":"04","textChars":2,"textLines":1,"bbox":[451.2,261.12,57.6,49.92]}
+{"kind":"textbox","id":"sh/ozyhcf25","slide":22,"name":"TextBox 27","text":"教师确认","textPreview":"教师确认","textChars":4,"textLines":1,"bbox":[398.4,347.52,163.2,30.72]}
+{"kind":"shape","id":"sh/907ylkjq","slide":22,"name":"Isosceles Triangle 28","bbox":[475.2,328.32,9.6,9.6]}
+{"kind":"shape","id":"sh/rup0va5s","slide":22,"name":"Oval 29","bbox":[581.44,261.12,49.92,49.92]}
+{"kind":"textbox","id":"sh/qtwz2547","slide":22,"name":"TextBox 30","text":"05","textPreview":"05","textChars":2,"textLines":1,"bbox":[577.6,261.12,57.6,49.92]}
+{"kind":"textbox","id":"sh/dw7ixkni","slide":22,"name":"TextBox 31","text":"内容生成","textPreview":"内容生成","textChars":4,"textLines":1,"bbox":[524.8,197.76,163.2,30.72]}
+{"kind":"shape","id":"sh/cvy14fmx","slide":22,"name":"Isosceles Triangle 32","bbox":[601.6,236.16,9.6,9.6]}
+{"kind":"shape","id":"sh/zyp0za5o","slide":22,"name":"Oval 33","bbox":[707.84,261.12,49.92,49.92]}
+{"kind":"textbox","id":"sh/exgj6p43","slide":22,"name":"TextBox 34","text":"06","textPreview":"06","textChars":2,"textLines":1,"bbox":[704,261.12,57.6,49.92]}
+{"kind":"textbox","id":"sh/1k7i1knu","slide":22,"name":"TextBox 35","text":"编辑精调","textPreview":"编辑精调","textChars":4,"textLines":1,"bbox":[651.2,347.52,163.2,30.72]}
+{"kind":"shape","id":"sh/0jy18fm9","slide":22,"name":"Isosceles Triangle 36","bbox":[728,328.32,9.6,9.6]}
+{"kind":"shape","id":"sh/nm903u5k","slide":22,"name":"Oval 37","bbox":[823.68,250.56,71.04,71.04]}
+{"kind":"shape","id":"sh/ml0jap4f","slide":22,"name":"Oval 38","bbox":[834.24,261.12,49.92,49.92]}
+{"kind":"textbox","id":"sh/65836tcb","slide":22,"name":"TextBox 39","text":"07","textPreview":"07","textChars":2,"textLines":1,"bbox":[830.4,261.12,57.6,49.92]}
+{"kind":"textbox","id":"sh/7qhkzytw","slide":22,"name":"TextBox 40","text":"成果导出","textPreview":"成果导出","textChars":4,"textLines":1,"bbox":[777.6,197.76,163.2,30.72]}
+{"kind":"shape","id":"sh/8rql83uh","slide":22,"name":"Isosceles Triangle 41","bbox":[854.4,236.16,9.6,9.6]}
+{"kind":"shape","id":"sh/ut83adcn","slide":22,"name":"Rectangle 43","bbox":[48,508.8,864,0.48]}
+{"kind":"textbox","id":"sh/gvqlcnud","slide":22,"name":"TextBox 45","text":"智核 · 多模态AI互动式教学智能体","textPreview":"智核 · 多模态AI互动式教学智能体","textChars":18,"textLines":1,"bbox":[78.72,513.6,345.6,19.2]}
+{"kind":"shape","id":"sh/hwz258by","slide":22,"name":"Rectangle 46","bbox":[861.12,516.48,7.68,7.68]}
+{"kind":"textbox","id":"sh/ax4jy9c3","slide":22,"name":"TextBox 47","text":"22","textPreview":"22","textChars":2,"textLines":1,"bbox":[871.68,513.6,40.32,19.2]}
+{"kind":"image","id":"im/s72p0vy9","slide":22,"name":"Picture 44","bbox":[48,510.72,23.04,23.04]}
+{"kind":"notes","id":"nt/5onypobq","slide":22,"text":""}
+{"kind":"slide","id":"sl/c7uhcr6t","slide":23,"title":"02","textShapes":11}
+{"kind":"shape","id":"sh/90vqdczq","slide":23,"name":"Rectangle 1","bbox":[48,38.4,53.76,53.76]}
+{"kind":"textbox","id":"sh/8zm9k7y5","slide":23,"name":"TextBox 2","text":"02","textPreview":"02","textChars":2,"textLines":1,"bbox":[48,38.4,53.76,53.76]}
+{"kind":"textbox","id":"sh/v2d8fmhw","slide":23,"name":"TextBox 3","text":"业务流程 · 节点7","textPreview":"业务流程 · 节点7","textChars":10,"textLines":1,"bbox":[119.04,33.6,432,24.96]}
+{"kind":"textbox","id":"sh/a14rmhgb","slide":23,"name":"TextBox 4","text":"成果导出","textPreview":"成果导出","textChars":4,"textLines":1,"bbox":[119.04,57.6,662.4,48]}
+{"kind":"textbox","id":"sh/xovqhcz2","slide":23,"name":"TextBox 5","text":"02 · BUSINESS","textPreview":"02 · BUSINESS","textChars":13,"textLines":1,"bbox":[824.67,45.01,87.33,13.67]}
+{"kind":"shape","id":"sh/w3m9o7yh","slide":23,"name":"Rectangle 6","bbox":[119.04,109.44,792.96,4.8]}
+{"kind":"shape","id":"sh/jqd8jmhs","slide":23,"name":"Rectangle 7","bbox":[119.04,109.44,105.6,4.8]}
+{"kind":"textbox","id":"sh/tc7at436","slide":23,"name":"TextBox 10","text":"07","textPreview":"07","textChars":2,"textLines":1,"bbox":[48,139.2,124.8,81.6]}
+{"kind":"textbox","id":"sh/69gry94v","slide":23,"name":"TextBox 11","text":"STEP 7 / 7","textPreview":"STEP 7 / 7","textChars":10,"textLines":1,"bbox":[49.92,222.72,249.6,26.88]}
+{"kind":"textbox","id":"sh/rapsrelg","slide":23,"name":"TextBox 12","text":"成果导出","textPreview":"成果导出","textChars":4,"textLines":1,"bbox":[48,255.36,278.4,52.8]}
+{"kind":"shape","id":"sh/0fi94jmx","slide":23,"name":"Rectangle 13","bbox":[49.92,316.8,52.8,4.8]}
+{"kind":"textbox","id":"sh/1graxo3i","slide":23,"name":"TextBox 14","text":"PPTX 课件 / Word 教案 / 互动资源包，附质量报告","textPreview":"PPTX 课件 / Word 教案 / 互动资源包，附质量报告","textChars":31,"textLines":1,"bbox":[48,336,273.6,134.4]}
+{"kind":"shape","id":"sh/edgr294r","slide":23,"name":"Rectangle 15","bbox":[340.8,139.2,571.2,355.2]}
+{"kind":"shape","id":"sh/wze9cjud","slide":23,"name":"Rectangle 20","bbox":[48,508.8,864,0.48]}
+{"kind":"textbox","id":"sh/axwratc7","slide":23,"name":"TextBox 22","text":"智核 · 多模态AI互动式教学智能体","textPreview":"智核 · 多模态AI互动式教学智能体","textChars":18,"textLines":1,"bbox":[78.72,513.6,345.6,19.2]}
+{"kind":"shape","id":"sh/l47ap8vu","slide":23,"name":"Rectangle 23","bbox":[861.12,516.48,7.68,7.68]}
+{"kind":"textbox","id":"sh/k3y9g3u9","slide":23,"name":"TextBox 24","text":"23","textPreview":"23","textChars":2,"textLines":1,"bbox":[871.68,513.6,40.32,19.2]}
+{"kind":"textbox","id":"sh/x0nalovi","slide":23,"name":"Rectangle 19","text":"产品界面 · 教师端","textPreview":"产品界面 · 教师端","textChars":10,"textLines":1,"bbox":[535.2,441.6,182.4,34.56]}
+{"kind":"image","id":"im/w3ehk3u5","slide":23,"name":"Picture 21","bbox":[48,510.72,23.04,23.04]}
+{"kind":"image","id":"im/h4nyt8vq","slide":23,"name":"Picture 25","bbox":[348.48,176.25,555.84,281.1]}
+{"kind":"notes","id":"nt/c7uhcr6t","slide":23,"text":""}
+{"kind":"slide","id":"sl/7qto7e10","slide":24,"title":"02","textShapes":21}
+{"kind":"shape","id":"sh/1sfqxsv6","slide":24,"name":"Rectangle 1","bbox":[48,38.4,53.76,53.76]}
+{"kind":"textbox","id":"sh/0r6p4nul","slide":24,"name":"TextBox 2","text":"02","textPreview":"02","textChars":2,"textLines":1,"bbox":[48,38.4,53.76,53.76]}
+{"kind":"textbox","id":"sh/nux8zidc","slide":24,"name":"TextBox 3","text":"项目亮点","textPreview":"项目亮点","textChars":4,"textLines":1,"bbox":[119.04,37.61,56,16.93]}
+{"kind":"textbox","id":"sh/2to76dcr","slide":24,"name":"TextBox 4","text":"三大层面亮点","textPreview":"三大层面亮点","textChars":6,"textLines":1,"bbox":[119.04,65.47,160,32.27]}
+{"kind":"textbox","id":"sh/9wzq1svi","slide":24,"name":"TextBox 5","text":"02 · BUSINESS","textPreview":"02 · BUSINESS","textChars":13,"textLines":1,"bbox":[824.67,45.01,87.33,13.67]}
+{"kind":"shape","id":"sh/ov6p8nux","slide":24,"name":"Rectangle 6","bbox":[119.04,109.44,792.96,4.8]}
+{"kind":"shape","id":"sh/3ydonyd8","slide":24,"name":"Rectangle 7","bbox":[119.04,109.44,105.6,4.8]}
+{"kind":"shape","id":"sh/s72p8z6p","slide":24,"name":"Rectangle 20","bbox":[48,508.8,864,0.48]}
+{"kind":"textbox","id":"sh/6lk76poz","slide":24,"name":"TextBox 22","text":"智核 · 多模态AI互动式教学智能体","textPreview":"智核 · 多模态AI互动式教学智能体","textChars":18,"textLines":1,"bbox":[78.72,513.6,345.6,19.2]}
+{"kind":"shape","id":"sh/1cv6l47m","slide":24,"name":"Rectangle 23","bbox":[861.12,516.48,7.68,7.68]}
+{"kind":"textbox","id":"sh/gbmpcz61","slide":24,"name":"TextBox 24","text":"24","textPreview":"24","textChars":2,"textLines":1,"bbox":[871.68,513.6,40.32,19.2]}
+{"kind":"textbox","id":"sh/fadojepg","slide":24,"name":"Rectangle 25","text":"使用层面","textPreview":"使用层面","textChars":4,"textLines":1,"bbox":[59.52,142.08,196.8,48]}
+{"kind":"textbox","id":"sh/e947a9ov","slide":24,"name":"TextBox 26","text":"备课耗时极简化","textPreview":"备课耗时极简化","textChars":7,"textLines":1,"bbox":[63.36,218.88,292.8,36.48]}
+{"kind":"textbox","id":"sh/of6pgj6x","slide":24,"name":"TextBox 28","text":"制课工具一站化","textPreview":"制课工具一站化","textChars":7,"textLines":1,"bbox":[63.36,252.52,292.8,36.48]}
+{"kind":"textbox","id":"sh/mlg3al4f","slide":24,"name":"TextBox 29","text":"备课场景多端化","textPreview":"备课场景多端化","textChars":7,"textLines":1,"bbox":[63.36,295.38,180,21.8]}
+{"kind":"textbox","id":"sh/nmp4jq50","slide":24,"name":"TextBox 30","text":"课件编辑双模化","textPreview":"课件编辑双模化","textChars":7,"textLines":1,"bbox":[360.96,226.5,126,21.8]}
+{"kind":"textbox","id":"sh/8nylcvml","slide":24,"name":"Rectangle 31","text":"功能层面","textPreview":"功能层面","textChars":4,"textLines":1,"bbox":[357.12,142.08,196.8,48]}
+{"kind":"textbox","id":"sh/wrilgvmh","slide":24,"name":"TextBox 35","text":"版本管理回滚化","textPreview":"版本管理回滚化","textChars":7,"textLines":1,"bbox":[360.96,253.57,292.8,36.48]}
+{"kind":"textbox","id":"sh/xsrmp0n2","slide":24,"name":"TextBox 36","text":"素材沉淀资产化","textPreview":"素材沉淀资产化","textChars":7,"textLines":1,"bbox":[360.96,289.09,292.8,36.48]}
+{"kind":"textbox","id":"sh/je94ra58","slide":24,"name":"TextBox 38","text":"案例复用社区化","textPreview":"案例复用社区化","textChars":7,"textLines":1,"bbox":[360.96,327.53,292.8,36.48]}
+{"kind":"textbox","id":"sh/q9w325wr","slide":24,"name":"Rectangle 40","text":"技术层面","textPreview":"技术层面","textChars":4,"textLines":1,"bbox":[654.72,142.08,196.8,48]}
+{"kind":"textbox","id":"sh/dc7md0fi","slide":24,"name":"TextBox 41","text":"对话编排状态化","textPreview":"对话编排状态化","textChars":7,"textLines":1,"bbox":[658.56,218.88,292.8,36.48]}
+{"kind":"textbox","id":"sh/sbyl4vex","slide":24,"name":"TextBox 42","text":"内容生成溯源化","textPreview":"内容生成溯源化","textChars":7,"textLines":1,"bbox":[658.56,254.4,292.8,36.48]}
+{"kind":"textbox","id":"sh/fyp4fax8","slide":24,"name":"TextBox 43","text":"质量管控管线化","textPreview":"质量管控管线化","textChars":7,"textLines":1,"bbox":[658.56,289.92,292.8,36.48]}
+{"kind":"textbox","id":"sh/edg365w3","slide":24,"name":"TextBox 44","text":"风格记忆长效化","textPreview":"风格记忆长效化","textChars":7,"textLines":1,"bbox":[658.56,325.44,292.8,36.48]}
+{"kind":"textbox","id":"sh/107mhkfe","slide":24,"name":"TextBox 45","text":"异常场景可控化","textPreview":"异常场景可控化","textChars":7,"textLines":1,"bbox":[658.56,360.96,292.8,36.48]}
+{"kind":"image","id":"im/fepobml4","slide":24,"name":"Picture 21","bbox":[48,510.72,23.04,23.04]}
+{"kind":"notes","id":"nt/7qto7e10","slide":24,"text":""}
+{"kind":"slide","id":"sl/69wfm9o7","slide":25,"title":"02","textShapes":6}
+{"kind":"shape","id":"sh/xg7axgf2","slide":25,"name":"Shape 0","bbox":[48,38.4,53.76,53.76]}
+{"kind":"textbox","id":"sh/cfyt4beh","slide":25,"name":"Text 1","text":"02","textPreview":"02","textChars":2,"textLines":1,"bbox":[48,38.4,53.76,53.76]}
+{"kind":"textbox","id":"sh/napsr6x0","slide":25,"name":"Text 2","text":"使用亮点①","textPreview":"使用亮点①","textChars":5,"textLines":1,"bbox":[119.04,33.6,432,24.96]}
+{"kind":"textbox","id":"sh/29wby1wf","slide":25,"name":"Text 3","text":"备课耗时极简化","textPreview":"备课耗时极简化","textChars":7,"textLines":1,"bbox":[119.04,57.6,662.4,48]}
+{"kind":"textbox","id":"sh/pc7atgf6","slide":25,"name":"Text 4","text":"02 · BUSINESS","textPreview":"02 · BUSINESS","textChars":13,"textLines":1,"bbox":[739.2,40.32,172.8,23.04]}
+{"kind":"shape","id":"sh/obyt0bel","slide":25,"name":"Shape 5","bbox":[119.04,109.44,792.96,4.8]}
+{"kind":"shape","id":"sh/fm5snmx4","slide":25,"name":"Shape 6","bbox":[119.04,109.44,105.6,4.8]}
+{"kind":"shape","id":"sh/s761kret","slide":25,"name":"Shape 23","bbox":[48,508.8,864,0]}
+{"kind":"textbox","id":"sh/6lojihwn","slide":25,"name":"Text 24","text":"智核 · 多模态AI互动式教学智能体","textPreview":"智核 · 多模态AI互动式教学智能体","textChars":18,"textLines":1,"bbox":[78.72,513.6,345.6,19.2]}
+{"kind":"shape","id":"sh/5kfi9cf2","slide":25,"name":"Shape 25","bbox":[861.12,516.96,7.68,7.68]}
+{"kind":"textbox","id":"sh/4j61g7eh","slide":25,"name":"Text 26","text":"25","textPreview":"25","textChars":2,"textLines":1,"bbox":[871.68,513.6,40.32,19.2]}
+{"kind":"shape","id":"sh/upkfqdcf","slide":25,"name":"Shape 27","bbox":[913.92,441.6,46.08,42.24]}
+{"kind":"image","id":"im/0vqpwfqx","slide":25,"name":"Image 0","bbox":[48,510.72,23.04,23.04]}
+{"kind":"image","id":"im/zuhonupc","slide":25,"name":"Picture 30","bbox":[24,138.73,912,288]}
+{"kind":"notes","id":"nt/69wfm9o7","slide":25,"text":""}
+{"kind":"slide","id":"sl/l0bepsfm","slide":26,"title":"02","textShapes":20}
+{"kind":"shape","id":"sh/uhk36lk7","slide":26,"name":"Rectangle 1","bbox":[48,38.4,53.76,53.76]}
+{"kind":"textbox","id":"sh/vitkzqlc","slide":26,"name":"TextBox 2","text":"02","textPreview":"02","textChars":2,"textLines":1,"bbox":[48,38.4,53.76,53.76]}
+{"kind":"textbox","id":"sh/8fil4b21","slide":26,"name":"TextBox 3","text":"使用亮点②","textPreview":"使用亮点②","textChars":5,"textLines":1,"bbox":[119.04,33.6,432,24.96]}
+{"kind":"textbox","id":"sh/tgr2xg3m","slide":26,"name":"TextBox 4","text":"制课工具一站化","textPreview":"制课工具一站化","textChars":7,"textLines":1,"bbox":[119.04,57.6,662.4,48]}
+{"kind":"textbox","id":"sh/md0321kv","slide":26,"name":"TextBox 5","text":"02 · BUSINESS","textPreview":"02 · BUSINESS","textChars":13,"textLines":1,"bbox":[739.2,40.32,172.8,23.04]}
+{"kind":"shape","id":"sh/7e9kv6lg","slide":26,"name":"Rectangle 6","bbox":[119.04,109.44,792.96,4.8]}
+{"kind":"shape","id":"sh/kbil0r2p","slide":26,"name":"Rectangle 7","bbox":[119.04,109.44,105.6,4.8]}
+{"kind":"shape","id":"sh/lcr2tw3a","slide":26,"name":"Rectangle 8","bbox":[48,149.76,14.4,14.4]}
+{"kind":"textbox","id":"sh/lsja143i","slide":26,"name":"TextBox 9","text":"六大模块","textPreview":"六大模块","textChars":4,"textLines":1,"bbox":[74.88,146.7,77.33,23.4]}
+{"kind":"textbox","id":"sh/krat8z2x","slide":26,"name":"TextBox 10","text":"AI教学引擎、创作工作台、个人资源库、智能知识库、成果导出中心、社区模块","textPreview":"AI教学引擎、创作工作台、个人资源库、智能知识库、成果导出中心、社区模块","textChars":36,"textLines":1,"bbox":[74.88,178.56,302.4,63.36]}
+{"kind":"shape","id":"sh/z61szulc","slide":26,"name":"Connector 11","bbox":[48,243.84,326.4,0]}
+{"kind":"shape","id":"sh/y5sr69kr","slide":26,"name":"Rectangle 12","bbox":[48,259.2,14.4,14.4]}
+{"kind":"textbox","id":"sh/x4jax436","slide":26,"name":"TextBox 13","text":"全流程覆盖","textPreview":"全流程覆盖","textChars":5,"textLines":1,"bbox":[74.88,256.14,96.67,23.4]}
+{"kind":"textbox","id":"sh/c3a94z21","slide":26,"name":"TextBox 14","text":"教学设计、课件、教案、互动内容、导出一站完成，无需切换软件","textPreview":"教学设计、课件、教案、互动内容、导出一站完成，无需切换软件","textChars":29,"textLines":1,"bbox":[74.88,288,302.4,63.36]}
+{"kind":"shape","id":"sh/b21svulg","slide":26,"name":"Connector 15","bbox":[48,353.28,326.4,0]}
+{"kind":"shape","id":"sh/a18r2pkv","slide":26,"name":"Rectangle 16","bbox":[48,368.64,14.4,14.4]}
+{"kind":"textbox","id":"sh/p0zatk3a","slide":26,"name":"TextBox 17","text":"数据互通","textPreview":"数据互通","textChars":4,"textLines":1,"bbox":[74.88,365.58,77.33,23.4]}
+{"kind":"textbox","id":"sh/ozq90f2p","slide":26,"name":"TextBox 18","text":"资源、知识库与生成结果跨模块复用，内容不孤岛","textPreview":"资源、知识库与生成结果跨模块复用，内容不孤岛","textChars":22,"textLines":1,"bbox":[74.88,397.44,302.4,63.36]}
+{"kind":"shape","id":"sh/sru1szel","slide":26,"name":"Rectangle 23","bbox":[48,508.8,864,0.48]}
+{"kind":"textbox","id":"sh/qpcjq9wv","slide":26,"name":"TextBox 25","text":"智核 · 多模态AI互动式教学智能体","textPreview":"智核 · 多模态AI互动式教学智能体","textChars":18,"textLines":1,"bbox":[78.72,513.6,345.6,19.2]}
+{"kind":"shape","id":"sh/rql0zex0","slide":26,"name":"Rectangle 26","bbox":[861.12,516.48,7.68,7.68]}
+{"kind":"textbox","id":"sh/cny143e5","slide":26,"name":"TextBox 27","text":"26","textPreview":"26","textChars":2,"textLines":1,"bbox":[871.68,513.6,40.32,19.2]}
+{"kind":"shape","id":"sh/xo72d8fq","slide":26,"name":"Rectangle 28","bbox":[913.92,441.6,46.08,42.24]}
+{"kind":"shape","id":"sh/mh0nuxg7","slide":26,"name":"Rectangle 30","bbox":[443.52,155.52,449.28,38.4]}
+{"kind":"textbox","id":"sh/9kbm5czy","slide":26,"name":"TextBox 31","text":"智核一站式工作台","textPreview":"智核一站式工作台","textChars":8,"textLines":1,"bbox":[604.16,165.05,128,19.33]}
+{"kind":"shape","id":"sh/8ji5w7yd","slide":26,"name":"Connector 32","bbox":[516.48,271.19,151.68,53.76]}
+{"kind":"shape","id":"sh/vmt47mho","slide":26,"name":"Connector 33","bbox":[668.16,271.19,159.36,53.76]}
+{"kind":"shape","id":"sh/ulknyhg3","slide":26,"name":"Connector 34","bbox":[516.48,324.95,151.68,0]}
+{"kind":"shape","id":"sh/h8bm9czu","slide":26,"name":"Connector 35","bbox":[668.16,324.95,159.36,0]}
+{"kind":"shape","id":"sh/wn2507y9","slide":26,"name":"Connector 36","bbox":[516.48,324.95,151.68,53.76]}
+{"kind":"shape","id":"sh/bqp4vihk","slide":26,"name":"Connector 37","bbox":[668.16,324.95,159.36,53.76]}
+{"kind":"textbox","id":"sh/apg3mdgz","slide":26,"name":"Oval 38","text":"智核\n工作台","textPreview":"智核 | 工作台","textChars":6,"textLines":2,"bbox":[617.28,274.07,101.76,101.76]}
+{"kind":"textbox","id":"sh/2tknidov","slide":26,"name":"Rectangle 39","text":"AI教学引擎","textPreview":"AI教学引擎","textChars":6,"textLines":1,"bbox":[439.68,248.15,153.6,46.08]}
+{"kind":"textbox","id":"sh/3ut4bipg","slide":26,"name":"Rectangle 40","text":"创作工作台","textPreview":"创作工作台","textChars":5,"textLines":1,"bbox":[750.72,248.15,153.6,46.08]}
+{"kind":"textbox","id":"sh/ov25kn61","slide":26,"name":"Rectangle 41","text":"个人资源库","textPreview":"个人资源库","textChars":5,"textLines":1,"bbox":[439.68,301.91,153.6,46.08]}
+{"kind":"textbox","id":"sh/pwbmds7m","slide":26,"name":"Rectangle 42","text":"智能知识库","textPreview":"智能知识库","textChars":5,"textLines":1,"bbox":[750.72,301.91,153.6,46.08]}
+{"kind":"textbox","id":"sh/qxknmxor","slide":26,"name":"Rectangle 43","text":"成果导出中心","textPreview":"成果导出中心","textChars":6,"textLines":1,"bbox":[439.68,355.67,153.6,46.08]}
+{"kind":"textbox","id":"sh/byd4f2pc","slide":26,"name":"Rectangle 44","text":"社区模块","textPreview":"社区模块","textChars":4,"textLines":1,"bbox":[750.72,355.67,153.6,46.08]}
+{"kind":"image","id":"im/vi1obq54","slide":26,"name":"Picture 24","bbox":[48,510.72,23.04,23.04]}
+{"kind":"notes","id":"nt/l0bepsfm","slide":26,"text":""}
+{"kind":"slide","id":"sl/4vyxknqp","slide":27,"title":"02","textShapes":8}
+{"kind":"shape","id":"sh/kn694nmx","slide":27,"name":"Rectangle 1","bbox":[48,38.4,53.76,53.76]}
+{"kind":"textbox","id":"sh/lofadsni","slide":27,"name":"TextBox 2","text":"02","textPreview":"02","textChars":2,"textLines":1,"bbox":[48,38.4,53.76,53.76]}
+{"kind":"textbox","id":"sh/mpor6x43","slide":27,"name":"TextBox 3","text":"使用亮点③","textPreview":"使用亮点③","textChars":5,"textLines":1,"bbox":[119.04,33.6,432,24.96]}
+{"kind":"textbox","id":"sh/7qxsfi5o","slide":27,"name":"TextBox 4","text":"备课场景多端化","textPreview":"备课场景多端化","textChars":7,"textLines":1,"bbox":[119.04,57.6,662.4,48]}
+{"kind":"textbox","id":"sh/8r698nm9","slide":27,"name":"TextBox 5","text":"02 · BUSINESS","textPreview":"02 · BUSINESS","textChars":13,"textLines":1,"bbox":[739.2,40.32,172.8,23.04]}
+{"kind":"shape","id":"sh/9sfahsnu","slide":27,"name":"Rectangle 6","bbox":[119.04,109.44,792.96,4.8]}
+{"kind":"shape","id":"sh/utobax4f","slide":27,"name":"Rectangle 7","bbox":[119.04,109.44,105.6,4.8]}
+{"kind":"shape","id":"sh/elkj65sb","slide":27,"name":"Rectangle 23","bbox":[48,508.8,864,0.48]}
+{"kind":"textbox","id":"sh/0nm18fa1","slide":27,"name":"TextBox 25","text":"智核 · 多模态AI互动式教学智能体","textPreview":"智核 · 多模态AI互动式教学智能体","textChars":18,"textLines":1,"bbox":[78.72,513.6,345.6,19.2]}
+{"kind":"shape","id":"sh/1ov210bm","slide":27,"name":"Rectangle 26","bbox":[861.12,516.48,7.68,7.68]}
+{"kind":"textbox","id":"sh/up0ju1sr","slide":27,"name":"TextBox 27","text":"27","textPreview":"27","textChars":2,"textLines":1,"bbox":[871.68,513.6,40.32,19.2]}
+{"kind":"shape","id":"sh/vq90n6tc","slide":27,"name":"Rectangle 28","bbox":[913.92,441.6,46.08,42.24]}
+{"kind":"shape","id":"sh/x4fmt4vu","slide":27,"name":"Rectangle 29","bbox":[99.33,143.53,488.27,264.6]}
+{"kind":"textbox","id":"sh/bix4red4","slide":27,"name":"Rectangle 31","text":"网页端","textPreview":"网页端","textChars":3,"textLines":1,"bbox":[290.68,447.61,105.6,30.72]}
+{"kind":"shape","id":"sh/aho3y9cj","slide":27,"name":"Rectangle 32","bbox":[697.53,126.53,177,301.47]}
+{"kind":"textbox","id":"sh/k7q54jul","slide":27,"name":"Rectangle 34","text":"移动端","textPreview":"移动端","textChars":3,"textLines":1,"bbox":[734.07,447.61,96,30.72]}
+{"kind":"image","id":"im/sfapcz65","slide":27,"name":"Picture 24","bbox":[48,510.72,23.04,23.04]}
+{"kind":"notes","id":"nt/4vyxknqp","slide":27,"text":""}
+{"kind":"slide","id":"sl/3mdove10","slide":28,"title":"02","textShapes":13}
+{"kind":"shape","id":"sh/q9cz6xkv","slide":28,"name":"Shape 0","bbox":[48,38.4,53.76,53.76]}
+{"kind":"textbox","id":"sh/ralgf21g","slide":28,"name":"Text 1","text":"02","textPreview":"02","textChars":2,"textLines":1,"bbox":[48,38.4,53.76,53.76]}
+{"kind":"textbox","id":"sh/0zehcr2x","slide":28,"name":"Text 2","text":"功能亮点①","textPreview":"功能亮点①","textChars":5,"textLines":1,"bbox":[119.04,33.6,432,24.96]}
+{"kind":"textbox","id":"sh/10nylwji","slide":28,"name":"Text 3","text":"课件编辑双模化","textPreview":"课件编辑双模化","textChars":7,"textLines":1,"bbox":[119.04,57.6,662.4,48]}
+{"kind":"textbox","id":"sh/exwzahkr","slide":28,"name":"Text 4","text":"02 · BUSINESS","textPreview":"02 · BUSINESS","textChars":13,"textLines":1,"bbox":[739.2,40.32,172.8,23.04]}
+{"kind":"shape","id":"sh/zy5gjm1c","slide":28,"name":"Shape 5","bbox":[119.04,109.44,792.96,4.8]}
+{"kind":"shape","id":"sh/o3ehgr29","slide":28,"name":"Shape 6","bbox":[119.04,109.44,105.6,4.8]}
+{"kind":"shape","id":"sh/947ipwje","slide":28,"name":"Shape 7","bbox":[48,149.76,14.4,14.4]}
+{"kind":"textbox","id":"sh/lg3690fq","slide":28,"name":"Text 8","text":"自然语言修改　教师端","textPreview":"自然语言修改　教师端","textChars":10,"textLines":1,"bbox":[74.88,142.08,302.4,32.64]}
+{"kind":"textbox","id":"sh/kfu5gfe5","slide":28,"name":"Text 9","text":"「第三页动画换简单一点」，单页 / 整册修改皆可","textPreview":"「第三页动画换简单一点」，单页 / 整册修改皆可","textChars":24,"textLines":1,"bbox":[74.88,178.56,302.4,63.36]}
+{"kind":"shape","id":"sh/je1o7ax0","slide":28,"name":"Shape 10","bbox":[48,243.84,326.4,0]}
+{"kind":"shape","id":"sh/ytsne5wf","slide":28,"name":"Shape 11","bbox":[48,259.2,14.4,14.4]}
+{"kind":"textbox","id":"sh/tk36dkf2","slide":28,"name":"Text 12","text":"可视化精调　教师端","textPreview":"可视化精调　教师端","textChars":9,"textLines":1,"bbox":[74.88,251.52,302.4,32.64]}
+{"kind":"textbox","id":"sh/8ju5kfeh","slide":28,"name":"Text 13","text":"组件拖拽、属性调整，所见即所得","textPreview":"组件拖拽、属性调整，所见即所得","textChars":15,"textLines":1,"bbox":[74.88,288,302.4,63.36]}
+{"kind":"shape","id":"sh/7ilobaxw","slide":28,"name":"Shape 14","bbox":[48,353.28,326.4,0]}
+{"kind":"shape","id":"sh/6hcni5wb","slide":28,"name":"Shape 15","bbox":[48,368.64,14.4,14.4]}
+{"kind":"textbox","id":"sh/9ojm1gfi","slide":28,"name":"Text 16","text":"适用范围　教师端","textPreview":"适用范围　教师端","textChars":8,"textLines":1,"bbox":[74.88,360.96,302.4,32.64]}
+{"kind":"textbox","id":"sh/ona58ved","slide":28,"name":"Text 17","text":"单页微调与整册重构皆可，修改实时生效","textPreview":"单页微调与整册重构皆可，修改实时生效","textChars":18,"textLines":1,"bbox":[74.88,397.44,302.4,63.36]}
+{"kind":"shape","id":"sh/0jex4fq5","slide":28,"name":"Shape 18","bbox":[424.32,142.08,487.68,280.32]}
+{"kind":"shape","id":"sh/zi5wba9k","slide":28,"name":"Shape 21","bbox":[626.16,432,84,32.64]}
+{"kind":"textbox","id":"sh/o7yx8zqh","slide":28,"name":"Text 22","text":"教师端","textPreview":"教师端","textChars":3,"textLines":1,"bbox":[626.16,432,84,32.64]}
+{"kind":"shape","id":"sh/987eh4rm","slide":28,"name":"Shape 23","bbox":[48,508.8,864,0]}
+{"kind":"textbox","id":"sh/n6pwfu9w","slide":28,"name":"Text 24","text":"智核 · 多模态AI互动式教学智能体","textPreview":"智核 · 多模态AI互动式教学智能体","textChars":18,"textLines":1,"bbox":[78.72,513.6,345.6,19.2]}
+{"kind":"shape","id":"sh/wbyxczqd","slide":28,"name":"Shape 25","bbox":[861.12,516.96,7.68,7.68]}
+{"kind":"textbox","id":"sh/xc7yl4ry","slide":28,"name":"Text 26","text":"28","textPreview":"28","textChars":2,"textLines":1,"bbox":[871.68,513.6,40.32,19.2]}
+{"kind":"shape","id":"sh/76t0byt0","slide":28,"name":"Shape 27","bbox":[913.92,441.6,46.08,42.24]}
+{"kind":"image","id":"im/58j21gji","slide":28,"name":"Image 0","bbox":[48,510.72,23.04,23.04]}
+{"kind":"notes","id":"nt/3mdove10","slide":28,"text":""}
+{"kind":"slide","id":"sl/i5o3q10v","slide":29,"title":"02","textShapes":13}
+{"kind":"shape","id":"sh/tk36hwby","slide":29,"name":"Rectangle 1","bbox":[48,38.4,53.76,53.76]}
+{"kind":"textbox","id":"sh/8jup8rad","slide":29,"name":"TextBox 2","text":"02","textPreview":"02","textChars":2,"textLines":1,"bbox":[48,38.4,53.76,53.76]}
+{"kind":"textbox","id":"sh/vmlojmto","slide":29,"name":"TextBox 3","text":"功能亮点②","textPreview":"功能亮点②","textChars":5,"textLines":1,"bbox":[119.04,33.6,432,24.96]}
+{"kind":"textbox","id":"sh/ulc7a1s3","slide":29,"name":"TextBox 4","text":"版本管理回滚化","textPreview":"版本管理回滚化","textChars":7,"textLines":1,"bbox":[119.04,57.6,662.4,48]}
+{"kind":"textbox","id":"sh/h8n6lwbu","slide":29,"name":"TextBox 5","text":"02 · BUSINESS","textPreview":"02 · BUSINESS","textChars":13,"textLines":1,"bbox":[739.2,40.32,172.8,23.04]}
+{"kind":"shape","id":"sh/g7upcra9","slide":29,"name":"Rectangle 6","bbox":[119.04,109.44,792.96,4.8]}
+{"kind":"shape","id":"sh/bq1o72tk","slide":29,"name":"Rectangle 7","bbox":[119.04,109.44,105.6,4.8]}
+{"kind":"shape","id":"sh/apsnyxcz","slide":29,"name":"Rectangle 8","bbox":[48,149.76,14.4,14.4]}
+{"kind":"textbox","id":"sh/kf2tw7a1","slide":29,"name":"TextBox 9","text":"快照保存　教师端","textPreview":"快照保存　教师端","textChars":8,"textLines":1,"bbox":[74.88,142.08,302.4,32.64]}
+{"kind":"textbox","id":"sh/5gbupcrm","slide":29,"name":"TextBox 10","text":"每次修改自动留档，随时回到任一历史版本","textPreview":"每次修改自动留档，随时回到任一历史版本","textChars":19,"textLines":1,"bbox":[74.88,178.56,302.4,63.36]}
+{"kind":"shape","id":"sh/idkbuxsv","slide":29,"name":"Connector 11","bbox":[48,243.84,326.4,0]}
+{"kind":"shape","id":"sh/jetc329g","slide":29,"name":"Rectangle 12","bbox":[48,259.2,14.4,14.4]}
+{"kind":"textbox","id":"sh/s32t07ax","slide":29,"name":"TextBox 13","text":"差异对比　教师端","textPreview":"差异对比　教师端","textChars":8,"textLines":1,"bbox":[74.88,251.52,302.4,32.64]}
+{"kind":"textbox","id":"sh/t4butcri","slide":29,"name":"TextBox 14","text":"版本间逐页查看改动，修改内容一目了然","textPreview":"版本间逐页查看改动，修改内容一目了然","textChars":18,"textLines":1,"bbox":[74.88,288,302.4,63.36]}
+{"kind":"shape","id":"sh/6hkbyhs7","slide":29,"name":"Connector 15","bbox":[48,353.28,326.4,0]}
+{"kind":"shape","id":"sh/7itcr29s","slide":29,"name":"Rectangle 16","bbox":[48,368.64,14.4,14.4]}
+{"kind":"textbox","id":"sh/87itonat","slide":29,"name":"TextBox 17","text":"一键回滚　教师端","textPreview":"一键回滚　教师端","textChars":8,"textLines":1,"bbox":[74.88,360.96,302.4,32.64]}
+{"kind":"textbox","id":"sh/98ruxsre","slide":29,"name":"TextBox 18","text":"不满意即点即恢复，大胆尝试零顾虑","textPreview":"不满意即点即恢复，大胆尝试零顾虑","textChars":16,"textLines":1,"bbox":[74.88,397.44,302.4,63.36]}
+{"kind":"shape","id":"sh/p4jal432","slide":29,"name":"Rectangle 19","bbox":[424.32,142.08,487.68,280.32]}
+{"kind":"textbox","id":"sh/218rq9kr","slide":29,"name":"Rectangle 22","text":"教师端","textPreview":"教师端","textChars":3,"textLines":1,"bbox":[625.92,432,84.48,32.64]}
+{"kind":"shape","id":"sh/x8japo3e","slide":29,"name":"Rectangle 23","bbox":[48,508.8,864,0.48]}
+{"kind":"textbox","id":"sh/b61snel8","slide":29,"name":"TextBox 25","text":"智核 · 多模态AI互动式教学智能体","textPreview":"智核 · 多模态AI互动式教学智能体","textChars":18,"textLines":1,"bbox":[78.72,513.6,345.6,19.2]}
+{"kind":"shape","id":"sh/a5sru9kn","slide":29,"name":"Rectangle 26","bbox":[861.12,516.48,7.68,7.68]}
+{"kind":"textbox","id":"sh/lw3ato3a","slide":29,"name":"TextBox 27","text":"29","textPreview":"29","textChars":2,"textLines":1,"bbox":[871.68,513.6,40.32,19.2]}
+{"kind":"shape","id":"sh/kbu9032p","slide":29,"name":"Rectangle 28","bbox":[913.92,441.6,46.08,42.24]}
+{"kind":"image","id":"im/xwjux43m","slide":29,"name":"Picture 24","bbox":[48,510.72,23.04,23.04]}
+{"kind":"notes","id":"nt/i5o3q10v","slide":29,"text":""}
+{"kind":"slide","id":"sl/wnqh07ex","slide":30,"title":"02","textShapes":13}
+{"kind":"shape","id":"sh/po72d8nm","slide":30,"name":"Rectangle 1","bbox":[48,38.4,53.76,53.76]}
+{"kind":"textbox","id":"sh/o3yl4361","slide":30,"name":"TextBox 2","text":"02","textPreview":"02","textChars":2,"textLines":1,"bbox":[48,38.4,53.76,53.76]}
+{"kind":"textbox","id":"sh/bqpkfy5s","slide":30,"name":"TextBox 3","text":"功能亮点②","textPreview":"功能亮点②","textChars":5,"textLines":1,"bbox":[119.04,33.6,432,24.96]}
+{"kind":"textbox","id":"sh/apg36do7","slide":30,"name":"TextBox 4","text":"版本管理回滚化","textPreview":"版本管理回滚化","textChars":7,"textLines":1,"bbox":[119.04,57.6,662.4,48]}
+{"kind":"textbox","id":"sh/xsr2h8ni","slide":30,"name":"TextBox 5","text":"02 · BUSINESS","textPreview":"02 · BUSINESS","textChars":13,"textLines":1,"bbox":[739.2,40.32,172.8,23.04]}
+{"kind":"shape","id":"sh/cril836d","slide":30,"name":"Rectangle 6","bbox":[119.04,109.44,792.96,4.8]}
+{"kind":"shape","id":"sh/ru5k3ep8","slide":30,"name":"Rectangle 7","bbox":[119.04,109.44,105.6,4.8]}
+{"kind":"shape","id":"sh/6twju9o3","slide":30,"name":"Rectangle 8","bbox":[48,149.76,14.4,14.4]}
+{"kind":"textbox","id":"sh/onqx8zix","slide":30,"name":"TextBox 9","text":"快照保存　教师端","textPreview":"快照保存　教师端","textChars":8,"textLines":1,"bbox":[74.88,142.08,302.4,32.64]}
+{"kind":"textbox","id":"sh/p8ze14zi","slide":30,"name":"TextBox 10","text":"每次修改自动留档，随时回到任一历史版本","textPreview":"每次修改自动留档，随时回到任一历史版本","textChars":19,"textLines":1,"bbox":[74.88,178.56,302.4,63.36]}
+{"kind":"shape","id":"sh/2l8f6p0r","slide":30,"name":"Connector 11","bbox":[48,243.84,326.4,0]}
+{"kind":"shape","id":"sh/3mhwzu1c","slide":30,"name":"Rectangle 12","bbox":[48,259.2,14.4,14.4]}
+{"kind":"textbox","id":"sh/cbaxczit","slide":30,"name":"TextBox 13","text":"差异对比　教师端","textPreview":"差异对比　教师端","textChars":8,"textLines":1,"bbox":[74.88,251.52,302.4,32.64]}
+{"kind":"textbox","id":"sh/dcje54ze","slide":30,"name":"TextBox 14","text":"版本间逐页查看改动，修改内容一目了然","textPreview":"版本间逐页查看改动，修改内容一目了然","textChars":18,"textLines":1,"bbox":[74.88,288,302.4,63.36]}
+{"kind":"shape","id":"sh/q9sfap03","slide":30,"name":"Connector 15","bbox":[48,353.28,326.4,0]}
+{"kind":"shape","id":"sh/ba1w3uh8","slide":30,"name":"Rectangle 16","bbox":[48,368.64,14.4,14.4]}
+{"kind":"textbox","id":"sh/sf6d0fip","slide":30,"name":"TextBox 17","text":"一键回滚　教师端","textPreview":"一键回滚　教师端","textChars":8,"textLines":1,"bbox":[74.88,360.96,302.4,32.64]}
+{"kind":"textbox","id":"sh/tgfetkja","slide":30,"name":"TextBox 18","text":"不满意即点即恢复，大胆尝试零顾虑","textPreview":"不满意即点即恢复，大胆尝试零顾虑","textChars":16,"textLines":1,"bbox":[74.88,397.44,302.4,63.36]}
+{"kind":"shape","id":"sh/907mhc7m","slide":30,"name":"Rectangle 19","bbox":[424.32,142.08,487.68,280.32]}
+{"kind":"textbox","id":"sh/mxw36xob","slide":30,"name":"Rectangle 22","text":"教师端","textPreview":"教师端","textChars":3,"textLines":1,"bbox":[625.92,432,84.48,32.64]}
+{"kind":"shape","id":"sh/h47mlc7y","slide":30,"name":"Rectangle 23","bbox":[48,508.8,864,0.48]}
+{"kind":"textbox","id":"sh/v2p4jmps","slide":30,"name":"TextBox 25","text":"智核 · 多模态AI互动式教学智能体","textPreview":"智核 · 多模态AI互动式教学智能体","textChars":18,"textLines":1,"bbox":[78.72,513.6,345.6,19.2]}
+{"kind":"shape","id":"sh/u1g3aho7","slide":30,"name":"Rectangle 26","bbox":[861.12,516.48,7.68,7.68]}
+{"kind":"textbox","id":"sh/5srmpw7u","slide":30,"name":"TextBox 27","text":"30","textPreview":"30","textChars":2,"textLines":1,"bbox":[871.68,513.6,40.32,19.2]}
+{"kind":"shape","id":"sh/4rylgr69","slide":30,"name":"Rectangle 28","bbox":[913.92,441.6,46.08,42.24]}
+{"kind":"image","id":"im/p4v6ho72","slide":30,"name":"Picture 24","bbox":[48,510.72,23.04,23.04]}
+{"kind":"notes","id":"nt/wnqh07ex","slide":30,"text":""}
+{"kind":"slide","id":"sl/lcn6tkb6","slide":31,"title":"02","textShapes":13}
+{"kind":"shape","id":"sh/dgja98fe","slide":31,"name":"Shape 0","bbox":[48,38.4,53.76,53.76]}
+{"kind":"textbox","id":"sh/cfa903yt","slide":31,"name":"Text 1","text":"02","textPreview":"02","textChars":2,"textLines":1,"bbox":[48,38.4,53.76,53.76]}
+{"kind":"textbox","id":"sh/zilsbyx4","slide":31,"name":"Text 2","text":"功能亮点③","textPreview":"功能亮点③","textChars":5,"textLines":1,"bbox":[119.04,33.6,432,24.96]}
+{"kind":"textbox","id":"sh/ehsr2dgz","slide":31,"name":"Text 3","text":"素材沉淀资产化","textPreview":"素材沉淀资产化","textChars":7,"textLines":1,"bbox":[119.04,57.6,662.4,48]}
+{"kind":"textbox","id":"sh/1k3ad8fa","slide":31,"name":"Text 4","text":"02 · BUSINESS","textPreview":"02 · BUSINESS","textChars":13,"textLines":1,"bbox":[739.2,40.32,172.8,23.04]}
+{"kind":"shape","id":"sh/0jut43yp","slide":31,"name":"Shape 5","bbox":[119.04,109.44,792.96,4.8]}
+{"kind":"shape","id":"sh/fmhszex0","slide":31,"name":"Shape 6","bbox":[119.04,109.44,105.6,4.8]}
+{"kind":"shape","id":"sh/ul8rq9gf","slide":31,"name":"Shape 7","bbox":[48,149.76,14.4,14.4]}
+{"kind":"textbox","id":"sh/4vm5g7al","slide":31,"name":"Text 8","text":"资源入库　教师端","textPreview":"资源入库　教师端","textChars":8,"textLines":1,"bbox":[74.88,142.08,302.4,32.64]}
+{"kind":"textbox","id":"sh/5wvmpcr6","slide":31,"name":"Text 9","text":"个人素材上传分类，AI 引用开关自主可控","textPreview":"个人素材上传分类，AI 引用开关自主可控","textChars":20,"textLines":1,"bbox":[74.88,178.56,302.4,63.36]}
+{"kind":"shape","id":"sh/it4nexsf","slide":31,"name":"Shape 10","bbox":[48,243.84,326.4,0]}
+{"kind":"shape","id":"sh/3ud4n290","slide":31,"name":"Shape 11","bbox":[48,259.2,14.4,14.4]}
+{"kind":"textbox","id":"sh/sz65k7ah","slide":31,"name":"Text 12","text":"RAG 增强生成　教师端","textPreview":"RAG 增强生成　教师端","textChars":12,"textLines":1,"bbox":[74.88,251.52,302.4,32.64]}
+{"kind":"textbox","id":"sh/d0fmtcr2","slide":31,"name":"Text 13","text":"生成时自动检索，来源片段随结果标注，抑制幻觉","textPreview":"生成时自动检索，来源片段随结果标注，抑制幻觉","textChars":22,"textLines":1,"bbox":[74.88,288,302.4,63.36]}
+{"kind":"shape","id":"sh/qx4nihsb","slide":31,"name":"Shape 14","bbox":[48,353.28,326.4,0]}
+{"kind":"shape","id":"sh/ryd4rm9w","slide":31,"name":"Shape 15","bbox":[48,368.64,14.4,14.4]}
+{"kind":"textbox","id":"sh/832l8nad","slide":31,"name":"Text 16","text":"公共知识库　后台端","textPreview":"公共知识库　后台端","textChars":9,"textLines":1,"bbox":[74.88,360.96,302.4,32.64]}
+{"kind":"textbox","id":"sh/t4bmhsry","slide":31,"name":"Text 17","text":"权威教材、题库、多媒体素材统一维护入库","textPreview":"权威教材、题库、多媒体素材统一维护入库","textChars":19,"textLines":1,"bbox":[74.88,397.44,302.4,63.36]}
+{"kind":"shape","id":"sh/9032l43m","slide":31,"name":"Shape 18","bbox":[424.32,142.08,487.68,280.32]}
+{"kind":"shape","id":"sh/mxcja9kv","slide":31,"name":"Shape 21","bbox":[594.48,432,147.36,32.64]}
+{"kind":"textbox","id":"sh/xon2po3i","slide":31,"name":"Text 22","text":"教师端","textPreview":"教师端","textChars":3,"textLines":1,"bbox":[594.48,432,147.36,32.64]}
+{"kind":"shape","id":"sh/wnulgj2d","slide":31,"name":"Shape 23","bbox":[48,508.8,864,0]}
+{"kind":"textbox","id":"sh/a1c3e9k7","slide":31,"name":"Text 24","text":"智核 · 多模态AI互动式教学智能体","textPreview":"智核 · 多模态AI互动式教学智能体","textChars":18,"textLines":1,"bbox":[78.72,513.6,345.6,19.2]}
+{"kind":"shape","id":"sh/5sn2to3u","slide":31,"name":"Shape 25","bbox":[861.12,516.96,7.68,7.68]}
+{"kind":"textbox","id":"sh/krelk329","slide":31,"name":"Text 26","text":"31","textPreview":"31","textChars":2,"textLines":1,"bbox":[871.68,513.6,40.32,19.2]}
+{"kind":"shape","id":"sh/ilory1wf","slide":31,"name":"Shape 27","bbox":[913.92,441.6,46.08,42.24]}
+{"kind":"image","id":"im/gvyp4b61","slide":31,"name":"Image 0","bbox":[48,510.72,23.04,23.04]}
+{"kind":"notes","id":"nt/lcn6tkb6","slide":31,"text":""}
+{"kind":"slide","id":"sl/6l0j294r","slide":32,"title":"02","textShapes":13}
+{"kind":"shape","id":"sh/kr61sfy1","slide":32,"name":"Shape 0","bbox":[48,38.4,53.76,53.76]}
+{"kind":"textbox","id":"sh/lszilkfm","slide":32,"name":"Text 1","text":"02","textPreview":"02","textChars":2,"textLines":1,"bbox":[48,38.4,53.76,53.76]}
+{"kind":"textbox","id":"sh/6t8jupg7","slide":32,"name":"Text 2","text":"功能亮点④","textPreview":"功能亮点④","textChars":5,"textLines":1,"bbox":[119.04,33.6,432,24.96]}
+{"kind":"textbox","id":"sh/7uh0nuxs","slide":32,"name":"Text 3","text":"案例复用社区化","textPreview":"案例复用社区化","textChars":7,"textLines":1,"bbox":[119.04,57.6,662.4,48]}
+{"kind":"textbox","id":"sh/8vq1wzyd","slide":32,"name":"Text 4","text":"02 · BUSINESS","textPreview":"02 · BUSINESS","textChars":13,"textLines":1,"bbox":[739.2,40.32,172.8,23.04]}
+{"kind":"shape","id":"sh/twzipkfy","slide":32,"name":"Shape 5","bbox":[119.04,109.44,792.96,4.8]}
+{"kind":"shape","id":"sh/mx4zilg3","slide":32,"name":"Shape 6","bbox":[119.04,109.44,105.6,4.8]}
+{"kind":"shape","id":"sh/nyd0bqxo","slide":32,"name":"Shape 7","bbox":[48,149.76,14.4,14.4]}
+{"kind":"textbox","id":"sh/ry94z29w","slide":32,"name":"Text 8","text":"社区广场　教师端","textPreview":"社区广场　教师端","textChars":8,"textLines":1,"bbox":[74.88,142.08,302.4,32.64]}
+{"kind":"textbox","id":"sh/qx0nqx8b","slide":32,"name":"Text 9","text":"Skill 模板与教学案例的分类检索、详情预览与收藏","textPreview":"Skill 模板与教学案例的分类检索、详情预览与收藏","textChars":26,"textLines":1,"bbox":[74.88,178.56,302.4,63.36]}
+{"kind":"shape","id":"sh/d0bm1c7m","slide":32,"name":"Shape 10","bbox":[48,243.84,326.4,0]}
+{"kind":"shape","id":"sh/szi5s7qh","slide":32,"name":"Shape 11","bbox":[48,259.2,14.4,14.4]}
+{"kind":"textbox","id":"sh/3a94vi9k","slide":32,"name":"Text 12","text":"二次创作　教师端","textPreview":"二次创作　教师端","textChars":8,"textLines":1,"bbox":[74.88,251.52,302.4,32.64]}
+{"kind":"textbox","id":"sh/i903mx8z","slide":32,"name":"Text 13","text":"「基于此创作」复制式复用，快速产出个人版本","textPreview":"「基于此创作」复制式复用，快速产出个人版本","textChars":21,"textLines":1,"bbox":[74.88,288,302.4,63.36]}
+{"kind":"shape","id":"sh/5crmxsrq","slide":32,"name":"Shape 14","bbox":[48,353.28,326.4,0]}
+{"kind":"shape","id":"sh/4bilonq5","slide":32,"name":"Shape 15","bbox":[48,368.64,14.4,14.4]}
+{"kind":"textbox","id":"sh/v6p4ri9o","slide":32,"name":"Text 16","text":"源保护　后台端","textPreview":"源保护　后台端","textChars":7,"textLines":1,"bbox":[74.88,360.96,302.4,32.64]}
+{"kind":"textbox","id":"sh/u5g3yd83","slide":32,"name":"Text 17","text":"私有素材仅用于本人创作，不写回社区、不进公共索引","textPreview":"私有素材仅用于本人创作，不写回社区、不进公共索引","textChars":24,"textLines":1,"bbox":[74.88,397.44,302.4,63.36]}
+{"kind":"shape","id":"sh/y1gnadsv","slide":32,"name":"Shape 18","bbox":[424.32,142.08,487.68,280.32]}
+{"kind":"shape","id":"sh/l4765sbm","slide":32,"name":"Shape 21","bbox":[594.48,432,147.36,32.64]}
+{"kind":"textbox","id":"sh/65gneds7","slide":32,"name":"Text 22","text":"教师端","textPreview":"教师端","textChars":3,"textLines":1,"bbox":[594.48,432,147.36,32.64]}
+{"kind":"shape","id":"sh/76po7its","slide":32,"name":"Shape 23","bbox":[48,508.8,864,0]}
+{"kind":"textbox","id":"sh/t8769sbi","slide":32,"name":"Text 24","text":"智核 · 多模态AI互动式教学智能体","textPreview":"智核 · 多模态AI互动式教学智能体","textChars":18,"textLines":1,"bbox":[78.72,513.6,345.6,19.2]}
+{"kind":"shape","id":"sh/u90nixs3","slide":32,"name":"Shape 25","bbox":[861.12,516.96,7.68,7.68]}
+{"kind":"textbox","id":"sh/va9ob2to","slide":32,"name":"Text 26","text":"32","textPreview":"32","textChars":2,"textLines":1,"bbox":[871.68,513.6,40.32,19.2]}
+{"kind":"shape","id":"sh/54bq1wvq","slide":32,"name":"Shape 27","bbox":[913.92,441.6,46.08,42.24]}
+{"kind":"image","id":"im/ny9wb6dw","slide":32,"name":"Image 0","bbox":[48,510.72,23.04,23.04]}
+{"kind":"notes","id":"nt/6l0j294r","slide":32,"text":""}
+{"kind":"slide","id":"sl/nax4b2dk","slide":33,"title":"PART 03","textShapes":5}
+{"kind":"shape","id":"sh/lk3m50nq","slide":33,"name":"Shape 0","bbox":[595.2,0,364.8,268.8]}
+{"kind":"textbox","id":"sh/0jalwfm5","slide":33,"name":"Text 1","text":"PART 03","textPreview":"PART 03","textChars":7,"textLines":1,"bbox":[729.6,33.6,192,28.8]}
+{"kind":"shape","id":"sh/nml47a5w","slide":33,"name":"Shape 2","bbox":[873.6,163.2,33.6,33.6]}
+{"kind":"shape","id":"sh/mlc3y54b","slide":33,"name":"Shape 3","bbox":[52.8,52.8,28.8,28.8]}
+{"kind":"textbox","id":"sh/vql4bu5s","slide":33,"name":"Text 6","text":"03","textPreview":"03","textChars":2,"textLines":1,"bbox":[48,81.6,355.2,220.8]}
+{"kind":"textbox","id":"sh/apc32p47","slide":33,"name":"Text 7","text":"技术实现","textPreview":"技术实现","textChars":4,"textLines":1,"bbox":[52.8,312,441.6,81.6]}
+{"kind":"shape","id":"sh/grad8zah","slide":33,"name":"Shape 8","bbox":[54.72,398.4,307.2,5.76]}
+{"kind":"textbox","id":"sh/hsjuhkb2","slide":33,"name":"Text 9","text":"TECHNICAL IMPLEMENTATION","textPreview":"TECHNICAL IMPLEMENTATION","textChars":24,"textLines":1,"bbox":[54.72,412.8,451.2,28.8]}
+{"kind":"textbox","id":"sh/upsv6psb","slide":33,"name":"Text 10","text":"本章内容：技术路线 · 系统架构 · 关键技术①—⑤","textPreview":"本章内容：技术路线 · 系统架构 · 关键技术①—⑤","textChars":26,"textLines":1,"bbox":[54.72,451.2,499.2,26.88]}
+{"kind":"shape","id":"sh/vq1cfutw","slide":33,"name":"Shape 11","bbox":[49.92,484.8,19.2,19.2]}
+{"kind":"shape","id":"sh/4vadczad","slide":33,"name":"Shape 12","bbox":[78.72,484.8,19.2,19.2]}
+{"kind":"shape","id":"sh/5w3ul4by","slide":33,"name":"Shape 13","bbox":[107.52,484.8,19.2,19.2]}
+{"kind":"shape","id":"sh/itsvapsn","slide":33,"name":"Shape 14","bbox":[136.32,484.8,19.2,19.2]}
+{"kind":"shape","id":"sh/3u1cjut8","slide":33,"name":"Shape 15","bbox":[165.12,484.8,19.2,19.2]}
+{"kind":"notes","id":"nt/nax4b2dk","slide":33,"text":""}
+{"kind":"slide","id":"sl/ofu103u5","slide":34,"title":"03","textShapes":22}
+{"kind":"textbox","id":"sh/2ton6pcv","slide":34,"text":"03","textPreview":"03","textChars":2,"textLines":1,"bbox":[48,38.4,53.76,53.76]}
+{"kind":"textbox","id":"sh/pwzm1kbm","slide":34,"text":"技术路线","textPreview":"技术路线","textChars":4,"textLines":1,"bbox":[119,33.6,430,25]}
+{"kind":"textbox","id":"sh/ovq58fu1","slide":34,"text":"一次请求贯穿四层，结果可流式返回并导出","textPreview":"一次请求贯穿四层，结果可流式返回并导出","textChars":19,"textLines":1,"bbox":[119,57.6,650,42]}
+{"kind":"textbox","id":"sh/byh43utc","slide":34,"text":"03 · TECHNOLOGY","textPreview":"03 · TECHNOLOGY","textChars":15,"textLines":1,"bbox":[739,40.3,173,23]}
+{"kind":"shape","id":"sh/qx8napc7","slide":34,"bbox":[119,109.4,793,4.8]}
+{"kind":"shape","id":"sh/d0zm54bi","slide":34,"bbox":[119,109.4,106,4.8]}
+{"kind":"shape","id":"sh/czq5czux","slide":34,"bbox":[48,508.8,864,1]}
+{"kind":"textbox","id":"sh/z2147eto","slide":34,"text":"智核 · 多模态AI互动式教学智能体","textPreview":"智核 · 多模态AI互动式教学智能体","textChars":18,"textLines":1,"bbox":[78.7,513.6,346,19.2]}
+{"kind":"shape","id":"sh/y18ne9c3","slide":34,"bbox":[861.1,517,7.7,7.7]}
+{"kind":"textbox","id":"sh/0vidkfu5","slide":34,"text":"34","textPreview":"34","textChars":2,"textLines":1,"bbox":[871.7,513.6,40.3,19.2]}
+{"kind":"textbox","id":"sh/1wredkbq","slide":34,"text":"教师端 / 管理端\nVue 3 · TypeScript","textPreview":"教师端 / 管理端 | Vue 3 · TypeScript","textChars":28,"textLines":2,"bbox":[53,158,145,76]}
+{"kind":"textbox","id":"sh/e90vipcz","slide":34,"text":"业务网关\nJava 17 · Spring Boot","textPreview":"业务网关 | Java 17 · Spring Boot","textChars":26,"textLines":2,"bbox":[238,158,150,76]}
+{"kind":"textbox","id":"sh/za9wbutk","slide":34,"text":"AI 引擎\nFastAPI · LangGraph","textPreview":"AI 引擎 | FastAPI · LangGraph","textChars":25,"textLines":2,"bbox":[428,158,160,76]}
+{"kind":"textbox","id":"sh/oz2dozu1","slide":34,"text":"模型服务\nLLM · Embedding","textPreview":"模型服务 | LLM · Embedding","textChars":20,"textLines":2,"bbox":[628,158,135,76]}
+{"kind":"textbox","id":"sh/90beh4bm","slide":34,"text":"输出\nPPTX / DOCX","textPreview":"输出 | PPTX / DOCX","textChars":14,"textLines":2,"bbox":[803,158,109,76]}
+{"kind":"shape","id":"sh/mxkvmpcb","slide":34,"bbox":[198,196,40,0]}
+{"kind":"shape","id":"sh/nytwfutg","slide":34,"bbox":[388,196,40,0]}
+{"kind":"shape","id":"sh/w32xszud","slide":34,"bbox":[588,196,40,0]}
+{"kind":"shape","id":"sh/x4vel4by","slide":34,"bbox":[763,196,40,0]}
+{"kind":"textbox","id":"sh/l87mpkzq","slide":34,"text":"请求主链路","textPreview":"请求主链路","textChars":5,"textLines":1,"bbox":[53,128,100,22]}
+{"kind":"textbox","id":"sh/k7y5gfi5","slide":34,"text":"JWT 鉴权与接口权限","textPreview":"JWT 鉴权与接口权限","textChars":11,"textLines":1,"bbox":[242,241,142,24]}
+{"kind":"textbox","id":"sh/j6p4nahk","slide":34,"text":"SSE 透传阶段与逐页结果","textPreview":"SSE 透传阶段与逐页结果","textChars":13,"textLines":1,"bbox":[429,241,159,24]}
+{"kind":"textbox","id":"sh/y5wne50z","slide":34,"text":"数据与资源底座","textPreview":"数据与资源底座","textChars":7,"textLines":1,"bbox":[53,286,116,22]}
+{"kind":"textbox","id":"sh/tc7mtkzm","slide":34,"text":"MySQL\n业务数据","textPreview":"MySQL | 业务数据","textChars":10,"textLines":2,"bbox":[66,330,126,64]}
+{"kind":"textbox","id":"sh/8by5kfi1","slide":34,"text":"PostgreSQL\n会话与画像","textPreview":"PostgreSQL | 会话与画像","textChars":16,"textLines":2,"bbox":[231,330,126,64]}
+{"kind":"textbox","id":"sh/7ap4rahw","slide":34,"text":"pgvector\n1024维向量","textPreview":"pgvector | 1024维向量","textChars":16,"textLines":2,"bbox":[396,330,126,64]}
+{"kind":"textbox","id":"sh/69gni50b","slide":34,"text":"Redis\n缓存与任务","textPreview":"Redis | 缓存与任务","textChars":11,"textLines":2,"bbox":[561,330,126,64]}
+{"kind":"textbox","id":"sh/9gnmh0zi","slide":34,"text":"OSS\n素材与导出","textPreview":"OSS | 素材与导出","textChars":9,"textLines":2,"bbox":[726,330,126,64]}
+{"kind":"shape","id":"sh/ofe58vix","slide":34,"bbox":[129,234,379,96]}
+{"kind":"shape","id":"sh/elsji1gv","slide":34,"bbox":[294,234,214,96]}
+{"kind":"shape","id":"sh/fmlkbmxg","slide":34,"bbox":[459,234,49,96]}
+{"kind":"shape","id":"sh/0nu1kry1","slide":34,"bbox":[508,234,116,96]}
+{"kind":"shape","id":"sh/1o32dwf6","slide":34,"bbox":[508,234,281,96]}
+{"kind":"shape","id":"sh/mpcjm1gr","slide":34,"bbox":[53,425,859,49]}
+{"kind":"textbox","id":"sh/nalkf6xc","slide":34,"text":"亮点","textPreview":"亮点","textChars":2,"textLines":1,"bbox":[70,434,58,28]}
+{"kind":"textbox","id":"sh/obulobyx","slide":34,"text":"前端只访问 Java 网关，Python 位于内网；AI 生成、业务治理、资源存储可以独立扩展与降级。","textPreview":"前端只访问 Java 网关，Python 位于内网；AI 生成、业务治理、资源存储可以独立扩展与降级。","textChars":51,"textLines":1,"bbox":[130,431,755,34]}
+{"kind":"notes","id":"nt/ofu103u5","slide":34,"text":"依据：A12 项目源码、CORE_ALGORITHM_REVIEW.md。讲解重点：请求只从 Java 网关进入，AI 引擎与业务系统解耦。"}
+{"kind":"slide","id":"sl/1obmtofm","slide":35,"title":"03","textShapes":22}
+{"kind":"textbox","id":"sh/5gfm9s7e","slide":35,"text":"03","textPreview":"03","textChars":2,"textLines":1,"bbox":[48,38.4,53.76,53.76]}
+{"kind":"textbox","id":"sh/idonexon","slide":35,"text":"系统架构","textPreview":"系统架构","textChars":4,"textLines":1,"bbox":[119,33.6,430,25]}
+{"kind":"textbox","id":"sh/3ex47ip8","slide":35,"text":"双服务解耦，业务治理与 AI 生成独立演进","textPreview":"双服务解耦，业务治理与 AI 生成独立演进","textChars":21,"textLines":1,"bbox":[119,57.6,650,42]}
+{"kind":"textbox","id":"sh/gb6lcn6x","slide":35,"text":"03 · TECHNOLOGY","textPreview":"03 · TECHNOLOGY","textChars":15,"textLines":1,"bbox":[739,40.3,173,23]}
+{"kind":"shape","id":"sh/hcfm5s72","slide":35,"bbox":[119,109.4,793,4.8]}
+{"kind":"shape","id":"sh/u943ador","slide":35,"bbox":[119,109.4,106,4.8]}
+{"kind":"shape","id":"sh/vad43ipc","slide":35,"bbox":[48,508.8,864,1]}
+{"kind":"textbox","id":"sh/87ml836l","slide":35,"text":"智核 · 多模态AI互动式教学智能体","textPreview":"智核 · 多模态AI互动式教学智能体","textChars":18,"textLines":1,"bbox":[78.7,513.6,346,19.2]}
+{"kind":"shape","id":"sh/t8vm1876","slide":35,"bbox":[861.1,517,7.7,7.7]}
+{"kind":"textbox","id":"sh/5of6xcbi","slide":35,"text":"35","textPreview":"35","textChars":2,"textLines":1,"bbox":[871.7,513.6,40.3,19.2]}
+{"kind":"textbox","id":"sh/4n65o7ax","slide":35,"text":"端到端分层","textPreview":"端到端分层","textChars":5,"textLines":1,"bbox":[52,130,95,22]}
+{"kind":"textbox","id":"sh/3mxov2tc","slide":35,"text":"表示层","textPreview":"表示层","textChars":3,"textLines":1,"bbox":[53,164,126,47]}
+{"kind":"textbox","id":"sh/ilonmxsr","slide":35,"text":"教师端 · 管理端 · 移动端 · iframe 沙箱预览","textPreview":"教师端 · 管理端 · 移动端 · iframe 沙箱预览","textChars":29,"textLines":1,"bbox":[179,164,429,47]}
+{"kind":"textbox","id":"sh/hkv6tsb6","slide":35,"text":"业务网关层","textPreview":"业务网关层","textChars":5,"textLines":1,"bbox":[53,225,126,47]}
+{"kind":"textbox","id":"sh/gjm5knal","slide":35,"text":"13 个 Controller · JWT 身份覆盖 · 接口级权限 · SSE 透传","textPreview":"13 个 Controller · JWT 身份覆盖 · 接口级权限 · SSE 透传","textChars":43,"textLines":1,"bbox":[179,225,429,47]}
+{"kind":"textbox","id":"sh/vidorit0","slide":35,"text":"AI 能力层","textPreview":"AI 能力层","textChars":6,"textLines":1,"bbox":[53,286,126,47]}
+{"kind":"textbox","id":"sh/uh4nidsv","slide":35,"text":"35 条路由 · Agent 编排 · RAG · 课件 / 教案 / 互动生成","textPreview":"35 条路由 · Agent 编排 · RAG · 课件 / 教案 / 互动生成","textChars":40,"textLines":1,"bbox":[179,286,429,47]}
+{"kind":"textbox","id":"sh/tgv6psba","slide":35,"text":"数据访问层","textPreview":"数据访问层","textChars":5,"textLines":1,"bbox":[53,347,126,47]}
+{"kind":"textbox","id":"sh/8fm5gnap","slide":35,"text":"20 个 Mapper · PostgreSQL · Redis · OSS 预签名直传","textPreview":"20 个 Mapper · PostgreSQL · Redis · OSS 预签名直传","textChars":44,"textLines":1,"bbox":[179,347,429,47]}
+{"kind":"shape","id":"sh/kzq5wnil","slide":35,"bbox":[393.5,211,0,14]}
+{"kind":"shape","id":"sh/l0z65sj6","slide":35,"bbox":[393.5,272,0,14]}
+{"kind":"shape","id":"sh/yxonud0f","slide":35,"bbox":[393.5,333,0,14]}
+{"kind":"textbox","id":"sh/zyxo3i10","slide":35,"text":"AI 引擎纵深","textPreview":"AI 引擎纵深","textChars":7,"textLines":1,"bbox":[650,130,104,22]}
+{"kind":"textbox","id":"sh/cv65s3i9","slide":35,"text":"1  接入层\nSSE / 任务队列","textPreview":"1  接入层 | SSE / 任务队列","textChars":17,"textLines":2,"bbox":[650,164,262,38]}
+{"kind":"textbox","id":"sh/xwf618ju","slide":35,"text":"2  编排层\n七节点状态机","textPreview":"2  编排层 | 七节点状态机","textChars":13,"textLines":2,"bbox":[650,213,262,38]}
+{"kind":"textbox","id":"sh/a9onqdkj","slide":35,"text":"3  组件层\n解析 / 检索 / 生成","textPreview":"3  组件层 | 解析 / 检索 / 生成","textChars":19,"textLines":2,"bbox":[650,262,262,38]}
+{"kind":"textbox","id":"sh/buxozy1o","slide":35,"text":"4  模型层\n多供应商兼容","textPreview":"4  模型层 | 多供应商兼容","textChars":13,"textLines":2,"bbox":[650,311,262,38]}
+{"kind":"textbox","id":"sh/wrap47it","slide":35,"text":"5  存储层\nPG / Redis / 本地降级","textPreview":"5  存储层 | PG / Redis / 本地降级","textChars":24,"textLines":2,"bbox":[650,360,262,38]}
+{"kind":"shape","id":"sh/hsj6dcjy","slide":35,"bbox":[781,202,0,11]}
+{"kind":"shape","id":"sh/ry50jqpc","slide":35,"bbox":[781,251,0,11]}
+{"kind":"shape","id":"sh/qxwzq5o7","slide":35,"bbox":[781,300,0,11]}
+{"kind":"shape","id":"sh/d0nil07i","slide":35,"bbox":[781,349,0,11]}
+{"kind":"textbox","id":"sh/czehsv6x","slide":35,"text":"平台治理贯穿全层：用户权限、内容审核、资源维护、运行日志与数据看板","textPreview":"平台治理贯穿全层：用户权限、内容审核、资源维护、运行日志与数据看板","textChars":33,"textLines":1,"bbox":[53,438,859,39]}
+{"kind":"notes","id":"nt/1obmtofm","slide":35,"text":"依据：原答辩稿第35页及项目代码结构。13个 Controller、35条 AI 路由、20个 Mapper 沿用原稿口径。"}
+{"kind":"slide","id":"sl/m9s3ehgf","slide":36,"title":"03","textShapes":20}
+{"kind":"textbox","id":"sh/i5cbypsz","slide":36,"text":"03","textPreview":"03","textChars":2,"textLines":1,"bbox":[48,38.4,53.76,53.76]}
+{"kind":"textbox","id":"sh/5s3atkbq","slide":36,"text":"关键技术①","textPreview":"关键技术①","textChars":5,"textLines":1,"bbox":[119,33.6,430,25]}
+{"kind":"textbox","id":"sh/4rut0fa5","slide":36,"text":"七节点状态机把自然语言需求变成可确认教学大纲","textPreview":"七节点状态机把自然语言需求变成可确认教学大纲","textChars":22,"textLines":1,"bbox":[119,57.6,650,42]}
+{"kind":"textbox","id":"sh/rulsvutw","slide":36,"text":"03 · TECHNOLOGY","textPreview":"03 · TECHNOLOGY","textChars":15,"textLines":1,"bbox":[739,40.3,173,23]}
+{"kind":"shape","id":"sh/qtcb2psb","slide":36,"bbox":[119,109.4,793,4.8]}
+{"kind":"shape","id":"sh/dwnax4bm","slide":36,"bbox":[119,109.4,106,4.8]}
+{"kind":"shape","id":"sh/svet4zah","slide":36,"bbox":[48,508.8,864,1]}
+{"kind":"textbox","id":"sh/fy5szuts","slide":36,"text":"智核 · 多模态AI互动式教学智能体","textPreview":"智核 · 多模态AI互动式教学智能体","textChars":18,"textLines":1,"bbox":[78.7,513.6,346,19.2]}
+{"kind":"shape","id":"sh/exwb69s7","slide":36,"bbox":[861.1,517,7.7,7.7]}
+{"kind":"textbox","id":"sh/kfi54n2l","slide":36,"text":"36","textPreview":"36","textChars":2,"textLines":1,"bbox":[871.7,513.6,40.3,19.2]}
+{"kind":"textbox","id":"sh/lgr6xs36","slide":36,"text":"LangGraph Agent 主流程","textPreview":"LangGraph Agent 主流程","textChars":19,"textLines":1,"bbox":[52,130,158,22]}
+{"kind":"textbox","id":"sh/ydgn2xkf","slide":36,"text":"01\n画像加载","textPreview":"01 | 画像加载","textChars":7,"textLines":2,"bbox":[48,181,105,57]}
+{"kind":"textbox","id":"sh/zepovil0","slide":36,"text":"02\n意图识别","textPreview":"02 | 意图识别","textChars":7,"textLines":2,"bbox":[174,181,105,57]}
+{"kind":"textbox","id":"sh/83i5872h","slide":36,"text":"03\n工具检索","textPreview":"03 | 工具检索","textChars":7,"textLines":2,"bbox":[300,181,105,57]}
+{"kind":"textbox","id":"sh/94r61c32","slide":36,"text":"04\n提示编排","textPreview":"04 | 提示编排","textChars":7,"textLines":2,"bbox":[426,181,105,57]}
+{"kind":"textbox","id":"sh/m10n6xkr","slide":36,"text":"05\n大纲生成","textPreview":"05 | 大纲生成","textChars":7,"textLines":2,"bbox":[552,181,105,57]}
+{"kind":"textbox","id":"sh/729oz2lw","slide":36,"text":"06\n反思校验","textPreview":"06 | 反思校验","textChars":7,"textLines":2,"bbox":[678,181,105,57]}
+{"kind":"textbox","id":"sh/w72pc72t","slide":36,"text":"07\n长期记忆","textPreview":"07 | 长期记忆","textChars":7,"textLines":2,"bbox":[804,181,105,57]}
+{"kind":"shape","id":"sh/h8b65cje","slide":36,"bbox":[153,209.5,21,0]}
+{"kind":"shape","id":"sh/5o76pcbi","slide":36,"bbox":[279,209.5,21,0]}
+{"kind":"shape","id":"sh/4ny5w7ux","slide":36,"bbox":[405,209.5,21,0]}
+{"kind":"shape","id":"sh/3mpon2tc","slide":36,"bbox":[531,209.5,21,0]}
+{"kind":"shape","id":"sh/i1wnuxcr","slide":36,"bbox":[657,209.5,21,0]}
+{"kind":"shape","id":"sh/ds76tcbe","slide":36,"bbox":[783,209.5,21,0]}
+{"kind":"textbox","id":"sh/sry50rut","slide":36,"text":"要素不足时进入澄清\n主题、年级、学科齐备后继续","textPreview":"要素不足时进入澄清 | 主题、年级、学科齐备后继续","textChars":23,"textLines":2,"bbox":[174,290,232,66]}
+{"kind":"shape","id":"sh/rqpormt8","slide":36,"bbox":[226.5,238,63.5,52]}
+{"kind":"textbox","id":"sh/qpgnyhc3","slide":36,"text":"质量不达标时自动修订一次\n最终稿再归档并写入记忆","textPreview":"质量不达标时自动修订一次 | 最终稿再归档并写入记忆","textChars":24,"textLines":2,"bbox":[647,290,218,66]}
+{"kind":"shape","id":"sh/twnmhsva","slide":36,"bbox":[730.5,238,25.5,52]}
+{"kind":"shape","id":"sh/8ve5onup","slide":36,"bbox":[604.5,238,42.5,85]}
+{"kind":"shape","id":"sh/y1s3ytsn","slide":36,"bbox":[52,405,860,70]}
+{"kind":"textbox","id":"sh/j2lkry9s","slide":36,"text":"双路径意图识别","textPreview":"双路径意图识别","textChars":7,"textLines":1,"bbox":[70,415,150,24]}
+{"kind":"textbox","id":"sh/k3ul03ad","slide":36,"text":"低温模型抽取 13 个白名单字段，异常时回退正则与学科词表。","textPreview":"低温模型抽取 13 个白名单字段，异常时回退正则与学科词表。","textChars":30,"textLines":1,"bbox":[215,414,670,27]}
+{"kind":"textbox","id":"sh/l432t8ry","slide":36,"text":"可恢复状态","textPreview":"可恢复状态","textChars":5,"textLines":1,"bbox":[70,444,150,22]}
+{"kind":"textbox","id":"sh/65c32tsj","slide":36,"text":"多轮对话持续累积上下文；中断后可从会话快照恢复。","textPreview":"多轮对话持续累积上下文；中断后可从会话快照恢复。","textChars":24,"textLines":1,"bbox":[215,442,670,27]}
+{"kind":"notes","id":"nt/m9s3ehgf","slide":36,"text":"依据：backend-python/A12-PY/a12_ppt/outline_chat/workflow.py 与 CORE_ALGORITHM_REVIEW.md。"}
+{"kind":"slide","id":"sl/jyhsreh4","slide":37,"title":"03","textShapes":21}
+{"kind":"textbox","id":"sh/tonqx8z2","slide":37,"text":"03","textPreview":"03","textChars":2,"textLines":1,"bbox":[48,38.4,53.76,53.76]}
+{"kind":"textbox","id":"sh/61c7md0r","slide":37,"text":"关键技术②","textPreview":"关键技术②","textChars":5,"textLines":1,"bbox":[119,33.6,430,25]}
+{"kind":"textbox","id":"sh/7m58vyhw","slide":37,"text":"多模态资料统一解析，检索结果带证据回填","textPreview":"多模态资料统一解析，检索结果带证据回填","textChars":19,"textLines":1,"bbox":[119,57.6,650,42]}
+{"kind":"textbox","id":"sh/kzupk3il","slide":37,"text":"03 · TECHNOLOGY","textPreview":"03 · TECHNOLOGY","textChars":15,"textLines":1,"bbox":[739,40.3,173,23]}
+{"kind":"shape","id":"sh/503qt8z6","slide":37,"bbox":[119,109.4,793,4.8]}
+{"kind":"shape","id":"sh/ixc7it0f","slide":37,"bbox":[119,109.4,106,4.8]}
+{"kind":"shape","id":"sh/jyl8ryh0","slide":37,"bbox":[48,508.8,864,1]}
+{"kind":"textbox","id":"sh/4vy9wnyp","slide":37,"text":"智核 · 多模态AI互动式教学智能体","textPreview":"智核 · 多模态AI互动式教学智能体","textChars":18,"textLines":1,"bbox":[78.7,513.6,346,19.2]}
+{"kind":"shape","id":"sh/pw7q5sza","slide":37,"bbox":[861.1,517,7.7,7.7]}
+{"kind":"textbox","id":"sh/9cfa9gry","slide":37,"text":"37","textPreview":"37","textChars":2,"textLines":1,"bbox":[871.7,513.6,40.3,19.2]}
+{"kind":"textbox","id":"sh/8b69gbqd","slide":37,"text":"知识入库","textPreview":"知识入库","textChars":4,"textLines":1,"bbox":[52,130,86,22]}
+{"kind":"textbox","id":"sh/naxs7q9s","slide":37,"text":"PDF / DOCX / PPTX","textPreview":"PDF / DOCX / PPTX","textChars":17,"textLines":1,"bbox":[53,169,171,42]}
+{"kind":"textbox","id":"sh/m94rel87","slide":37,"text":"图片 OCR + 视觉","textPreview":"图片 OCR + 视觉","textChars":11,"textLines":1,"bbox":[53,227,171,42]}
+{"kind":"textbox","id":"sh/l8va5grm","slide":37,"text":"视频关键帧 + ASR","textPreview":"视频关键帧 + ASR","textChars":11,"textLines":1,"bbox":[53,285,171,42]}
+{"kind":"textbox","id":"sh/07m9cbq1","slide":37,"text":"音频 / 字幕文本","textPreview":"音频 / 字幕文本","textChars":9,"textLines":1,"bbox":[53,343,171,42]}
+{"kind":"textbox","id":"sh/z6ds369w","slide":37,"text":"解析与切分\n\n按资料类型调整\n窗口与重叠","textPreview":"解析与切分 |  | 按资料类型调整 | 窗口与重叠","textChars":20,"textLines":4,"bbox":[275,190,143,94]}
+{"kind":"textbox","id":"sh/y54ra18b","slide":37,"text":"SHA-256 指纹\n内容未变不重复解析","textPreview":"SHA-256 指纹 | 内容未变不重复解析","textChars":20,"textLines":2,"bbox":[275,320,143,70]}
+{"kind":"shape","id":"sh/54zah0r6","slide":37,"bbox":[224,190,51,47]}
+{"kind":"shape","id":"sh/43qtofql","slide":37,"bbox":[224,237,51,11]}
+{"kind":"shape","id":"sh/47ydkjyh","slide":37,"bbox":[224,237,51,69]}
+{"kind":"shape","id":"sh/p87udof2","slide":37,"bbox":[224,237,51,127]}
+{"kind":"shape","id":"sh/2lgvi9gr","slide":37,"bbox":[346.5,284,0,36]}
+{"kind":"textbox","id":"sh/36pcbexc","slide":37,"text":"检索与重排","textPreview":"检索与重排","textChars":5,"textLines":1,"bbox":[468,130,105,22]}
+{"kind":"textbox","id":"sh/gjetgzyl","slide":37,"text":"向量化与 HNSW\n当前 1024 维，可配置","textPreview":"向量化与 HNSW | 当前 1024 维，可配置","textChars":23,"textLines":2,"bbox":[469,172,160,62]}
+{"kind":"textbox","id":"sh/hknu94f6","slide":37,"text":"候选召回\n取 Top-K 的 4 倍候选","textPreview":"候选召回 | 取 Top-K 的 4 倍候选","textChars":20,"textLines":2,"bbox":[469,270,160,62]}
+{"kind":"textbox","id":"sh/uhwbe9gf","slide":37,"text":"混合重排\n0.68 向量 + 0.24 词法\n元数据与整串命中奖励","textPreview":"混合重排 | 0.68 向量 + 0.24 词法 | 元数据与整串命中奖励","textChars":33,"textLines":3,"bbox":[469,368,160,76]}
+{"kind":"shape","id":"sh/fi5c7ux0","slide":37,"bbox":[418,203,51,34]}
+{"kind":"shape","id":"sh/sfetczyp","slide":37,"bbox":[549,234,0,36]}
+{"kind":"shape","id":"sh/tgnu54fu","slide":37,"bbox":[549,332,0,36]}
+{"kind":"textbox","id":"sh/valcvu1w","slide":37,"text":"生成上下文","textPreview":"生成上下文","textChars":5,"textLines":1,"bbox":[686,130,105,22]}
+{"kind":"textbox","id":"sh/a9cvmp0b","slide":37,"text":"证据片段\n来源文件 · 页码 / 时间戳\n检索分数 · 引用编号","textPreview":"证据片段 | 来源文件 · 页码 / 时间戳 | 检索分数 · 引用编号","textChars":32,"textLines":3,"bbox":[686,185,226,94]}
+{"kind":"textbox","id":"sh/xc3exkj2","slide":37,"text":"受证据约束的生成\n按学段与学科过滤误排\n审计日志支持追溯","textPreview":"受证据约束的生成 | 按学段与学科过滤误排 | 审计日志支持追溯","textChars":28,"textLines":3,"bbox":[686,334,226,94]}
+{"kind":"shape","id":"sh/wbudozih","slide":37,"bbox":[629,232,57,174]}
+{"kind":"shape","id":"sh/je5wzu1s","slide":37,"bbox":[799,279,0,55]}
+{"kind":"textbox","id":"sh/idcvqp07","slide":37,"text":"核心亮点：资料解析、检索证据和生成引用形成完整链路，降低“语义相近但学段不符”的误用。","textPreview":"核心亮点：资料解析、检索证据和生成引用形成完整链路，降低“语义相近但学段不符”的误用。","textChars":43,"textLines":1,"bbox":[53,461,859,30]}
+{"kind":"notes","id":"nt/jyhsreh4","slide":37,"text":"依据：资源解析、index_store 与 CORE_ALGORITHM_REVIEW.md。向量维度当前为1024，并可通过配置调整。"}
+{"kind":"slide","id":"sl/ofahkri5","slide":38,"title":"03","textShapes":28}
+{"kind":"textbox","id":"sh/zup0b6d4","slide":38,"text":"03","textPreview":"03","textChars":2,"textLines":1,"bbox":[48,38.4,53.76,53.76]}
+{"kind":"textbox","id":"sh/kvy1kbep","slide":38,"text":"关键技术③","textPreview":"关键技术③","textChars":5,"textLines":1,"bbox":[119,33.6,430,25]}
+{"kind":"textbox","id":"sh/lw7idgva","slide":38,"text":"先定全局规则，再并行生成与逐页校验","textPreview":"先定全局规则，再并行生成与逐页校验","textChars":17,"textLines":1,"bbox":[119,57.6,650,42]}
+{"kind":"textbox","id":"sh/mxgjmlwv","slide":38,"text":"03 · TECHNOLOGY","textPreview":"03 · TECHNOLOGY","textChars":15,"textLines":1,"bbox":[739,40.3,173,23]}
+{"kind":"shape","id":"sh/7yp0f6dg","slide":38,"bbox":[119,109.4,793,4.8]}
+{"kind":"shape","id":"sh/8zi1obe1","slide":38,"bbox":[119,109.4,106,4.8]}
+{"kind":"shape","id":"sh/90rihgv6","slide":38,"bbox":[48,508.8,864,1]}
+{"kind":"textbox","id":"sh/u10jqlwr","slide":38,"text":"智核 · 多模态AI互动式教学智能体","textPreview":"智核 · 多模态AI互动式教学智能体","textChars":18,"textLines":1,"bbox":[78.7,513.6,346,19.2]}
+{"kind":"shape","id":"sh/v290jqdc","slide":38,"bbox":[861.1,517,7.7,7.7]}
+{"kind":"textbox","id":"sh/3it0j25o","slide":38,"text":"38","textPreview":"38","textChars":2,"textLines":1,"bbox":[871.7,513.6,40.3,19.2]}
+{"kind":"textbox","id":"sh/ih0zqxoj","slide":38,"text":"课件生成质量管线","textPreview":"课件生成质量管线","textChars":8,"textLines":1,"bbox":[52,130,150,22]}
+{"kind":"textbox","id":"sh/5kbilcnu","slide":38,"text":"01","textPreview":"01","textChars":2,"textLines":1,"bbox":[52,169,52,23]}
+{"kind":"textbox","id":"sh/4j2hs7m9","slide":38,"text":"全局规划\n模板风格基因\n视觉规则","textPreview":"全局规划 | 模板风格基因 | 视觉规则","textChars":16,"textLines":3,"bbox":[52,195,125,90]}
+{"kind":"textbox","id":"sh/ve90f25s","slide":38,"text":"02","textPreview":"02","textChars":2,"textLines":1,"bbox":[197,169,52,23]}
+{"kind":"textbox","id":"sh/ud0zmxo7","slide":38,"text":"逐页 Brief\n教学目标\n内容与视觉建议","textPreview":"逐页 Brief | 教学目标 | 内容与视觉建议","textChars":21,"textLines":3,"bbox":[197,195,125,90]}
+{"kind":"textbox","id":"sh/hgrihsny","slide":38,"text":"03","textPreview":"03","textChars":2,"textLines":1,"bbox":[342,169,52,23]}
+{"kind":"textbox","id":"sh/gfihon6d","slide":38,"text":"并发生成\n页面级异步任务\n受控并发","textPreview":"并发生成 | 页面级异步任务 | 受控并发","textChars":17,"textLines":3,"bbox":[342,195,125,90]}
+{"kind":"textbox","id":"sh/fad0rm5w","slide":38,"text":"04","textPreview":"04","textChars":2,"textLines":1,"bbox":[487,169,52,23]}
+{"kind":"textbox","id":"sh/e94jyh4b","slide":38,"text":"增量推送\n完整页面即刻\nSSE 预览","textPreview":"增量推送 | 完整页面即刻 | SSE 预览","textChars":18,"textLines":3,"bbox":[487,195,125,90]}
+{"kind":"textbox","id":"sh/a5o3qloj","slide":38,"text":"05","textPreview":"05","textChars":2,"textLines":1,"bbox":[632,169,52,23]}
+{"kind":"textbox","id":"sh/b6xkjqp4","slide":38,"text":"校验修复\nHTML 结构检查\n失败降温重试","textPreview":"校验修复 | HTML 结构检查 | 失败降温重试","textChars":21,"textLines":3,"bbox":[632,195,125,90]}
+{"kind":"textbox","id":"sh/w76lsv6p","slide":38,"text":"06","textPreview":"06","textChars":2,"textLines":1,"bbox":[777,169,52,23]}
+{"kind":"textbox","id":"sh/x8z2l07a","slide":38,"text":"可编辑导出\nDOM 转 PPTX\n元素级降级","textPreview":"可编辑导出 | DOM 转 PPTX | 元素级降级","textChars":22,"textLines":3,"bbox":[777,195,125,90]}
+{"kind":"shape","id":"sh/y983u5ov","slide":38,"bbox":[177,240,20,0]}
+{"kind":"shape","id":"sh/jahknqpg","slide":38,"bbox":[322,240,20,0]}
+{"kind":"shape","id":"sh/kbqlwv61","slide":38,"bbox":[467,240,20,0]}
+{"kind":"shape","id":"sh/lczmp07m","slide":38,"bbox":[612,240,20,0]}
+{"kind":"shape","id":"sh/ed43i18r","slide":38,"bbox":[757,240,20,0]}
+{"kind":"shape","id":"sh/fedkb6pw","slide":38,"bbox":[52,331,541,126]}
+{"kind":"textbox","id":"sh/h43ed8vq","slide":38,"text":"流式增量解析","textPreview":"流式增量解析","textChars":6,"textLines":1,"bbox":[72,346,160,28]}
+{"kind":"textbox","id":"sh/g3ux43u5","slide":38,"text":"括号配对状态机只提取已闭合页面；每完成一页就推送预览，整册失败不会抹掉已完成结果。","textPreview":"括号配对状态机只提取已闭合页面；每完成一页就推送预览，整册失败不会抹掉已完成结果。","textChars":41,"textLines":1,"bbox":[72,376,488,58]}
+{"kind":"shape","id":"sh/f2lwbyd0","slide":38,"bbox":[622,331,290,126]}
+{"kind":"textbox","id":"sh/uhcf2tcf","slide":38,"text":"8 页课件受控对照测试","textPreview":"8 页课件受控对照测试","textChars":11,"textLines":1,"bbox":[643,343,248,24]}
+{"kind":"textbox","id":"sh/p8neh8v2","slide":38,"text":"267.4s","textPreview":"267.4s","textChars":6,"textLines":1,"bbox":[645,371,96,34]}
+{"kind":"textbox","id":"sh/47ex83uh","slide":38,"text":"39.3s","textPreview":"39.3s","textChars":5,"textLines":1,"bbox":[792,371,96,34]}
+{"kind":"textbox","id":"sh/365wfydw","slide":38,"text":"串行","textPreview":"串行","textChars":2,"textLines":1,"bbox":[645,403,96,21]}
+{"kind":"textbox","id":"sh/25wf6dcb","slide":38,"text":"8 并发","textPreview":"8 并发","textChars":4,"textLines":1,"bbox":[792,403,96,21]}
+{"kind":"textbox","id":"sh/5cje5ovi","slide":38,"text":"耗时降低 85.30%，加速 6.8 倍","textPreview":"耗时降低 85.30%，加速 6.8 倍","textChars":20,"textLines":1,"bbox":[641,427,252,24]}
+{"kind":"textbox","id":"sh/kbadwjed","slide":38,"text":"注：同一模型、同一大纲、关闭修复重试的一次完整对照实验","textPreview":"注：同一模型、同一大纲、关闭修复重试的一次完整对照实验","textChars":27,"textLines":1,"bbox":[622,464,290,26]}
+{"kind":"notes","id":"nt/ofahkri5","slide":38,"text":"依据：AI_BENCHMARK_REPORT.md，2026-09-25。性能数据为一次完整串行/并行对照，正式答辩建议说明测试口径。"}
+{"kind":"slide","id":"sl/twb2lg7e","slide":39,"title":"03","textShapes":16}
+{"kind":"textbox","id":"sh/ixwnypc3","slide":39,"text":"03","textPreview":"03","textChars":2,"textLines":1,"bbox":[48,38.4,53.76,53.76]}
+{"kind":"textbox","id":"sh/50769kvu","slide":39,"text":"关键技术④","textPreview":"关键技术④","textChars":5,"textLines":1,"bbox":[119,33.6,430,25]}
+{"kind":"textbox","id":"sh/4ze50fu9","slide":39,"text":"教师偏好通过证据和反馈形成长期记忆闭环","textPreview":"教师偏好通过证据和反馈形成长期记忆闭环","textChars":19,"textLines":1,"bbox":[119,57.6,650,42]}
+{"kind":"textbox","id":"sh/r2pobudk","slide":39,"text":"03 · TECHNOLOGY","textPreview":"03 · TECHNOLOGY","textChars":15,"textLines":1,"bbox":[739,40.3,173,23]}
+{"kind":"shape","id":"sh/q1gn2pcf","slide":39,"bbox":[119,109.4,793,4.8]}
+{"kind":"shape","id":"sh/do76d4vq","slide":39,"bbox":[119,109.4,106,4.8]}
+{"kind":"shape","id":"sh/snyp4zu5","slide":39,"bbox":[48,508.8,864,1]}
+{"kind":"textbox","id":"sh/76lozqdg","slide":39,"text":"智核 · 多模态AI互动式教学智能体","textPreview":"智核 · 多模态AI互动式教学智能体","textChars":18,"textLines":1,"bbox":[78.7,513.6,346,19.2]}
+{"kind":"shape","id":"sh/65cnq5cv","slide":39,"bbox":[861.1,517,7.7,7.7]}
+{"kind":"textbox","id":"sh/sjmpon2x","slide":39,"text":"39","textPreview":"39","textChars":2,"textLines":1,"bbox":[871.7,513.6,40.3,19.2]}
+{"kind":"textbox","id":"sh/dkvqxsji","slide":39,"text":"输入证据","textPreview":"输入证据","textChars":4,"textLines":1,"bbox":[52,130,86,22]}
+{"kind":"textbox","id":"sh/qx47mdkr","slide":39,"text":"显式偏好\n学段、风格、互动方式","textPreview":"显式偏好 | 学段、风格、互动方式","textChars":15,"textLines":2,"bbox":[53,173,184,70]}
+{"kind":"textbox","id":"sh/rid8vi1c","slide":39,"text":"隐式行为\n采纳、拒绝、修改内容","textPreview":"隐式行为 | 采纳、拒绝、修改内容","textChars":15,"textLines":2,"bbox":[53,269,184,70]}
+{"kind":"textbox","id":"sh/0n6psni9","slide":39,"text":"课堂反馈\n正确率、参与度、困惑点","textPreview":"课堂反馈 | 正确率、参与度、困惑点","textChars":16,"textLines":2,"bbox":[53,365,184,70]}
+{"kind":"textbox","id":"sh/1ofq1sje","slide":39,"text":"证据表留档\n记录来源与时间\n支持追溯","textPreview":"证据表留档 | 记录来源与时间 | 支持追溯","textChars":18,"textLines":3,"bbox":[310,210,165,92]}
+{"kind":"textbox","id":"sh/el47qxk3","slide":39,"text":"教师风格画像\n时间衰减置信度\n只保留稳定偏好","textPreview":"教师风格画像 | 时间衰减置信度 | 只保留稳定偏好","textChars":22,"textLines":3,"bbox":[310,345,165,92]}
+{"kind":"shape","id":"sh/fmx8z21o","slide":39,"bbox":[237,208,73,48]}
+{"kind":"shape","id":"sh/gr2pg32p","slide":39,"bbox":[237,256,73,48]}
+{"kind":"shape","id":"sh/hsbqp8ja","slide":39,"bbox":[237,391,73,9]}
+{"kind":"shape","id":"sh/xcjex072","slide":39,"bbox":[392.5,302,0,43]}
+{"kind":"textbox","id":"sh/cbax4vqh","slide":39,"text":"提示编排\n当前任务 + RAG 证据\n+ 稳定风格偏好","textPreview":"提示编排 | 当前任务 + RAG 证据 | + 稳定风格偏好","textChars":27,"textLines":3,"bbox":[548,210,160,92]}
+{"kind":"textbox","id":"sh/ba1wvqpw","slide":39,"text":"个性化结果\n首版更贴近教师习惯\n无需重新训练模型","textPreview":"个性化结果 | 首版更贴近教师习惯 | 无需重新训练模型","textChars":24,"textLines":3,"bbox":[548,345,160,92]}
+{"kind":"shape","id":"sh/a9sf2l8b","slide":39,"bbox":[475,256,73,135]}
+{"kind":"shape","id":"sh/l03e107y","slide":39,"bbox":[628,302,0,43]}
+{"kind":"textbox","id":"sh/kfux8fqd","slide":39,"text":"反馈回写\n\n采纳\n拒绝\n编辑差异\n\n更新证据与画像","textPreview":"反馈回写 |  | 采纳 | 拒绝 | 编辑差异 |  | 更新证据与画像","textChars":25,"textLines":7,"bbox":[779,244,133,159]}
+{"kind":"shape","id":"sh/zelwzaps","slide":39,"bbox":[708,323.5,71,67.5]}
+{"kind":"shape","id":"sh/ydcf658n","slide":39,"bbox":[392.5,186,453,58]}
+{"kind":"textbox","id":"sh/t4ne5k7a","slide":39,"text":"写入规则：证据表与画像表同时成功才标记为已保存；数据库异常会返回不可用状态，避免“假记忆”。","textPreview":"写入规则：证据表与画像表同时成功才标记为已保存；数据库异常会返回不可用状态，避免“假记忆”。","textChars":46,"textLines":1,"bbox":[53,457,859,33]}
+{"kind":"notes","id":"nt/twb2lg7e","slide":39,"text":"依据：教师画像、反馈与课堂事件链路说明。持久化边界来自 CORE_ALGORITHM_REVIEW.md。"}
+{"kind":"slide","id":"sl/5ojatgfe","slide":40,"title":"03","textShapes":14}
+{"kind":"textbox","id":"sh/lc7y50ze","slide":40,"text":"03","textPreview":"03","textChars":2,"textLines":1,"bbox":[48,38.4,53.76,53.76]}
+{"kind":"textbox","id":"sh/y9gzu50n","slide":40,"text":"关键技术⑤","textPreview":"关键技术⑤","textChars":5,"textLines":1,"bbox":[119,33.6,430,25]}
+{"kind":"textbox","id":"sh/zapg3qh8","slide":40,"text":"两级质检和受控降级守住课堂可用底线","textPreview":"两级质检和受控降级守住课堂可用底线","textChars":17,"textLines":1,"bbox":[119,57.6,650,42]}
+{"kind":"textbox","id":"sh/cnexsvih","slide":40,"text":"03 · TECHNOLOGY","textPreview":"03 · TECHNOLOGY","textChars":15,"textLines":1,"bbox":[739,40.3,173,23]}
+{"kind":"shape","id":"sh/x8ny10z2","slide":40,"bbox":[119,109.4,793,4.8]}
+{"kind":"shape","id":"sh/alwfql0r","slide":40,"bbox":[119,109.4,106,4.8]}
+{"kind":"shape","id":"sh/bm5gzqhw","slide":40,"bbox":[48,508.8,864,1]}
+{"kind":"textbox","id":"sh/ojexobil","slide":40,"text":"智核 · 多模态AI互动式教学智能体","textPreview":"智核 · 多模态AI互动式教学智能体","textChars":18,"textLines":1,"bbox":[78.7,513.6,346,19.2]}
+{"kind":"shape","id":"sh/pknyxgz6","slide":40,"bbox":[861.1,517,7.7,7.7]}
+{"kind":"textbox","id":"sh/1wnmx4vq","slide":40,"text":"40","textPreview":"40","textChars":2,"textLines":1,"bbox":[871.7,513.6,40.3,19.2]}
+{"kind":"textbox","id":"sh/gvel4ze5","slide":40,"text":"生成结果进入两道质量门","textPreview":"生成结果进入两道质量门","textChars":11,"textLines":1,"bbox":[52,130,176,22]}
+{"kind":"textbox","id":"sh/fu54vudk","slide":40,"text":"生成草稿\n大纲 + 页面","textPreview":"生成草稿 | 大纲 + 页面","textChars":12,"textLines":2,"bbox":[53,188,124,72]}
+{"kind":"textbox","id":"sh/etw32pwz","slide":40,"text":"大纲层 8 项检查\n\n教研链 · 封面 · 目录 · 总结\n页数偏差 · 教学意图\n视觉建议 · 知识点覆盖","textPreview":"大纲层 8 项检查 |  | 教研链 · 封面 · 目录 · 总结 | 页数偏差 · 教学意图 | 视觉建议 · 知识点覆盖","textChars":54,"textLines":5,"bbox":[236,160,242,128]}
+{"kind":"textbox","id":"sh/tsnmt4vu","slide":40,"text":"页面层结构检查\n\n必需标签与层级\n画布约束与嵌套合法性\n危险内容清理","textPreview":"页面层结构检查 |  | 必需标签与层级 | 画布约束与嵌套合法性 | 危险内容清理","textChars":34,"textLines":5,"bbox":[536,160,242,128]}
+{"kind":"textbox","id":"sh/s7el0ze9","slide":40,"text":"通过\n可预览 / 导出","textPreview":"通过 | 可预览 / 导出","textChars":11,"textLines":2,"bbox":[836,188,76,72]}
+{"kind":"shape","id":"sh/r6l4rudo","slide":40,"bbox":[177,224,59,0]}
+{"kind":"shape","id":"sh/65c3ypw3","slide":40,"bbox":[478,224,58,0]}
+{"kind":"shape","id":"sh/543mpkvi","slide":40,"bbox":[778,224,58,0]}
+{"kind":"textbox","id":"sh/43ulwfex","slide":40,"text":"质量修订\n反思节点自动重试一次\n失败时降低温度并收紧约束","textPreview":"质量修订 | 反思节点自动重试一次 | 失败时降低温度并收紧约束","textChars":28,"textLines":3,"bbox":[236,335,242,88]}
+{"kind":"shape","id":"sh/wny5cfmt","slide":40,"bbox":[357,288,0,47]}
+{"kind":"shape","id":"sh/x87m5k3e","slide":40,"bbox":[357,288,145,91]}
+{"kind":"textbox","id":"sh/alg3ap4n","slide":40,"text":"受控降级链\n模型失败：内置模板     PostgreSQL 异常：本地 JSON / 内存\nOCR 不可用：视觉理解互补     DOM 导出失败：元素级 / 基础文本导出","textPreview":"受控降级链 | 模型失败：内置模板     PostgreSQL 异常：本地 JSON / 内存 | OCR 不可用：视觉理解互补     DOM 导出失败：元素级 / 基础文本导出","textChars":87,"textLines":3,"bbox":[536,335,376,88]}
+{"kind":"shape","id":"sh/vmp43al8","slide":40,"bbox":[657,288,67,47]}
+{"kind":"textbox","id":"sh/8jel8fmx","slide":40,"text":"判定标准关注内容与结构合格性。外部服务异常时，系统仍返回可讲授、可预览、可导出的基础结果。","textPreview":"判定标准关注内容与结构合格性。外部服务异常时，系统仍返回可讲授、可预览、可导出的基础结果。","textChars":45,"textLines":1,"bbox":[53,454,859,36]}
+{"kind":"notes","id":"nt/5ojatgfe","slide":40,"text":"依据：课件生成器、HTML校验与降级逻辑。讲解重点：质量门槛独立于接口是否成功。"}
+{"kind":"slide","id":"sl/cnmpwjmp","slide":41,"title":"PART 04","textShapes":5}
+{"kind":"shape","id":"sh/t0rqhkju","slide":41,"name":"Shape 0","bbox":[614.4,259.2,345.6,247.68]}
+{"kind":"textbox","id":"sh/szi98fi9","slide":41,"name":"Text 1","text":"PART 04","textPreview":"PART 04","textChars":7,"textLines":1,"bbox":[672,475.2,249.6,28.8]}
+{"kind":"shape","id":"sh/f298ju10","slide":41,"name":"Shape 2","bbox":[854.4,432,38.4,38.4]}
+{"kind":"textbox","id":"sh/36t8nu1w","slide":41,"name":"Text 6","text":"04","textPreview":"04","textChars":2,"textLines":1,"bbox":[48,52.8,355.2,220.8]}
+{"kind":"textbox","id":"sh/25krep0r","slide":41,"name":"Text 7","text":"组织管理","textPreview":"组织管理","textChars":4,"textLines":1,"bbox":[52.8,283.2,441.6,81.6]}
+{"kind":"shape","id":"sh/cvqp43qh","slide":41,"name":"Shape 8","bbox":[54.72,369.6,307.2,5.76]}
+{"kind":"textbox","id":"sh/dwjqd8r2","slide":41,"name":"Text 9","text":"ORGANIZATION & MANAGEMENT","textPreview":"ORGANIZATION & MANAGEMENT","textChars":25,"textLines":1,"bbox":[54.72,384,451.2,28.8]}
+{"kind":"textbox","id":"sh/qt872t8b","slide":41,"name":"Text 10","text":"本章内容：团队分工 · 项目实施 · 进度计划","textPreview":"本章内容：团队分工 · 项目实施 · 进度计划","textChars":23,"textLines":1,"bbox":[54.72,422.4,499.2,26.88]}
+{"kind":"shape","id":"sh/ruh8by9w","slide":41,"name":"Shape 11","bbox":[54.72,484.8,19.2,19.2]}
+{"kind":"shape","id":"sh/0za983qd","slide":41,"name":"Shape 12","bbox":[83.52,484.8,19.2,19.2]}
+{"kind":"shape","id":"sh/10jqh8ry","slide":41,"name":"Shape 13","bbox":[112.32,484.8,19.2,19.2]}
+{"kind":"shape","id":"sh/exsr6t87","slide":41,"name":"Shape 14","bbox":[141.12,484.8,19.2,19.2]}
+{"kind":"shape","id":"sh/zy18fy9s","slide":41,"name":"Shape 15","bbox":[169.92,484.8,19.2,19.2]}
+{"kind":"notes","id":"nt/cnmpwjmp","slide":41,"text":""}
+{"kind":"slide","id":"sl/7mdw7yh8","slide":42,"title":"04","textShapes":12}
+{"kind":"shape","id":"sh/mlovmtcr","slide":42,"name":"Shape 0","bbox":[48,38.4,53.76,53.76]}
+{"kind":"textbox","id":"sh/nmxwfetc","slide":42,"name":"Text 1","text":"04","textPreview":"04","textChars":2,"textLines":1,"bbox":[48,38.4,53.76,53.76]}
+{"kind":"textbox","id":"sh/0j6dkjul","slide":42,"name":"Text 2","text":"团队分工","textPreview":"团队分工","textChars":4,"textLines":1,"bbox":[119.04,33.6,432,24.96]}
+{"kind":"textbox","id":"sh/lkfedov6","slide":42,"name":"Text 3","text":"3 人精干团队，一人多职","textPreview":"3 人精干团队，一人多职","textChars":12,"textLines":1,"bbox":[119.04,57.6,662.4,48]}
+{"kind":"textbox","id":"sh/yh4vi9cv","slide":42,"name":"Text 4","text":"04 · MANAGEMENT","textPreview":"04 · MANAGEMENT","textChars":15,"textLines":1,"bbox":[739.2,40.32,172.8,23.04]}
+{"kind":"shape","id":"sh/zixcbedg","slide":42,"name":"Shape 5","bbox":[119.04,109.44,792.96,4.8]}
+{"kind":"shape","id":"sh/cfmdgzup","slide":42,"name":"Shape 6","bbox":[119.04,109.44,105.6,4.8]}
+{"kind":"shape","id":"sh/s72l03eh","slide":42,"name":"Shape 31","bbox":[48,508.8,864,0]}
+{"kind":"textbox","id":"sh/e9k32dwn","slide":42,"name":"Text 32","text":"智核 · 多模态AI互动式教学智能体","textPreview":"智核 · 多模态AI互动式教学智能体","textChars":18,"textLines":1,"bbox":[78.72,513.6,345.6,19.2]}
+{"kind":"shape","id":"sh/1cvmx8ve","slide":42,"name":"Shape 33","bbox":[861.12,516.96,7.68,7.68]}
+{"kind":"textbox","id":"sh/0b2l4net","slide":42,"name":"Text 34","text":"42","textPreview":"42","textChars":2,"textLines":1,"bbox":[871.68,513.6,40.32,19.2]}
+{"kind":"shape","id":"sh/ud03q9wj","slide":42,"name":"Rectangle 38","bbox":[266.27,145.6,427.47,318.53]}
+{"kind":"textbox","id":"sh/8zml8jm5","slide":42,"name":"TextBox 41","text":"小杨","textPreview":"小杨","textChars":2,"textLines":1,"bbox":[48,253.65,249.6,38.4]}
+{"kind":"textbox","id":"sh/90vm1onq","slide":42,"name":"Rectangle 42","text":"项目经理","textPreview":"项目经理","textChars":4,"textLines":1,"bbox":[48,297.81,124.8,30.72]}
+{"kind":"textbox","id":"sh/wnmlc3mh","slide":42,"name":"TextBox 45","text":"小李","textPreview":"小李","textChars":2,"textLines":1,"bbox":[763.2,331.64,249.6,38.4]}
+{"kind":"textbox","id":"sh/hovm58n2","slide":42,"name":"Rectangle 46","text":"客户关系经理","textPreview":"客户关系经理","textChars":6,"textLines":1,"bbox":[763.2,375.8,148.8,30.72]}
+{"kind":"textbox","id":"sh/tkz6dc7a","slide":42,"name":"TextBox 49","text":"小王","textPreview":"小王","textChars":2,"textLines":1,"bbox":[700.8,159.07,211.2,38.4]}
+{"kind":"textbox","id":"sh/sjq5476p","slide":42,"name":"Rectangle 50","text":"技术经理","textPreview":"技术经理","textChars":4,"textLines":1,"bbox":[787.2,203.23,124.8,30.72]}
+{"kind":"shape","id":"sh/gnqp876l","slide":42,"name":"Connector 54","bbox":[172.83,305.88,165.2,7.33]}
+{"kind":"shape","id":"sh/obapcr6x","slide":42,"name":"Connector 58","bbox":[499.47,218.61,287.73,52.93]}
+{"kind":"shape","id":"sh/dgvu94va","slide":42,"name":"Connector 58","bbox":[647.27,305.88,115.93,85.33]}
+{"kind":"image","id":"im/fix07qlk","slide":42,"name":"Image 0","bbox":[48,510.72,23.04,23.04]}
+{"kind":"image","id":"im/ehozyl4z","slide":42,"name":"Picture 37","bbox":[266.73,145.67,426.53,319.8]}
+{"kind":"notes","id":"nt/7mdw7yh8","slide":42,"text":""}
+{"kind":"slide","id":"sl/qhkbqxoz","slide":43,"title":"04","textShapes":21}
+{"kind":"shape","id":"sh/5ojy5gr2","slide":43,"name":"Shape 0","bbox":[48,38.4,53.76,53.76]}
+{"kind":"textbox","id":"sh/43axcvqx","slide":43,"name":"Text 1","text":"04","textPreview":"04","textChars":2,"textLines":1,"bbox":[48,38.4,53.76,53.76]}
+{"kind":"textbox","id":"sh/vyhgz690","slide":43,"name":"Text 2","text":"项目实施","textPreview":"项目实施","textChars":4,"textLines":1,"bbox":[119.04,33.6,432,24.96]}
+{"kind":"textbox","id":"sh/ux8f618f","slide":43,"name":"Text 3","text":"五阶段闭环推进","textPreview":"五阶段闭环推进","textChars":7,"textLines":1,"bbox":[119.04,57.6,662.4,48]}
+{"kind":"textbox","id":"sh/h0jy1gr6","slide":43,"name":"Text 4","text":"04 · MANAGEMENT","textPreview":"04 · MANAGEMENT","textChars":15,"textLines":1,"bbox":[739.2,40.32,172.8,23.04]}
+{"kind":"shape","id":"sh/wzax8bql","slide":43,"name":"Shape 5","bbox":[119.04,109.44,792.96,4.8]}
+{"kind":"shape","id":"sh/fulgba9k","slide":43,"name":"Shape 6","bbox":[119.04,109.44,105.6,4.8]}
+{"kind":"shape","id":"sh/gnih4bed","slide":43,"name":"Shape 27","bbox":[48,508.8,864,0]}
+{"kind":"textbox","id":"sh/fu1writg","slide":43,"name":"Text 28","text":"智核 · 多模态AI互动式教学智能体","textPreview":"智核 · 多模态AI互动式教学智能体","textChars":18,"textLines":1,"bbox":[78.72,513.6,345.6,19.2]}
+{"kind":"shape","id":"sh/0vud0nu1","slide":43,"name":"Shape 29","bbox":[861.12,516.96,7.68,7.68]}
+{"kind":"textbox","id":"sh/1w3etsbm","slide":43,"name":"Text 30","text":"43","textPreview":"43","textChars":2,"textLines":1,"bbox":[871.68,513.6,40.32,19.2]}
+{"kind":"shape","id":"sh/qpsvutcz","slide":43,"name":"Connector 33","bbox":[148.8,244.8,166.08,139.2]}
+{"kind":"shape","id":"sh/rq1wnytk","slide":43,"name":"Connector 34","bbox":[314.88,244.8,166.08,139.2]}
+{"kind":"shape","id":"sh/sradw3u5","slide":43,"name":"Connector 35","bbox":[480.96,244.8,166.08,139.2]}
+{"kind":"shape","id":"sh/dsjep8ba","slide":43,"name":"Connector 36","bbox":[647.04,244.8,166.08,139.2]}
+{"kind":"shape","id":"sh/alcvqxc3","slide":43,"name":"Rectangle 37","bbox":[225.6,308.16,12.48,12.48]}
+{"kind":"shape","id":"sh/bmlwz2to","slide":43,"name":"Rectangle 38","bbox":[391.68,308.16,12.48,12.48]}
+{"kind":"shape","id":"sh/ve1svux4","slide":43,"name":"Rectangle 39","bbox":[557.76,308.16,12.48,12.48]}
+{"kind":"shape","id":"sh/udsrmpgj","slide":43,"name":"Rectangle 40","bbox":[723.84,308.16,12.48,12.48]}
+{"kind":"textbox","id":"sh/hgjax4fa","slide":43,"name":"Oval 41","text":"01","textPreview":"01","textChars":2,"textLines":1,"bbox":[108,343.2,81.6,81.6]}
+{"kind":"textbox","id":"sh/wfa9ozyp","slide":43,"name":"Oval 42","text":"02","textPreview":"02","textChars":2,"textLines":1,"bbox":[274.08,204,81.6,81.6]}
+{"kind":"textbox","id":"sh/7q1sruxs","slide":43,"name":"Oval 43","text":"03","textPreview":"03","textChars":2,"textLines":1,"bbox":[440.16,343.2,81.6,81.6]}
+{"kind":"textbox","id":"sh/mp8ripgn","slide":43,"name":"Oval 44","text":"04","textPreview":"04","textChars":2,"textLines":1,"bbox":[606.24,204,81.6,81.6]}
+{"kind":"textbox","id":"sh/9cjatkfy","slide":43,"name":"Oval 45","text":"05","textPreview":"05","textChars":2,"textLines":1,"bbox":[772.32,343.2,81.6,81.6]}
+{"kind":"textbox","id":"sh/8ra9kzyd","slide":43,"name":"TextBox 46","text":"建议阶段","textPreview":"建议阶段","textChars":4,"textLines":1,"bbox":[33.6,425.4,230.4,28.8]}
+{"kind":"textbox","id":"sh/rmls3exc","slide":43,"name":"TextBox 47","text":"可行性分析\n团队组建\n风险分析","textPreview":"可行性分析 | 团队组建 | 风险分析","textChars":15,"textLines":3,"bbox":[117.13,453.16,63.33,46]}
+{"kind":"textbox","id":"sh/6lcbu9gr","slide":43,"name":"TextBox 48","text":"明确范围分工\n质量标准\n进度计划","textPreview":"明确范围分工 | 质量标准 | 进度计划","textChars":16,"textLines":3,"bbox":[276.88,128.68,76,46]}
+{"kind":"textbox","id":"sh/4fmx8rax","slide":43,"name":"TextBox 49","text":"启动计划","textPreview":"启动计划","textChars":4,"textLines":1,"bbox":[199.68,174.83,230.4,28.8]}
+{"kind":"textbox","id":"sh/pgvy1wri","slide":43,"name":"TextBox 50","text":"实施阶段","textPreview":"实施阶段","textChars":4,"textLines":1,"bbox":[365.76,426.87,230.4,28.8]}
+{"kind":"textbox","id":"sh/2d4f6hsr","slide":43,"name":"TextBox 51","text":"资源分配\n核心设计\n架构与代码实现","textPreview":"资源分配 | 核心设计 | 架构与代码实现","textChars":17,"textLines":3,"bbox":[436.63,453.16,88.67,46]}
+{"kind":"textbox","id":"sh/3edgzm9c","slide":43,"name":"TextBox 52","text":"进度成本控制\n上线运行\n测试分析","textPreview":"进度成本控制 | 上线运行 | 测试分析","textChars":16,"textLines":3,"bbox":[609.04,128.68,76,46]}
+{"kind":"textbox","id":"sh/cjmxcra9","slide":43,"name":"TextBox 53","text":"控制阶段","textPreview":"控制阶段","textChars":4,"textLines":1,"bbox":[531.84,173.36,230.4,28.8]}
+{"kind":"textbox","id":"sh/dkfy5wre","slide":43,"name":"TextBox 54","text":"收尾阶段","textPreview":"收尾阶段","textChars":4,"textLines":1,"bbox":[697.92,427.6,230.4,28.8]}
+{"kind":"textbox","id":"sh/qh4fahs3","slide":43,"name":"TextBox 55","text":"评估验收\n财务结算\n归档与后续计划","textPreview":"评估验收 | 财务结算 | 归档与后续计划","textChars":17,"textLines":3,"bbox":[768.79,453.16,88.67,46]}
+{"kind":"image","id":"im/wnqpgfap","slide":43,"name":"Image 0","bbox":[48,510.72,23.04,23.04]}
+{"kind":"notes","id":"nt/qhkbqxoz","slide":43,"text":""}
+{"kind":"slide","id":"sl/pcvutcvy","slide":44,"title":"04","textShapes":6}
+{"kind":"shape","id":"sh/tozulw3e","slide":44,"name":"Shape 0","bbox":[48,38.4,53.76,53.76]}
+{"kind":"textbox","id":"sh/s3qdcr2t","slide":44,"name":"Text 1","text":"04","textPreview":"04","textChars":2,"textLines":1,"bbox":[48,38.4,53.76,53.76]}
+{"kind":"textbox","id":"sh/fqhcn6lk","slide":44,"name":"Text 2","text":"进度计划","textPreview":"进度计划","textChars":4,"textLines":1,"bbox":[119.04,33.6,432,24.96]}
+{"kind":"textbox","id":"sh/ep8ve1kz","slide":44,"name":"Text 3","text":"项目进度甘特图","textPreview":"项目进度甘特图","textChars":7,"textLines":1,"bbox":[119.04,57.6,662.4,48]}
+{"kind":"textbox","id":"sh/1szepg3q","slide":44,"name":"Text 4","text":"04 · MANAGEMENT","textPreview":"04 · MANAGEMENT","textChars":15,"textLines":1,"bbox":[739.2,40.32,172.8,23.04]}
+{"kind":"shape","id":"sh/grqdgb25","slide":44,"name":"Shape 5","bbox":[119.04,109.44,792.96,4.8]}
+{"kind":"shape","id":"sh/vuxcb2lg","slide":44,"name":"Shape 6","bbox":[119.04,109.44,105.6,4.8]}
+{"kind":"shape","id":"sh/ad0zyp8f","slide":44,"name":"Shape 54","bbox":[48,508.8,864,0]}
+{"kind":"textbox","id":"sh/gbm1cj6p","slide":44,"name":"Text 55","text":"智核 · 多模态AI互动式教学智能体","textPreview":"智核 · 多模态AI互动式教学智能体","textChars":18,"textLines":1,"bbox":[78.72,513.6,345.6,19.2]}
+{"kind":"shape","id":"sh/hcvilo7a","slide":44,"name":"Shape 56","bbox":[861.12,516.96,7.68,7.68]}
+{"kind":"textbox","id":"sh/psbi5oze","slide":44,"name":"Text 57","text":"44","textPreview":"44","textChars":2,"textLines":1,"bbox":[871.68,513.6,40.32,19.2]}
+{"kind":"shape","id":"sh/o7i1wjyt","slide":44,"name":"Rectangle 38","bbox":[46.8,117.53,865.2,387.87]}
+{"kind":"image","id":"im/ofi94nql","slide":44,"name":"Image 0","bbox":[48,510.72,23.04,23.04]}
+{"kind":"notes","id":"nt/pcvutcvy","slide":44,"text":""}
+{"kind":"slide","id":"sl/kvipwnmh","slide":45,"title":"05","textShapes":6}
+{"kind":"shape","id":"sh/lsz2dofy","slide":45,"name":"Shape 0","bbox":[48,38.4,53.76,53.76]}
+{"kind":"textbox","id":"sh/0rq1kjed","slide":45,"name":"Text 1","text":"05","textPreview":"05","textChars":2,"textLines":1,"bbox":[48,38.4,53.76,53.76]}
+{"kind":"textbox","id":"sh/ne1kfydo","slide":45,"name":"Text 2","text":"系统演示","textPreview":"系统演示","textChars":4,"textLines":1,"bbox":[119.04,33.6,432,24.96]}
+{"kind":"textbox","id":"sh/mtsjmtw3","slide":45,"name":"Text 3","text":"项目演示视频","textPreview":"项目演示视频","textChars":6,"textLines":1,"bbox":[119.04,57.6,662.4,48]}
+{"kind":"textbox","id":"sh/9gj2hovu","slide":45,"name":"Text 4","text":"SYSTEM DEMO","textPreview":"SYSTEM DEMO","textChars":11,"textLines":1,"bbox":[739.2,40.32,172.8,23.04]}
+{"kind":"shape","id":"sh/8fa1oje9","slide":45,"name":"Shape 5","bbox":[119.04,109.44,792.96,4.8]}
+{"kind":"shape","id":"sh/vi1kjyd0","slide":45,"name":"Shape 6","bbox":[119.04,109.44,105.6,4.8]}
+{"kind":"shape","id":"sh/ahs3qtwf","slide":45,"name":"Shape 7","bbox":[48,139.2,863.93,331.2]}
+{"kind":"shape","id":"sh/f6xgzaxo","slide":45,"name":"Shape 29","bbox":[48,508.8,864,0]}
+{"kind":"textbox","id":"sh/h8fy10fu","slide":45,"name":"Text 30","text":"智核 · 多模态AI互动式教学智能体","textPreview":"智核 · 多模态AI互动式教学智能体","textChars":18,"textLines":1,"bbox":[78.72,513.6,345.6,19.2]}
+{"kind":"shape","id":"sh/29oza5gz","slide":45,"name":"Shape 31","bbox":[861.12,516.96,7.68,7.68]}
+{"kind":"textbox","id":"sh/3axg3axk","slide":45,"name":"Text 32","text":"48","textPreview":"48","textChars":2,"textLines":1,"bbox":[871.68,513.6,40.32,19.2]}
+{"kind":"image","id":"im/z25onap8","slide":45,"name":"Image 0","bbox":[48,510.72,23.04,23.04]}
+{"kind":"notes","id":"nt/kvipwnmh","slide":45,"text":""}
+{"kind":"slide","id":"sl/zixsf2ps","slide":46,"title":"06","textShapes":6}
+{"kind":"shape","id":"sh/a9s3uhcv","slide":46,"name":"Shape 0","bbox":[48,38.4,53.76,53.76]}
+{"kind":"textbox","id":"sh/va14nmtg","slide":46,"name":"Text 1","text":"06","textPreview":"06","textChars":2,"textLines":1,"bbox":[48,38.4,53.76,53.76]}
+{"kind":"textbox","id":"sh/kful0rud","slide":46,"name":"Text 2","text":"团队展示","textPreview":"团队展示","textChars":4,"textLines":1,"bbox":[119.04,33.6,432,24.96]}
+{"kind":"textbox","id":"sh/5g3mtwbi","slide":46,"name":"Text 3","text":"团队视频","textPreview":"团队视频","textChars":4,"textLines":1,"bbox":[119.04,57.6,662.4,48]}
+{"kind":"textbox","id":"sh/ids3yhc7","slide":46,"name":"Text 4","text":"TEAM SHOWCASE","textPreview":"TEAM SHOWCASE","textChars":13,"textLines":1,"bbox":[739.2,40.32,172.8,23.04]}
+{"kind":"shape","id":"sh/je14rmts","slide":46,"name":"Shape 5","bbox":[119.04,109.44,792.96,4.8]}
+{"kind":"shape","id":"sh/s3ul4bu9","slide":46,"name":"Shape 6","bbox":[119.04,109.44,105.6,4.8]}
+{"kind":"shape","id":"sh/gbil07ih","slide":46,"name":"Shape 18","bbox":[48,139.2,864,331.2]}
+{"kind":"shape","id":"sh/pgbmdcze","slide":46,"name":"Shape 23","bbox":[48,508.8,864,0]}
+{"kind":"textbox","id":"sh/3e94bmh8","slide":46,"name":"Text 24","text":"智核 · 多模态AI互动式教学智能体","textPreview":"智核 · 多模态AI互动式教学智能体","textChars":18,"textLines":1,"bbox":[78.72,513.6,345.6,19.2]}
+{"kind":"shape","id":"sh/c32l8rip","slide":46,"name":"Shape 25","bbox":[861.12,516.96,7.68,7.68]}
+{"kind":"textbox","id":"sh/d4bmhwza","slide":46,"name":"Text 26","text":"49","textPreview":"49","textChars":2,"textLines":1,"bbox":[871.68,513.6,40.32,19.2]}
+{"kind":"image","id":"im/gbi9kbup","slide":46,"name":"Image 0","bbox":[48,510.72,23.04,23.04]}
+{"kind":"notes","id":"nt/zixsf2ps","slide":46,"text":""}
+{"kind":"slide","id":"sl/atcnytkf","slide":47,"title":"感谢聆听","textShapes":5}
+{"kind":"shape","id":"sh/503e9ora","slide":47,"name":"Shape 0","bbox":[0,0,960,42.24]}
+{"kind":"shape","id":"sh/4zadgjap","slide":47,"name":"Shape 1","bbox":[0,42.24,960,6.72]}
+{"kind":"textbox","id":"sh/rmlwby90","slide":47,"name":"Text 2","text":"感谢聆听","textPreview":"感谢聆听","textChars":4,"textLines":1,"bbox":[52.8,105.6,624,148.8]}
+{"kind":"textbox","id":"sh/6lcvitsf","slide":47,"name":"Text 3","text":"THANK YOU FOR LISTENING","textPreview":"THANK YOU FOR LISTENING","textChars":23,"textLines":1,"bbox":[57.6,273.6,528,33.6]}
+{"kind":"shape","id":"sh/do3edor6","slide":47,"name":"Shape 4","bbox":[57.6,331.2,441.6,0]}
+{"kind":"textbox","id":"sh/snudk3al","slide":47,"name":"Text 5","text":"智核 · 多模态AI互动式教学智能体","textPreview":"智核 · 多模态AI互动式教学智能体","textChars":18,"textLines":1,"bbox":[57.6,347.52,576,33.6]}
+{"kind":"textbox","id":"sh/7qhczu9w","slide":47,"name":"Text 6","text":"智核项目组","textPreview":"智核项目组","textChars":5,"textLines":1,"bbox":[57.6,388.8,576,28.8]}
+{"kind":"shape","id":"sh/mp8v6psb","slide":47,"name":"Shape 7","bbox":[643.2,316.8,316.8,190.08]}
+{"kind":"textbox","id":"sh/szy5wbeh","slide":47,"name":"Text 8","text":"ZHIHE · AI TEACHING AGENT","textPreview":"ZHIHE · AI TEACHING AGENT","textChars":25,"textLines":1,"bbox":[662.4,475.2,278.4,30.72]}
+{"kind":"image","id":"im/yx8r2l4z","slide":47,"name":"Image 0","bbox":[827.52,69.12,100.8,100.8]}
+{"kind":"notes","id":"nt/atcnytkf","slide":47,"text":""}

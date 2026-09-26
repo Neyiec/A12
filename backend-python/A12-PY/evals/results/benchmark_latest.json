@@ -1,0 +1,191 @@
+{
+  "generated_at": "2026-09-25T13:46:44+08:00",
+  "configuration": {
+    "llm_model": "qwen3.7-flash",
+    "embedding_model": "qwen3.7-text-embedding",
+    "embedding_dimensions": 1024,
+    "quality_preset": "fast"
+  },
+  "model_probe": {
+    "configured": true,
+    "available": true,
+    "status": "available",
+    "model": "qwen3.7-flash",
+    "latency_ms": 2348
+  },
+  "embedding": {
+    "status": "passed",
+    "model": "qwen3.7-text-embedding",
+    "dimensions": 1024,
+    "top1_accuracy": 1.0,
+    "latency_ms": 2056,
+    "cases": [
+      {
+        "query": "植物如何制造有机物",
+        "expected": 0,
+        "predicted": 0,
+        "top_score": 0.653
+      },
+      {
+        "query": "把披萨平均分成几份怎样表示",
+        "expected": 1,
+        "predicted": 1,
+        "top_score": 0.7184
+      },
+      {
+        "query": "如何识别伪造账号登录链接",
+        "expected": 2,
+        "predicted": 2,
+        "top_score": 0.7618
+      },
+      {
+        "query": "物体为什么会发声",
+        "expected": 3,
+        "predicted": 3,
+        "top_score": 0.7787
+      },
+      {
+        "query": "琵琶女的音乐描写",
+        "expected": 4,
+        "predicted": 4,
+        "top_score": 0.7431
+      }
+    ]
+  },
+  "outlines": {
+    "status": "passed",
+    "model": "qwen3.7-flash",
+    "case_count": 5,
+    "model_completion_rate": 1.0,
+    "latency_p50_ms": 45113.0,
+    "latency_p95_ms": 50782.0,
+    "mean_quality_score": 0.9524,
+    "mean_requirement_coverage": 0.95,
+    "cases": [
+      {
+        "id": "primary_math_fraction",
+        "generation_status": "model",
+        "latency_ms": 45113,
+        "slide_count": 4,
+        "quality_score": 0.9524,
+        "requirement_coverage": 1.0,
+        "covered_terms": [
+          "教学目标",
+          "互动",
+          "检测",
+          "总结"
+        ]
+      },
+      {
+        "id": "junior_biology_photosynthesis",
+        "generation_status": "model",
+        "latency_ms": 48397,
+        "slide_count": 4,
+        "quality_score": 0.9524,
+        "requirement_coverage": 1.0,
+        "covered_terms": [
+          "教学目标",
+          "实验",
+          "互动",
+          "引用"
+        ]
+      },
+      {
+        "id": "senior_chinese_poetry",
+        "generation_status": "model",
+        "latency_ms": 39398,
+        "slide_count": 4,
+        "quality_score": 0.9524,
+        "requirement_coverage": 1.0,
+        "covered_terms": [
+          "教学目标",
+          "朗读",
+          "互动",
+          "总结"
+        ]
+      },
+      {
+        "id": "vocational_network_security",
+        "generation_status": "model",
+        "latency_ms": 42526,
+        "slide_count": 4,
+        "quality_score": 0.9524,
+        "requirement_coverage": 1.0,
+        "covered_terms": [
+          "教学目标",
+          "案例",
+          "互动",
+          "检测"
+        ]
+      },
+      {
+        "id": "accessibility_science",
+        "generation_status": "model",
+        "latency_ms": 50782,
+        "slide_count": 4,
+        "quality_score": 0.9524,
+        "requirement_coverage": 0.75,
+        "covered_terms": [
+          "教学目标",
+          "互动",
+          "总结"
+        ]
+      }
+    ]
+  },
+  "concurrency": {
+    "status": "passed",
+    "serial": {
+      "concurrency": 1,
+      "latency_ms": 267404,
+      "slide_count": 8,
+      "model_page_count": 8,
+      "valid_html_pages": 8,
+      "html_retries": 0
+    },
+    "parallel": {
+      "concurrency": 8,
+      "latency_ms": 39320,
+      "slide_count": 8,
+      "model_page_count": 8,
+      "valid_html_pages": 8,
+      "html_retries": 0
+    },
+    "time_reduction": 0.853,
+    "speedup": 6.8
+  },
+  "grounding": {
+    "status": "passed",
+    "model": "qwen3.7-flash",
+    "factual_accuracy": 1.0,
+    "citation_coverage": 1.0,
+    "latency_ms": 3622,
+    "cases": [
+      {
+        "id": "E1",
+        "fact_correct": true,
+        "citation_correct": true
+      },
+      {
+        "id": "E2",
+        "fact_correct": true,
+        "citation_correct": true
+      },
+      {
+        "id": "E3",
+        "fact_correct": true,
+        "citation_correct": true
+      },
+      {
+        "id": "E4",
+        "fact_correct": true,
+        "citation_correct": true
+      },
+      {
+        "id": "E5",
+        "fact_correct": true,
+        "citation_correct": true
+      }
+    ]
+  }
+}

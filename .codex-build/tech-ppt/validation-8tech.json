@@ -1,0 +1,180 @@
+{
+  "schemaVersion": "presentation-finalization.v1",
+  "finalSha256": "47d6bcb75cbe126e00c02c359bf3092e135091adfd7f90be2e265a954f50039d",
+  "byteCount": 7514589,
+  "packageIntegrity": {
+    "chart_count": 0,
+    "claim_boundary": "Structural package checks only; no slide text, notes, formulas, chart values, or native PowerPoint execution were inspected.",
+    "finding_count": 0,
+    "findings": [],
+    "notes_parts_skipped": 49,
+    "relationship_part_count": 103,
+    "slide_count": 49,
+    "status": "pass",
+    "exitCode": 0,
+    "findingCount": 0,
+    "warnings": []
+  },
+  "presentationLayout": {
+    "finding_count": 0,
+    "findings": [],
+    "font_policy": {
+      "checked_text_script_count": 1002,
+      "native_font_rendering_verified": false,
+      "observed_font_families": [
+        "Arial Black",
+        "微软雅黑"
+      ],
+      "observed_font_use_counts": {
+        "Arial Black": 159,
+        "微软雅黑": 843
+      },
+      "passed": true,
+      "performed": true
+    },
+    "slide_count": 49,
+    "slide_size_in": [
+      10,
+      5.625
+    ],
+    "warning_count": 2,
+    "warnings": [
+      {
+        "connector_id": "55",
+        "connector_z": 28,
+        "kind": "connector_over_text",
+        "slide": 41,
+        "text_object_id": "21",
+        "text_z": 22
+      },
+      {
+        "kind": "object_outside_slide_boundary",
+        "object_id": "46",
+        "object_kind": "sp",
+        "slide": 44
+      }
+    ],
+    "exitCode": 0,
+    "findingCount": 0,
+    "fontPolicy": {
+      "checked_text_script_count": 1002,
+      "native_font_rendering_verified": false,
+      "observed_font_families": [
+        "Arial Black",
+        "微软雅黑"
+      ],
+      "observed_font_use_counts": {
+        "Arial Black": 159,
+        "微软雅黑": 843
+      },
+      "passed": true,
+      "performed": true
+    }
+  },
+  "fontSelection": {
+    "basis": "reference",
+    "approvedFamilies": [
+      "微软雅黑",
+      "Arial Black"
+    ],
+    "scriptFonts": {},
+    "referenceSha256": "c3c3fb1822044d79d5acc39c05ed1aceb6950844bce5f875a3e63aca06b01411",
+    "referenceFontsVerifiedInEncodedText": true,
+    "checked_text_script_count": 1002,
+    "native_font_rendering_verified": false,
+    "observed_font_families": [
+      "Arial Black",
+      "微软雅黑"
+    ],
+    "observed_font_use_counts": {
+      "Arial Black": 159,
+      "微软雅黑": 843
+    },
+    "passed": true,
+    "performed": true
+  },
+  "firstPartyImport": {
+    "performed": true,
+    "passed": true,
+    "slideCount": 49,
+    "sha256": "47d6bcb75cbe126e00c02c359bf3092e135091adfd7f90be2e265a954f50039d",
+    "runtimeNodeModules": "C:\\Users\\32761\\.cache\\codex-runtimes\\codex-primary-runtime\\dependencies\\node\\node_modules",
+    "nodeExecutable": "C:\\Users\\32761\\.cache\\codex-runtimes\\codex-primary-runtime\\dependencies\\node\\bin\\node.exe"
+  },
+  "nativeTableArithmetic": {
+    "performed": true,
+    "checked_column_count": 0,
+    "checks": [],
+    "claim_boundary": "Displayed-value arithmetic with rounding tolerance; not source-data verification.",
+    "eligible_table_count": 0,
+    "finding_count": 0,
+    "findings": [],
+    "native_table_count": 0,
+    "passed": true,
+    "schema_version": "presentation-native-table-arithmetic.v1",
+    "skipped_tables": [],
+    "slide_count": 49,
+    "warning_count": 0,
+    "warnings": []
+  },
+  "nativeChartTitles": {
+    "performed": true,
+    "checks": [],
+    "finding_count": 0,
+    "findings": [],
+    "native_chart_count": 0,
+    "native_powerpoint_verified": false,
+    "passed": true,
+    "presentation_sha256": "47d6bcb75cbe126e00c02c359bf3092e135091adfd7f90be2e265a954f50039d",
+    "schema_version": "presentation-native-chart-titles.v1",
+    "slide_count": 49,
+    "source_text_emitted": false,
+    "unresolved_linked_title_count": 0
+  },
+  "sourceDerivedPolicyFlags": [
+    "--expected-slide-size-emu",
+    "9144000,5143500",
+    "--validate-heading-fit",
+    "--cover-role",
+    "none",
+    "--expected-slide-count",
+    "49",
+    "--approved-font-family",
+    "微软雅黑",
+    "--approved-font-family",
+    "Arial Black"
+  ],
+  "nativeChartValidation": {
+    "detectedOwnerSlides": [],
+    "detectedChartCount": 0,
+    "targetApplication": "portable",
+    "sourceChartOwnersExplicitlyDeclared": true,
+    "validatorRan": false,
+    "passed": true
+  },
+  "sourceTemplateFidelity": {
+    "report": {
+      "coverage_ratio": 1,
+      "dimensions_match": null,
+      "generated_slide_count": 49,
+      "geometry_match": null,
+      "issue_codes": [],
+      "matched_family_count": 1,
+      "matched_generated_slide_count": 49,
+      "minimum_coverage_ratio": 0,
+      "passed": true,
+      "photographic_background_matched": null,
+      "photographic_background_required": false,
+      "prompt_or_slide_text_included": false,
+      "reference_family_count": 1,
+      "schema_version": "template_source_fidelity.v1",
+      "status": "passed"
+    },
+    "exitCode": 0,
+    "referenceFamilyCount": 1,
+    "matchedFamilyCount": 1,
+    "coverageRatio": 1,
+    "minimumCoverageRatio": 0,
+    "sourceSha256": "c3c3fb1822044d79d5acc39c05ed1aceb6950844bce5f875a3e63aca06b01411"
+  }
+}

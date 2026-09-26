@@ -1,0 +1,26 @@
+Traceback (most recent call last):
+  File "C:\Users\32761\.codex\plugins\cache\openai-primary-runtime\presentations\26.909.12148\skills\presentations\container_tools\render_slides.py", line 250, in <module>
+    main()
+  File "C:\Users\32761\.codex\plugins\cache\openai-primary-runtime\presentations\26.909.12148\skills\presentations\container_tools\render_slides.py", line 245, in main
+    rasterize(input_path, out_dir, dpi)
+  File "C:\Users\32761\.codex\plugins\cache\openai-primary-runtime\presentations\26.909.12148\skills\presentations\container_tools\render_slides.py", line 171, in rasterize
+    return _render_presentation_with_artifact_tool(input_path, out_dir, dpi)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "C:\Users\32761\.codex\plugins\cache\openai-primary-runtime\presentations\26.909.12148\skills\presentations\container_tools\render_slides.py", line 124, in _render_presentation_with_artifact_tool
+    raise RuntimeError(
+RuntimeError: Failed to render presentation with artifact-tool.
+{
+  "input": "D:\\GitRepositories\\A12\\artifacts\\ppt-benchmark\\光合作用-qwen3.7-flash-可编辑-final-v3.pptx",
+  "outputDir": "D:\\GitRepositories\\A12\\artifacts\\ppt-benchmark\\.validation\\rendered-v3",
+  "slideCount": 8,
+  "paths": [
+    "D:\\GitRepositories\\A12\\artifacts\\ppt-benchmark\\.validation\\rendered-v3\\slide-1.png",
+    "D:\\GitRepositories\\A12\\artifacts\\ppt-benchmark\\.validation\\rendered-v3\\slide-2.png",
+    "D:\\GitRepositories\\A12\\artifacts\\ppt-benchmark\\.validation\\rendered-v3\\slide-3.png",
+    "D:\\GitRepositories\\A12\\artifacts\\ppt-benchmark\\.validation\\rendered-v3\\slide-4.png",
+    "D:\\GitRepositories\\A12\\artifacts\\ppt-benchmark\\.validation\\rendered-v3\\slide-5.png",
+    "D:\\GitRepositories\\A12\\artifacts\\ppt-benchmark\\.validation\\rendered-v3\\slide-6.png",
+    "D:\\GitRepositories\\A12\\artifacts\\ppt-benchmark\\.validation\\rendered-v3\\slide-7.png",
+    "D:\\GitRepositories\\A12\\artifacts\\ppt-benchmark\\.validation\\rendered-v3\\slide-8.png"
+  ]
+}
