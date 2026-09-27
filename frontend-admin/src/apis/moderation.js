@@ -23,6 +23,15 @@ export function getModerationTasks(params) {
   return get('/api/v1/admin/moderation/tasks', params)
 }
 
+
+/**
+ * 读取审核目标的完整内容（包括待审核、未公开稿件），仅管理员审核权限可用。
+ * @param {number} id - 社区内容 ID
+ * @returns {Promise<Result<ContentVO>>}
+ */
+export function getModerationContent(id) {
+  return get(`/api/v1/admin/moderation/content/${id}`)
+}
 /**
  * 提交审核决定（API-91）
  * 仅允许处理 pending 状态的任务；approve→内容公开、reject→内容下架、rework→内容退回草稿

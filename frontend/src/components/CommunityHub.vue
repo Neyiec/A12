@@ -4,13 +4,14 @@
   - 输出: Skill 与教学案例社区页面
 -->
 <script setup>
-import { computed, onMounted, ref, watch } from 'vue'
+import { computed, onBeforeUnmount, onMounted, ref, watch } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { ElMessage } from 'element-plus'
 import { CollectionTag, Search, Star, User } from '@element-plus/icons-vue'
 import { COMMUNITY_PAGE } from '../config/teacherPages.config.js'
 import { createCommunityReport, createCommunitySubmission, favoriteCommunityItem, getCommunityItem, getCommunityReport, getCommunitySubmission, listCommunityFavorites, listCommunityItems, listCommunityRecentViews, listCommunityReports, listCommunitySubmissions, listResources, patchProject, recordCommunityView, removeCommunityRecentView, reuseCommunityItem, saveCommunitySubmissionVersion, submitCommunitySubmission, unfavoriteCommunityItem, updateCommunitySubmission } from '../apis/teacher'
 import { useUserStore } from '../storage/user.js'
+import CommunityContentPreview from './CommunityContentPreview.vue'
 
 const router = useRouter()
 const route = useRoute()
@@ -32,7 +33,10 @@ const loading = ref(false)
 const detailVisible = ref(false), submissionVisible = ref(false), collectionVisible = ref(false), reportVisible = ref(false)
 const detail = ref(null), favorites = ref([]), recentViews = ref([]), submissions = ref([]), reports = ref([])
 const detailLoading = ref(false)
+const detailSlideFrameObservers = new Set()
 const detailError = ref('')
+const activeDetailSlideIndex = ref(0)
+const detailContentView = ref('lesson_plan')
 const currentUser = computed(() => userStore.userInfo || {})
 const currentAvatarText = computed(() => (currentUser.value.real_name || currentUser.value.username || '用').slice(0, 1))
 const currentAvatarUrl = computed(() => currentUser.value.avatar || undefined)
@@ -320,7 +324,8 @@ const addSubmissionVariable = () => submissionVariableEditor.value.push({ key: `
 const removeSubmissionVariable = (index) => submissionVariableEditor.value.splice(index, 1)
 const detailContentObject = computed(() => {
   const parsed = parseJsonValue(detail.value?.content_data, null)
-  return parsed && typeof parsed === 'object' && !Array.isArray(parsed) ? parsed : null
+  if (Array.isArray(parsed)) return { slides: parsed }
+  return parsed && typeof parsed === 'object' ? parsed : null
 })
 const detailSteps = computed(() => {
   const steps = detailContentObject.value?.steps ?? detailContentObject.value?.activities ?? detailContentObject.value?.stages
@@ -332,6 +337,75 @@ const detailSteps = computed(() => {
 })
 const detailObjective = computed(() => String(detailContentObject.value?.objective || detailContentObject.value?.goal || '').trim())
 const detailInputVariables = computed(() => normalizeInputVariables(detail.value?.input_variables))
+const detailLessonPlan = computed(() => {
+  const content = detailContentObject.value || {}
+  const candidates = [
+    content.lesson_plan,
+    content.lessonPlan,
+    content.teaching_plan,
+    content.teachingPlan,
+    content.workspace_context?.lesson_plan,
+    content.workspace_context?.lessonPlan,
+  ]
+  for (const candidate of candidates) {
+    const plan = parseJsonValue(candidate, candidate)
+    if (!plan || typeof plan !== 'object' || Array.isArray(plan)) continue
+    const nestedPlan = parseJsonValue(plan.lesson_plan, plan.lesson_plan)
+    return nestedPlan && typeof nestedPlan === 'object' && !Array.isArray(nestedPlan) ? nestedPlan : plan
+  }
+  const planKeys = ['teaching_goals', 'goals', 'objectives', 'key_points', 'difficult_points', 'lesson_process', 'teaching_process', 'process', 'classroom_activities']
+  if (planKeys.some((key) => Object.prototype.hasOwnProperty.call(content, key))) return content
+  return null
+})
+const detailSlides = computed(() => {
+  const content = detailContentObject.value || {}
+  const pages = Array.isArray(content.slides)
+    ? content.slides
+    : Array.isArray(content.pages)
+      ? content.pages
+      : Array.isArray(content.presentation?.slides)
+        ? content.presentation.slides
+        : content.html || content.content_html || content.srcdoc
+          ? [content]
+          : []
+  return pages.map((page, index) => {
+    const item = page && typeof page === 'object' ? page : {}
+    const html = String(item.html || item.content_html || item.srcdoc || '')
+    const titleMatch = html.match(/<title[^>]*>([\s\S]*?)<\/title>/i)
+    const title = String(item.title || item.name || item.page_title || (titleMatch ? briefText(titleMatch[1], 56) : '') || `第 ${index + 1} 页`).trim()
+    return { index, html, title }
+  }).filter((page) => Boolean(page.html))
+})
+const activeDetailSlide = computed(() => detailSlides.value[activeDetailSlideIndex.value] || detailSlides.value[0] || null)
+const selectDetailSlide = (index) => { if (detailSlides.value[index]) activeDetailSlideIndex.value = index }
+const fitDetailSlideFrame = (event) => {
+  const iframe = event?.currentTarget
+  const container = iframe?.parentElement
+  if (!iframe || !container) return
+
+  const previous = [...detailSlideFrameObservers].find((item) => item.iframe === iframe)
+  previous?.observer?.disconnect()
+  if (previous) detailSlideFrameObservers.delete(previous)
+
+  const resize = () => {
+    const { clientWidth: width, clientHeight: height } = container
+    if (!width || !height) return
+    iframe.style.transform = `scale(${Math.min(width / 1280, height / 720)})`
+  }
+
+  resize()
+  if (typeof ResizeObserver === 'undefined') {
+    detailSlideFrameObservers.add({ iframe, observer: null })
+    return
+  }
+  const observer = new ResizeObserver(resize)
+  observer.observe(container)
+  detailSlideFrameObservers.add({ iframe, observer })
+}
+onBeforeUnmount(() => {
+  detailSlideFrameObservers.forEach(({ observer }) => observer?.disconnect())
+  detailSlideFrameObservers.clear()
+})
 const normalizedVariableValue = (variable) => variable.default ?? variable.default_value ?? variable.example ?? ''
 const reuseVersionOptions = computed(() => {
   const current = Number(reuseDetail.value?.version || 1)
@@ -608,16 +682,20 @@ const toggleFavorite = async (item) => {
 }
 
 const openDetail = async (item) => {
-  const rawId = item?.id ?? item?.item_id
+  const rawId = item?.id ?? item?.item_id ?? item?.testCaseId
   if (rawId === null || rawId === undefined || rawId === '') return ElMessage.info('该内容暂时没有可查看的详情')
   detailVisible.value = true
   detailLoading.value = true
   detailError.value = ''
   try {
-    const source = item?.testCaseId && !item?.id ? item : unwrap(assertApiSuccess(await getCommunityItem(rawId)))
+    const source = item?.testCaseId && !item?.id
+      ? (item.raw || item)
+      : unwrap(assertApiSuccess(await getCommunityItem(rawId)))
     if (!source) throw new Error('未找到社区内容')
     detail.value = { ...source, id: source.id ?? rawId, content_type: normalizeCommunityContentType(source) }
+    detailContentView.value = detailLessonPlan.value ? 'lesson_plan' : detailSlides.value.length ? 'ppt' : 'overview'
     try { await assertApiSuccess(await recordCommunityView(rawId)) } catch { /* 浏览事件失败不阻塞详情查看。 */ }
+    activeDetailSlideIndex.value = 0
   } catch (error) {
     detail.value = null
     detailError.value = error?.message || '内容详情加载失败，请稍后重试'
@@ -968,13 +1046,16 @@ onMounted(() => {
                   <p>{{ detail.example_effect }}</p>
                 </section>
                 <section class="detail-content-section">
-                  <div class="detail-section-heading"><div><span class="detail-section-eyebrow">CONTENT</span><h3>案例内容</h3></div><span class="detail-section-note">先看流程，再展开结构</span></div>
-                  <div v-if="detailSteps.length" class="detail-flow">
-                    <div class="detail-flow-header"><strong>课堂流程</strong><span>{{ detailSteps.length }} 个环节</span></div>
-                    <ol class="detail-flow-list"><li v-for="(step, index) in detailSteps" :key="`${step}-${index}`"><span>{{ index + 1 }}</span><strong>{{ step }}</strong></li></ol>
-                  </div>
-                  <div v-if="detailObjective" class="detail-objective"><span>教学目标</span><p>{{ detailObjective }}</p></div>
-                  <details class="detail-raw-content" :open="!detailSteps.length && !detailObjective"><summary><span>查看原始结构</span><span>JSON</span></summary><div class="detail-content-frame"><pre class="detail-content">{{ formatJsonForDisplay(detail.content_data || detail.example_effect) }}</pre></div></details>
+                  <div class="detail-section-heading"><div><span class="detail-section-eyebrow">CONTENT</span><h3>案例内容</h3></div><span class="detail-section-note">结构化内容预览</span></div>
+                  <CommunityContentPreview
+                    :item="detail"
+                    :slides="detailSlides"
+                    :lesson-plan="detailLessonPlan"
+                    :active-view="detailContentView"
+                    :active-slide-index="activeDetailSlideIndex"
+                    @update:active-view="detailContentView = $event"
+                    @update:active-slide-index="selectDetailSlide($event)"
+                  />
                 </section>
               </main>
 
@@ -1088,6 +1169,12 @@ onMounted(() => {
 .detail-section-heading { display: flex; align-items: flex-start; justify-content: space-between; gap: 16px; margin-bottom: 18px; }
 .detail-section-heading h3 { margin: 4px 0 0; font-size: 20px; line-height: 1.35; }
 .detail-section-note { padding-top: 3px; color: var(--zh-text-caption); font-size: 11px; }
+.detail-content-switch { display: inline-flex; flex: none; padding: 3px; border: 1px solid var(--zh-line-border); border-radius: var(--zh-radius8); background: var(--zh-background-light); }.detail-content-switch button { min-width: 66px; padding: 6px 10px; border: 0; border-radius: 6px; color: var(--zh-text-caption); background: transparent; cursor: pointer; font: 600 11px/1.2 var(--zh-font-family); transition: color .16s ease, background .16s ease, box-shadow .16s ease; }.detail-content-switch button:hover { color: var(--zh-text-theme); }.detail-content-switch button.active { color: var(--zh-text-theme); background: var(--zh-background-pop); box-shadow: var(--zh-shadow1); }.detail-content-switch button:focus-visible { outline: 2px solid var(--zh-border-focus); outline-offset: 2px; }
+.detail-slides-preview { display: grid; gap: 10px; margin-top: 14px; padding: 14px; border: 1px solid var(--zh-line-parting); border-radius: var(--zh-radius8); background: var(--zh-background-light); }
+.detail-lesson-plan { margin-top: 14px; }
+.detail-slides-preview-header { display: flex; align-items: baseline; justify-content: space-between; gap: 12px; }.detail-slides-preview-header div { display: grid; gap: 3px; }.detail-slides-preview-header strong { color: var(--zh-text-primary); font-size: 13px; }.detail-slides-preview-header span,.detail-slides-preview-header small { color: var(--zh-text-caption); font-size: 11px; }.detail-slides-preview-header span { overflow: hidden; max-width: 440px; text-overflow: ellipsis; white-space: nowrap; }
+.detail-slide-stage { position: relative; aspect-ratio: 16 / 9; overflow: hidden; border: 1px solid var(--zh-line-border); border-radius: 7px; background: #fff; box-shadow: inset 0 0 0 1px rgb(15 23 42 / 3%); }.detail-slide-frame { position: absolute; top: 0; left: 0; display: block; width: 1280px; height: 720px; border: 0; background: #fff; transform-origin: top left; }
+.detail-slide-picker { display: flex; gap: 7px; overflow-x: auto; padding: 1px; scrollbar-width: thin; }.detail-slide-picker button { display: grid; grid-template-columns: 24px minmax(0, 1fr); flex: 0 0 min(180px, 42%); align-items: center; gap: 7px; min-width: 120px; padding: 8px; border: 1px solid var(--zh-line-parting); border-radius: 7px; color: var(--zh-text-secondary); background: var(--zh-background-pop); cursor: pointer; text-align: left; transition: border-color .16s ease, background .16s ease, transform .16s ease; }.detail-slide-picker button:hover { border-color: var(--zh-border-focus); transform: translateY(-1px); }.detail-slide-picker button.active { border-color: var(--zh-theme-primary); background: var(--zh-background-weaken); }.detail-slide-picker button > span { display: grid; width: 24px; height: 24px; place-items: center; border-radius: 6px; color: var(--zh-text-theme); background: var(--zh-background-option-on); font: 600 10px/1 var(--zh-font-number); }.detail-slide-picker button > strong { overflow: hidden; color: inherit; font-size: 11px; font-weight: 580; text-overflow: ellipsis; white-space: nowrap; }
 .detail-content-frame { position: relative; overflow: hidden; border: 1px solid var(--zh-line-parting); border-radius: var(--zh-radius8); background: #f3f6fb; }
 .detail-content { max-height: 320px; margin: 0; overflow: auto; padding: 24px 22px; color: #334155; background: transparent; contain: content; font: 12px/1.75 var(--zh-font-code, ui-monospace, SFMono-Regular, Consolas, monospace); white-space: pre-wrap; word-break: break-word; overscroll-behavior: contain; -webkit-overflow-scrolling: touch; }
 .detail-content::-webkit-scrollbar { width: 8px; height: 8px; }.detail-content::-webkit-scrollbar-thumb { border: 2px solid transparent; border-radius: 999px; background: #cbd5e1; background-clip: padding-box; }

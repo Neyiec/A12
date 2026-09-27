@@ -6920,7 +6920,7 @@ const buildCommunityContentData = () => ({
     elements: Array.isArray(slide?.elements) ? slide.elements : [],
     metadata: slide?.metadata || {},
   })),
-  lesson_plan: lessonPlanDraft.value || null,
+  lesson_plan: lessonPlanDraft.value || presentationMetadata.value?.lesson_plan || null,
   workspace_context: workspaceContextPayload(),
 })
 const publishCommunity = async (submit = false) => {
