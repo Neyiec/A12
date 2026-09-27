@@ -33,23 +33,11 @@ class LLMClient:
             return content
         return "".join(str(part) for part in content)
 
-    async def complete_stream(
-        self,
-        system_prompt: str,
-        user_prompt: str,
-        temperature: float = 0.45,
-        model: str | None = None,
-        reasoning_effort: str | None = None,
-    ) -> AsyncIterator[str]:
+    async def complete_stream(self, system_prompt: str, user_prompt: str, temperature: float = 0.45) -> AsyncIterator[str]:
         """流式补全：逐 token 产出文本片段。模型不可用时直接结束（不产出任何片段）。"""
         if not self.available:
             return
-        model = create_chat_model_from_settings(
-            self.settings,
-            temperature=temperature,
-            model=model,
-            reasoning_effort=reasoning_effort,
-        )
+        model = create_chat_model_from_settings(self.settings, temperature=temperature)
         messages = [SystemMessage(content=system_prompt), HumanMessage(content=user_prompt)]
         async for chunk in model.astream(messages):
             content = chunk.content
