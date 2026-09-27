@@ -1,7 +1,6 @@
-import time
-from typing import Any, AsyncIterator
+from typing import AsyncIterator
 
-from langchain_core.messages import AIMessage, BaseMessage, HumanMessage, SystemMessage
+from langchain_core.messages import BaseMessage, HumanMessage, SystemMessage
 
 from ..config import get_settings
 from .model_factory import create_chat_model
@@ -47,39 +46,11 @@ class LLMClient:
             return content
         return "".join(str(part) for part in content)
 
-    async def complete_stream(
-        self,
-        system_prompt: str,
-        user_prompt: str,
-        temperature: float = 0.45,
-        model: str | None = None,
-        reasoning_effort: str | None = None,
-    ) -> AsyncIterator[str]:
-    async def invoke_tools(
-        self,
-        messages: list[BaseMessage],
-        tools: list[dict[str, Any]],
-        temperature: float = 0.1,
-    ) -> AIMessage:
-        """Invoke the chat model with native tool calling enabled."""
-        if not self.available or not tools:
-            return AIMessage(content="")
-        runtime = current_runtime()
-        model = create_chat_model(routed_model(), self.settings.openai_api_key, self.settings.openai_base_url,
-                                  self.settings.request_timeout_seconds, temperature, runtime.reasoning_effort)
-        response = await model.bind_tools(tools).ainvoke(messages)
-        if isinstance(response, AIMessage):
-            return response
-        return AIMessage(content=response.content or "")
-
     async def complete_stream(self, system_prompt: str, user_prompt: str, temperature: float = 0.45) -> AsyncIterator[str]:
         """流式补全：逐 token 产出文本片段。模型不可用时直接结束（不产出任何片段）。"""
         if not self.available:
             return
-        model_name = routed_model()
-        model = create_chat_model(model_name, self.settings.openai_api_key, self.settings.openai_base_url,
-                                  self.settings.request_timeout_seconds, temperature, current_runtime().reasoning_effort)
-        started = time.perf_counter()
+        model = create_chat_model_from_settings(self.settings, temperature=temperature)
         messages = [SystemMessage(content=system_prompt), HumanMessage(content=user_prompt)]
         try:
             async for chunk in model.astream(messages):
