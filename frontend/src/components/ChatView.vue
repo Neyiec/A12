@@ -43,6 +43,10 @@ const emit = defineEmits(['back', 'open-workspace', 'planning-request', 'session
 
 const userStore = useUserStore()
 const isGeneralChat = computed(() => props.mode === 'general')
+const selectedModelProfile = ref(localStorage.getItem('a12:model-profile') || 'standard')
+const selectedReasoningEffort = ref(localStorage.getItem('a12:reasoning-effort') || 'medium')
+watch(selectedModelProfile, (value) => localStorage.setItem('a12:model-profile', value))
+watch(selectedReasoningEffort, (value) => localStorage.setItem('a12:reasoning-effort', value))
 
 // ========== 响应式断点（design.md §9.3：手机档 <768px） ==========
 /** 手机档断点：补充信息表单由 display:table 降级为卡片堆叠渲染。 */
@@ -784,6 +788,8 @@ async function sendMessageToBackend(message, { includeContinuation = false } = {
     resource_ids: JSON.stringify(props.resourceIds || []),
     enable_rag: props.resourceIds.length > 0,
     enable_web: false,
+    model_profile: selectedModelProfile.value,
+    reasoning_effort: selectedReasoningEffort.value,
     known_context: JSON.stringify({
       title: infoForm.courseName.trim(),
       subject: infoForm.subject,
@@ -1133,7 +1139,9 @@ async function requestOutlineRepairWithModel(response) {
   const modelResponse = await streamGeneralChat({
     mode: 'outline-repair',
     user_id: String(userStore.userInfo?.user_id || '10001'),
-    messages: [{ role: 'user', content: outlineRepairPrompt(response) }],
+      messages: [{ role: 'user', content: outlineRepairPrompt(response) }],
+      model_profile: selectedModelProfile.value,
+      reasoning_effort: selectedReasoningEffort.value,
   })
   if (!modelResponse.ok) {
     let message = ''
@@ -1188,6 +1196,8 @@ async function requestGeneralChatReply() {
     const response = await streamGeneralChat({
       user_id: String(userStore.userInfo?.user_id || '10001'),
       messages: history,
+      model_profile: selectedModelProfile.value,
+      reasoning_effort: selectedReasoningEffort.value,
     })
     if (!response.ok) {
       let message = ''
@@ -2347,6 +2357,8 @@ async function restoreSession() {
   .chat-composer {
     padding-bottom: calc(16px + var(--zh-safe-bottom));
   }
+  .ai-option-select { width: 78px; }
+  .ai-option-select + .ai-option-select { width: 92px; }
   .user-bubble {
     max-width: 92%;
   }

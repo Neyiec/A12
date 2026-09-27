@@ -44,11 +44,16 @@ from a12_ppt.models import (
     Result,
     SlideModifyRequest,
     TemplateMutationRequest,
+    TeacherFeedbackRequest,
+    TextToSpeechRequest,
+    ClassroomEventRequest,
 )
 from a12_ppt.resources import resource_index_store, save_upload
 from a12_ppt.outline_chat import OutlineChatWorkflow
 from a12_ppt.outline_chat.postgres_store import postgres_memory_store
 from a12_ppt.outline_chat.session_store import outline_session_store
+from a12_ppt.database import ensure_ai_schema
+from a12_ppt.ai_runtime import probe_model, use_runtime_options
 
 
 settings = get_settings()
@@ -64,6 +69,11 @@ lesson_plan_generator = LessonPlanGenerator()
 outline_chat_workflow = OutlineChatWorkflow(generator)
 
 
+@app.on_event("startup")
+async def initialize_ai_database() -> None:
+    ensure_ai_schema()
+
+
 @app.post("/api/v1/python/workspace/chat/stream")
 async def workspace_chat(request: WorkspaceChatRequest):
     return StreamingResponse(stream_workspace_chat(request), media_type="text/event-stream",
@@ -71,12 +81,19 @@ async def workspace_chat(request: WorkspaceChatRequest):
 
 
 @app.get("/api/v1/python/health")
-async def health() -> Result:
+async def health(probe: bool = Query(default=False)) -> Result:
+    model_status = await probe_model() if probe else {
+        "configured": bool(settings.openai_api_key),
+        "available": None,
+        "status": "not_probed",
+        "model": settings.openai_model,
+    }
     return Result(data={
         "status": "ok",
         "service": settings.app_name,
         "version": settings.app_version,
-        "model_ready": bool(settings.openai_api_key),
+        "model_ready": bool(model_status.get("available")) if probe else bool(settings.openai_api_key),
+        "model_status": model_status,
         "embedding_ready": bool(settings.embedding_api_key),
         "embedding_model": settings.embedding_model,
         "asr_model": settings.asr_model,
@@ -179,6 +196,7 @@ async def search_resource_index(request: ResourceIndexSearchRequest) -> Result:
         request.limit,
         request.top_k,
         request.source_type,
+        request.min_score,
     ))
 
 
@@ -241,7 +259,8 @@ async def download_ppt_template_file(theme: str):
 
 @app.post("/api/v1/python/outlines/generate")
 async def generate_outline(request: OutlineGenerateRequest) -> Result:
-    return Result(data=await generator.generate_outline(request))
+    with use_runtime_options(None, "outline_generate", request.model_profile, request.reasoning_effort):
+        return Result(data=await generator.generate_outline(request))
 
 
 @app.post("/api/v1/python/intent/recognize")
@@ -252,10 +271,11 @@ async def recognize_intent(request: IntentRecognizeRequest) -> Result:
 @app.post("/api/v1/python/outlines/chat/stream")
 async def stream_outline_chat(request: OutlineChatStreamRequest):
     async def event_source():
-        async for item in outline_chat_workflow.stream(request):
-            event = item.get("event", "message")
-            data = json.dumps(item.get("data", {}), ensure_ascii=False)
-            yield f"event: {event}\ndata: {data}\n\n"
+        with use_runtime_options(request.user_id, "outline_chat", request.model_profile, request.reasoning_effort):
+            async for item in outline_chat_workflow.stream(request):
+                event = item.get("event", "message")
+                data = json.dumps(item.get("data", {}), ensure_ascii=False)
+                yield f"event: {event}\ndata: {data}\n\n"
 
     return StreamingResponse(event_source(), media_type="text/event-stream")
 
@@ -307,6 +327,26 @@ async def get_teacher_style_profile(user_id: str = Query(..., min_length=1)) -> 
     })
 
 
+@app.post("/api/v1/python/teacher-style/feedback")
+async def record_teacher_feedback(request: TeacherFeedbackRequest) -> Result:
+    return Result(data=postgres_memory_store.record_feedback(request.model_dump()))
+
+
+@app.get("/api/v1/python/ai/metrics")
+async def ai_metrics(limit: int = Query(50, ge=1, le=500)) -> Result:
+    return Result(data=postgres_memory_store.ai_metrics(limit))
+
+
+@app.post("/api/v1/python/classroom/events")
+async def record_classroom_event(request: ClassroomEventRequest) -> Result:
+    return Result(data={"stored": postgres_memory_store.record_classroom_event(request.model_dump())})
+
+
+@app.get("/api/v1/python/classroom/insights/{project_id}")
+async def classroom_insights(project_id: str, user_id: str = Query(..., min_length=1)) -> Result:
+    return Result(data=postgres_memory_store.classroom_insights(user_id, project_id))
+
+
 @app.post("/api/v1/python/outlines/update")
 async def update_outline(request: OutlineUpdateRequest) -> Result:
     return Result(data=await generator.update_outline(request))
@@ -314,7 +354,25 @@ async def update_outline(request: OutlineUpdateRequest) -> Result:
 
 @app.post("/api/v1/python/presentations/generate")
 async def generate_presentation(request: PresentationGenerateRequest) -> Result:
-    return Result(data=await generator.generate_presentation(request))
+    with use_runtime_options(None, "presentation_generate", request.model_profile, request.reasoning_effort):
+        return Result(data=await generator.generate_presentation(request))
+
+
+@app.post("/api/v1/python/presentations/generate/stream")
+async def stream_presentation(request: PresentationGenerateRequest):
+    async def event_source():
+        try:
+            with use_runtime_options(None, "presentation_stream", request.model_profile, request.reasoning_effort):
+                async for item in generator.stream_presentation(request):
+                    event = "presentation_slide" if item.get("type") == "slide" else "final"
+                    payload = item.get("response") if event == "final" else item
+                    yield f"event: {event}\ndata: {json.dumps(payload or {}, ensure_ascii=False)}\n\n"
+            yield "event: done\ndata: {\"status\":\"completed\"}\n\n"
+        except Exception as exc:
+            payload = json.dumps({"message": str(exc)}, ensure_ascii=False)
+            yield f"event: error\ndata: {payload}\n\n"
+
+    return StreamingResponse(event_source(), media_type="text/event-stream")
 
 
 @app.post("/api/v1/python/presentations/slides/modify")
@@ -351,6 +409,18 @@ async def generate_interactive_module(request: InteractiveModuleGenerateRequest)
 @app.post("/api/v1/python/lesson-plans/generate")
 async def generate_lesson_plan(request: LessonPlanGenerateRequest) -> Result:
     return Result(data=await lesson_plan_generator.generate(request))
+
+
+@app.post("/api/v1/python/audio/tts")
+async def synthesize_speech(request: TextToSpeechRequest):
+    from openai import AsyncOpenAI
+    if not settings.openai_api_key:
+        raise HTTPException(status_code=503, detail="TTS 服务未配置")
+    client = AsyncOpenAI(api_key=settings.openai_api_key, base_url=settings.openai_base_url.rstrip("/"),
+                         timeout=settings.request_timeout_seconds)
+    speech = await client.audio.speech.create(model=settings.tts_model,
+                                              voice=request.voice or settings.tts_voice, input=request.text)
+    return Response(content=speech.content, media_type="audio/mpeg")
 
 
 @app.post("/api/v1/python/lesson-plans/export/docx")

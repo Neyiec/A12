@@ -3,7 +3,8 @@ from typing import AsyncIterator
 from langchain_core.messages import BaseMessage, HumanMessage, SystemMessage
 
 from ..config import get_settings
-from .model_factory import create_chat_model_from_settings
+from .model_factory import create_chat_model
+from ..ai_runtime import current_runtime, record_run, routed_model
 
 
 class LLMClient:
@@ -26,8 +27,20 @@ class LLMClient:
         if not self.available:
             return ""
 
-        model = create_chat_model_from_settings(self.settings, temperature=temperature)
-        response = await model.ainvoke(messages)
+        runtime = current_runtime()
+        model_name = routed_model()
+        model = create_chat_model(model_name, self.settings.openai_api_key, self.settings.openai_base_url,
+                                  self.settings.request_timeout_seconds, temperature, runtime.reasoning_effort)
+        started = time.perf_counter()
+        try:
+            response = await model.ainvoke(messages)
+        except Exception as exc:
+            record_run("failed", round((time.perf_counter() - started) * 1000), model_name, fallback_reason=str(exc)[:300])
+            raise
+        usage = getattr(response, "usage_metadata", None) or {}
+        record_run("success", round((time.perf_counter() - started) * 1000), model_name,
+                   input_tokens=int(usage.get("input_tokens") or 0), output_tokens=int(usage.get("output_tokens") or 0),
+                   metadata={"reasoning_effort": runtime.reasoning_effort})
         content = response.content
         if isinstance(content, str):
             return content
@@ -39,11 +52,16 @@ class LLMClient:
             return
         model = create_chat_model_from_settings(self.settings, temperature=temperature)
         messages = [SystemMessage(content=system_prompt), HumanMessage(content=user_prompt)]
-        async for chunk in model.astream(messages):
-            content = chunk.content
-            if isinstance(content, str):
-                text = content
-            else:
-                text = "".join(str(part) for part in content) if content else ""
-            if text:
-                yield text
+        try:
+            async for chunk in model.astream(messages):
+                content = chunk.content
+                if isinstance(content, str):
+                    text = content
+                else:
+                    text = "".join(str(part) for part in content) if content else ""
+                if text:
+                    yield text
+            record_run("success", round((time.perf_counter() - started) * 1000), model_name)
+        except Exception as exc:
+            record_run("failed", round((time.perf_counter() - started) * 1000), model_name, fallback_reason=str(exc)[:300])
+            raise

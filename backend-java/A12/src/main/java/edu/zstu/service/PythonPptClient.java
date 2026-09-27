@@ -171,6 +171,10 @@ public class PythonPptClient {
         streamToEmitter("/api/v1/python/workspace/chat/stream", payload, emitter);
     }
 
+    public void streamPresentationToEmitter(Map<String, Object> payload, SseEmitter emitter) {
+        streamToEmitter("/api/v1/python/presentations/generate/stream", payload, emitter);
+    }
+
     private void streamToEmitter(String path, Map<String, Object> payload, SseEmitter emitter) {
         String event = "message";
         StringBuilder data = new StringBuilder();
@@ -320,6 +324,26 @@ public class PythonPptClient {
 
     public Map<String, Object> teacherStyleProfile(String userId) {
         return getJson("/api/v1/python/teacher-style/profile", Map.of("user_id", userId));
+    }
+
+    public Map<String, Object> recordTeacherFeedback(Map<String, Object> payload) {
+        return postJson("/api/v1/python/teacher-style/feedback", payload);
+    }
+
+    public Map<String, Object> aiMetrics(Integer limit) {
+        return getJson("/api/v1/python/ai/metrics", limit == null ? Map.of() : Map.of("limit", limit));
+    }
+
+    public PythonFileResult synthesizeSpeech(Map<String, Object> payload) {
+        return postFile("/api/v1/python/audio/tts", payload, "调用Python语音合成服务失败");
+    }
+
+    public Map<String, Object> recordClassroomEvent(Map<String, Object> payload) {
+        return postJson("/api/v1/python/classroom/events", payload);
+    }
+
+    public Map<String, Object> classroomInsights(String userId, String projectId) {
+        return getJson("/api/v1/python/classroom/insights/" + urlEncode(projectId), Map.of("user_id", userId));
     }
 
     public Map<String, Object> generatePresentation(Map<String, Object> payload) {

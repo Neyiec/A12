@@ -473,7 +473,9 @@ const uploadLocalFiles = async (rawFiles) => {
     'jpg', 'jpeg', 'png', 'gif', 'webp', 'svg',
     'mp3', 'wav', 'm4a', 'ogg', 'mp4', 'avi', 'mov', 'mkv', 'webm',
   ]
-  const files = Array.from(rawFiles || []).filter((file) => supportedExtensions.includes(file.name.split('.').pop()?.toLowerCase()))
+  const candidates = Array.from(rawFiles || [])
+  const files = candidates.filter((file) => supportedExtensions.includes(file.name.split('.').pop()?.toLowerCase()))
+  if (files.length !== candidates.length) ElMessage.warning('已忽略不支持的文件格式')
   if (!files.length) return
   resourceUploading.value = true; resourceUploadProgress.value = 0
   try {
@@ -510,9 +512,7 @@ const dropResourceFiles = async (event) => {
   uploadDragging.value = false
   const files = Array.from(event.dataTransfer?.files || [])
   if (!files.length) return
-  const supported = files.filter((file) => /\.(pdf|docx?|pptx?|txt|md)$/i.test(file.name))
-  if (supported.length !== files.length) ElMessage.warning('已忽略不支持的文件格式')
-  await uploadLocalFiles(supported)
+  await uploadLocalFiles(files)
 }
 const openProjectManager = async () => {
   projectManagerVisible.value = true; projectManagerLoading.value = true

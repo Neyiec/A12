@@ -23,6 +23,10 @@ EMBEDDING_API_KEY=你的百炼 API Key
 EMBEDDING_BASE_URL=https://dashscope.aliyuncs.com/compatible-mode/v1
 EMBEDDING_MODEL=text-embedding-v4
 EMBEDDING_DIMENSIONS=1024
+IMAGE_GENERATION_API_KEY=你的百炼 API Key
+IMAGE_GENERATION_BASE_URL=https://dashscope.aliyuncs.com/api/v1
+IMAGE_GENERATION_MODEL=wan2.2-t2i-flash
+MAX_GENERATED_IMAGES=4
 REQUEST_TIMEOUT_SECONDS=90
 MAX_SLIDE_CONCURRENCY=8
 MAX_HTML_RETRIES=1
@@ -32,6 +36,12 @@ QUALITY_PRESET=fast
 
 百炼的 OpenAI 兼容 Embeddings 请求地址为
 `https://dashscope.aliyuncs.com/compatible-mode/v1/embeddings`。API Key 必须与所选地域和计费方案的 Base URL 匹配。
+
+PPT 的 `asset_policy` 默认是 `auto`：服务会先识别用户是否明确要求无图、图片占位或 AI 配图，
+再结合学科、页面类型和 `visual_suggestion` 逐页选择。AI 配图使用百炼异步文生图接口，最多生成
+`MAX_GENERATED_IMAGES` 张；公式、表格、练习和总结页默认不强行配图。生成结果会立即下载并嵌入 HTML，
+因此百炼临时 URL 过期后课件仍可显示，导出 PPTX 时图片也会作为独立图片元素保留。未配置图片模型、
+生成超时或调用失败时会自动降级为智能占位，不会中断整套课件。
 
 速度建议：
 
@@ -110,7 +120,22 @@ QUALITY_PRESET=fast
 - 可通过 `/outlines/chat/sessions?user_id=10001` 找回用户会话。
 - 可通过 `/teacher-style/profile?user_id=10001` 查询教师画像。
 
-当前 PPTX 导出是稳定文本版，能保证可下载和基础内容落地。如果要做到浏览器 HTML 级别高保真，需要后续接入 Playwright 截图或 DOM-to-PPTX 转换。
+当前 PPTX 默认使用 `dom_editable`：Playwright 在 Chromium 中渲染每页 HTML，随后通过随项目部署的 LandPPT `dom-to-pptx`/PptxGenJS 转换器生成 PowerPoint 原生对象。文字、基础形状、表格和媒体尽量保持可编辑；复杂渐变、滤镜、裁切和多重阴影等 PowerPoint 无法准确表达的装饰会局部栅格化。浏览器或主转换器不可用时，会自动降级为 A12 元素级导出，再降级为基础文本版。
+
+首次部署需安装 Chromium：`python -m playwright install chromium`。第三方组件来源及 Apache-2.0 许可证保存在 `a12_ppt/presentation/vendor/`。
+
+## 教学视频解析
+
+视频资料会先读取时长、分辨率和帧率，再根据视频时长动态选择 6～24 个代表画面。关键帧由均匀覆盖和场景变化检测共同决定，随后与内嵌字幕或每 5 分钟一段的 ASR 转写按时间轴对齐。音频片段前后保留 8 秒重叠并在转写后去重，降低分段边界丢字概率。解析结果按时间片独立分块和向量化，每个检索结果都带有 `start_seconds`、`end_seconds` 和可显示的时间戳。
+
+完整 `timeline` 和关键帧列表只保存在资源主记录；向量 chunk 只保存自身时间范围和帧时间点，避免长视频元数据在每个向量块中重复存储。
+
+- 服务优先使用系统 `FFmpeg`；未安装时会使用 `imageio-ffmpeg` 随 Python 依赖提供的可执行文件。
+- `ffprobe` 不可用时会回落到 OpenCV 获取视频时长、分辨率和帧率。
+- 音轨转写需要配置 `ASR_API_KEY`、`ASR_BASE_URL` 和 `ASR_MODEL`；未单独配置时会回落到 `OPENAI_*`。
+- 关键帧视觉理解需要 `ENABLE_VISION_PARSE=true`，且 `OPENAI_MODEL` 必须支持图片输入。
+- 支持将 `.srt`、`.vtt`、`.ass` 字幕作为文本资料单独上传；视频内嵌字幕存在时会优先使用，避免重复 ASR。
+
 ## Project structure
 
 Current package layout:
@@ -121,3 +146,12 @@ Current package layout:
 - `a12_ppt/outline_chat/`: LangGraph-based ChatGPT-style outline conversation workflow, session storage, PostgreSQL long memory, and teacher-style profile memory.
 - `a12_ppt/tools/`: tool-call adapters used by the workflow, such as RAG search and web search.
 - Root compatibility modules such as `a12_ppt/generator.py`, `a12_ppt/resource_store.py`, and `a12_ppt/llm_client.py` only re-export the new package implementations. New code should import from the structured packages.
+
+## AI 能力与评测
+
+- `model_profile` 与 `reasoning_effort` 会真实参与模型路由；每次调用的模型、耗时、令牌量、成功与降级状态会写入 `a12_ai_run_log`。
+- RAG 使用向量与关键词混合召回、分数阈值和逐条引用标识；检索文本按不可信证据处理，不能覆盖系统指令。
+- 教师对结果的采纳、拒绝和修改写入 `a12_ai_feedback`，并以时间衰减后的置信度更新教师风格画像。
+- 课堂正确率、参与度与困惑点写入 `a12_classroom_event`，可在后续生成中作为补救教学依据。
+- 视频解析输出关键帧、字幕/ASR 分段、说话人（供应商提供时）和可检索时间轴；语音输出由 `/audio/tts` 提供。
+- 离线回归评测位于 `evals/`，执行 `.venv\Scripts\python.exe evals/run_offline_evals.py` 不消耗外部模型额度。

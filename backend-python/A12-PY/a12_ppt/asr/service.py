@@ -22,21 +22,33 @@ async def transcribe_audio(path: Path, language: str | None = None) -> dict:
             base_url=settings.asr_base_url.rstrip("/") if settings.asr_base_url else None,
             timeout=settings.request_timeout_seconds,
         )
-        with path.open("rb") as audio_file:
-            kwargs = {
-                "model": settings.asr_model,
-                "file": audio_file,
-                "response_format": "json",
-            }
-            if language:
-                kwargs["language"] = language
-            transcript = await client.audio.transcriptions.create(**kwargs)
+        try:
+            with path.open("rb") as audio_file:
+                kwargs = {"model": settings.asr_model, "file": audio_file,
+                          "response_format": "verbose_json", "timestamp_granularities": ["segment"]}
+                if language:
+                    kwargs["language"] = language
+                transcript = await client.audio.transcriptions.create(**kwargs)
+        except Exception:
+            # Some OpenAI-compatible ASR providers only implement the basic JSON format.
+            with path.open("rb") as audio_file:
+                kwargs = {"model": settings.asr_model, "file": audio_file, "response_format": "json"}
+                if language:
+                    kwargs["language"] = language
+                transcript = await client.audio.transcriptions.create(**kwargs)
         text = getattr(transcript, "text", None) or str(transcript)
+        raw_segments = getattr(transcript, "segments", None) or []
+        segments = []
+        for item in raw_segments:
+            value = item.model_dump() if hasattr(item, "model_dump") else dict(item) if isinstance(item, dict) else {}
+            segments.append({"start": value.get("start"), "end": value.get("end"),
+                             "text": str(value.get("text") or "").strip(), "speaker": value.get("speaker")})
         return {
             "text": text.strip(),
             "language": language,
             "model": settings.asr_model,
             "status": "completed",
+            "segments": segments,
             "error_message": None,
         }
     except Exception as exc:

@@ -299,6 +299,58 @@ export const generatePresentation = (data) => apiRequest({
   timeout: PYTHON_PPT_REQUEST_TIMEOUT
 })
 
+/** 经 Java 网关流式生成 HTML PPT；每完成一页即调用 onSlide，最终返回完整 presentation。 */
+export async function generatePresentationStream(data, options = {}) {
+  const userStore = useUserStore()
+  const response = await fetch(`${import.meta.env.VITE_API_BASE_URL || ''}/api/v1/ai/engine/presentations/generate/stream`, {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/json',
+      Accept: 'text/event-stream',
+      ...(userStore.token ? { Authorization: `Bearer ${userStore.token}` } : {}),
+    },
+    body: JSON.stringify(data),
+    signal: options.signal,
+  })
+  if (!response.ok) throw new Error(`HTML PPT 生成失败 (${response.status})`)
+
+  const reader = response.body.getReader()
+  const decoder = new TextDecoder('utf-8')
+  let buffer = ''
+  let final = null
+  const consume = (block) => {
+    let event = 'message'
+    const dataLines = []
+    for (const line of block.split(/\r?\n/)) {
+      if (line.startsWith('event:')) event = line.slice(6).trim()
+      else if (line.startsWith('data:')) dataLines.push(line.slice(5).trimStart())
+    }
+    if (!dataLines.length) return
+    const payload = JSON.parse(dataLines.join('\n'))
+    if (event === 'presentation_slide') options.onSlide?.(payload)
+    else if (event === 'final') final = payload
+    else if (event === 'error') throw new Error(payload.message || 'HTML PPT 流式生成失败')
+  }
+
+  while (true) {
+    const { value, done } = await reader.read()
+    buffer += decoder.decode(value || new Uint8Array(), { stream: !done })
+    const blocks = buffer.split(/\r?\n\r?\n/)
+    buffer = blocks.pop() || ''
+    blocks.filter(Boolean).forEach(consume)
+    if (done) break
+  }
+  if (buffer.trim()) consume(buffer)
+  if (!final) throw new Error('HTML PPT 生成流结束，但未收到最终结果')
+  return final
+}
+
+/** 记录教师对 AI 生成结果的接受、拒绝、撤销和手工修改，供个性化学习使用。 */
+export const recordAiFeedback = (data) => post('/api/v1/ai/engine/teacher-style/feedback', data)
+
+/** 获取 AI 运行质量、耗时、Token 与反馈指标。 */
+export const getAiMetrics = (params) => get('/api/v1/ai/engine/ai/metrics', params)
+
 /** 生成可在线编辑的结构化教案（API-142）。 */
 export const generateLessonPlan = (data) => apiRequest({
   url: '/api/v1/ai/engine/lesson-plans/generate',

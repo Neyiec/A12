@@ -197,6 +197,41 @@ public class PythonProxyController {
         return callJson(() -> pythonPptClient.generatePresentation(payload));
     }
 
+    @PostMapping("/teacher-style/feedback")
+    public Map<String, Object> recordTeacherFeedback(@RequestBody Map<String, Object> payload) {
+        bindCurrentUser(payload);
+        return callJson(() -> pythonPptClient.recordTeacherFeedback(payload));
+    }
+
+    @GetMapping("/ai/metrics")
+    public Map<String, Object> aiMetrics(@RequestParam(required = false) Integer limit) {
+        return callJson(() -> pythonPptClient.aiMetrics(limit));
+    }
+
+    @PostMapping("/audio/tts")
+    public ResponseEntity<byte[]> synthesizeSpeech(@RequestBody Map<String, Object> payload) {
+        PythonPptClient.PythonFileResult file = pythonPptClient.synthesizeSpeech(payload);
+        return fileResponse(file.bytes, "a12-speech.mp3", file.contentType);
+    }
+
+    @PostMapping("/classroom/events")
+    public Map<String, Object> recordClassroomEvent(@RequestBody Map<String, Object> payload) {
+        bindCurrentUser(payload);
+        return callJson(() -> pythonPptClient.recordClassroomEvent(payload));
+    }
+
+    @GetMapping("/classroom/insights/{projectId}")
+    public Map<String, Object> classroomInsights(@PathVariable String projectId) {
+        return callJson(() -> pythonPptClient.classroomInsights(currentUserId(), projectId));
+    }
+
+    @PostMapping(value = "/presentations/generate/stream", produces = "text/event-stream;charset=UTF-8")
+    public SseEmitter streamPresentation(@RequestBody Map<String, Object> payload) {
+        SseEmitter emitter = newGatewayEmitter();
+        CompletableFuture.runAsync(() -> pythonPptClient.streamPresentationToEmitter(payload, emitter));
+        return emitter;
+    }
+
     @PostMapping("/presentations/slides/modify")
     public Map<String, Object> modifySlide(@RequestBody Map<String, Object> payload) {
         return callJson(() -> pythonPptClient.modifySlide(payload));

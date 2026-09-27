@@ -5,3 +5,5 @@ doc/
 .trae/
 .commit-policy.md
 .ui-workflow/
+*-service.out.log
+*-service.err.log

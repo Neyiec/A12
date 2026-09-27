@@ -17,12 +17,18 @@ class WorkspaceChatRequest(BaseModel):
     user_id: str = Field(min_length=1, max_length=128)
     mode: Literal["chat", "discussion", "workbench-intent", "outline-repair"] = "chat"
     messages: list[WorkspaceMessage] = Field(min_length=1, max_length=60)
+    model_profile: Literal["fast", "standard", "deep"] = "standard"
+    reasoning_effort: Literal["low", "medium", "high"] = "medium"
 
 
 async def stream_workspace_chat(request: WorkspaceChatRequest):
+    from .ai_runtime import use_runtime_options
+    runtime = use_runtime_options(request.user_id, f"workspace_{request.mode}", request.model_profile, request.reasoning_effort)
+    runtime.__enter__()
     client = LLMClient()
     if not client.available:
         yield 'event: error\ndata: ' + json.dumps({"message": "尚未配置对话模型，无法生成回复"}, ensure_ascii=False) + '\n\n'
+        runtime.__exit__(None, None, None)
         return
     system = "你是智核教学助手，用简体中文回应教师。结合学情和明确需求，给出可上课使用的具体建议；不能声称已经执行页面编辑或导出操作。"
     if request.mode == "workbench-intent":
@@ -48,3 +54,5 @@ async def stream_workspace_chat(request: WorkspaceChatRequest):
         yield "data: [DONE]\n\n"
     except Exception:
         yield 'event: error\ndata: ' + json.dumps({"message": "对话模型调用失败，请稍后重试"}, ensure_ascii=False) + '\n\n'
+    finally:
+        runtime.__exit__(None, None, None)

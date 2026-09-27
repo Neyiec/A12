@@ -19,6 +19,7 @@ def create_chat_model(
         base_url=base_url.rstrip("/") if base_url else None,
         timeout=timeout_seconds,
         temperature=temperature,
+        **kwargs,
     )
 
 
