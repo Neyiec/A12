@@ -1,11 +1,14 @@
 """工作台讨论、操作分类和大纲修复；仅由 Java 网关调用。"""
 import json
+import logging
 from typing import Literal
 
 from pydantic import BaseModel, Field
 
 from .llm import LLMClient
 from .outline_chat.postgres_store import postgres_memory_store
+
+logger = logging.getLogger("a12_ppt.workspace")
 
 
 class WorkspaceMessage(BaseModel):
@@ -53,6 +56,7 @@ async def stream_workspace_chat(request: WorkspaceChatRequest):
             raise RuntimeError("模型没有返回有效内容")
         yield "data: [DONE]\n\n"
     except Exception:
+        logger.exception("工作台对话模型调用失败 mode=%s", request.mode)
         yield 'event: error\ndata: ' + json.dumps({"message": "对话模型调用失败，请稍后重试"}, ensure_ascii=False) + '\n\n'
     finally:
         runtime.__exit__(None, None, None)

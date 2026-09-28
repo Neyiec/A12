@@ -20,6 +20,7 @@ import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.UUID;
+import java.util.function.Consumer;
 import java.util.stream.Stream;
 
 @Slf4j
@@ -169,6 +170,95 @@ public class PythonPptClient {
 
     public void streamWorkspaceChatToEmitter(Map<String, Object> payload, SseEmitter emitter) {
         streamToEmitter("/api/v1/python/workspace/chat/stream", payload, emitter);
+    }
+
+    /** LangGraph 决定聊天/备课分支；Java 只读取图的结果并执行业务持久化。 */
+    @SuppressWarnings("unchecked")
+    public Map<String, Object> routeTeachingChat(String userId, List<Map<String, String>> history, String preference) {
+        try {
+            Map<String, Object> response = postJson("/api/v1/python/workspace/chat/route", Map.of(
+                    "user_id", userId, "messages", history,
+                    "route_preference", preference == null ? "auto" : preference));
+            Object data = response.get("data");
+            return data instanceof Map<?, ?> ? (Map<String, Object>) data : null;
+        } catch (Exception e) {
+            log.warn("routeTeachingChat unavailable: {}", e.getMessage());
+            return null;
+        }
+    }
+
+    /** 普通聊天需要边转发边收集正文，供 Java 在流结束时持久化完整回复。 */
+    public void streamWorkspaceChatToEmitter(Map<String, Object> payload, SseEmitter emitter,
+                                             Consumer<WorkspaceChatResult> onFinished) {
+        WorkspaceChatResult result = new WorkspaceChatResult();
+        String event = "message";
+        StringBuilder data = new StringBuilder();
+        try {
+            HttpResponse<Stream<String>> response = postJsonLinesResponse("/api/v1/python/workspace/chat/stream", payload);
+            try (Stream<String> lines = response.body()) {
+                for (java.util.Iterator<String> iterator = lines.iterator(); iterator.hasNext(); ) {
+                    String line = iterator.next();
+                    if (line.isEmpty()) {
+                        captureWorkspaceChatEvent(event, data, result);
+                        if (!"error".equals(event)) forwardWorkspaceChatEvent(emitter, event, data);
+                        event = "message";
+                        data.setLength(0);
+                    } else if (line.startsWith("event:")) {
+                        event = line.substring(6).trim();
+                    } else if (line.startsWith("data:")) {
+                        if (data.length() > 0) data.append('\n');
+                        data.append(line.substring(5).trim());
+                    }
+                }
+            }
+            captureWorkspaceChatEvent(event, data, result);
+            if (!"error".equals(event)) forwardWorkspaceChatEvent(emitter, event, data);
+            if (result.error == null && result.content.isBlank()) {
+                result.error = "模型未返回有效内容";
+            }
+        } catch (Exception e) {
+            log.warn("streamWorkspaceChatToEmitter failed", e);
+            result.error = "AI 服务调用失败: " + e.getMessage();
+        } finally {
+            try {
+                onFinished.accept(result);
+                if (result.error != null) {
+                    forwardWorkspaceChatEvent(emitter, "error", new StringBuilder(toJson(Map.of("message", result.error))));
+                }
+            } catch (Exception e) {
+                log.error("普通聊天回复持久化失败", e);
+                forwardWorkspaceChatEvent(emitter, "error", new StringBuilder(toJson(Map.of("message", "回复保存失败，请稍后重试"))));
+            }
+            emitter.complete();
+        }
+    }
+
+    private void forwardWorkspaceChatEvent(SseEmitter emitter, String event, StringBuilder data) {
+        try {
+            sendSseEvent(emitter, event, data);
+        } catch (IOException | IllegalStateException disconnected) {
+            // 浏览器关闭/刷新不应打断上游读取；完整回复仍需写入会话历史。
+        }
+    }
+
+    private void captureWorkspaceChatEvent(String event, StringBuilder data, WorkspaceChatResult result) {
+        if (data == null || data.length() == 0 || "[DONE]".contentEquals(data)) return;
+        try {
+            var parsed = objectMapper.readTree(data.toString());
+            if ("error".equals(event)) {
+                result.error = parsed.path("message").asText("对话模型调用失败");
+            } else if ("message".equals(event)) {
+                var content = parsed.path("choices").path(0).path("delta").path("content");
+                if (content.isTextual()) result.content += content.asText();
+            }
+        } catch (Exception e) {
+            if ("error".equals(event)) result.error = data.toString();
+        }
+    }
+
+    public static class WorkspaceChatResult {
+        public String content = "";
+        public String error;
     }
 
     public void streamPresentationToEmitter(Map<String, Object> payload, SseEmitter emitter) {
@@ -514,10 +604,15 @@ public class PythonPptClient {
     }
 
     private HttpResponse<Stream<String>> postJsonLinesResponse(String path, Map<String, Object> payload) throws Exception {
+        return postJsonLinesResponse(path, payload, requestTimeoutSeconds);
+    }
+
+    private HttpResponse<Stream<String>> postJsonLinesResponse(String path, Map<String, Object> payload,
+                                                                long timeoutSeconds) throws Exception {
         String body = objectMapper.writeValueAsString(payload == null ? Map.of() : payload);
         HttpRequest request = HttpRequest.newBuilder()
                 .uri(URI.create(baseUrl + path))
-                .timeout(Duration.ofSeconds(requestTimeoutSeconds))
+                .timeout(Duration.ofSeconds(timeoutSeconds))
                 .header("Content-Type", "application/json")
                 .POST(HttpRequest.BodyPublishers.ofString(body))
                 .build();

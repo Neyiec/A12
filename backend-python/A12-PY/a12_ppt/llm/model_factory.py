@@ -12,7 +12,11 @@ def create_chat_model(
     base_url: str,
     timeout_seconds: float,
     temperature: float,
+    reasoning_effort: str = "medium",
 ) -> ChatOpenAI:
+    kwargs = {}
+    if "dashscope.aliyuncs.com" in (base_url or "").lower():
+        kwargs["extra_body"] = {"enable_thinking": reasoning_effort in {"medium", "high"}}
     return ChatOpenAI(
         model=model,
         api_key=api_key,
@@ -30,6 +34,7 @@ def create_chat_model_from_settings(settings: Settings, temperature: float = 0.4
         base_url=settings.openai_base_url,
         timeout_seconds=settings.request_timeout_seconds,
         temperature=temperature,
+        reasoning_effort="medium",
     )
 
 

@@ -1,3 +1,4 @@
+import time
 from typing import AsyncIterator
 
 from langchain_core.messages import BaseMessage, HumanMessage, SystemMessage
@@ -29,10 +30,10 @@ class LLMClient:
 
         runtime = current_runtime()
         model_name = routed_model()
-        model = create_chat_model(model_name, self.settings.openai_api_key, self.settings.openai_base_url,
-                                  self.settings.request_timeout_seconds, temperature, runtime.reasoning_effort)
         started = time.perf_counter()
         try:
+            model = create_chat_model(model_name, self.settings.openai_api_key, self.settings.openai_base_url,
+                                      self.settings.request_timeout_seconds, temperature, runtime.reasoning_effort)
             response = await model.ainvoke(messages)
         except Exception as exc:
             record_run("failed", round((time.perf_counter() - started) * 1000), model_name, fallback_reason=str(exc)[:300])
@@ -50,9 +51,14 @@ class LLMClient:
         """流式补全：逐 token 产出文本片段。模型不可用时直接结束（不产出任何片段）。"""
         if not self.available:
             return
-        model = create_chat_model_from_settings(self.settings, temperature=temperature)
+        runtime = current_runtime()
+        model_name = routed_model()
+        started = time.perf_counter()
         messages = [SystemMessage(content=system_prompt), HumanMessage(content=user_prompt)]
         try:
+            model = create_chat_model(model_name, self.settings.openai_api_key, self.settings.openai_base_url,
+                                      self.settings.request_timeout_seconds, temperature, runtime.reasoning_effort)
+            produced = False
             async for chunk in model.astream(messages):
                 content = chunk.content
                 if isinstance(content, str):
@@ -60,7 +66,10 @@ class LLMClient:
                 else:
                     text = "".join(str(part) for part in content) if content else ""
                 if text:
+                    produced = True
                     yield text
+            if not produced:
+                raise RuntimeError("模型没有返回可显示的正文")
             record_run("success", round((time.perf_counter() - started) * 1000), model_name)
         except Exception as exc:
             record_run("failed", round((time.perf_counter() - started) * 1000), model_name, fallback_reason=str(exc)[:300])

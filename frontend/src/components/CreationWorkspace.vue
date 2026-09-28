@@ -20,6 +20,7 @@ import { createSubjectToolData, normalizeSubjectToolData, normalizeSubjectToolTy
 import { INTERACTIVE_MODULE_TYPES, interactiveModuleTypeInfo, normalizeInteractiveModuleType } from '../utils/interactiveModule'
 import { useUserStore } from '../storage/user.js'
 import { readOutlineDraft, readPresentationDraft, savePresentationDraft } from '../utils/presentationDraft.js'
+import { readOpenAiTextStream } from '../utils/openAiSse.js'
 import { createPresentationFixture } from '../mock/data/presentationFixture.js'
 
 const router = useRouter()
@@ -5495,39 +5496,10 @@ const workspaceDiscussionContext = () => {
   ].filter(Boolean).join('\n')
 }
 const readWorkspaceDiscussionStream = async (response, assistantMessage) => {
-  const reader = response.body?.getReader()
-  if (!reader) throw new Error('模型没有返回可读取的数据流')
-  const decoder = new TextDecoder()
-  let buffer = ''
-  let content = ''
-  const consumeLine = (line) => {
-    if (!line.startsWith('data:')) return
-    const data = line.slice(5).trim()
-    if (!data || data === '[DONE]') return
-    try {
-      const payload = JSON.parse(data)
-      const delta = payload?.choices?.[0]?.delta?.content ?? payload?.choices?.[0]?.message?.content
-      if (typeof delta === 'string' && delta) {
-        content += delta
-        assistantMessage.text = content
-        void scrollAssistantConversation()
-      }
-    } catch {
-      // 不完整的 SSE 行会在下一次读取时拼接后再解析。
-    }
-  }
-
-  while (true) {
-    const { done, value } = await reader.read()
-    buffer += decoder.decode(value || new Uint8Array(), { stream: !done })
-    const lines = buffer.split(/\r?\n/)
-    buffer = lines.pop() || ''
-    lines.forEach(consumeLine)
-    if (done) break
-  }
-  if (buffer.trim()) consumeLine(buffer)
-  if (!content.trim()) throw new Error('模型未返回有效内容')
-  assistantMessage.text = content
+  const content = await readOpenAiTextStream(response, (_delta, text) => {
+    assistantMessage.text = text
+    void scrollAssistantConversation()
+  })
   assistantMessage.streaming = false
   return content
 }
