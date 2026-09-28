@@ -14,11 +14,13 @@ import { Brush, Document, Promotion } from '@element-plus/icons-vue'
 import MarkdownRender from 'markstream-vue'
 import { useUserStore } from '../storage/user.js'
 import { readOutlineDraft, saveOutlineDraft } from '../utils/presentationDraft.js'
-import { confirmAiPlan, getAiPlan, getAiSession, listPptTemplates, sendAiSessionAudioMessage, streamGeneralChat, streamSendAiSessionMessage, transcribeAudio } from '../apis/teacher.js'
+import { readOpenAiTextStream } from '../utils/openAiSse.js'
+import { normalizeModelProfile, normalizeReasoningEffort } from '../utils/aiOptions.js'
+import { confirmAiPlan, getAiPlan, getAiSession, listPptTemplates, sendAiSessionAudioMessage, streamGeneralChat, streamPersistentGeneralChat, streamSendAiSessionMessage, transcribeAudio } from '../apis/teacher.js'
 import {
   CHAT_COMPOSER, CLASS_LEVEL_OPTIONS, CLARIFICATION_LABELS,
   extractPlanningContext, GRADE_OPTIONS, CHAT_RESUME, DESIGN_ACTION_BAR, GEN_RESOURCE_DEFAULTS, INFO_FORM_DEFAULTS,
-  isPlanningPrompt, STAGE_OPTIONS, SUBJECT_OPTIONS,
+  STAGE_OPTIONS, SUBJECT_OPTIONS,
   latestSessionPush, RESOURCE_CARD_LABELS, SYSTEM_MESSAGES,
 } from '../config/teacherChat.config.js'
 import IntentClarificationDialog from './IntentClarificationDialog.vue'
@@ -26,7 +28,7 @@ import PptTemplatePicker from './PptTemplatePicker.vue'
 import VoiceRecorderButton from './VoiceRecorderButton.vue'
 
 const props = defineProps({
-  sessionId: { type: String, required: true },
+  sessionId: { type: [String, Number], default: null },
   initialPrompt: { type: String, default: '' },
   resourceIds: { type: Array, default: () => [] },
   /** 资料上传明细、社区 Skill/案例等需要继续传给工作台的上下文。 */
@@ -35,16 +37,19 @@ const props = defineProps({
   continuationHistory: { type: Array, default: () => [] },
   /** 普通主对话不进入备课补充信息流程；默认仍为备课工作流。 */
   mode: { type: String, default: 'planning' },
+  routePreference: { type: String, default: 'auto' },
   /** 是否为恢复历史会话（来自侧栏历史对话），开启时挂载后拉取消息回显 */
   resume: { type: Boolean, default: false },
 })
 
-const emit = defineEmits(['back', 'open-workspace', 'planning-request', 'session-created'])
+const emit = defineEmits(['back', 'open-workspace', 'planning-request', 'session-created', 'general-session'])
 
 const userStore = useUserStore()
 const isGeneralChat = computed(() => props.mode === 'general')
-const selectedModelProfile = ref(localStorage.getItem('a12:model-profile') || 'standard')
-const selectedReasoningEffort = ref(localStorage.getItem('a12:reasoning-effort') || 'medium')
+const generalSessionId = ref(props.mode === 'general' && props.resume ? props.sessionId : null)
+const selectedRoutePreference = ref(props.routePreference)
+const selectedModelProfile = ref(normalizeModelProfile(localStorage.getItem('a12:model-profile')))
+const selectedReasoningEffort = ref(normalizeReasoningEffort(localStorage.getItem('a12:reasoning-effort')))
 watch(selectedModelProfile, (value) => localStorage.setItem('a12:model-profile', value))
 watch(selectedReasoningEffort, (value) => localStorage.setItem('a12:reasoning-effort', value))
 
@@ -1031,41 +1036,17 @@ function getGeneralChatHistory() {
 
 /** 读取 OpenAI-compatible SSE，将模型增量内容实时写入当前消息。 */
 async function readGeneralChatStream(response, assistantMessage) {
-  const reader = response.body?.getReader()
-  if (!reader) throw new Error('模型没有返回可读取的数据流')
-  const decoder = new TextDecoder()
-  let buffer = ''
-  let content = ''
+  await readOpenAiTextStream(response, (_delta, content) => {
+    assistantMessage.content = content
+    void scrollToBottom()
+  })
+}
 
-  const consumeLine = (line) => {
-    if (!line.startsWith('data:')) return
-    const data = line.slice(5).trim()
-    if (!data || data === '[DONE]') return
-    try {
-      const payload = JSON.parse(data)
-      const delta = payload?.choices?.[0]?.delta?.content ?? payload?.choices?.[0]?.message?.content
-      if (typeof delta === 'string' && delta) {
-        content += String(delta)
-        assistantMessage.content = content
-        void scrollToBottom()
-      }
-    } catch {
-      // 忽略不完整或非 JSON 的 SSE 行，下一次读取会补齐内容。
-    }
-  }
-
-  while (true) {
-    const { done, value } = await reader.read()
-    buffer += decoder.decode(value || new Uint8Array(), { stream: !done })
-    // 以行解析而不是依赖空行分隔，兼容代理把多个 SSE 事件合并到同一块数据的情况。
-    const lines = buffer.split(/\r?\n/)
-    buffer = lines.pop() || ''
-    lines.forEach(consumeLine)
-    if (done) break
-  }
-  if (buffer.trim()) consumeLine(buffer)
-  assistantMessage.content = content
-  if (!content.trim()) throw new Error('模型未返回有效内容')
+function messageTraceLabel(message) {
+  const trace = message.data
+  if (!trace?.message_id) return undefined
+  const time = trace.created_at ? new Date(trace.created_at).toLocaleString('zh-CN') : '时间未知'
+  return `${time} · 消息 ID：${trace.message_id} · 回合 ID：${trace.turn_id || '未知'}`
 }
 
 /** 从模型文本中提取 JSON 对象，兼容模型偶尔附带的代码围栏。 */
@@ -1189,15 +1170,19 @@ async function ensureOutlineQuality(response) {
 
 /** 通过本地开发代理调用已配置的 DeepSeek/OpenAI-compatible 大模型。 */
 async function requestGeneralChatReply() {
-  const history = getGeneralChatHistory()
+  const latestUserMessage = [...messages].reverse().find((item) => item.role === 'user' && item.type === 'text')
+  if (!latestUserMessage?.content?.trim()) return
   const assistantMessage = addMessage('assistant', 'text', '')
   isRequesterLoading.value = true
+  let routedToPlanning = false
   try {
-    const response = await streamGeneralChat({
-      user_id: String(userStore.userInfo?.user_id || '10001'),
-      messages: history,
+    const response = await streamPersistentGeneralChat({
+      session_id: generalSessionId.value,
+      message: latestUserMessage.content,
       model_profile: selectedModelProfile.value,
       reasoning_effort: selectedReasoningEffort.value,
+      route_preference: selectedRoutePreference.value,
+      resource_ids: JSON.stringify(props.resourceIds || []),
     })
     if (!response.ok) {
       let message = ''
@@ -1209,9 +1194,51 @@ async function requestGeneralChatReply() {
       }
       throw new Error(message || `模型请求失败（HTTP ${response.status}）`)
     }
-    await readGeneralChatStream(response, assistantMessage)
+    await readOpenAiTextStream(response, (_delta, content) => {
+      assistantMessage.content = content
+      void scrollToBottom()
+    }, (type, payload) => {
+      if (type === 'session') {
+        generalSessionId.value = payload.conversation_id
+        latestUserMessage.data = {
+          message_id: payload.user_message_id,
+          turn_id: payload.turn_id,
+          created_at: payload.created_at,
+        }
+        latestSessionPush.value = {
+          id: payload.conversation_id,
+          title: payload.title,
+          updated_at: payload.created_at,
+          mode: 'general',
+        }
+        emit('general-session', { id: payload.conversation_id, title: payload.title })
+      } else if (type === 'message_saved') {
+        assistantMessage.data = payload
+      } else if (type === 'route' && payload.target === 'planning') {
+        routedToPlanning = true
+        assistantMessage.content = payload.assistant_content || '已进入备课流程，请补充课程信息。'
+        assistantMessage.data = {
+          message_id: payload.assistant_message_id,
+          turn_id: latestUserMessage.data?.turn_id,
+          created_at: payload.created_at,
+        }
+      }
+    }, { allowEmpty: true })
+    if (routedToPlanning) {
+      emit('planning-request', {
+        existingSessionId: generalSessionId.value,
+        prompt: latestUserMessage.content,
+        resourceIds: [...(props.resourceIds || [])],
+        workspaceContext: props.workspaceContext,
+        history: getGeneralChatHistory().slice(0, -2),
+      })
+    } else if (!assistantMessage.content.trim()) {
+      throw new Error('模型未返回有效内容')
+    }
   } catch (error) {
-    assistantMessage.content = `大模型暂时无法回复：${error?.message || '连接失败，请检查模型配置。'}`
+    if (!assistantMessage.content.trim()) {
+      assistantMessage.content = `大模型暂时无法回复：${error?.message || '连接失败，请检查模型配置。'}`
+    }
     ElMessage.error(error?.message || '大模型连接失败，请检查配置')
   } finally {
     isRequesterLoading.value = false
@@ -1226,18 +1253,6 @@ async function handleGeneralMessage() {
   if (!text) return
   addMessage('user', 'text', text)
   composerInput.value = ''
-
-  // 普通聊天中途明确提出制作课件/备课时，交给父级创建真正的备课会话，
-  // 保证后续进入结构化征询，而不是继续让普通模型用文字追问。
-  if (isPlanningPrompt(text)) {
-    emit('planning-request', {
-      prompt: text,
-      resourceIds: [...(props.resourceIds || [])],
-      // 当前这条备课请求由父级作为新流程的首条消息传入，这里只传切换前的历史。
-      history: getGeneralChatHistory().slice(0, -1),
-    })
-    return
-  }
 
   await requestGeneralChatReply()
 }
@@ -1401,7 +1416,7 @@ watch(
   () => [props.mode, props.sessionId, props.resume],
   async ([mode, sessionId, resume], previous = []) => {
     const [previousMode, previousSessionId, previousResume] = previous
-    if (resume || mode !== 'planning' || previousMode !== 'general' || !sessionId || sessionId === previousSessionId || previousResume) return
+    if (resume || mode !== 'planning' || previousMode !== 'general' || !sessionId || previousResume) return
     await enterPlanningInCurrentConversation()
   },
   { flush: 'post' }
@@ -1477,6 +1492,22 @@ function hasGeneratedOutline(value) {
 async function restoreSession() {
   resumeLoading.value = true
   try {
+    if (isGeneralChat.value) {
+      const sessionRes = await getAiSession(props.sessionId)
+      if (!isOk(sessionRes)) throw new Error('聊天历史加载失败')
+      const session = sessionRes.data
+      generalSessionId.value = session.id
+      parseStoredMessages(session.messages)
+        .filter((item) => (item.role === 'user' || item.role === 'assistant') && String(item.content || '').trim())
+        .forEach((item) => addMessage(item.role, 'text', item.content, {
+          message_id: item.message_id,
+          turn_id: item.turn_id,
+          created_at: item.created_at,
+          status: item.status,
+        }))
+      phase.value = 'general_chat'
+      return
+    }
     const [sessionRes, planRes] = await Promise.all([
       getAiSession(props.sessionId),
       getAiPlan(props.sessionId).catch(() => null),
@@ -1582,6 +1613,8 @@ async function restoreSession() {
       openPlanningClarification(question)
     } else {
       phase.value = 'info'
+      const latestUser = [...storedMessages].reverse().find((item) => item.role === 'user')
+      prepareInitialInfoForm(latestUser?.content || session?.title || '')
       addMessage('assistant', 'info_form', '补充信息')
     }
     await scrollToBottom()
@@ -1603,7 +1636,7 @@ async function restoreSession() {
           :class="['chat-message', `msg-${msg.role}`, `msg-type-${msg.type}`]"
         >
           <!-- 用户消息：右对齐气泡 -->
-          <div v-if="msg.role === 'user'" class="user-bubble">
+          <div v-if="msg.role === 'user'" class="user-bubble" :title="messageTraceLabel(msg)">
             {{ msg.content }}
           </div>
 
@@ -1790,7 +1823,7 @@ async function restoreSession() {
             </div>
 
             <!-- 普通 AI 文本消息（同样使用 MarkdownRender 渲染以支持 MD 格式，占满全宽） -->
-            <div v-else class="ai-bubble">
+            <div v-else class="ai-bubble" :title="messageTraceLabel(msg)">
               <div class="ai-markdown-body">
                 <MarkdownRender
                   mode="chat"
@@ -1852,6 +1885,14 @@ async function restoreSession() {
     <!-- 底部输入区（flex 布局固定在页面底部，不随消息滚动）
          澄清阶段启用输入框，供教师补充回复后端提出的澄清问题 -->
     <footer class="chat-composer">
+      <div v-if="isGeneralChat" class="route-preference-row">
+        <span>任务方式</span>
+        <el-select v-model="selectedRoutePreference" size="small" aria-label="任务分流方式" style="width: 126px">
+          <el-option label="自动判断" value="auto" />
+          <el-option label="仅对话" value="chat" />
+          <el-option label="直接备课" value="planning" />
+        </el-select>
+      </div>
       <div class="composer-input-row" :class="{ 'is-editable': isGeneralChat || phase === 'info' || phase === 'clarifying' }">
         <el-input
           v-model="composerInput"
@@ -1953,6 +1994,14 @@ async function restoreSession() {
 }
 
 /* ===== 消息滚动区 ===== */
+.route-preference-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 0 0 8px;
+  color: var(--zh-text-secondary);
+  font-size: 12px;
+}
 .chat-messages {
   flex: 1;
   overflow-y: auto;

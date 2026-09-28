@@ -9,6 +9,7 @@ from fastapi.responses import FileResponse, Response, StreamingResponse
 
 from a12_ppt.config import get_settings
 from a12_ppt.workspace import WorkspaceChatRequest, stream_workspace_chat
+from a12_ppt.chat_router import ChatRouteRequest, chat_route_workflow
 from a12_ppt.asr import transcribe_audio
 from a12_ppt.interactive import InteractiveModuleGenerator
 from a12_ppt.lesson_plan import LessonPlanGenerator, export_lesson_plan_to_docx
@@ -78,6 +79,12 @@ async def initialize_ai_database() -> None:
 async def workspace_chat(request: WorkspaceChatRequest):
     return StreamingResponse(stream_workspace_chat(request), media_type="text/event-stream",
                              headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"})
+
+
+@app.post("/api/v1/python/workspace/chat/route")
+async def route_workspace_chat(request: ChatRouteRequest) -> Result:
+    with use_runtime_options(request.user_id, "chat_route", "fast", "low"):
+        return Result(data=await chat_route_workflow.route(request))
 
 
 @app.get("/api/v1/python/health")

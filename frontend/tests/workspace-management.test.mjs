@@ -22,6 +22,7 @@ test('audio player starts element dragging without cancelling its native control
   let capturedPointer = null
   const state = {
     placementMode: ref(false), elementById: id => id === element.id ? element : null,
+    isMobile: ref(false),
     dragState: ref(null), draggingElementId: ref(null), current: ref({ elements: [element] }),
     selectElement() {}, handleElementDrag() {}, stopElementDrag() {},
     window: { addEventListener() {} },

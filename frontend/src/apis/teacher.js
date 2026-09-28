@@ -218,6 +218,20 @@ export function streamGeneralChat(body, options = {}) {
   })
 }
 
+/** 普通聊天由 Java 建立并持久化会话；每轮提问和回复都可从历史恢复。 */
+export function streamPersistentGeneralChat(body, options = {}) {
+  const userStore = useUserStore()
+  return fetch(`${import.meta.env.VITE_API_BASE_URL || ''}/api/v1/ai/general-chat/stream`, {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/json',
+      ...(userStore.token ? { Authorization: `Bearer ${userStore.token}` } : {}),
+    },
+    body: JSON.stringify(body),
+    signal: options.signal,
+  })
+}
+
 // 教师端项目管理
 export const createProject = (data) => post('/api/v1/projects', data)
 export const listProjects = (params) => get('/api/v1/projects', params)

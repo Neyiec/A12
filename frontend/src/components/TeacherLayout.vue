@@ -152,6 +152,7 @@ const loadHistory = async () => {
       id: item.id,
       title: item.title,
       time: formatRelativeTime(item.updated_at),
+      mode: item.status === 'general' ? 'general' : 'planning',
     }))
   } catch { /* 请求层会统一处理失效会话 */ }
 }
@@ -163,7 +164,7 @@ const openHistorySession = (item) => {
   if (route.path !== '/main') {
     router.push({ path: '/main', query: route.query.preview ? { preview: '1' } : {} })
   }
-  openChatSession.value = { id: item.id, title: item.title }
+  openChatSession.value = { id: item.id, title: item.title, mode: item.mode }
 }
 
 /** 处理历史记录行的操作菜单命令：删除弹出危险确认框，重命名弹出输入框。 */
@@ -224,6 +225,7 @@ watch(latestSessionPush, (session) => {
     id: session.id,
     title: session.title,
     time: formatRelativeTime(session.updated_at),
+    mode: session.mode === 'general' ? 'general' : 'planning',
   })
 })
 </script>

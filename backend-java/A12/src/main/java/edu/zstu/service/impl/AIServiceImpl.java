@@ -99,6 +99,43 @@ public class AIServiceImpl implements AIService {
         return toTaskVO(task);
     }
 
+    /** 普通聊天转备课时沿用原会话 ID 和完整消息时间线。 */
+    @Override
+    @Transactional
+    public TaskVO promoteGeneralSession(Integer conversationId, TaskCreateDTO dto) {
+        Integer userId = requireLogin();
+        AI_Conversation conversation = conversationMapper.findById(conversationId);
+        if (conversation == null || conversation.getUser_id() != userId || !"general".equals(conversation.getStatus())) {
+            throw new IllegalArgumentException("普通聊天会话不存在或已进入备课流程");
+        }
+        if (taskMapper.findByConversationId(conversationId) != null) {
+            throw new IllegalStateException("此会话已有备课任务");
+        }
+        String title = defaultString(dto.getTitle(), conversation.getTitle());
+        String pythonSessionId = createPythonSessionIfAvailable(userId, title);
+        AI_Task task = new AI_Task();
+        task.setUser_id(userId);
+        task.setConversation_id(conversationId);
+        task.setTitle(title);
+        task.setSubject(dto.getSubject());
+        task.setGrade(dto.getGrade());
+        task.setStatus("planning");
+        task.setUploaded_refs(defaultJson(firstNotBlank(dto.getUploaded_refs(), dto.getResource_ids()), "[]"));
+        task.setPlan_json(defaultJson(dto.getPlan_json(), initialPlanJson(dto)));
+        task.setPlan_confirm_status("pending");
+        task.setExec_steps("[]");
+        task.setReflections("[]");
+        task.setPython_session_id(pythonSessionId);
+        task.setGeneration_mode("python");
+        if (conversationMapper.promoteToPlanning(conversationId, userId, pythonSessionId, title) != 1) {
+            throw new IllegalStateException("会话状态已变化，请重新打开对话");
+        }
+        taskMapper.insert(task);
+        businessLogService.record("operation", "ai", "promote_general_session", "ai_task", task.getId(),
+                Map.of("conversation_id", conversationId, "title", title));
+        return toTaskVO(task);
+    }
+
     @Override
     public List<ConversationVO> listSessions() {
         Integer userId = requireLogin();
@@ -125,9 +162,9 @@ public class AIServiceImpl implements AIService {
             conversation.setTitle(dto.getTitle());
             updatePythonSessionTitleIfAvailable(userId, conversation.getPython_session_id(), dto.getTitle());
         }
-        if (dto.getStatus() != null) conversation.setStatus(dto.getStatus());
-        if (dto.getContext_summary() != null) conversation.setContext_summary(dto.getContext_summary());
-        conversationMapper.update(conversation);
+        // 重命名/改状态只更新元数据；不能用旧快照覆盖正在流式追加的聊天消息。
+        conversationMapper.updateMetadata(conversation.getId(), userId,
+                dto.getTitle(), dto.getStatus(), dto.getContext_summary());
         return toConversationVO(conversationMapper.findById(conversation.getId()));
     }
 
@@ -324,7 +361,13 @@ public class AIServiceImpl implements AIService {
         payload.put("enable_rag", requestBoolean(dto.getEnable_rag(), task, "enable_rag"));
         payload.put("enable_web", requestBoolean(dto.getEnable_web(), task, "enable_web"));
         payload.put("slide_count", requestSlideCount(dto, task));
-        payload.put("known_context", buildKnownContext(task, dto.getKnown_context()));
+        Map<String, Object> knownContext = buildKnownContext(task, dto.getKnown_context());
+        String priorDiscussion = priorGeneralChatContext(conversation.getMessages());
+        if (!priorDiscussion.isBlank()) {
+            String requirements = String.valueOf(knownContext.getOrDefault("requirements", ""));
+            knownContext.put("requirements", (requirements + "\n已讨论背景（本次明确要求优先）：\n" + priorDiscussion).trim());
+        }
+        payload.put("known_context", knownContext);
         payload.put("model_profile", firstNotBlank(dto.getModel_profile(), "standard"));
         payload.put("reasoning_effort", firstNotBlank(dto.getReasoning_effort(), "medium"));
         return payload;
@@ -429,6 +472,26 @@ public class AIServiceImpl implements AIService {
             }
         }
         return knownContext;
+    }
+
+    private String priorGeneralChatContext(String rawMessages) {
+        if (isBlank(rawMessages)) return "";
+        try {
+            List<Map<String, Object>> saved = objectMapper.readValue(rawMessages, new TypeReference<>() {});
+            List<Map<String, Object>> discussion = saved.stream()
+                    .filter(item -> "general_chat".equals(item.get("source")))
+                    .filter(item -> "user".equals(item.get("role"))
+                            || ("assistant".equals(item.get("role")) && "completed".equals(item.get("status"))))
+                    .toList();
+            String transcript = discussion.stream()
+                    .skip(Math.max(0, discussion.size() - 12))
+                    .map(item -> ("user".equals(item.get("role")) ? "教师：" : "AI：") + item.get("content"))
+                    .collect(Collectors.joining("\n"));
+            return transcript.substring(0, Math.min(3000, transcript.length()));
+        } catch (Exception e) {
+            log.warn("priorGeneralChatContext parse failed: {}", e.getMessage());
+            return "";
+        }
     }
 
     private byte[] readFileBytes(MultipartFile file) {

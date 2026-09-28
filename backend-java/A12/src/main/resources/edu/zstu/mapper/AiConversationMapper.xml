@@ -24,6 +24,25 @@
         <if test="last_question != null">last_question = #{last_question},</if>
         updated_at = NOW()</set> WHERE id = #{id}
     </update>
+    <update id="updateMetadata">
+        UPDATE ai_conversation <set>
+            <if test="title != null">title = #{title},</if>
+            <if test="status != null">status = #{status},</if>
+            <if test="contextSummary != null">context_summary = #{contextSummary},</if>
+            updated_at = NOW()
+        </set> WHERE id = #{id} AND user_id = #{userId}
+    </update>
+    <update id="appendMessage">
+        UPDATE ai_conversation
+        SET messages = JSON_ARRAY_APPEND(COALESCE(messages, JSON_ARRAY()), '$', CAST(#{messageJson} AS JSON)),
+            updated_at = NOW()
+        WHERE id = #{id} AND user_id = #{userId}
+    </update>
+    <update id="promoteToPlanning">
+        UPDATE ai_conversation
+        SET status = 'active', python_session_id = #{pythonSessionId}, title = #{title}, updated_at = NOW()
+        WHERE id = #{id} AND user_id = #{userId} AND status = 'general'
+    </update>
     <delete id="deleteById">
         DELETE FROM ai_conversation WHERE id = #{id} AND user_id = #{userId}
     </delete>

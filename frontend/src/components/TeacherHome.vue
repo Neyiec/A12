@@ -19,7 +19,7 @@ import {
   Promotion,
 } from '@element-plus/icons-vue'
 import { TEACHER_HOME } from '../config/teacherHome.config.js'
-import { INFO_FORM_DEFAULTS, isPlanningPrompt, requestNewChat, openChatSession } from '../config/teacherChat.config.js'
+import { INFO_FORM_DEFAULTS, requestNewChat, openChatSession } from '../config/teacherChat.config.js'
 import { useUserStore } from '../storage/user'
 import ChatView from './ChatView.vue'
 import { archiveProject, copyProject, createAiSession, createProject, deleteProject, listProjects, listResources, transcribeAudio, uploadResource } from '../apis/teacher'
@@ -43,6 +43,7 @@ const greetingPeriod = computed(() => {
 })
 const teacherGreeting = computed(() => `${greetingPeriod.value}，${teacherSurname.value ? `${teacherSurname.value}老师` : '老师'}`)
 const prompt = ref('')
+const routePreference = ref('auto')
 const canSend = computed(() => prompt.value.trim().length > 0)
 const composerInput = ref(null)
 const activeSuggestionId = ref(null)
@@ -308,36 +309,24 @@ const startPlanningSession = async (text, resourceIds = [], history = null, work
 }
 
 /**
- * 从欢迎页发送提示词：明确的教学设计需求进入备课流程，其他内容进入普通对话。
- * 普通对话使用本地会话 ID，不创建后端“备课会话”。
+ * 所有首句先交给 Java 保存并分流；用户可在发送前覆盖自动判断。
  */
 const sendPrompt = async () => {
   if (!canSend.value) return
   const text = prompt.value.trim()
 
-  if (!isPlanningPrompt(text)) {
-    chatMode.value = 'general'
-    chatSessionId.value = `local-chat-${Date.now()}`
-    chatPrompt.value = text
-    chatResourceIds.value = [...selectedResourceIds.value]
-    // 普通对话后续也可以切换到生成工作台；提前保留资料/上传文件上下文，
-    // 避免只有备课流能把资源带进工作台。
-    chatWorkspaceContext.value = normalizeWorkspaceContext({
-      uploadedResources: pendingUploadedResources.value,
-    }, selectedResourceIds.value)
-    chatContinuationHistory.value = []
-    chatResume.value = false
-    viewMode.value = 'chat'
-    prompt.value = ''
-    activeSuggestionId.value = null
-    return
-  }
-
+  chatMode.value = 'general'
+  chatSessionId.value = null
+  chatPrompt.value = text
+  chatResourceIds.value = [...selectedResourceIds.value]
+  chatWorkspaceContext.value = normalizeWorkspaceContext({
+    uploadedResources: pendingUploadedResources.value,
+  }, selectedResourceIds.value)
+  chatContinuationHistory.value = []
+  chatResume.value = false
+  viewMode.value = 'chat'
   prompt.value = ''
   activeSuggestionId.value = null
-  await startPlanningSession(text, [...selectedResourceIds.value], [], normalizeWorkspaceContext({
-    uploadedResources: pendingUploadedResources.value,
-  }, selectedResourceIds.value))
 }
 
 /** 欢迎页快捷键：Enter 发送，Shift+Enter 保留换行；中文输入法确认候选词时不抢占 Enter。
@@ -363,6 +352,16 @@ const handlePlanningRequest = async (payload) => {
     ? payload.workspaceContext
     : chatWorkspaceContext.value
   if (!String(text || '').trim()) return
+  if (payload?.existingSessionId) {
+    // Java 已把同一会话升级为备课任务，无需再次创建会话或复制历史消息。
+    chatSessionId.value = payload.existingSessionId
+    chatPrompt.value = text
+    chatResourceIds.value = normalizeResourceIds(resourceIds)
+    chatWorkspaceContext.value = normalizeWorkspaceContext(workspaceContext || {}, chatResourceIds.value)
+    chatContinuationHistory.value = Array.isArray(history) ? history : []
+    chatMode.value = 'planning'
+    return
+  }
   await startPlanningSession(text, resourceIds, history, workspaceContext)
 }
 
@@ -398,7 +397,7 @@ watch(requestNewChat, (val) => {
  */
 watch(openChatSession, (target) => {
   if (!target?.id) return
-  chatMode.value = 'planning'
+  chatMode.value = target.mode === 'general' ? 'general' : 'planning'
   chatSessionId.value = target.id
   chatPrompt.value = target.title || ''
   chatResourceIds.value = []
@@ -408,6 +407,10 @@ watch(openChatSession, (target) => {
   viewMode.value = 'chat'
   openChatSession.value = null
 }, { immediate: true })
+
+const handleGeneralSession = (session) => {
+  if (chatMode.value === 'general' && session?.id) chatSessionId.value = session.id
+}
 
 /** 从聊天视图跳转到创作工作台，并携带生成前已选定的 PPT 模板 */
 const openWorkspaceFromChat = (payload) => {
@@ -625,6 +628,11 @@ onMounted(() => {
       />
       <div class="composer-toolbar">
         <div class="composer-tools">
+          <el-select v-model="routePreference" size="small" aria-label="任务分流方式" style="width: 118px">
+            <el-option label="自动判断" value="auto" />
+            <el-option label="仅对话" value="chat" />
+            <el-option label="直接备课" value="planning" />
+          </el-select>
           <el-tooltip content="从电脑上传本次备课要使用的资料"><span><el-button text :icon="Paperclip" @click="openUploadDialog">{{ TEACHER_HOME.composer.attach }}</el-button></span></el-tooltip>
           <el-tooltip content="从个人知识库中检索并引用已有资料"><span><el-button text :icon="Collection" @click="openKnowledgeDialog">{{ TEACHER_HOME.composer.knowledge }}</el-button></span></el-tooltip>
           <el-tooltip content="打开语音输入"><span><el-button text circle aria-label="语音输入" @click="voiceDialogVisible = true"><el-icon><Microphone /></el-icon></el-button></span></el-tooltip>
@@ -655,10 +663,12 @@ onMounted(() => {
       :workspace-context="chatWorkspaceContext"
       :continuation-history="chatContinuationHistory"
       :mode="chatMode"
+      :route-preference="routePreference"
       :resume="chatResume"
       @back="closeChatView"
       @open-workspace="openWorkspaceFromChat"
       @planning-request="handlePlanningRequest"
+      @general-session="handleGeneralSession"
     />
 
     <!-- 资料上传 / 知识库 / 语音对话框（欢迎视图和聊天视图共用）-->

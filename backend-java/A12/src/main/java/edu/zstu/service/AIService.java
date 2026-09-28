@@ -15,6 +15,7 @@ import java.util.List;
 
 public interface AIService {
     TaskVO createSession(TaskCreateDTO dto);
+    TaskVO promoteGeneralSession(Integer conversationId, TaskCreateDTO dto);
     List<ConversationVO> listSessions();
     ConversationVO getSession(String id);
     ConversationVO updateSession(String id, ConversationDTO dto);
