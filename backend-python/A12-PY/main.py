@@ -1,13 +1,19 @@
-from fastapi import FastAPI, File, Form, HTTPException, Query, UploadFile
+from fastapi import FastAPI, File, Form, HTTPException, Query, Request, UploadFile
 import json
 import logging
+import os
 import tempfile
 from pathlib import Path
 from urllib.parse import quote
 
 from fastapi.responses import FileResponse, Response, StreamingResponse
+from fastapi.middleware.cors import CORSMiddleware
 
 from a12_ppt.config import get_settings
+from a12_ppt.direct_auth import (authenticate_browser, direct_bearer, direct_user_id, direct_user_role,
+                                 internal_request_allowed, reject_identity_spoofing,
+                                 signed_personal_resource_url, signed_public_resource_url,
+                                 verify_active_token, require_active_browser_token)
 from a12_ppt.workspace import WorkspaceChatRequest, stream_workspace_chat
 from a12_ppt.chat_router import ChatRouteRequest, chat_route_workflow
 from a12_ppt.asr import transcribe_audio
@@ -22,6 +28,7 @@ from a12_ppt.presentation import (
     get_template_file,
     list_templates,
     replace_template,
+    set_template_status,
     validate_html,
 )
 from a12_ppt.models import (
@@ -48,8 +55,11 @@ from a12_ppt.models import (
     TeacherFeedbackRequest,
     TextToSpeechRequest,
     ClassroomEventRequest,
+    CourseGraphUpsertRequest,
 )
+from a12_ppt.course_graph import course_graph_store
 from a12_ppt.resources import resource_index_store, save_upload
+from a12_ppt.resources.index_worker import start_resource_index_worker
 from a12_ppt.outline_chat import OutlineChatWorkflow
 from a12_ppt.outline_chat.postgres_store import postgres_memory_store
 from a12_ppt.outline_chat.session_store import outline_session_store
@@ -70,9 +80,54 @@ lesson_plan_generator = LessonPlanGenerator()
 outline_chat_workflow = OutlineChatWorkflow(generator)
 
 
+@app.middleware("http")
+async def authorize_python_api(request: Request, call_next):
+    if not request.url.path.startswith("/api/v1/python/") or request.method == "OPTIONS":
+        return await call_next(request)
+    if internal_request_allowed(request.headers.get("X-A12-Internal-Key")):
+        return await call_next(request)
+    try:
+        identity = await authenticate_browser(request.headers.get("Authorization"))
+        user_id, token = identity[:2]
+        await verify_active_token(user_id, token)
+        role = identity[2] if len(identity) > 2 else ""
+        admin_template = (request.url.path.startswith("/api/v1/python/templates/") or
+                          (request.url.path == "/api/v1/python/templates" and request.method != "GET"))
+        if admin_template and role != "admin":
+            raise HTTPException(status_code=403, detail="仅管理员可管理模板")
+        if request.headers.get("Content-Type", "").split(";", 1)[0].lower() == "application/json":
+            if role != "admin" or not request.url.path.startswith("/api/v1/python/resources/index/"):
+                reject_identity_spoofing(await request.body(), dict(request.query_params), user_id)
+        else:
+            reject_identity_spoofing(b"", dict(request.query_params), user_id)
+    except HTTPException as exc:
+        return Response(content=json.dumps({"code": exc.status_code, "message": exc.detail, "data": None},
+                                           ensure_ascii=False), status_code=exc.status_code,
+                        media_type="application/json")
+    user_scope = direct_user_id.set(user_id)
+    token_scope = direct_bearer.set(token)
+    role_scope = direct_user_role.set(role)
+    try:
+        return await call_next(request)
+    finally:
+        direct_user_id.reset(user_scope)
+        direct_bearer.reset(token_scope)
+        direct_user_role.reset(role_scope)
+
+
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=[origin.strip() for origin in os.getenv(
+        "A12_FRONTEND_ORIGINS", "http://localhost:5173,http://127.0.0.1:5173").split(",") if origin.strip()],
+    allow_methods=["GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS"],
+    allow_headers=["Authorization", "Content-Type"],
+)
+
+
 @app.on_event("startup")
 async def initialize_ai_database() -> None:
     ensure_ai_schema()
+    start_resource_index_worker()
 
 
 @app.post("/api/v1/python/workspace/chat/stream")
@@ -145,16 +200,49 @@ async def upload_resource(file: UploadFile = File(...)) -> Result:
 
 @app.post("/api/v1/python/resources/index/sync")
 async def sync_resource_index(request: ResourceIndexSyncRequest) -> Result:
+    if direct_user_id.get():
+        if request.source_type == "public":
+            if direct_user_role.get() != "admin":
+                raise HTTPException(status_code=403, detail="仅管理员可维护公共资源索引")
+            request.file_url = await signed_public_resource_url(request.resource_id)
+        else:
+            request.file_url = await signed_personal_resource_url(request.resource_id)
+            request.owner_user_id = direct_user_id.get()
+            request.uploaded_by = direct_user_id.get()
+            request.metadata["owner_user_id"] = direct_user_id.get()
+        request.metadata["file_url"] = request.file_url
     return Result(data=await resource_index_store.sync_resource(request))
 
 
 @app.post("/api/v1/python/resources/index/bootstrap")
 async def bootstrap_resource_index(request: ResourceIndexBootstrapRequest) -> Result:
+    if direct_user_id.get():
+        for resource in request.resources:
+            if resource.source_type == "public":
+                if direct_user_role.get() != "admin":
+                    raise HTTPException(status_code=403, detail="仅管理员可维护公共资源索引")
+                resource.file_url = await signed_public_resource_url(resource.resource_id)
+            else:
+                resource.file_url = await signed_personal_resource_url(resource.resource_id)
+                resource.owner_user_id = direct_user_id.get()
+                resource.uploaded_by = direct_user_id.get()
+                resource.metadata["owner_user_id"] = direct_user_id.get()
+            resource.metadata["file_url"] = resource.file_url
     return Result(data=await resource_index_store.bootstrap(request.resources, request.force_reparse))
 
 
 @app.patch("/api/v1/python/resources/index/metadata")
 async def update_resource_index_metadata(request: ResourceIndexMetadataRequest) -> Result:
+    if direct_user_id.get():
+        if request.source_type == "public":
+            if direct_user_role.get() != "admin":
+                raise HTTPException(status_code=403, detail="仅管理员可维护公共资源索引")
+            await signed_public_resource_url(request.resource_id)
+        else:
+            if not resource_index_store.get_resource(request.source_type, request.resource_id, 0):
+                raise HTTPException(status_code=403, detail="无权修改该资源索引")
+            await signed_personal_resource_url(request.resource_id)
+            request.metadata.pop("owner_user_id", None)
     return Result(data=resource_index_store.update_metadata(request))
 
 
@@ -209,6 +297,13 @@ async def search_resource_index(request: ResourceIndexSearchRequest) -> Result:
 
 @app.delete("/api/v1/python/resources/index/{source_type}/{resource_id}")
 async def delete_resource_index(source_type: str, resource_id: str) -> Result:
+    if direct_user_id.get():
+        if source_type == "public":
+            if direct_user_role.get() != "admin":
+                raise HTTPException(status_code=403, detail="仅管理员可维护公共资源索引")
+        else:
+            if not resource_index_store.get_resource(source_type, resource_id, 0):
+                raise HTTPException(status_code=403, detail="无权删除该资源索引")
     return Result(data=resource_index_store.delete_resource(source_type, resource_id))
 
 
@@ -249,6 +344,14 @@ async def delete_ppt_template(theme: str) -> Result:
         return Result(code=400, message=str(exc))
 
 
+@app.put("/api/v1/python/templates/{theme}/status")
+async def update_ppt_template_status(theme: str, status: str = Query(...)) -> Result:
+    try:
+        return Result(data=set_template_status(theme, status))
+    except ValueError as exc:
+        return Result(code=400, message=str(exc))
+
+
 @app.get("/api/v1/python/templates/{theme}/file")
 async def download_ppt_template_file(theme: str):
     """管理后台下载模板 JSON 文件，业务错误以非 2xx 返回（调用方按字节流处理）"""
@@ -266,7 +369,7 @@ async def download_ppt_template_file(theme: str):
 
 @app.post("/api/v1/python/outlines/generate")
 async def generate_outline(request: OutlineGenerateRequest) -> Result:
-    with use_runtime_options(None, "outline_generate", request.model_profile, request.reasoning_effort):
+    with use_runtime_options(direct_user_id.get(), "outline_generate", request.model_profile, request.reasoning_effort):
         return Result(data=await generator.generate_outline(request))
 
 
@@ -334,6 +437,22 @@ async def get_teacher_style_profile(user_id: str = Query(..., min_length=1)) -> 
     })
 
 
+@app.put("/api/v1/python/courses/graph")
+async def upsert_course_graph(request: CourseGraphUpsertRequest) -> Result:
+    try:
+        return Result(data=course_graph_store.put(request.user_id, request.course_id, request.title, request.model_dump()))
+    except ValueError as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
+
+
+@app.get("/api/v1/python/courses/{course_id}/graph")
+async def get_course_graph(course_id: str, user_id: str = Query(..., min_length=1)) -> Result:
+    graph = course_graph_store.get(user_id, course_id)
+    if not graph:
+        raise HTTPException(status_code=404, detail="课程图谱不存在")
+    return Result(data=graph)
+
+
 @app.post("/api/v1/python/teacher-style/feedback")
 async def record_teacher_feedback(request: TeacherFeedbackRequest) -> Result:
     return Result(data=postgres_memory_store.record_feedback(request.model_dump()))
@@ -341,7 +460,7 @@ async def record_teacher_feedback(request: TeacherFeedbackRequest) -> Result:
 
 @app.get("/api/v1/python/ai/metrics")
 async def ai_metrics(limit: int = Query(50, ge=1, le=500)) -> Result:
-    return Result(data=postgres_memory_store.ai_metrics(limit))
+    return Result(data=postgres_memory_store.ai_metrics(limit, direct_user_id.get()))
 
 
 @app.post("/api/v1/python/classroom/events")
@@ -361,7 +480,7 @@ async def update_outline(request: OutlineUpdateRequest) -> Result:
 
 @app.post("/api/v1/python/presentations/generate")
 async def generate_presentation(request: PresentationGenerateRequest) -> Result:
-    with use_runtime_options(None, "presentation_generate", request.model_profile, request.reasoning_effort):
+    with use_runtime_options(direct_user_id.get(), "presentation_generate", request.model_profile, request.reasoning_effort):
         return Result(data=await generator.generate_presentation(request))
 
 
@@ -369,7 +488,7 @@ async def generate_presentation(request: PresentationGenerateRequest) -> Result:
 async def stream_presentation(request: PresentationGenerateRequest):
     async def event_source():
         try:
-            with use_runtime_options(None, "presentation_stream", request.model_profile, request.reasoning_effort):
+            with use_runtime_options(direct_user_id.get(), "presentation_stream", request.model_profile, request.reasoning_effort):
                 async for item in generator.stream_presentation(request):
                     event = "presentation_slide" if item.get("type") == "slide" else "final"
                     payload = item.get("response") if event == "final" else item
@@ -423,6 +542,7 @@ async def synthesize_speech(request: TextToSpeechRequest):
     from openai import AsyncOpenAI
     if not settings.openai_api_key:
         raise HTTPException(status_code=503, detail="TTS 服务未配置")
+    await require_active_browser_token()
     client = AsyncOpenAI(api_key=settings.openai_api_key, base_url=settings.openai_base_url.rstrip("/"),
                          timeout=settings.request_timeout_seconds)
     speech = await client.audio.speech.create(model=settings.tts_model,

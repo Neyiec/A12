@@ -6,6 +6,7 @@ from pathlib import Path
 
 from fastapi import UploadFile
 
+from ..direct_auth import direct_user_id
 from .parsers import parse_resource_file
 
 DATA_DIR = Path(__file__).resolve().parents[2] / "data" / "resources"
@@ -41,7 +42,7 @@ async def save_upload(file: UploadFile) -> ResourceRecord:
     text_path.write_text(text, encoding="utf-8")
     metadata_path = resource_dir / "metadata.json"
     metadata_path.write_text(
-        json.dumps(parsed.metadata, ensure_ascii=False, indent=2),
+        json.dumps({**parsed.metadata, "owner_user_id": direct_user_id.get()}, ensure_ascii=False, indent=2),
         encoding="utf-8",
     )
     return ResourceRecord(
@@ -55,6 +56,17 @@ async def save_upload(file: UploadFile) -> ResourceRecord:
 
 
 def load_resource_text(resource_id: str) -> str:
+    if not re.fullmatch(r"res_[0-9a-f]{16}", resource_id):
+        return ""
+    user_id = direct_user_id.get()
+    if user_id:
+        metadata_path = DATA_DIR / resource_id / "metadata.json"
+        try:
+            metadata = json.loads(metadata_path.read_text(encoding="utf-8"))
+        except (OSError, ValueError):
+            return ""
+        if str(metadata.get("owner_user_id") or "") != user_id:
+            return ""
     text_path = DATA_DIR / resource_id / "content.txt"
     if not text_path.exists():
         return ""

@@ -19,9 +19,5 @@ public interface AdminResourceService {
     Map<String, Object> getDownloadUrl(Integer id);
     Map<String, Object> getProcessingStatus(Integer id);
     Map<String, Object> bootstrapAiResourceIndex(boolean forceReparse);
-    Map<String, Object> aiIndexOverview();
-    Map<String, Object> aiIndexTasks(String sourceType, String parseStatus, String keyword, int page, int size);
-    Map<String, Object> aiIndexResource(String sourceType, String resourceId, Integer chunkLimit);
-    Map<String, Object> aiIndexSearch(String query, String sourceType, Integer topK);
     Map<String, Object> aiIndexReparse(String sourceType, Integer resourceId, Integer adminId);
 }

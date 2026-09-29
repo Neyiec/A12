@@ -54,22 +54,22 @@ export const createResourceCategory = (data) => post('/api/v1/resources/categori
 export const updateResourceCategory = (id, data) => apiRequest({ url: `/api/v1/resources/categories/${id}`, method: 'patch', data })
 export const deleteResourceCategory = (id) => del(`/api/v1/resources/categories/${id}`)
 
-export const syncResourceIndex = (data) => post('/api/v1/ai/engine/resources/index/sync', data)
+export const syncResourceIndex = (data) => post('/api/v1/python/resources/index/sync', data)
 // 资源索引 bootstrap 需要处理全量素材，后端耗时较长，单独放宽超时，避免被默认 10 秒超时误判失败。
 const RESOURCE_INDEX_BOOTSTRAP_TIMEOUT = 210000
 export const bootstrapResourceIndex = (data) => apiRequest({
-  url: '/api/v1/ai/engine/resources/index/bootstrap',
+  url: '/api/v1/python/resources/index/bootstrap',
   method: 'post',
   data,
   timeout: RESOURCE_INDEX_BOOTSTRAP_TIMEOUT,
 })
-export const updateResourceIndexMetadata = (data) => apiRequest({ url: '/api/v1/ai/engine/resources/index/metadata', method: 'patch', data })
-export const getResourceIndexOverview = () => get('/api/v1/ai/engine/resources/index/overview')
-export const listResourceIndexResources = (params) => get('/api/v1/ai/engine/resources/index/resources', params)
-export const getResourceIndexResource = (sourceType, resourceId, params) => get(`/api/v1/ai/engine/resources/index/resources/${sourceType}/${resourceId}`, params)
-export const listResourceIndexLogs = (params) => get('/api/v1/ai/engine/resources/index/logs', params)
-export const searchResourceIndex = (data) => post('/api/v1/ai/engine/resources/index/search', data)
-export const deleteResourceIndex = (sourceType, resourceId) => del(`/api/v1/ai/engine/resources/index/${sourceType}/${resourceId}`)
+export const updateResourceIndexMetadata = (data) => apiRequest({ url: '/api/v1/python/resources/index/metadata', method: 'patch', data })
+export const getResourceIndexOverview = () => get('/api/v1/python/resources/index/overview')
+export const listResourceIndexResources = (params) => get('/api/v1/python/resources/index/resources', params)
+export const getResourceIndexResource = (sourceType, resourceId, params) => get(`/api/v1/python/resources/index/resources/${sourceType}/${resourceId}`, params)
+export const listResourceIndexLogs = (params) => get('/api/v1/python/resources/index/logs', params)
+export const searchResourceIndex = (data) => post('/api/v1/python/resources/index/search', data)
+export const deleteResourceIndex = (sourceType, resourceId) => del(`/api/v1/python/resources/index/${sourceType}/${resourceId}`)
 
 export const listCommunityItems = (params) => get('/api/v1/community/items', params)
 export const favoriteCommunityItem = (id) => put(`/api/v1/community/items/${id}/favorite`)
@@ -94,9 +94,63 @@ export const listExportTasks = (params) => get('/api/v1/export-tasks', params)
 export const getExportTask = (id) => get(`/api/v1/export-tasks/${id}`)
 // 导出接口会等待文件生成服务返回成果，单独放宽超时，避免大课件被默认 10 秒超时误判失败。
 const EXPORT_TASK_TIMEOUT = 210000
-export const retryExportTask = (id) => apiRequest({ url: `/api/v1/export-tasks/${id}/retry`, method: 'post', timeout: EXPORT_TASK_TIMEOUT })
+export const retryExportTask = async (id) => {
+  const created = await post(`/api/v1/export-tasks/${id}/retry`)
+  if (created?.code !== 200 && created?.code !== 0) return created
+  return runClientExport(created.data)
+}
 export const downloadExportArtifact = (id) => post(`/api/v1/export-artifacts/${id}/download-url`)
-export const createExportTask = (data) => apiRequest({ url: '/api/v1/export-tasks', method: 'post', data, timeout: EXPORT_TASK_TIMEOUT })
+export const createExportTask = async (data) => {
+  const created = await post('/api/v1/export-tasks', data)
+  if (created?.code !== 200 && created?.code !== 0) return created
+  return runClientExport(created.data)
+}
+
+async function runClientExport(task) {
+  if (!task?.id) throw new Error('导出任务未返回 ID')
+  try {
+    const prepared = await get(`/api/v1/export-tasks/${task.id}/payload`)
+    if (prepared?.code !== 200 && prepared?.code !== 0) throw new Error(prepared?.message || '读取导出页面失败')
+    const payload = prepared.data || {}
+    let generated
+    if (['word', 'docx'].includes(task.export_type)) {
+      let lessonPlan = payload.lesson_plan
+      if (!lessonPlan) {
+        const response = await generateLessonPlan({
+          title: payload.title, subject: payload.subject, grade: payload.grade,
+          teaching_goals: payload.teaching_goals, requirements: payload.requirements,
+          reference_text: payload.reference_text, slides: payload.slides,
+          outline: { slides: payload.slides },
+        })
+        if (response?.code !== 200 && response?.code !== 0) throw new Error(response?.message || '教案生成失败')
+        lessonPlan = response.data?.lesson_plan
+      }
+      generated = await exportLessonPlanDocx({ title: payload.title, filename: payload.filename, lesson_plan: lessonPlan })
+    } else {
+      if (!Array.isArray(payload.slides) || !payload.slides.length) throw new Error('项目没有可导出的课件页面')
+      generated = await exportPresentationPptx({
+        title: payload.title, filename: payload.filename, slides: payload.slides,
+        fidelity: payload.fidelity, package_static_assets: payload.package_static_assets,
+      })
+    }
+    const blob = generated?.data
+    if (!(blob instanceof Blob) || !blob.size) throw new Error('Python 未返回有效导出文件')
+    const disposition = generated?.headers?.['content-disposition'] || ''
+    const encodedName = disposition.match(/filename\*=UTF-8''([^;]+)/i)?.[1]
+    const plainName = disposition.match(/filename="?([^";]+)"?/i)?.[1]
+    let filename = payload.filename || `export-${task.id}.${task.export_type === 'word' ? 'docx' : 'pptx'}`
+    try { filename = encodedName ? decodeURIComponent(encodedName) : plainName || filename } catch { /* 保留默认名称。 */ }
+    if (generated?.headers?.['content-type']?.includes('zip')) filename = filename.replace(/\.[^.]+$/, '.zip')
+    const body = new FormData()
+    body.append('file', new File([blob], filename, { type: blob.type || 'application/octet-stream' }))
+    const saved = await apiRequest({ url: `/api/v1/export-tasks/${task.id}/artifact`, method: 'post', data: body, timeout: EXPORT_TASK_TIMEOUT })
+    if (saved?.code !== 200 && saved?.code !== 0) throw new Error(saved?.message || '登记导出文件失败')
+    return saved
+  } catch (error) {
+    await post(`/api/v1/export-tasks/${task.id}/failure`, { error: String(error?.message || '导出失败') }).catch(() => {})
+    throw error
+  }
+}
 export const precheckProjectExport = (id, data) => post(`/api/v1/projects/${id}/export-prechecks`, data)
 export const cancelExportTask = (id) => post(`/api/v1/export-tasks/${id}/cancel`)
 export const getExportQualityReport = (id) => get(`/api/v1/export-tasks/${id}/quality-report`)
@@ -105,62 +159,91 @@ export const createExportPreviewUrl = (id) => post(`/api/v1/export-artifacts/${i
 
 export const patchProject = (id, data) => apiRequest({ url: `/api/v1/projects/${id}`, method: 'patch', data })
 export const createAiSession = (data) => post('/api/v1/ai/sessions', data)
+export const saveDirectOutlineResult = (id, data) => apiRequest({ url: `/api/v1/ai/sessions/${id}/outline-results`, method: 'post', data, timeout: 30000 })
+/** 工作台的非流式交互同样由浏览器直连 FastAPI；Java 只接收最终业务快照。 */
+export async function sendDirectOutlineSessionMessage(id, message, knownContext = {}, pythonSessionId = '') {
+  const userId = String(useUserStore().userInfo?.user_id || '')
+  const response = await streamOutlineChat({
+    user_id: userId, session_id: pythonSessionId || undefined, message,
+    known_context: knownContext,
+    resource_ids: (knownContext?.workspace_context?.resource_ids || []).map((id) => String(id)),
+    enable_rag: false, enable_web: false, slide_count: 8, language: 'zh-CN',
+  })
+  if (!response.ok) throw new Error(`大纲请求失败（HTTP ${response.status}）`)
+  const reader = response.body?.getReader()
+  if (!reader) throw new Error('大纲服务未返回数据流')
+  const decoder = new TextDecoder()
+  let buffer = '', session = pythonSessionId, final = null, question = null, error = ''
+  const dispatch = (frame) => {
+    const event = frame.match(/(?:^|\n)event:\s*([^\n]+)/)?.[1]?.trim()
+    const raw = frame.match(/(?:^|\n)data:\s*([^\n]+)/)?.[1]
+    if (!raw) return
+    let data
+    try { data = JSON.parse(raw) } catch { return }
+    if (event === 'session') session = String(data.session_id || session)
+    if (event === 'final') final = data
+    if (event === 'question') question = data
+    if (event === 'error') error = data.message || '大纲生成失败'
+  }
+  for (;;) {
+    const { value, done } = await reader.read()
+    buffer += decoder.decode(value || new Uint8Array(), { stream: !done })
+    const frames = buffer.split(/\r?\n\r?\n/)
+    buffer = frames.pop() || ''
+    frames.forEach(dispatch)
+    if (done) break
+  }
+  if (buffer.trim()) dispatch(buffer)
+  const saved = await saveDirectOutlineResult(id, {
+    message, python_session_id: session,
+    status: final ? 'completed' : question ? 'need_clarification' : 'failed',
+    final_data: final, question: question?.question || '', error_message: error,
+  })
+  if (saved?.code !== 200 && saved?.code !== 0) throw new Error(saved?.message || '大纲结果保存失败')
+  if (!final && !question) throw new Error(error || '大纲服务未返回有效结果')
+  return saved
+}
 export const listAiSessions = () => get('/api/v1/ai/sessions')
 export const getAiSession = (id) => get(`/api/v1/ai/sessions/${id}`)
-export const updateAiSession = (id, data) => apiRequest({ url: `/api/v1/ai/sessions/${id}`, method: 'patch', data })
-export const deleteAiSession = (id) => del(`/api/v1/ai/sessions/${id}`)
-// 大纲生成同步阻塞、耗时较长（后端 request-timeout-seconds 已放宽到 600s），
-// 单独使用长超时，避免被默认 10s 超时取消导致"已取消"或后端完成前被掐断。
-export const sendAiSessionMessage = (id, data) =>
-  apiRequest({ url: `/api/v1/ai/sessions/${id}/messages`, method: 'post', data, timeout: 620000 })
-
-/**
- * 发送语音消息到正式 AI 会话接口。
- * 语音先由网关完成转写，再沿用同一条会话上下文执行意图分流。
- */
-export const sendAiSessionAudioMessage = (id, formData, options = {}) =>
-  apiRequest({
-    url: `/api/v1/ai/sessions/${id}/audio-messages`,
-    method: 'post',
-    data: formData,
-    timeout: options.timeout || 620000,
-    signal: options.signal,
-  })
-
-/**
- * 流式发送 AI 会话消息（SSE）
- * 走 Java 网关 /api/v1/ai/sessions/{id}/messages/stream，
- * 边生成边回传 session/outline_delta/question/final/error/done 事件。
- * 浏览器原生 EventSource 仅支持 GET，因此用原生 fetch 返回 Response，由调用方读取 ReadableStream 解析 SSE。
- * @returns {Promise<Response>}
- */
-export function streamSendAiSessionMessage(id, data) {
-  const userStore = useUserStore()
-  return fetch(
-    `${import.meta.env.VITE_API_BASE_URL || ''}/api/v1/ai/sessions/${id}/messages/stream`,
-    {
-      method: 'POST',
-      headers: {
-        'Content-Type': 'application/json',
-        Authorization: `Bearer ${userStore.token}`,
-      },
-      body: JSON.stringify(data),
-    }
-  )
+export const updateAiSession = async (id, data) => {
+  const existing = await getAiSession(id)
+  const result = await apiRequest({ url: `/api/v1/ai/sessions/${id}`, method: 'patch', data })
+  const pythonId = existing?.data?.python_session_id
+  const userId = useUserStore().userInfo?.user_id
+  if (pythonId && userId && data?.title) {
+    await apiRequest({ url: `/api/v1/python/outlines/chat/sessions/${encodeURIComponent(pythonId)}?user_id=${encodeURIComponent(userId)}`, method: 'patch', data: { title: data.title } }).catch(() => {})
+  }
+  return result
+}
+export const deleteAiSession = async (id) => {
+  const existing = await getAiSession(id)
+  const pythonId = existing?.data?.python_session_id
+  const userId = useUserStore().userInfo?.user_id
+  if (pythonId && userId) {
+    await apiRequest({ url: `/api/v1/python/outlines/chat/sessions/${encodeURIComponent(pythonId)}?user_id=${encodeURIComponent(userId)}`, method: 'delete' }).catch(() => {})
+  }
+  return del(`/api/v1/ai/sessions/${id}`)
 }
 export const getAiPlan = (id) => get(`/api/v1/ai/sessions/${id}/plan`)
 export const confirmAiPlan = (id, data) => post(`/api/v1/ai/sessions/${id}/plan-confirmations`, data)
 export const createAiRun = (id) => post(`/api/v1/ai/sessions/${id}/runs`)
 export const getAiRun = (runId) => get(`/api/v1/ai/runs/${runId}`)
 /**
- * 正式业务意图识别接口（API-13B）。
- * 工作台的“讨论 / 页面修改 / 生成 / 导出 / 打开项目”分流必须先经过 Java
- * 业务网关，不依赖前端开发服务器注入的模型中间件。
+ * 工作台教学意图识别由 FastAPI 处理；Java 仍保存正式会话与项目状态。
  */
+const parseIntentField = (value, fallback) => {
+  if (typeof value !== 'string') return value ?? fallback
+  try { return JSON.parse(value) } catch { return fallback }
+}
 export const recognizeIntent = (data, options = {}) => apiRequest({
-  url: '/api/v1/ai/intent/recognize',
+  url: '/api/v1/python/intent/recognize',
   method: 'post',
-  data,
+  data: {
+    ...data,
+    history: parseIntentField(data.history, []),
+    known_context: parseIntentField(data.known_context, {}),
+    resource_ids: parseIntentField(data.resource_ids, []),
+  },
   timeout: options.timeout || 45000,
   signal: options.signal,
 })
@@ -183,7 +266,7 @@ export function streamAiRunEvents(runId, lastEventId, options = {}) {
 export const reviseProjectWithAi = (id, data) => post(`/api/v1/projects/${id}/ai-revisions`, data)
 
 /**
- * 经 Java AI 网关调用 SSE 大纲/资源生成对话流（POST 端点）
+ * 直接调用 FastAPI SSE 大纲/资源生成对话流（POST 端点）
  * 注意：浏览器原生 EventSource 仅支持 GET，API-137A 需要 POST JSON body
  * 因此返回原生 fetch Response，由调用方通过 ReadableStream 读取 SSE 事件
  * @param {Object} body - 请求体 { user_id, session_id, message, history?, ... }
@@ -192,7 +275,7 @@ export const reviseProjectWithAi = (id, data) => post(`/api/v1/projects/${id}/ai
 export function streamOutlineChat(body) {
   const userStore = useUserStore()
   return fetch(
-    `${import.meta.env.VITE_API_BASE_URL || ''}/api/v1/ai/engine/outlines/chat/stream`,
+    `${import.meta.env.VITE_PYTHON_API_BASE_URL || ''}/api/v1/python/outlines/chat/stream`,
     {
       method: 'POST',
       headers: {
@@ -204,10 +287,10 @@ export function streamOutlineChat(body) {
   )
 }
 
-/** 正式工作台聊天/分类流，经 Java 网关转发 Python 服务；浏览器不持有模型密钥。 */
+/** 正式工作台聊天/分类流，浏览器直连 FastAPI；浏览器不持有模型密钥。 */
 export function streamGeneralChat(body, options = {}) {
   const userStore = useUserStore()
-  return fetch(`${import.meta.env.VITE_API_BASE_URL || ''}/api/v1/ai/engine/workspace/chat/stream`, {
+  return fetch(`${import.meta.env.VITE_PYTHON_API_BASE_URL || ''}/api/v1/python/workspace/chat/stream`, {
     method: 'POST',
     headers: {
       'Content-Type': 'application/json',
@@ -218,19 +301,11 @@ export function streamGeneralChat(body, options = {}) {
   })
 }
 
-/** 普通聊天由 Java 建立并持久化会话；每轮提问和回复都可从历史恢复。 */
-export function streamPersistentGeneralChat(body, options = {}) {
-  const userStore = useUserStore()
-  return fetch(`${import.meta.env.VITE_API_BASE_URL || ''}/api/v1/ai/general-chat/stream`, {
-    method: 'POST',
-    headers: {
-      'Content-Type': 'application/json',
-      ...(userStore.token ? { Authorization: `Bearer ${userStore.token}` } : {}),
-    },
-    body: JSON.stringify(body),
-    signal: options.signal,
-  })
-}
+/** LangGraph 分流直接请求 FastAPI；Java 不参与推理。 */
+export const routeTeachingChat = (data) => post('/api/v1/python/workspace/chat/route', data)
+/** Java 仅记录消息和会话状态，不转发 Python。 */
+export const beginGeneralChatTurn = (data) => post('/api/v1/ai/general-chat/turns', data)
+export const completeGeneralChatTurn = (id, data) => post(`/api/v1/ai/general-chat/turns/${id}/result`, data)
 
 // 教师端项目管理
 export const createProject = (data) => post('/api/v1/projects', data)
@@ -279,7 +354,7 @@ export const getTeacherPreferences = () => get('/api/v1/teachers/me/preferences'
  * @param {FormData} formData - 表单数据，含语音文件（file）与可选语言（language）
  * @returns {Promise} 后端返回 { text, language, model, ... }
  */
-export const transcribeAudio = (formData) => apiRequest({ url: '/api/v1/ai/engine/audio/asr', method: 'post', data: formData })
+export const transcribeAudio = (formData) => apiRequest({ url: '/api/v1/python/audio/asr', method: 'post', data: formData })
 
 /**
  * 生成可独立运行或嵌入课件页面的互动模块。
@@ -291,7 +366,7 @@ export const transcribeAudio = (formData) => apiRequest({ url: '/api/v1/ai/engin
 const INTERACTIVE_MODULE_GENERATION_TIMEOUT = 50000
 
 export const generateInteractiveModule = (data) => apiRequest({
-  url: '/api/v1/ai/engine/interactive-modules/generate',
+  url: '/api/v1/python/interactive-modules/generate',
   method: 'post',
   data,
   timeout: INTERACTIVE_MODULE_GENERATION_TIMEOUT,
@@ -301,22 +376,27 @@ export const generateInteractiveModule = (data) => apiRequest({
  * 获取 Python PPT 生成模板列表。
  * `theme` 是后续调用 PPT 生成接口时应传入的模板值。
  */
-export const listPptTemplates = () => get('/api/v1/ai/engine/templates')
+export const listPptTemplates = () => get('/api/v1/python/templates')
+export const createPptTemplate = (data) => post('/api/v1/python/templates', data)
+export const replacePptTemplate = (theme, data) => apiRequest({ url: `/api/v1/python/templates/${encodeURIComponent(theme)}`, method: 'patch', data })
+export const setPptTemplateStatus = (theme, status) => apiRequest({ url: `/api/v1/python/templates/${encodeURIComponent(theme)}/status`, method: 'put', params: { status } })
+export const deletePptTemplate = (theme) => del(`/api/v1/python/templates/${encodeURIComponent(theme)}`)
+export const downloadPptTemplate = (theme) => apiRequest({ url: `/api/v1/python/templates/${encodeURIComponent(theme)}/file`, responseType: 'blob' })
 
 // Python 端单次模型请求为 120 秒，兼容客户端可能自动重试 2 次；前端留出完整响应时间。
 const PYTHON_PPT_REQUEST_TIMEOUT = 420000
 
 export const generatePresentation = (data) => apiRequest({
-  url: '/api/v1/ai/engine/presentations/generate',
+  url: '/api/v1/python/presentations/generate',
   method: 'post',
   data,
   timeout: PYTHON_PPT_REQUEST_TIMEOUT
 })
 
-/** 经 Java 网关流式生成 HTML PPT；每完成一页即调用 onSlide，最终返回完整 presentation。 */
+/** 直连 FastAPI 流式生成 HTML PPT；每完成一页即调用 onSlide，最终返回完整 presentation。 */
 export async function generatePresentationStream(data, options = {}) {
   const userStore = useUserStore()
-  const response = await fetch(`${import.meta.env.VITE_API_BASE_URL || ''}/api/v1/ai/engine/presentations/generate/stream`, {
+  const response = await fetch(`${import.meta.env.VITE_PYTHON_API_BASE_URL || ''}/api/v1/python/presentations/generate/stream`, {
     method: 'POST',
     headers: {
       'Content-Type': 'application/json',
@@ -360,14 +440,14 @@ export async function generatePresentationStream(data, options = {}) {
 }
 
 /** 记录教师对 AI 生成结果的接受、拒绝、撤销和手工修改，供个性化学习使用。 */
-export const recordAiFeedback = (data) => post('/api/v1/ai/engine/teacher-style/feedback', data)
+export const recordAiFeedback = (data) => post('/api/v1/python/teacher-style/feedback', data)
 
 /** 获取 AI 运行质量、耗时、Token 与反馈指标。 */
-export const getAiMetrics = (params) => get('/api/v1/ai/engine/ai/metrics', params)
+export const getAiMetrics = (params) => get('/api/v1/python/ai/metrics', params)
 
 /** 生成可在线编辑的结构化教案（API-142）。 */
 export const generateLessonPlan = (data) => apiRequest({
-  url: '/api/v1/ai/engine/lesson-plans/generate',
+  url: '/api/v1/python/lesson-plans/generate',
   method: 'post',
   data,
   timeout: PYTHON_PPT_REQUEST_TIMEOUT,
@@ -375,7 +455,7 @@ export const generateLessonPlan = (data) => apiRequest({
 
 /** 直接导出当前 HTML PPT 为 PPTX/ZIP（API-141）。 */
 export const exportPresentationPptx = (data) => apiRequest({
-  url: '/api/v1/ai/engine/presentations/export/pptx',
+  url: '/api/v1/python/presentations/export/pptx',
   method: 'post',
   data,
   responseType: 'blob',
@@ -384,7 +464,7 @@ export const exportPresentationPptx = (data) => apiRequest({
 
 /** 导出当前教案为 DOCX（API-143）。 */
 export const exportLessonPlanDocx = (data) => apiRequest({
-  url: '/api/v1/ai/engine/lesson-plans/export/docx',
+  url: '/api/v1/python/lesson-plans/export/docx',
   method: 'post',
   data,
   responseType: 'blob',
@@ -397,7 +477,7 @@ export const exportLessonPlanDocx = (data) => apiRequest({
  * @returns {Promise} 后端返回 { presentation_id, slide_no, html, change_summary, ... }
  */
 export const modifyPresentationSlide = (data) => apiRequest({
-  url: '/api/v1/ai/engine/presentations/slides/modify',
+  url: '/api/v1/python/presentations/slides/modify',
   method: 'post',
   data,
   timeout: PYTHON_PPT_REQUEST_TIMEOUT
@@ -409,7 +489,7 @@ export const modifyPresentationSlide = (data) => apiRequest({
  * @returns {Promise} 后端返回修改后的 slides
  */
 export const modifyPresentation = (data) => apiRequest({
-  url: '/api/v1/ai/engine/presentations/modify',
+  url: '/api/v1/python/presentations/modify',
   method: 'post',
   data,
   timeout: PYTHON_PPT_REQUEST_TIMEOUT
@@ -417,7 +497,7 @@ export const modifyPresentation = (data) => apiRequest({
 
 /** 校验模型返回的单页 HTML 是否可安全加载到工作台 iframe。 */
 export const validatePresentationHtml = (data) => apiRequest({
-  url: '/api/v1/ai/engine/presentations/html/validate',
+  url: '/api/v1/python/presentations/html/validate',
   method: 'post',
   data,
   timeout: 60000,

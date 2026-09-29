@@ -21,6 +21,10 @@ const isDevelopmentPreview = () => import.meta.env.DEV && router.currentRoute.va
 // 请求拦截器
 service.interceptors.request.use(
   config => {
+    // AI 引擎接口由浏览器直接调用 FastAPI；账号/业务接口仍由 Java 提供。
+    if (config.url?.startsWith('/api/v1/python/')) {
+      config.baseURL = import.meta.env.VITE_PYTHON_API_BASE_URL || ''
+    }
     // 从 Pinia store 获取 token（由 pinia-plugin-persistedstate 自动从 localStorage 恢复）
     const userStore = useUserStore()
     const token = userStore.token

@@ -6,6 +6,7 @@ from pathlib import Path
 from langchain_core.messages import HumanMessage
 
 from ...config import get_settings
+from ...direct_auth import require_active_browser_token
 from ...llm.model_factory import create_chat_model_from_settings
 
 # 统一日志约定（main.py 启动时 basicConfig）
@@ -37,6 +38,7 @@ async def describe_image(path: Path, prompt: str | None = None) -> str:
         return ""
     if not settings.openai_api_key:
         return ""
+    await require_active_browser_token()
     try:
         model = create_chat_model_from_settings(settings, temperature=0.1)
         mime = mimetypes.guess_type(path.name)[0] or "image/png"

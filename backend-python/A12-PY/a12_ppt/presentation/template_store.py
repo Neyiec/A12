@@ -52,6 +52,7 @@ def list_templates() -> list[dict[str, Any]]:
             "is_default": file_theme == DEFAULT_THEME,
             "filename": path.name,
             "size": path.stat().st_size,
+            "status": "published" if file_theme == DEFAULT_THEME else str(data.get("status") or "published"),
         })
     return items
 
@@ -60,6 +61,8 @@ def list_templates() -> list[dict[str, Any]]:
 def load_templates() -> dict[str, dict[str, Any]]:
     templates: dict[str, dict[str, Any]] = {}
     for meta in list_templates():
+        if meta.get("status") != "published":
+            continue
         path = TEMPLATE_DIR / str(meta["filename"])
         data = _load_json(path)
         if not data:
@@ -195,6 +198,20 @@ def delete_template(theme: str) -> dict[str, Any]:
     path.unlink()
     _clear_cache()
     return {"theme": path.stem, "filename": path.name}
+
+
+def set_template_status(theme: str, status: str) -> dict[str, Any]:
+    if status not in {"published", "unpublished"}:
+        raise ValueError("模板状态必须为 published 或 unpublished")
+    path = _require_template_file(theme)
+    if path.stem == DEFAULT_THEME and status != "published":
+        raise ValueError("默认模板不可停用")
+    data = _load_json(path)
+    if not data:
+        raise ValueError("模板文件无效")
+    data["status"] = status
+    _write_template_file(path, data, None)
+    return {"theme": path.stem, "status": status}
 
 
 def get_template_file(theme: str) -> Path:

@@ -17,6 +17,7 @@ from typing import Any
 import httpx
 
 from ..config import get_settings
+from ..direct_auth import require_active_browser_token
 
 
 @dataclass(frozen=True)
@@ -43,6 +44,8 @@ class ImageGenerationClient:
         prompt = (prompt or "").strip()[:1800]
         if not self.available or not prompt:
             return None
+
+        await require_active_browser_token()
 
         cache_key = hashlib.sha256(
             f"{self.settings.image_generation_model}\n{aspect_ratio}\n{prompt}".encode("utf-8")

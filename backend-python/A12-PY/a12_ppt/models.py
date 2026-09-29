@@ -206,6 +206,14 @@ class ResourceIndexSearchRequest(BaseModel):
     min_score: float | None = Field(default=None, ge=0, le=1)
 
 
+class CourseGraphUpsertRequest(BaseModel):
+    user_id: str = Field(..., min_length=1)
+    course_id: str = Field(..., pattern=r"^[a-zA-Z0-9_-]{1,80}$")
+    title: str = Field(..., min_length=1, max_length=255)
+    nodes: list[dict[str, Any]] = Field(default_factory=list)
+    edges: list[dict[str, Any]] = Field(default_factory=list)
+
+
 class TeacherFeedbackRequest(BaseModel):
     user_id: str = Field(..., min_length=1)
     session_id: str | None = None

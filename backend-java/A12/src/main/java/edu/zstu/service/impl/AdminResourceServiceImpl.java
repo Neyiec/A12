@@ -11,7 +11,7 @@ import edu.zstu.mapper.AdmResourceMapper;
 import edu.zstu.mapper.ResMaterialMapper;
 import edu.zstu.service.AdminResourceService;
 import edu.zstu.service.BusinessLogService;
-import edu.zstu.service.PythonPptClient;
+import edu.zstu.service.ResourceIndexEventPublisher;
 import edu.zstu.utils.OssUtil;
 import edu.zstu.utils.PageResult;
 import edu.zstu.vo.ResourceVO;
@@ -31,20 +31,20 @@ public class AdminResourceServiceImpl implements AdminResourceService {
     private final ResMaterialMapper materialMapper;
     private final OssUtil ossUtil;
     private final BusinessLogService businessLogService;
-    private final PythonPptClient pythonPptClient;
+    private final ResourceIndexEventPublisher indexEvents;
     private final PublicResourceIndexSyncService publicResourceIndexSyncService;
     private final ResourceIndexSyncService resourceIndexSyncService;
 
     public AdminResourceServiceImpl(AdmResourceMapper resourceMapper, ResMaterialMapper materialMapper,
                                     OssUtil ossUtil, BusinessLogService businessLogService,
-                                    PythonPptClient pythonPptClient,
+                                    ResourceIndexEventPublisher indexEvents,
                                     PublicResourceIndexSyncService publicResourceIndexSyncService,
                                     ResourceIndexSyncService resourceIndexSyncService) {
         this.resourceMapper = resourceMapper;
         this.materialMapper = materialMapper;
         this.ossUtil = ossUtil;
         this.businessLogService = businessLogService;
-        this.pythonPptClient = pythonPptClient;
+        this.indexEvents = indexEvents;
         this.publicResourceIndexSyncService = publicResourceIndexSyncService;
         this.resourceIndexSyncService = resourceIndexSyncService;
     }
@@ -119,7 +119,7 @@ public class AdminResourceServiceImpl implements AdminResourceService {
         // 索引同步异步化：仅标记 indexing 后立即返回，Python 解析在 resourceIndexExecutor 线程池执行（前端轮询状态）
         Adm_Resource synced = resourceMapper.findById(id);
         resourceMapper.updateAiIndexStatus(id, "indexing", null);
-        publicResourceIndexSyncService.syncPublicResourceIndex(id, publicResourcePayload(synced, false));
+        publicResourceIndexSyncService.syncPublicResourceIndex(id, Map.of("force_reparse", false));
         return toResourceVO(resourceMapper.findById(id));
     }
 
@@ -151,8 +151,7 @@ public class AdminResourceServiceImpl implements AdminResourceService {
         if (r.getStatus() == 1) {
             // 索引同步异步化：编辑启用态资源同样只标记 indexing 后立即返回
             resourceMapper.updateAiIndexStatus(id, "indexing", null);
-            publicResourceIndexSyncService.syncPublicResourceIndex(id,
-                    publicResourcePayload(resourceMapper.findById(id), false));
+            publicResourceIndexSyncService.syncPublicResourceIndex(id, Map.of("force_reparse", false));
         }
         return toResourceVO(r);
     }
@@ -179,14 +178,8 @@ public class AdminResourceServiceImpl implements AdminResourceService {
         Adm_Resource resource = resourceMapper.findById(id);
         if (resource == null) throw new RuntimeException("资源不存在");
 
-        // 先清理 Python 侧向量索引（失败则抛出回滚，避免留下孤儿向量），再删 MySQL 行
-        try {
-            pythonPptClient.deleteResourceIndex("public", id);
-        } catch (Exception e) {
-            log.warn("delete public resource index failed, resourceId={}", id, e);
-            throw new RuntimeException("清理 AI 索引失败，请稍后重试: " + e.getMessage());
-        }
         resourceMapper.deleteById(id);
+        indexEvents.publish("delete", "public", id, false);
         // OSS 对象删除尽力而为：失败不影响记录删除（残留对象可由桶生命周期策略清理）
         try {
             ossUtil.deleteObject(ossUtil.extractObjectKey(resource.getFile_url()));
@@ -212,8 +205,7 @@ public class AdminResourceServiceImpl implements AdminResourceService {
         // force_reparse=true：绕过 file_fingerprint 短路，强制重新解析并重建向量
         // 索引同步异步化：标记 indexing 后立即返回，前端轮询 processing-status 获取最终状态
         resourceMapper.updateAiIndexStatus(id, "indexing", null);
-        publicResourceIndexSyncService.syncPublicResourceIndex(id,
-                publicResourcePayload(resourceMapper.findById(id), true));
+        publicResourceIndexSyncService.syncPublicResourceIndex(id, Map.of("force_reparse", true));
         return toResourceVO(resourceMapper.findById(id));
     }
 
@@ -252,68 +244,21 @@ public class AdminResourceServiceImpl implements AdminResourceService {
     @Override
     public Map<String, Object> bootstrapAiResourceIndex(boolean forceReparse) {
         log.info("bootstrapAiResourceIndex forceReparse={}", forceReparse);
-        List<Map<String, Object>> resources = new ArrayList<>();
+        int count = 0;
         for (Adm_Resource resource : resourceMapper.findActive()) {
             if (resource.getFile_url() != null && !resource.getFile_url().isBlank()) {
-                resources.add(publicResourcePayload(resource, forceReparse));
+                publicResourceIndexSyncService.syncPublicResourceIndex(resource.getId(), Map.of("force_reparse", forceReparse));
+                count++;
             }
         }
         for (Res_Material material : materialMapper.findAiAvailable()) {
             if (material.getFile_url() != null && !material.getFile_url().isBlank()) {
-                resources.add(personalResourcePayload(material, forceReparse));
+                materialMapper.updateAiIndexStatus(material.getId(), "indexing", null);
+                resourceIndexSyncService.syncPersonalResourceIndex(material, forceReparse);
+                count++;
             }
         }
-        log.info("bootstrapAiResourceIndex callPython resourceCount={}, forceReparse={}", resources.size(), forceReparse);
-        Map<String, Object> response = pythonPptClient.bootstrapResourceIndex(resources, forceReparse);
-        log.info("bootstrapAiResourceIndex pythonResponseKeys={}", response.keySet());
-        applyBootstrapStatuses(response);
-        return response;
-    }
-
-    @Override
-    public Map<String, Object> aiIndexOverview() {
-        log.info("aiIndexOverview");
-        return unwrapPythonData(pythonPptClient.resourceIndexOverview());
-    }
-
-    @Override
-    public Map<String, Object> aiIndexTasks(String sourceType, String parseStatus, String keyword, int page, int size) {
-        log.info("aiIndexTasks sourceType={}, parseStatus={}, keyword={}, page={}, size={}",
-                sourceType, parseStatus, keyword, page, size);
-        int limit = Math.max(1, Math.min(size, 200));
-        int safePage = Math.max(page, 1);
-        int offset = (safePage - 1) * limit;
-        Map<String, Object> data = unwrapPythonData(pythonPptClient.listResourceIndexResources(
-                sourceType, null, limit, offset, parseStatus, keyword));
-        // PG 行仅终态落库（completed/failed），进行中的 indexing 状态以 MySQL ai_index_status 为准（按域批量查询，禁止逐行）
-        enrichTasksWithMysqlIndexStatus(data);
-        return data;
-    }
-
-    @Override
-    public Map<String, Object> aiIndexResource(String sourceType, String resourceId, Integer chunkLimit) {
-        log.info("aiIndexResource sourceType={}, resourceId={}, chunkLimit={}", sourceType, resourceId, chunkLimit);
-        try {
-            return unwrapPythonData(pythonPptClient.getResourceIndexResource(sourceType, resourceId, chunkLimit));
-        } catch (RuntimeException e) {
-            if (e.getMessage() != null && e.getMessage().contains("HTTP 404")) {
-                throw new RuntimeException("该资源尚未建立索引或索引已被移除");
-            }
-            throw e;
-        }
-    }
-
-    @Override
-    public Map<String, Object> aiIndexSearch(String query, String sourceType, Integer topK) {
-        log.info("aiIndexSearch sourceType={}, topK={}, queryLength={}", sourceType, topK,
-                query == null ? 0 : query.length());
-        Map<String, Object> payload = new LinkedHashMap<>();
-        payload.put("query", query);
-        if (sourceType != null && !sourceType.isBlank()) {
-            payload.put("source_type", sourceType);
-        }
-        payload.put("top_k", topK == null ? 10 : Math.max(1, Math.min(topK, 30)));
-        return unwrapPythonData(pythonPptClient.searchResourceIndex(payload));
+        return Map.of("queued", count, "force_reparse", forceReparse);
     }
 
     @Override
@@ -347,81 +292,8 @@ public class AdminResourceServiceImpl implements AdminResourceService {
         return result;
     }
 
-    /** 解包 Python Result 信封中的 data（无 data 时返回空 Map） */
-    @SuppressWarnings("unchecked")
-    private Map<String, Object> unwrapPythonData(Map<String, Object> response) {
-        if (response == null) {
-            return new LinkedHashMap<>();
-        }
-        Object data = response.get("data");
-        return data instanceof Map ? (Map<String, Object>) data : new LinkedHashMap<>();
-    }
-
-    private Integer parseResourceId(Object value) {
-        if (value == null) return null;
-        try {
-            return Integer.valueOf(String.valueOf(value));
-        } catch (NumberFormatException e) {
-            return null;
-        }
-    }
-
-    @SuppressWarnings("unchecked")
-    private void enrichTasksWithMysqlIndexStatus(Map<String, Object> data) {
-        Object itemsObj = data.get("items");
-        if (!(itemsObj instanceof List<?> items) || items.isEmpty()) {
-            return;
-        }
-        List<Integer> publicIds = new ArrayList<>();
-        List<Integer> personalIds = new ArrayList<>();
-        for (Object item : items) {
-            if (item instanceof Map<?, ?> row) {
-                Integer id = parseResourceId(row.get("resource_id"));
-                if (id == null) continue;
-                if ("public".equals(row.get("source_type"))) {
-                    publicIds.add(id);
-                } else if ("personal".equals(row.get("source_type"))) {
-                    personalIds.add(id);
-                }
-            }
-        }
-        Map<Integer, String> statusMap = new HashMap<>();
-        if (!publicIds.isEmpty()) {
-            for (Adm_Resource r : resourceMapper.findByIds(publicIds)) {
-                statusMap.put(r.getId(), r.getAi_index_status());
-            }
-        }
-        if (!personalIds.isEmpty()) {
-            for (Res_Material m : materialMapper.findByIds(personalIds)) {
-                statusMap.put(m.getId(), m.getAi_index_status());
-            }
-        }
-        for (Object item : items) {
-            if (item instanceof Map) {
-                Map<String, Object> row = (Map<String, Object>) item;
-                String pgStatus = row.get("parse_status") == null ? "" : String.valueOf(row.get("parse_status"));
-                Integer id = parseResourceId(row.get("resource_id"));
-                String mysqlStatus = id == null ? null : statusMap.get(id);
-                row.put("effective_status", "indexing".equals(mysqlStatus) ? "indexing" : pgStatus);
-            }
-        }
-    }
-
     private void updatePublicResourceAvailability(Adm_Resource resource) {
-        try {
-            Map<String, Object> payload = new LinkedHashMap<>();
-            payload.put("source_type", "public");
-            payload.put("resource_id", String.valueOf(resource.getId()));
-            payload.put("available", resource.getStatus() == 1);
-            payload.put("allow_ai", resource.getStatus() == 1);
-            payload.put("metadata", Map.of(
-                    "uploaded_by", String.valueOf(resource.getUploaded_by()),
-                    "available", resource.getStatus() == 1
-            ));
-            pythonPptClient.updateResourceIndexMetadata(payload);
-        } catch (Exception e) {
-            log.warn("update public resource index metadata failed, resourceId={}", resource.getId(), e);
-        }
+        indexEvents.publish("metadata", "public", resource.getId(), false);
     }
 
     private Map<String, Object> publicResourcePayload(Adm_Resource resource, boolean forceReparse) {

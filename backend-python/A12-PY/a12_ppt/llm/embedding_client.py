@@ -3,6 +3,7 @@ import time
 from collections import OrderedDict
 
 from ..config import get_settings
+from ..direct_auth import require_active_browser_token
 from .model_factory import create_embedding_model_from_settings
 
 
@@ -18,12 +19,14 @@ class EmbeddingClient:
     async def embed_documents(self, texts: list[str]) -> list[list[float]]:
         if not self.available or not texts:
             return []
+        await require_active_browser_token()
         model = create_embedding_model_from_settings(self.settings)
         return await model.aembed_documents(texts)
 
     async def embed_query(self, text: str) -> list[float]:
         if not self.available or not text:
             return []
+        await require_active_browser_token()
         key = hashlib.sha256(f"{self.settings.embedding_model}:{text.strip()}".encode("utf-8")).hexdigest()
         cached = self._query_cache.get(key)
         if cached and time.time() - cached[0] < 3600:

@@ -15,6 +15,8 @@ uvicorn main:app --host 0.0.0.0 --port 8001 --reload
 
 复制 `.env.example` 为 `.env`，然后填写模型配置：
 
+双端直连还需配置 `JAVA_AUTH_BASE_URL`（Java 服务地址）、`A12_FRONTEND_ORIGINS`（允许的前端来源）及随机长密钥 `A12_PYTHON_INTERNAL_KEY`。Java 启动进程必须设置**相同**的 `A12_PYTHON_INTERNAL_KEY`，供 Python 索引消费者向 Java 读取资源业务数据和回写状态；不得放在 `VITE_*` 前端变量中。设置 `A12_RESOURCE_REDIS_URL` 指向 Java 使用的同一 Redis 实例（默认 `redis://127.0.0.1:6379/0`）；`A12_AUTH_REDIS_URL` 可单独指定认证 Redis，未设置时沿用资源 Redis。Python 在浏览器请求进入时、调用模型前都核对 Java 的 `token:user:{userId}`：缺失或被新登录替换返回 401，Redis 不可用返回 503，不降级放行。可信的后台索引事件没有浏览器令牌，不受此检查影响。资源变动经 Redis Stream `a12:resource-index:events` 传递，失败重试 3 次后进入 `a12:resource-index:dead-letter`，可人工检查和重放。教师端开发服务器通过 `/api/v1/python` 代理到 FastAPI，其余 `/api` 到 Java；生产环境分别设置 `VITE_PYTHON_API_BASE_URL` 和 `VITE_API_BASE_URL`，并为两个域名启用 HTTPS。未配置内部密钥时 Python 后台索引消费者不会启动。
+
 ```env
 OPENAI_API_KEY=你的模型服务 Key
 OPENAI_BASE_URL=https://api.openai.com/v1
@@ -155,3 +157,10 @@ Current package layout:
 - 课堂正确率、参与度与困惑点写入 `a12_classroom_event`，可在后续生成中作为补救教学依据。
 - 视频解析输出关键帧、字幕/ASR 分段、说话人（供应商提供时）和可检索时间轴；语音输出由 `/audio/tts` 提供。
 - 离线回归评测位于 `evals/`，执行 `.venv\Scripts\python.exe evals/run_offline_evals.py` 不消耗外部模型额度。
+# 课程知识/技能图谱与 Agent 自更新
+
+`examples/java_programming_course_graph.json` 是一门「Java 程序设计」的**待教师审核示例**，包含概念、技能以及先修、包含、支撑和考核关系。教师可将其作为 `PUT /api/v1/python/courses/graph` 的请求体（加登录 Bearer）；`GET /api/v1/python/courses/{course_id}/graph?user_id=...` 可查看版本。课程图谱按用户隔离，导入新版本不会删除历史课件，但会清除旧图谱证据，需要对关联资料执行 `force_reparse=true` 重新挂载。新资料同步时传 `metadata.course_id`，索引成功后系统仅为已有节点补充资源摘要、SHA-256 和摘录证据；不会让未经审核的资料自动创造课程关系。
+
+大纲 LangGraph 在意图解析后自动匹配或读取课程图谱，按“直接生成 / RAG / 图谱 / 图谱+RAG”选择检索路径，记录所用策略和图谱版本。图谱不可用时回退原路径；本轮明确启用 RAG 时不会被历史偏好关掉。教师反馈仍更新长期画像，针对大纲的接受、修改、拒绝记录用于计算策略修改率；至少积累 5 条反馈才参与策略偏好。这里的“自更新”是知识证据、教师画像与有边界的检索策略更新，**不包含模型权重微调或无审核地改变工作流代码**。
+
+教学助手入口的分流 LangGraph 状态包含 `route` 与 `next_stage`：普通聊天进入 `ordinary_chat`，备课进入 `outline_graph`。大纲 Graph 在工具检索后运行 `generate_learning_graphs`，产出本轮知识、技能两张小图，再生成大纲。SSE 的 `learning_graphs` 事件会先于大纲页发送；最终 `outline.learning_graphs` 同时落入 Java 侧的 `plan_json`，供历史会话恢复。前端默认展示知识图谱，点击按钮切换技能图谱。审核课程图谱优先；没有可用审核图谱时使用模型提议或确定性草案，并明确标记“请核对”。

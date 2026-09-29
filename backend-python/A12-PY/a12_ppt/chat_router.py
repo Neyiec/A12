@@ -25,14 +25,15 @@ class ChatRouteState(TypedDict, total=False):
     confidence: float
     reason: str
     forced: bool
+    next_stage: Literal["ordinary_chat", "outline_graph"]
 
 
 class ChatRouteWorkflow:
     def __init__(self) -> None:
         graph = StateGraph(ChatRouteState)
         graph.add_node("recognize_intent", self._recognize_intent)
-        graph.add_node("continue_chat", lambda state: {})
-        graph.add_node("enter_planning", lambda state: {})
+        graph.add_node("continue_chat", lambda state: {"next_stage": "ordinary_chat"})
+        graph.add_node("enter_planning", lambda state: {"next_stage": "outline_graph"})
         graph.add_edge(START, "recognize_intent")
         graph.add_conditional_edges("recognize_intent", lambda state: state["route"],
                                     {"chat": "continue_chat", "planning": "enter_planning"})
@@ -45,7 +46,7 @@ class ChatRouteWorkflow:
             "messages": request.messages[-8:],
             "route_preference": request.route_preference,
         })
-        return {key: result[key] for key in ("route", "confidence", "reason", "forced")}
+        return {key: result[key] for key in ("route", "confidence", "reason", "forced", "next_stage")}
 
     async def _recognize_intent(self, state: ChatRouteState) -> ChatRouteState:
         preference = state.get("route_preference", "auto")

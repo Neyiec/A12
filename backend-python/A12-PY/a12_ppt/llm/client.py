@@ -4,6 +4,7 @@ from typing import AsyncIterator
 from langchain_core.messages import BaseMessage, HumanMessage, SystemMessage
 
 from ..config import get_settings
+from ..direct_auth import require_active_browser_token
 from .model_factory import create_chat_model
 from ..ai_runtime import current_runtime, record_run, routed_model
 
@@ -28,6 +29,8 @@ class LLMClient:
         if not self.available:
             return ""
 
+        await require_active_browser_token()
+
         runtime = current_runtime()
         model_name = routed_model()
         started = time.perf_counter()
@@ -51,6 +54,7 @@ class LLMClient:
         """流式补全：逐 token 产出文本片段。模型不可用时直接结束（不产出任何片段）。"""
         if not self.available:
             return
+        await require_active_browser_token()
         runtime = current_runtime()
         model_name = routed_model()
         started = time.perf_counter()

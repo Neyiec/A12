@@ -14,7 +14,6 @@ import edu.zstu.mapper.WsPageMapper;
 import edu.zstu.mapper.WsProjectMapper;
 import edu.zstu.service.BusinessLogService;
 import edu.zstu.service.ExportService;
-import edu.zstu.service.PythonPptClient;
 import edu.zstu.utils.CurrentHolder;
 import edu.zstu.utils.PageResult;
 import edu.zstu.vo.ExportTaskVO;
@@ -22,6 +21,7 @@ import lombok.extern.slf4j.Slf4j;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
+import org.springframework.web.multipart.MultipartFile;
 
 import java.io.IOException;
 import java.nio.file.Files;
@@ -40,7 +40,6 @@ public class ExportServiceImpl implements ExportService {
     private final WsProjectMapper projectMapper;
     private final WsPageMapper pageMapper;
     private final BusinessLogService businessLogService;
-    private final PythonPptClient pythonPptClient;
     private final ObjectMapper objectMapper;
     private final Path exportDir;
     private final String publicPrefix;
@@ -49,7 +48,6 @@ public class ExportServiceImpl implements ExportService {
                              WsProjectMapper projectMapper,
                              WsPageMapper pageMapper,
                              BusinessLogService businessLogService,
-                             PythonPptClient pythonPptClient,
                              ObjectMapper objectMapper,
                              @Value("${a12.export.local-dir:data/exports}") String exportDir,
                              @Value("${a12.export.public-prefix:/exports}") String publicPrefix) {
@@ -57,7 +55,6 @@ public class ExportServiceImpl implements ExportService {
         this.projectMapper = projectMapper;
         this.pageMapper = pageMapper;
         this.businessLogService = businessLogService;
-        this.pythonPptClient = pythonPptClient;
         this.objectMapper = objectMapper;
         this.exportDir = Path.of(exportDir).toAbsolutePath().normalize();
         this.publicPrefix = publicPrefix == null || publicPrefix.isBlank() ? "/exports" : publicPrefix.replaceAll("/+$", "");
@@ -107,17 +104,68 @@ public class ExportServiceImpl implements ExportService {
         task.setConfig(dto.getConfig() == null ? "{}" : dto.getConfig());
         task.setProgress(10);
         task.setRetry_count(0);
-        task.setWorker_id("java-python-sync");
+        task.setWorker_id("browser-python-direct");
         task.setStarted_at(LocalDateTime.now());
         task.setFile_status("generating");
         task.setQuality_report("{}");
         taskMapper.insert(task);
 
+        businessLogService.record("operation", "export", "create_task", "export_task", task.getId(),
+                Map.of("project_id", dto.getProject_id(), "export_type", exportType, "status", task.getStatus()));
+        return toVO(taskMapper.findById(task.getId()));
+    }
+
+    @Override
+    public Map<String, Object> getExportPayload(String id) {
+        Exp_Task task = requireOwnedTask(id);
+        Ws_Project project = requireProject(task.getProject_id());
+        assertProjectReadable(project);
+        Map<String, Object> config = parseConfig(task.getConfig());
+        Map<String, Object> payload = new LinkedHashMap<>();
+        payload.put("title", stringValue(config.get("title"), project.getProject_name()));
+        payload.put("filename", stringValue(config.get("filename"), defaultFilename(project, task,
+                List.of("word", "docx").contains(task.getExport_type()) ? "docx" : "pptx")));
+        payload.put("export_type", task.getExport_type());
+        payload.put("slides", buildSlides(project, config));
+        payload.put("fidelity", stringValue(config.get("fidelity"), "dom_editable"));
+        payload.put("package_static_assets", !Boolean.FALSE.equals(config.get("package_static_assets")));
+        payload.put("lesson_plan", config.get("lesson_plan"));
+        payload.put("subject", stringValue(config.get("subject"), ""));
+        payload.put("grade", stringValue(config.get("grade"), ""));
+        payload.put("teaching_goals", stringValue(config.get("teaching_goals"), ""));
+        payload.put("requirements", stringValue(config.get("requirements"), ""));
+        payload.put("reference_text", stringValue(config.get("reference_text"), ""));
+        return payload;
+    }
+
+    @Override
+    @Transactional
+    public ExportTaskVO completeExportTask(String id, MultipartFile file) {
+        Exp_Task task = requireOwnedTask(id);
+        if (!"generating".equals(task.getStatus())) throw new RuntimeException("导出任务当前不可提交成果");
+        if (file == null || file.isEmpty()) throw new RuntimeException("导出文件不能为空");
+        if (file.getSize() > 100L * 1024 * 1024) throw new RuntimeException("导出文件不能超过 100 MB");
+        String incomingName = file.getOriginalFilename() == null ? "" : file.getOriginalFilename().toLowerCase(java.util.Locale.ROOT);
+        boolean document = List.of("word", "docx").contains(task.getExport_type());
+        if (document ? !incomingName.endsWith(".docx") : !(incomingName.endsWith(".pptx") || incomingName.endsWith(".zip"))) {
+            throw new RuntimeException("导出文件类型与任务不匹配");
+        }
         try {
-            ExportedFile exported = generateFile(project, task, parseConfig(dto.getConfig()));
+            byte[] signature = file.getInputStream().readNBytes(4);
+            if (signature.length < 4 || signature[0] != 'P' || signature[1] != 'K') {
+                throw new RuntimeException("导出文件不是有效的 Office/ZIP 文件");
+            }
+            Files.createDirectories(exportDir);
+            String filename = uniqueFilename(sanitizeFilename(file.getOriginalFilename() == null
+                    ? "export-" + id + ".pptx" : file.getOriginalFilename()));
+            Path output = exportDir.resolve(filename).normalize();
+            if (!output.startsWith(exportDir)) throw new RuntimeException("无效导出文件名");
+            file.transferTo(output);
+            ExportedFile exported = new ExportedFile(filename, publicPrefix + "/" + filename,
+                    Files.size(output), contentTypeFor(filename));
             task.setStatus("success");
             task.setProgress(100);
-            task.setFile_name(exported.filename());
+            task.setFile_name(filename);
             task.setFile_url(exported.publicUrl());
             task.setDownload_url(exported.publicUrl());
             task.setUrl_expire_at(LocalDateTime.now().plusDays(7));
@@ -126,18 +174,25 @@ public class ExportServiceImpl implements ExportService {
             task.setQuality_report(buildQualityReport(true, List.of(), exported, task));
             task.setError_msg("");
             task.setCompleted_at(LocalDateTime.now());
-        } catch (Exception e) {
-            log.warn("createExportTask generation failed taskId={}", task.getId(), e);
-            task.setStatus("failed");
-            task.setProgress(100);
-            task.setFile_status("unavailable");
-            task.setError_msg(e.getMessage());
-            task.setQuality_report(buildFailureReport(e));
-            task.setCompleted_at(LocalDateTime.now());
+            taskMapper.update(task);
+            return toVO(taskMapper.findById(task.getId()));
+        } catch (IOException e) {
+            throw new RuntimeException("保存导出文件失败", e);
         }
+    }
+
+    @Override
+    @Transactional
+    public ExportTaskVO failExportTask(String id, String error) {
+        Exp_Task task = requireOwnedTask(id);
+        if (!"generating".equals(task.getStatus())) throw new RuntimeException("导出任务当前不可标记失败");
+        task.setStatus("failed");
+        task.setProgress(100);
+        task.setFile_status("unavailable");
+        task.setError_msg(error == null ? "Python 导出失败" : error.substring(0, Math.min(error.length(), 1000)));
+        task.setQuality_report(buildFailureReport(new RuntimeException(task.getError_msg())));
+        task.setCompleted_at(LocalDateTime.now());
         taskMapper.update(task);
-        businessLogService.record("operation", "export", "create_task", "export_task", task.getId(),
-                Map.of("project_id", dto.getProject_id(), "export_type", exportType, "status", task.getStatus()));
         return toVO(taskMapper.findById(task.getId()));
     }
 
@@ -249,58 +304,6 @@ public class ExportServiceImpl implements ExportService {
         }
     }
 
-    private ExportedFile generateFile(Ws_Project project, Exp_Task task, Map<String, Object> config) throws Exception {
-        List<Map<String, Object>> slides = buildSlides(project, config);
-        String exportType = task.getExport_type();
-        PythonPptClient.PythonFileResult result;
-        if ("word".equals(exportType) || "docx".equals(exportType)) {
-            Map<String, Object> lessonPlan = lessonPlanFromConfigOrGenerate(project, task, config, slides);
-            Map<String, Object> payload = new LinkedHashMap<>();
-            payload.put("title", stringValue(config.get("title"), project.getProject_name()));
-            payload.put("filename", stringValue(config.get("filename"), defaultFilename(project, task, "docx")));
-            payload.put("lesson_plan", lessonPlan);
-            result = pythonPptClient.exportLessonPlanFile(payload);
-        } else {
-            if (slides.isEmpty()) {
-                throw new RuntimeException("No slides available for PPT export");
-            }
-            Map<String, Object> payload = new LinkedHashMap<>();
-            payload.put("title", stringValue(config.get("title"), project.getProject_name()));
-            payload.put("filename", stringValue(config.get("filename"), defaultFilename(project, task, "pptx")));
-            payload.put("slides", slides);
-            payload.put("fidelity", stringValue(config.get("fidelity"), "dom_editable"));
-            payload.put("package_static_assets", !Boolean.FALSE.equals(config.get("package_static_assets")));
-            result = pythonPptClient.exportPresentationFile(payload);
-        }
-        return saveExportFile(result, project, task);
-    }
-
-    @SuppressWarnings("unchecked")
-    private Map<String, Object> lessonPlanFromConfigOrGenerate(Ws_Project project, Exp_Task task,
-                                                               Map<String, Object> config,
-                                                               List<Map<String, Object>> slides) {
-        Object existing = config.get("lesson_plan");
-        if (existing instanceof Map<?, ?> map) {
-            return new LinkedHashMap<>((Map<String, Object>) map);
-        }
-        Map<String, Object> payload = new LinkedHashMap<>();
-        payload.put("title", stringValue(config.get("title"), project.getProject_name()));
-        payload.put("subject", stringValue(config.get("subject"), ""));
-        payload.put("grade", stringValue(config.get("grade"), ""));
-        payload.put("duration_minutes", config.get("duration_minutes"));
-        payload.put("teaching_goals", stringValue(config.get("teaching_goals"), ""));
-        payload.put("outline", config.getOrDefault("outline", Map.of("slides", slides)));
-        payload.put("slides", slides);
-        payload.put("requirements", stringValue(config.get("requirements"), ""));
-        payload.put("reference_text", stringValue(config.get("reference_text"), ""));
-        Map<String, Object> response = pythonPptClient.generateLessonPlan(payload);
-        Object data = response.get("data");
-        if (data instanceof Map<?, ?> dataMap && dataMap.get("lesson_plan") instanceof Map<?, ?> planMap) {
-            return new LinkedHashMap<>((Map<String, Object>) planMap);
-        }
-        throw new RuntimeException("Python lesson plan generation returned invalid data");
-    }
-
     @SuppressWarnings("unchecked")
     private List<Map<String, Object>> buildSlides(Ws_Project project, Map<String, Object> config) {
         Object configSlides = config.get("slides");
@@ -327,23 +330,6 @@ public class ExportServiceImpl implements ExportService {
             slides.add(slide);
         }
         return slides;
-    }
-
-    private ExportedFile saveExportFile(PythonPptClient.PythonFileResult result, Ws_Project project, Exp_Task task) throws Exception {
-        if (result.bytes == null || result.bytes.length == 0) {
-            throw new RuntimeException("Python export returned empty file");
-        }
-        Files.createDirectories(exportDir);
-        String filename = sanitizeFilename(result.filename == null || result.filename.isBlank()
-                ? defaultFilename(project, task, extensionFromContentType(result.contentType, task.getExport_type()))
-                : result.filename);
-        filename = uniqueFilename(filename);
-        Path output = exportDir.resolve(filename).normalize();
-        if (!output.startsWith(exportDir)) {
-            throw new RuntimeException("Invalid export filename");
-        }
-        Files.write(output, result.bytes);
-        return new ExportedFile(filename, publicPrefix + "/" + filename, result.bytes.length, result.contentType);
     }
 
     private String fallbackSlideHtml(Ws_Page page, Map<String, Object> content) {

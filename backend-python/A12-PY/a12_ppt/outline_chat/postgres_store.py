@@ -1,9 +1,24 @@
 import json
+import re
 import uuid
 from datetime import datetime, timezone
 from typing import Any
 
 from ..config import get_settings
+
+
+STYLE_SIGNALS = {
+    "more_cases": ("多案例", "增加案例", "案例多一点", "更多案例"),
+    "more_practice": ("多练习", "增加练习", "更多练习", "实践多一点"),
+    "less_theory": ("少理论", "减少理论", "理论少一点"),
+    "less_slide_text": ("少文字", "减少文字", "每页字少", "字太多"),
+    "boppps": ("BOPPPS", "boppps"),
+}
+
+
+def extract_style_signals(text: str) -> list[str]:
+    normalized = re.sub(r"\s+", "", text).lower()
+    return [name for name, phrases in STYLE_SIGNALS.items() if any(phrase.lower() in normalized for phrase in phrases)]
 
 
 class PostgresOutlineMemoryStore:
@@ -227,6 +242,11 @@ class PostgresOutlineMemoryStore:
         user_id = str(payload.get("user_id") or "").strip()
         action = str(payload.get("action") or "").strip()
         metadata = dict(payload.get("metadata") or {})
+        metadata.pop("style_signals", None)
+        signals = extract_style_signals(" ".join([str(payload.get("instruction") or ""),
+                                                   str(payload.get("change_summary") or "")]))
+        if signals and action in {"accept", "manual_edit"}:
+            metadata["style_signals"] = signals
         saved = self._execute(
             """INSERT INTO a12_ai_feedback
               (user_id,session_id,project_id,action,target_type,instruction,change_summary,before_data,after_data,metadata)
@@ -236,16 +256,31 @@ class PostgresOutlineMemoryStore:
              payload.get("change_summary"), json.dumps(payload.get("before_data") or {}, ensure_ascii=False),
              json.dumps(payload.get("after_data") or {}, ensure_ascii=False), json.dumps(metadata, ensure_ascii=False)),
         )
-        # Only accepted/manual changes become positive long-term evidence. Rejections are retained as
-        # negative evidence in the feedback table and can be used by the next request.
-        if saved and action in {"accept", "manual_edit"}:
+        # A single edit can be task-specific. Only repeat signals promote to
+        # long-term preference; rejection stays negative evidence.
+        repeated: list[str] = []
+        if saved and signals and action in {"accept", "manual_edit"}:
+            try:
+                import psycopg
+                from psycopg.rows import dict_row
+                with psycopg.connect(self.settings.postgres_dsn, row_factory=dict_row) as conn:
+                    with conn.cursor() as cur:
+                        cur.execute("""SELECT metadata FROM a12_ai_feedback WHERE user_id=%s
+                            AND action IN ('accept','manual_edit') ORDER BY created_at DESC LIMIT 20""", (user_id,))
+                        evidence = [dict(row.get("metadata") or {}) for row in cur.fetchall()]
+                repeated = [signal for signal in signals if sum(signal in row.get("style_signals", []) for row in evidence) >= 2]
+            except Exception:
+                self.available = False
+        profile_saved = False
+        if saved and repeated:
             preference = {
+                "style_preferences": repeated,
                 "last_positive_action": action,
                 "last_change_summary": str(payload.get("change_summary") or "")[:500],
                 "last_instruction": str(payload.get("instruction") or "")[:500],
                 "subject": metadata.get("subject"), "grade": metadata.get("grade"),
             }
-            self._execute(
+            profile_saved = self._execute(
                 """INSERT INTO a12_teacher_style_profile(user_id,style_summary,profile,evidence_count,confidence)
                    VALUES (%s,%s,%s::jsonb,1,0.55)
                    ON CONFLICT(user_id) DO UPDATE SET profile=a12_teacher_style_profile.profile || EXCLUDED.profile,
@@ -254,20 +289,25 @@ class PostgresOutlineMemoryStore:
                 (user_id, preference["last_change_summary"] or preference["last_instruction"],
                  json.dumps(preference, ensure_ascii=False)),
             )
-        return {"stored": bool(saved), "action": action, "profile_updated": bool(saved and action in {"accept", "manual_edit"})}
+        return {"stored": bool(saved), "action": action, "profile_updated": bool(profile_saved),
+                "style_signals": signals}
 
-    def ai_metrics(self, limit: int = 50) -> dict[str, Any]:
+    def ai_metrics(self, limit: int = 50, user_id: str | None = None) -> dict[str, Any]:
         try:
             import psycopg
             from psycopg.rows import dict_row
             with psycopg.connect(self.settings.postgres_dsn, row_factory=dict_row) as conn:
                 with conn.cursor() as cur:
+                    run_scope = "WHERE user_id = %s" if user_id else ""
+                    feedback_scope = "WHERE user_id = %s" if user_id else ""
                     cur.execute("""SELECT operation,status,model,COUNT(*) runs,
                               ROUND(AVG(latency_ms)) avg_latency_ms,SUM(input_tokens) input_tokens,
                               SUM(output_tokens) output_tokens
-                              FROM a12_ai_run_log GROUP BY operation,status,model ORDER BY runs DESC LIMIT %s""", (limit,))
+                              FROM a12_ai_run_log {scope} GROUP BY operation,status,model ORDER BY runs DESC LIMIT %s"""
+                                .replace("{scope}", run_scope), ((user_id,) if user_id else ()) + (limit,))
                     runs = [dict(row) for row in cur.fetchall()]
-                    cur.execute("SELECT action, COUNT(*) count FROM a12_ai_feedback GROUP BY action ORDER BY count DESC")
+                    cur.execute(f"SELECT action, COUNT(*) count FROM a12_ai_feedback {feedback_scope} GROUP BY action ORDER BY count DESC",
+                                (user_id,) if user_id else ())
                     feedback = [dict(row) for row in cur.fetchall()]
             return {"runs": runs, "feedback": feedback, "postgres_available": True}
         except Exception as exc:

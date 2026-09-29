@@ -13,6 +13,8 @@ import org.springframework.http.HttpStatus;
 import org.springframework.http.MediaType;
 import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.annotation.*;
+import org.springframework.web.multipart.MultipartFile;
+import java.util.Map;
 
 import java.nio.charset.StandardCharsets;
 
@@ -59,6 +61,26 @@ public class ExportController {
         try {
             return Result.success(exportService.createExportTask(dto));
         } catch (RuntimeException e) { return Result.error(400, e.getMessage()); }
+    }
+
+    /** 校验任务归属后提供已保存的项目页面，供浏览器直连 Python 导出。 */
+    @GetMapping("/export-tasks/{id}/payload")
+    public Result<Map<String, Object>> getExportPayload(@PathVariable String id) {
+        try { return Result.success(exportService.getExportPayload(id)); }
+        catch (RuntimeException e) { return Result.error(400, e.getMessage()); }
+    }
+
+    /** 仅接收 Python 已生成的文件并登记业务成果，不运行 AI。 */
+    @PostMapping(value = "/export-tasks/{id}/artifact", consumes = MediaType.MULTIPART_FORM_DATA_VALUE)
+    public Result<ExportTaskVO> completeExportTask(@PathVariable String id, @RequestParam("file") MultipartFile file) {
+        try { return Result.success(exportService.completeExportTask(id, file)); }
+        catch (RuntimeException e) { return Result.error(400, e.getMessage()); }
+    }
+
+    @PostMapping("/export-tasks/{id}/failure")
+    public Result<ExportTaskVO> failExportTask(@PathVariable String id, @RequestBody Map<String, String> body) {
+        try { return Result.success(exportService.failExportTask(id, body.get("error"))); }
+        catch (RuntimeException e) { return Result.error(400, e.getMessage()); }
     }
 
     /**

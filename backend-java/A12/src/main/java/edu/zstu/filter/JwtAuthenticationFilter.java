@@ -14,6 +14,9 @@ import org.springframework.util.AntPathMatcher;
 import lombok.extern.slf4j.Slf4j;
 
 import java.io.IOException;
+import java.nio.charset.StandardCharsets;
+import java.security.MessageDigest;
+import org.springframework.beans.factory.annotation.Value;
 /**
  * JWT 认证过滤器
  * 拦截非 /api/v1/auth/** 的请求：
@@ -31,6 +34,8 @@ public class JwtAuthenticationFilter implements Filter {
 
     private final JwtUtil jwtUtil;
     private final StringRedisTemplate redisTemplate;
+    @Value("${a12.python.internal-key:}")
+    private String internalKey;
 
     public JwtAuthenticationFilter(JwtUtil jwtUtil, StringRedisTemplate redisTemplate) {
         this.jwtUtil = jwtUtil;
@@ -43,6 +48,17 @@ public class JwtAuthenticationFilter implements Filter {
 
         HttpServletRequest req = (HttpServletRequest) request;
         HttpServletResponse res = (HttpServletResponse) response;
+
+        if (req.getRequestURI().startsWith("/api/v1/internal/")) {
+            String supplied = req.getHeader("X-A12-Internal-Key");
+            if (internalKey == null || internalKey.isBlank() || supplied == null ||
+                    !MessageDigest.isEqual(internalKey.getBytes(StandardCharsets.UTF_8), supplied.getBytes(StandardCharsets.UTF_8))) {
+                writeUnauthorized(res, "内部服务凭据无效");
+                return;
+            }
+            chain.doFilter(request, response);
+            return;
+        }
 
         // 跳过 OPTIONS 预检和认证相关路径
         if ("OPTIONS".equals(req.getMethod()) || isAuthPath(req.getRequestURI())) {
