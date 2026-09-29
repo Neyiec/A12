@@ -3,12 +3,13 @@ package edu.zstu.controller;
 import edu.zstu.dto.GeneralChatDTO;
 import edu.zstu.service.GeneralChatService;
 import lombok.RequiredArgsConstructor;
-import org.springframework.http.MediaType;
 import org.springframework.web.bind.annotation.PostMapping;
 import org.springframework.web.bind.annotation.RequestBody;
 import org.springframework.web.bind.annotation.RequestMapping;
+import org.springframework.web.bind.annotation.PathVariable;
 import org.springframework.web.bind.annotation.RestController;
-import org.springframework.web.servlet.mvc.method.annotation.SseEmitter;
+import java.util.Map;
+import edu.zstu.utils.Result;
 
 @RestController
 @RequiredArgsConstructor
@@ -16,8 +17,14 @@ import org.springframework.web.servlet.mvc.method.annotation.SseEmitter;
 public class GeneralChatController {
     private final GeneralChatService generalChatService;
 
-    @PostMapping(value = "/stream", produces = MediaType.TEXT_EVENT_STREAM_VALUE)
-    public SseEmitter stream(@RequestBody GeneralChatDTO request) {
-        return generalChatService.stream(request);
+    @PostMapping("/turns")
+    public Result<Map<String, Object>> beginTurn(@RequestBody GeneralChatDTO request) {
+        return Result.success(generalChatService.beginTurn(request));
+    }
+
+    @PostMapping("/turns/{sessionId}/result")
+    public Result<Map<String, Object>> completeTurn(@PathVariable Integer sessionId,
+                                                     @RequestBody Map<String, Object> result) {
+        return Result.success(generalChatService.completeTurn(sessionId, result));
     }
 }

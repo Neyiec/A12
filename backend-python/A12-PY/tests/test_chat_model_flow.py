@@ -38,9 +38,11 @@ class ChatModelFlowTests(unittest.IsolatedAsyncioTestCase):
         with patch("a12_ppt.chat_router.LLMClient", return_value=RouteModel()):
             result = await workflow.route(request)
             self.assertEqual(result["route"], "planning")
+            self.assertEqual(result["next_stage"], "outline_graph")
             self.assertFalse(result["forced"])
             forced = await workflow.route(request.model_copy(update={"route_preference": "chat"}))
             self.assertEqual(forced["route"], "chat")
+            self.assertEqual(forced["next_stage"], "ordinary_chat")
             self.assertTrue(forced["forced"])
 
     async def test_langgraph_keeps_explanation_in_chat_and_falls_back_safely(self):

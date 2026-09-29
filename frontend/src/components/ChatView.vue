@@ -10,13 +10,13 @@
 <script setup>
 import { computed, nextTick, onMounted, onUnmounted, reactive, ref, watch } from 'vue'
 import { ElMessage } from 'element-plus'
-import { Brush, Document, Promotion } from '@element-plus/icons-vue'
+import { Brush, Document, Paperclip, Promotion } from '@element-plus/icons-vue'
 import MarkdownRender from 'markstream-vue'
 import { useUserStore } from '../storage/user.js'
 import { readOutlineDraft, saveOutlineDraft } from '../utils/presentationDraft.js'
 import { readOpenAiTextStream } from '../utils/openAiSse.js'
 import { normalizeModelProfile, normalizeReasoningEffort } from '../utils/aiOptions.js'
-import { confirmAiPlan, getAiPlan, getAiSession, listPptTemplates, sendAiSessionAudioMessage, streamGeneralChat, streamPersistentGeneralChat, streamSendAiSessionMessage, transcribeAudio } from '../apis/teacher.js'
+import { beginGeneralChatTurn, completeGeneralChatTurn, confirmAiPlan, getAiPlan, getAiSession, listPptTemplates, routeTeachingChat, saveDirectOutlineResult, streamGeneralChat, streamOutlineChat, transcribeAudio, uploadResource } from '../apis/teacher.js'
 import {
   CHAT_COMPOSER, CLASS_LEVEL_OPTIONS, CLARIFICATION_LABELS,
   extractPlanningContext, GRADE_OPTIONS, CHAT_RESUME, DESIGN_ACTION_BAR, GEN_RESOURCE_DEFAULTS, INFO_FORM_DEFAULTS,
@@ -26,6 +26,7 @@ import {
 import IntentClarificationDialog from './IntentClarificationDialog.vue'
 import PptTemplatePicker from './PptTemplatePicker.vue'
 import VoiceRecorderButton from './VoiceRecorderButton.vue'
+import LearningGraphPanel from './LearningGraphPanel.vue'
 
 const props = defineProps({
   sessionId: { type: [String, Number], default: null },
@@ -46,6 +47,47 @@ const emit = defineEmits(['back', 'open-workspace', 'planning-request', 'session
 
 const userStore = useUserStore()
 const isGeneralChat = computed(() => props.mode === 'general')
+const attachedResources = ref([])
+const resourceFileInput = ref(null)
+const resourceUploading = ref(false)
+const activeResourceIds = computed(() => [...new Set([
+  ...(props.resourceIds || []).map((id) => String(id)),
+  ...attachedResources.value.map((item) => String(item.id)),
+])])
+const activeWorkspaceContext = computed(() => ({
+  ...(props.workspaceContext || {}),
+  resourceIds: activeResourceIds.value,
+  resource_ids: activeResourceIds.value,
+  uploadedResources: [...(props.workspaceContext?.uploadedResources || []), ...attachedResources.value],
+  uploaded_resources: [...(props.workspaceContext?.uploaded_resources || []), ...attachedResources.value],
+}))
+const uploadChatResources = async (event) => {
+  const files = Array.from(event.target?.files || [])
+  if (event.target) event.target.value = ''
+  if (!files.length || resourceUploading.value) return
+  resourceUploading.value = true
+  let uploaded = 0
+  try {
+    for (const file of files) {
+      const result = await uploadResource(file)
+      const id = result?.id || result?.resource_id || result?.resourceId
+      if (!id) throw new Error(`${file.name} 上传成功但未返回资源 ID`)
+      attachedResources.value = [
+        ...attachedResources.value.filter((item) => String(item.id) !== String(id)),
+        { id: String(id), resource_id: String(id), file_name: file.name, file_type: file.type, file_size: file.size },
+      ]
+      uploaded += 1
+    }
+    ElMessage.success(`已添加 ${uploaded} 份资料；后台解析完成后，后续大纲和 PPT 生成即可检索引用`)
+  } catch (error) {
+    ElMessage.error(error?.message || '资料上传失败')
+  } finally {
+    resourceUploading.value = false
+  }
+}
+const removeChatResource = (id) => {
+  attachedResources.value = attachedResources.value.filter((item) => String(item.id) !== String(id))
+}
 const generalSessionId = ref(props.mode === 'general' && props.resume ? props.sessionId : null)
 const selectedRoutePreference = ref(props.routePreference)
 const selectedModelProfile = ref(normalizeModelProfile(localStorage.getItem('a12:model-profile')))
@@ -95,6 +137,7 @@ const messages = reactive([])
 let messageSeq = 0
 /** 实时流式预览的临时消息 id（final 到达后被正式大纲替换） */
 let liveMsgId = null
+let activeLearningGraphMessageId = null
 const messageListRef = ref(null)
 
 // ========== 教学设计方案数据 ==========
@@ -541,7 +584,7 @@ function normalizeRealOutlineResponse(response = {}) {
     slide_count: Number(nestedOutline.slide_count) || Number(response.slide_count) || slides.length,
     slides,
   }
-  ;['teaching_design_chain', 'interactive_assets', 'diagram_assets', 'quality_report', 'generation_options']
+  ;['teaching_design_chain', 'interactive_assets', 'diagram_assets', 'learning_graphs', 'quality_report', 'generation_options']
     .forEach((key) => {
       if (planJson[key] === undefined && response[key] !== undefined) planJson[key] = response[key]
     })
@@ -555,6 +598,8 @@ function normalizeRealOutlineResponse(response = {}) {
 function applyRealOutlineResponse(response) {
   const planJson = normalizeRealOutlineResponse(response)
   if (!Array.isArray(planJson.slides) || !planJson.slides.length) throw new Error('大纲模型未返回页面结构')
+
+  showLearningGraphs(response?.learning_graphs || planJson.learning_graphs)
 
   const outlineId = String(response?.outline_id || planJson.outline_id || '').trim()
   const version = Number(planJson.version) || 1
@@ -590,7 +635,7 @@ function applyRealOutlineResponse(response) {
 
 /** 通过 Python SSE 真实 Agent 生成/修改大纲；请求体直接使用 Python DTO 的字段类型。 */
 async function requestRealOutlineChat(message) {
-  const resourceIds = (props.resourceIds || []).map((item) => String(item))
+  const resourceIds = activeResourceIds.value
   const response = await streamOutlineChat({
     user_id: String(userStore.userInfo?.user_id || '10001'),
     session_id: outlinePythonSessionId.value || String(props.sessionId || '') || undefined,
@@ -605,7 +650,7 @@ async function requestRealOutlineChat(message) {
       textbook: infoForm.textbook,
       class_level: infoForm.classLevel,
       requirements: infoForm.requirements,
-      workspace_context: props.workspaceContext || {},
+      workspace_context: activeWorkspaceContext.value,
     },
     resource_ids: resourceIds,
     enable_rag: resourceIds.length > 0,
@@ -622,6 +667,9 @@ async function requestRealOutlineChat(message) {
     },
     onStage: (data) => {
       outlineGenerationStage.value = String(data?.message || data?.name || '正在生成教学设计大纲…')
+    },
+    onEvent: (event, data) => {
+      if (event === 'learning_graphs') showLearningGraphs(data)
     },
     onQuestion: (data) => {
       clarification = data
@@ -674,7 +722,7 @@ function buildContextMessage(extra = '') {
 
 /**
  * 解析 SSE 响应体，按事件边界逐步调用 onEvent(event, data)，直至流结束。
- * @param {Response} res - streamSendAiSessionMessage 返回的 fetch Response
+ * @param {Response} res - FastAPI 大纲流返回的 fetch Response
  * @param {(event: string, data: Object) => void} onEvent - 事件回调
  */
 async function consumeSseStream(res, onEvent) {
@@ -733,6 +781,7 @@ function renderStreamedOutline(data) {
     return
   }
   const slides = Array.isArray(planJson.slides) ? planJson.slides : []
+  showLearningGraphs(data?.learning_graphs || planJson.learning_graphs)
   const title = data?.title || planJson.title || '教学设计方案'
   planTask.value = {
     ...(planTask.value || {}),
@@ -779,19 +828,35 @@ function finalizeLiveOutline() {
   liveMsgId = null
 }
 
+/** 图谱先于大纲展示；同一次流的 final 只更新卡片，不重复插入。 */
+function showLearningGraphs(graphs) {
+  if (!graphs || !Array.isArray(graphs.knowledge?.nodes) || !Array.isArray(graphs.skill?.nodes)) return
+  if (activeLearningGraphMessageId != null) {
+    const existing = messages.find((message) => message.id === activeLearningGraphMessageId)
+    if (existing) {
+      existing.data = graphs
+      return
+    }
+  }
+  const message = addMessage('assistant', 'learning_graph', '', { data: graphs })
+  activeLearningGraphMessageId = message?.id ?? messages[messages.length - 1]?.id ?? null
+  void scrollToBottom()
+}
+
 /**
- * 调用 API-11S 流式发送消息，Java 转发 Python 边生成边回传事件。
+ * 浏览器直连 FastAPI 获取大纲 SSE；Java 仅保存生成结果。
  * 由 final 事件渲染最终大纲；question 进入澄清阶段；error/done(failed) 提示错误。
  * @param {string} message - 本轮自然语言输入
  * @param {Object} options - 是否把切换前的普通对话作为首次备课背景注入
  */
-async function sendMessageToBackend(message, { includeContinuation = false } = {}) {
+async function sendMessageToBackend(message, { includeContinuation = false, clarificationContext = {} } = {}) {
   phase.value = 'generating_outline'
   isRequesterLoading.value = true
+  activeLearningGraphMessageId = null
   const payload = {
     message,
-    resource_ids: JSON.stringify(props.resourceIds || []),
-    enable_rag: props.resourceIds.length > 0,
+    resource_ids: JSON.stringify(activeResourceIds.value),
+    enable_rag: activeResourceIds.value.length > 0,
     enable_web: false,
     model_profile: selectedModelProfile.value,
     reasoning_effort: selectedReasoningEffort.value,
@@ -799,13 +864,35 @@ async function sendMessageToBackend(message, { includeContinuation = false } = {
       title: infoForm.courseName.trim(),
       subject: infoForm.subject,
       grade: infoForm.grade,
-      workspace_context: props.workspaceContext || {},
+      workspace_context: activeWorkspaceContext.value,
+      ...clarificationContext,
     }),
   }
   let finished = false
+  let finalResult = null
+  let questionResult = null
+  let streamError = ''
   try {
-    const res = await streamSendAiSessionMessage(props.sessionId, payload)
+    const res = await streamOutlineChat({
+      user_id: String(userStore.userInfo?.user_id || ''),
+      session_id: outlinePythonSessionId.value || undefined,
+      message,
+      history: includeContinuation ? normalizeConversationHistory(props.continuationHistory) : [],
+      resource_ids: activeResourceIds.value,
+      enable_rag: payload.enable_rag,
+      enable_web: false,
+      model_profile: payload.model_profile,
+      reasoning_effort: payload.reasoning_effort,
+      known_context: JSON.parse(payload.known_context),
+      slide_count: Number(genResource.slideCount) || 8,
+      language: 'zh-CN',
+    })
     await consumeSseStream(res, (event, data) => {
+      if (event === 'session' && data.session_id) outlinePythonSessionId.value = String(data.session_id)
+      if (event === 'learning_graphs') {
+        showLearningGraphs(data)
+        return
+      }
       if (event === 'outline_delta') {
         // 逐页实时回传，边生成边渲染到预览消息
         renderLiveOutline(data.slide)
@@ -813,44 +900,53 @@ async function sendMessageToBackend(message, { includeContinuation = false } = {
       }
       if (event === 'question') {
         finished = true
-        finalizeLiveOutline()
-        const question = data.question || data.message || ''
-        if (!question) return
-        lastClarification.value = question
-        phase.value = 'clarifying'
-        addMessage('assistant', 'clarification', question)
+        questionResult = data
         return
       }
       if (event === 'final') {
         finished = true
-        finalizeLiveOutline()
-        renderStreamedOutline(data)
+        finalResult = data
         return
       }
       if (event === 'error') {
         finished = true
-        finalizeLiveOutline()
-        ElMessage.error(data.message || SYSTEM_MESSAGES.connectionError)
-        phase.value = 'info'
+        streamError = data.message || SYSTEM_MESSAGES.connectionError
         return
       }
       if (event === 'done') {
         finished = true
-        finalizeLiveOutline()
-        if (data.status === 'failed') {
-          ElMessage.error(data.message || SYSTEM_MESSAGES.connectionError)
-          phase.value = 'info'
-        }
+        if (data.status === 'failed') streamError ||= data.message || SYSTEM_MESSAGES.connectionError
       }
     })
+    finalizeLiveOutline()
+    const status = finalResult ? 'completed' : questionResult ? 'need_clarification' : 'failed'
+    const saved = await saveDirectOutlineResult(props.sessionId, {
+      message,
+      status,
+      python_session_id: outlinePythonSessionId.value,
+      question: normalizePlanningClarification(questionResult?.question)?.text || '',
+      final_data: finalResult,
+      error_message: streamError,
+    })
+    if (!isOk(saved)) throw new Error(saved?.message || '备课结果保存失败')
+    if (finalResult) renderStreamedOutline(finalResult)
+    else if (questionResult) {
+      const question = normalizePlanningClarification(questionResult.question || questionResult.message)
+      lastClarification.value = question?.text || ''
+      phase.value = 'clarifying'
+      if (question) {
+        addMessage('assistant', 'clarification', question.text)
+        openPlanningClarification(question)
+      }
+    } else if (streamError) throw new Error(streamError)
     if (!finished) {
       finalizeLiveOutline()
       ElMessage.error(SYSTEM_MESSAGES.connectionError)
       phase.value = 'info'
     }
-  } catch {
+  } catch (error) {
     finalizeLiveOutline()
-    ElMessage.error(SYSTEM_MESSAGES.connectionError)
+    ElMessage.error(error?.message || SYSTEM_MESSAGES.connectionError)
     phase.value = 'info'
   } finally {
     isRequesterLoading.value = false
@@ -915,34 +1011,16 @@ async function handleChatVoice(file) {
 
   voiceSubmitting.value = true
   try {
-    const context = {
-      title: infoForm.courseName.trim(),
-      subject: infoForm.subject,
-      grade: infoForm.grade,
-      stage: infoForm.stage,
-      workspace_context: props.workspaceContext || {},
-    }
     const formData = new FormData()
     formData.append('file', file)
     formData.append('language', 'zh')
-    formData.append('resource_ids', JSON.stringify(props.resourceIds || []))
-    formData.append('enable_rag', String(Boolean(props.resourceIds?.length)))
-    formData.append('enable_web', 'false')
-    formData.append('known_context', JSON.stringify(context))
-    formData.append('context_summary', buildContinuationContext())
-    if (composerInput.value.trim()) formData.append('message', composerInput.value.trim())
-
-    const response = await sendAiSessionAudioMessage(props.sessionId, formData)
-    const conversation = sessionResponseData(response)
-    appendAudioConversation(conversation)
-
-    // API-13A 返回的是会话快照，API-14 的 plan_json 仍由独立资源维护；
-    // 这里主动刷新一次，保证语音触发大纲后当前页面马上进入可确认状态。
-    const planResponse = await getAiPlan(props.sessionId).catch(() => null)
-    const planData = isOk(planResponse) ? planResponse.data : null
-    if (hasGeneratedOutline(parsePlanJson(planData?.plan_json))) await loadPlan()
+    const response = await transcribeAudio(formData)
+    const transcript = String(response?.data?.text || response?.text || '').trim()
+    if (!transcript) throw new Error('未能识别到有效语音')
+    const message = [composerInput.value.trim(), transcript].filter(Boolean).join('\n')
+    addMessage('user', 'text', message)
+    await sendMessageToBackend(message)
     composerInput.value = ''
-    ElMessage.success('语音已发送，AI 会沿用当前备课会话继续处理')
   } catch (error) {
     ElMessage.error(error?.message || '语音会话提交失败，请重试')
   } finally {
@@ -1020,7 +1098,7 @@ async function submitPlanningClarification(payload = {}) {
     if (!answer) return
     planningClarificationVisible.value = false
     addMessage('user', 'text', answer)
-    await sendMessageToBackend(answer)
+    await sendMessageToBackend(answer, { clarificationContext: payload.knownContext || {} })
   } finally {
     planningClarificationSubmitting.value = false
   }
@@ -1175,16 +1253,41 @@ async function requestGeneralChatReply() {
   const assistantMessage = addMessage('assistant', 'text', '')
   isRequesterLoading.value = true
   let routedToPlanning = false
+  let turn = null
   try {
-    const response = await streamPersistentGeneralChat({
+    const begun = await beginGeneralChatTurn({
       session_id: generalSessionId.value,
       message: latestUserMessage.content,
       model_profile: selectedModelProfile.value,
       reasoning_effort: selectedReasoningEffort.value,
-      route_preference: selectedRoutePreference.value,
-      resource_ids: JSON.stringify(props.resourceIds || []),
     })
-    if (!response.ok) {
+    if (!isOk(begun)) throw new Error(begun?.message || '保存提问失败')
+    turn = begun.data
+    generalSessionId.value = turn.conversation_id
+    latestUserMessage.data = { message_id: turn.user_message_id, turn_id: turn.turn_id, created_at: turn.created_at }
+    latestSessionPush.value = { id: turn.conversation_id, title: turn.title, updated_at: turn.created_at, mode: 'general' }
+    emit('general-session', { id: turn.conversation_id, title: turn.title })
+    const routeResult = await routeTeachingChat({
+      user_id: String(userStore.userInfo?.user_id || ''),
+      messages: turn.messages.slice(-8),
+      route_preference: selectedRoutePreference.value || 'auto',
+    })
+    if (!isOk(routeResult)) throw new Error(routeResult?.message || '意图分流失败')
+    const route = routeResult.data || {}
+    routedToPlanning = route.next_stage === 'outline_graph' || route.route === 'planning'
+    let response
+    if (routedToPlanning) {
+      assistantMessage.content = '已进入备课流程，请补充课程信息。'
+    } else {
+      response = await streamGeneralChat({
+        user_id: String(userStore.userInfo?.user_id || ''),
+        mode: 'chat',
+        messages: turn.messages,
+        model_profile: selectedModelProfile.value,
+        reasoning_effort: selectedReasoningEffort.value,
+      })
+    }
+    if (response && !response.ok) {
       let message = ''
       try {
         const payload = await response.json()
@@ -1194,50 +1297,45 @@ async function requestGeneralChatReply() {
       }
       throw new Error(message || `模型请求失败（HTTP ${response.status}）`)
     }
-    await readOpenAiTextStream(response, (_delta, content) => {
+    if (response) await readOpenAiTextStream(response, (_delta, content) => {
       assistantMessage.content = content
       void scrollToBottom()
-    }, (type, payload) => {
-      if (type === 'session') {
-        generalSessionId.value = payload.conversation_id
-        latestUserMessage.data = {
-          message_id: payload.user_message_id,
-          turn_id: payload.turn_id,
-          created_at: payload.created_at,
-        }
-        latestSessionPush.value = {
-          id: payload.conversation_id,
-          title: payload.title,
-          updated_at: payload.created_at,
-          mode: 'general',
-        }
-        emit('general-session', { id: payload.conversation_id, title: payload.title })
-      } else if (type === 'message_saved') {
-        assistantMessage.data = payload
-      } else if (type === 'route' && payload.target === 'planning') {
-        routedToPlanning = true
-        assistantMessage.content = payload.assistant_content || '已进入备课流程，请补充课程信息。'
-        assistantMessage.data = {
-          message_id: payload.assistant_message_id,
-          turn_id: latestUserMessage.data?.turn_id,
-          created_at: payload.created_at,
-        }
-      }
-    }, { allowEmpty: true })
+    })
+    if (!assistantMessage.content.trim()) throw new Error('模型未返回有效内容')
+    const completed = await completeGeneralChatTurn(turn.conversation_id, {
+      turn_id: turn.turn_id,
+      route: routedToPlanning ? 'planning' : 'chat',
+      reason: route.reason || '',
+      content: assistantMessage.content,
+      status: 'completed',
+      model_profile: selectedModelProfile.value,
+      reasoning_effort: selectedReasoningEffort.value,
+      resource_ids: JSON.stringify(activeResourceIds.value),
+    })
+    if (!isOk(completed)) throw new Error(completed?.message || '回复保存失败')
+    assistantMessage.data = completed.data
     if (routedToPlanning) {
       emit('planning-request', {
         existingSessionId: generalSessionId.value,
         prompt: latestUserMessage.content,
-        resourceIds: [...(props.resourceIds || [])],
-        workspaceContext: props.workspaceContext,
+        resourceIds: [...activeResourceIds.value],
+        workspaceContext: activeWorkspaceContext.value,
         history: getGeneralChatHistory().slice(0, -2),
       })
-    } else if (!assistantMessage.content.trim()) {
-      throw new Error('模型未返回有效内容')
     }
   } catch (error) {
     if (!assistantMessage.content.trim()) {
       assistantMessage.content = `大模型暂时无法回复：${error?.message || '连接失败，请检查模型配置。'}`
+    }
+    if (turn && !assistantMessage.data?.message_id) {
+      try {
+        const failed = await completeGeneralChatTurn(turn.conversation_id, {
+          turn_id: turn.turn_id, route: 'chat', content: assistantMessage.content,
+          status: 'failed', model_profile: selectedModelProfile.value,
+          reasoning_effort: selectedReasoningEffort.value,
+        })
+        if (isOk(failed)) assistantMessage.data = failed.data
+      } catch { /* 保留原始请求错误。 */ }
     }
     ElMessage.error(error?.message || '大模型连接失败，请检查配置')
   } finally {
@@ -1379,18 +1477,15 @@ function startGenerateResource() {
   emit('open-workspace', {
     pptTheme: selectedPptTemplateTheme.value,
     generationKey: String(Date.now()),
-    resourceIds: [...(props.resourceIds || [])],
-    workspaceContext: {
-      ...(props.workspaceContext || {}),
-      resourceIds: [...(props.resourceIds || [])],
-      resource_ids: [...(props.resourceIds || [])],
-    },
+    resourceIds: [...activeResourceIds.value],
+    workspaceContext: activeWorkspaceContext.value,
   })
 }
 
 /** 普通对话切换到备课后，在同一条消息时间线里追加补充信息卡片。 */
 async function enterPlanningInCurrentConversation() {
   outlineData.value = null
+  activeLearningGraphMessageId = null
   planVersion.value = 1
   outlinePythonSessionId.value = String(props.sessionId || '')
   outlineGenerationStage.value = ''
@@ -1574,6 +1669,8 @@ async function restoreSession() {
     })
 
     if (planJson) {
+      activeLearningGraphMessageId = null
+      showLearningGraphs(planJson.learning_graphs || localOutlineDraft?.learning_graphs)
       outlineData.value = {
         markdown: planJsonToMarkdown(planJson),
         title: planJson.title || '教学设计方案',
@@ -1787,6 +1884,9 @@ async function restoreSession() {
               <p class="clarification-hint">{{ CLARIFICATION_LABELS.hint }}</p>
             </div>
 
+            <!-- 双图谱：默认知识图谱，按钮切换技能图谱。 -->
+            <LearningGraphPanel v-else-if="msg.type === 'learning_graph'" :graphs="msg.data" />
+
             <!-- AI Markdown 大纲消息：使用 markstream-vue 渲染，占满全宽 -->
             <div v-else-if="msg.type === 'markdown'" class="ai-bubble">
               <div class="ai-markdown-body">
@@ -1885,6 +1985,12 @@ async function restoreSession() {
     <!-- 底部输入区（flex 布局固定在页面底部，不随消息滚动）
          澄清阶段启用输入框，供教师补充回复后端提出的澄清问题 -->
     <footer class="chat-composer">
+      <div class="composer-resource-row">
+        <input ref="resourceFileInput" class="composer-resource-input" type="file" multiple accept=".pdf,.doc,.docx,.ppt,.pptx,.xls,.xlsx,.csv,.tsv,.txt,.md,.jpg,.jpeg,.png,.gif,.webp,.mp3,.wav,.m4a,.ogg,.mp4,.avi,.mov,.mkv,.webm" @change="uploadChatResources" />
+        <el-button text size="small" :icon="Paperclip" :loading="resourceUploading" :disabled="resourceUploading" @click="resourceFileInput?.click()">添加资料</el-button>
+        <span v-if="activeResourceIds.length" class="composer-resource-count">已绑定 {{ activeResourceIds.length }} 份资料 · 解析完成后用于生成</span>
+        <el-tag v-for="resource in attachedResources" :key="resource.id" size="small" closable @close="removeChatResource(resource.id)">{{ resource.file_name }}</el-tag>
+      </div>
       <div v-if="isGeneralChat" class="route-preference-row">
         <span>任务方式</span>
         <el-select v-model="selectedRoutePreference" size="small" aria-label="任务分流方式" style="width: 126px">
@@ -2328,6 +2434,9 @@ async function restoreSession() {
   border-top: 1px solid var(--zh-line-parting);
   background: var(--zh-background-primary);
 }
+.composer-resource-row { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; padding-bottom: 7px; }
+.composer-resource-input { display: none; }
+.composer-resource-count { color: var(--zh-text-caption); font-size: var(--zh-font-size11); }
 .composer-input-row {
   display: flex;
   align-items: flex-end;

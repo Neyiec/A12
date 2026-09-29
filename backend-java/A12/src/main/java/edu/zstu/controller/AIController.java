@@ -1,24 +1,18 @@
 package edu.zstu.controller;
 
 import edu.zstu.dto.ConversationDTO;
-import edu.zstu.dto.IntentRecognitionDTO;
 import edu.zstu.dto.PlanConfirmationDTO;
 import edu.zstu.dto.TaskCreateDTO;
 import edu.zstu.service.AIService;
-import edu.zstu.service.PythonPptClient;
-import com.fasterxml.jackson.core.type.TypeReference;
-import com.fasterxml.jackson.databind.ObjectMapper;
 import edu.zstu.utils.Result;
 import edu.zstu.vo.ConversationVO;
 import edu.zstu.vo.TaskVO;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.http.MediaType;
 import org.springframework.web.bind.annotation.*;
-import org.springframework.web.multipart.MultipartFile;
 import org.springframework.web.servlet.mvc.method.annotation.SseEmitter;
 
 import java.io.IOException;
-import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 
@@ -33,10 +27,6 @@ import java.util.Map;
 public class AIController {
     @Autowired
     private AIService aiService;
-    @Autowired
-    private PythonPptClient pythonPptClient;
-    @Autowired
-    private ObjectMapper objectMapper;
 
     /**
      * API-10 创建备课会话
@@ -92,14 +82,6 @@ public class AIController {
      * @param dto 消息请求参数 {@link ConversationDTO}（messages 必填）
      * @return 更新后的会话信息 {@link ConversationVO}
      */
-    @PostMapping("/sessions/{id}/messages")
-    public Result<ConversationVO> sendMessage(@PathVariable String id,
-                                              @RequestBody ConversationDTO dto) {
-        try {
-            return Result.success(aiService.sendMessage(id, dto));
-        } catch (RuntimeException e) { return Result.error(400, e.getMessage()); }
-    }
-
     /**
      * API-13S 流式发送会话消息（SSE）
      *
@@ -110,87 +92,12 @@ public class AIController {
      * @param dto 消息请求参数 {@link ConversationDTO}
      * @return SSE 事件流
      */
-    @PostMapping(value = "/sessions/{id}/messages/stream", produces = MediaType.TEXT_EVENT_STREAM_VALUE)
-    public SseEmitter sendMessageStream(@PathVariable String id, @RequestBody ConversationDTO dto) {
-        return aiService.sendMessageStream(id, dto);
-    }
-
-    @PostMapping(value = "/sessions/{id}/audio-messages", consumes = MediaType.MULTIPART_FORM_DATA_VALUE)
-    public Result<ConversationVO> sendAudioMessage(@PathVariable String id,
-                                                   @RequestParam("file") MultipartFile file,
-                                                   @RequestParam(required = false) String language,
-                                                   @RequestParam(required = false) String message,
-                                                   @RequestParam(required = false) String resource_ids,
-                                                   @RequestParam(required = false) Boolean enable_rag,
-                                                   @RequestParam(required = false) Boolean enable_web,
-                                                   @RequestParam(required = false) Integer slide_count,
-                                                   @RequestParam(required = false) String known_context,
-                                                   @RequestParam(required = false) String context_summary) {
+    /** 浏览器直连 FastAPI 后，只将已生成的大纲结果保存到业务库。 */
+    @PostMapping("/sessions/{id}/outline-results")
+    public Result<ConversationVO> saveDirectOutlineResult(@PathVariable String id,
+                                                            @RequestBody Map<String, Object> result) {
         try {
-            ConversationDTO dto = new ConversationDTO();
-            dto.setMessage(message);
-            dto.setResource_ids(resource_ids);
-            dto.setEnable_rag(enable_rag);
-            dto.setEnable_web(enable_web);
-            dto.setSlide_count(slide_count);
-            dto.setKnown_context(known_context);
-            dto.setContext_summary(context_summary);
-            return Result.success(aiService.sendAudioMessage(id, file, language, dto));
-        } catch (RuntimeException e) { return Result.error(400, e.getMessage()); }
-    }
-
-    @PostMapping("/intent/recognize")
-    public Result<?> recognizeIntent(@RequestBody IntentRecognitionDTO dto) {
-        try {
-            return Result.success(pythonData(pythonPptClient.recognizeIntent(intentPayload(dto, "text"))));
-        } catch (RuntimeException e) { return Result.error(400, e.getMessage()); }
-    }
-
-    @PostMapping(value = "/intent/recognize-audio", consumes = MediaType.MULTIPART_FORM_DATA_VALUE)
-    public Result<?> recognizeAudioIntent(@RequestParam("file") MultipartFile file,
-                                          @RequestParam(required = false) String language,
-                                          @RequestParam(required = false) String user_id,
-                                          @RequestParam(required = false) String session_id,
-                                          @RequestParam(required = false) String title,
-                                          @RequestParam(required = false) String message,
-                                          @RequestParam(required = false) String history,
-                                          @RequestParam(required = false) String known_context,
-                                          @RequestParam(required = false) String resource_ids,
-                                          @RequestParam(required = false) Boolean enable_rag,
-                                          @RequestParam(required = false) Boolean enable_web,
-                                          @RequestParam(required = false) Integer slide_count) {
-        try {
-            Map<String, Object> asr = pythonPptClient.transcribeAudio(file.getBytes(), file.getOriginalFilename(), file.getContentType(), language);
-            String transcript = extractAsrText(asr);
-            if (transcript.isBlank()) {
-                return Result.error(400, "语音转写未返回有效文本");
-            }
-            IntentRecognitionDTO dto = new IntentRecognitionDTO();
-            dto.setUser_id(user_id);
-            dto.setSession_id(session_id);
-            dto.setTitle(title);
-            dto.setMessage(mergeMessage(message, transcript));
-            dto.setHistory(history);
-            dto.setKnown_context(known_context);
-            dto.setResource_ids(resource_ids);
-            dto.setEnable_rag(enable_rag);
-            dto.setEnable_web(enable_web);
-            dto.setSlide_count(slide_count);
-            dto.setLanguage(language);
-            Object data = pythonData(pythonPptClient.recognizeIntent(intentPayload(dto, "audio")));
-            if (data instanceof Map<?, ?> map) {
-                Map<String, Object> enriched = new LinkedHashMap<>();
-                for (Map.Entry<?, ?> entry : map.entrySet()) {
-                    if (entry.getKey() != null) {
-                        enriched.put(String.valueOf(entry.getKey()), entry.getValue());
-                    }
-                }
-                enriched.put("asr", asr.get("data"));
-                return Result.success(enriched);
-            }
-            return Result.success(data);
-        } catch (IOException e) {
-            return Result.error(400, "读取语音文件失败: " + e.getMessage());
+            return Result.success(aiService.saveDirectOutlineResult(id, result));
         } catch (RuntimeException e) { return Result.error(400, e.getMessage()); }
     }
 
@@ -284,60 +191,4 @@ public class AIController {
         return emitter;
     }
 
-    private Map<String, Object> intentPayload(IntentRecognitionDTO dto, String inputType) {
-        Map<String, Object> payload = new LinkedHashMap<>();
-        payload.put("user_id", String.valueOf(edu.zstu.utils.CurrentHolder.getCurrentId()));
-        payload.put("session_id", blankToNull(dto.getSession_id()));
-        payload.put("title", blankToNull(dto.getTitle()));
-        payload.put("message", dto.getMessage());
-        payload.put("history", parseJsonOrDefault(dto.getHistory(), List.of()));
-        payload.put("known_context", parseJsonOrDefault(dto.getKnown_context(), Map.of()));
-        payload.put("resource_ids", parseJsonOrDefault(dto.getResource_ids(), List.of()));
-        payload.put("enable_rag", Boolean.TRUE.equals(dto.getEnable_rag()));
-        payload.put("enable_web", Boolean.TRUE.equals(dto.getEnable_web()));
-        payload.put("slide_count", dto.getSlide_count() == null ? 8 : dto.getSlide_count());
-        payload.put("language", blankToDefault(dto.getLanguage(), "zh-CN"));
-        payload.put("input_type", inputType);
-        return payload;
-    }
-
-    private Object parseJsonOrDefault(String raw, Object fallback) {
-        if (raw == null || raw.isBlank()) return fallback;
-        try {
-            return objectMapper.readValue(raw, new TypeReference<Object>() {});
-        } catch (Exception ignored) {
-            return fallback;
-        }
-    }
-
-    private String extractAsrText(Map<String, Object> response) {
-        Object data = response == null ? null : response.get("data");
-        if (data instanceof Map<?, ?> map) {
-            Object text = map.get("text");
-            return text == null ? "" : String.valueOf(text).trim();
-        }
-        return "";
-    }
-
-    private Object pythonData(Map<String, Object> response) {
-        if (response == null) return null;
-        Object code = response.get("code");
-        if (code != null && !"200".equals(String.valueOf(code))) {
-            throw new RuntimeException(String.valueOf(response.getOrDefault("message", "Python服务调用失败")));
-        }
-        return response.get("data");
-    }
-
-    private String mergeMessage(String manualMessage, String transcript) {
-        if (manualMessage == null || manualMessage.isBlank()) return transcript;
-        return manualMessage.trim() + "\n" + transcript.trim();
-    }
-
-    private String blankToNull(String value) {
-        return value == null || value.isBlank() ? null : value;
-    }
-
-    private String blankToDefault(String value, String fallback) {
-        return value == null || value.isBlank() ? fallback : value;
-    }
 }

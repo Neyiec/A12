@@ -69,6 +69,8 @@ def record_run(status: str, latency_ms: int, model: str, *, fallback_reason: str
 
 
 async def probe_model() -> dict[str, Any]:
+    from .direct_auth import require_active_browser_token
+    await require_active_browser_token()
     settings = get_settings()
     if not settings.openai_api_key:
         return {"configured": False, "available": False, "status": "not_configured"}

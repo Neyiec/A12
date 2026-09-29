@@ -80,7 +80,9 @@ export function useSSEChat() {
     isConnecting.value = true
 
     const userStore = useUserStore()
-    const baseURL = import.meta.env.VITE_API_BASE_URL || ''
+    const baseURL = url.startsWith('/api/v1/python/')
+      ? (import.meta.env.VITE_PYTHON_API_BASE_URL || '')
+      : (import.meta.env.VITE_API_BASE_URL || '')
 
     try {
       const response = await fetch(`${baseURL}${url}`, {

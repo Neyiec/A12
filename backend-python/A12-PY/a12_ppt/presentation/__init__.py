@@ -9,6 +9,7 @@ from .template_store import (
     get_template_file,
     list_templates,
     replace_template,
+    set_template_status,
 )
 
 __all__ = [
@@ -24,4 +25,5 @@ __all__ = [
     "replace_template",
     "delete_template",
     "get_template_file",
+    "set_template_status",
 ]

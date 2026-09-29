@@ -64,6 +64,7 @@ mybatis:
 a12:
   python:
     base-url: http://127.0.0.1:8001
+    internal-key: ${A12_PYTHON_INTERNAL_KEY:}
     connect-timeout-seconds: 5
     request-timeout-seconds: 180
   export:

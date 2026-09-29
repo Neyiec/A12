@@ -9,6 +9,7 @@ from pathlib import Path
 from typing import Any
 
 from ..config import get_settings
+from ..direct_auth import direct_user_id
 from ..llm import EmbeddingClient
 from ..models import ResourceIndexMetadataRequest, ResourceIndexSyncRequest
 from .chunks import chunk_records
@@ -28,6 +29,11 @@ FALLBACK_RETRIEVAL_LOG_PATH = INDEX_DIR / "retrieval_logs.jsonl"
 
 
 class ResourceIndexStore:
+    @staticmethod
+    def _visible(source_type: str, metadata: dict[str, Any]) -> bool:
+        user_id = direct_user_id.get()
+        return user_id is None or source_type == "public" or str(metadata.get("owner_user_id") or "") == user_id
+
     def __init__(self) -> None:
         self.settings = get_settings()
         self.embedding_client = EmbeddingClient()
@@ -192,6 +198,15 @@ class ResourceIndexStore:
                     "error_message": message,
                 }
             self._replace_index(request, metadata, fingerprint, text, chunks, embeddings, chunk_metadata)
+            # Graph evidence follows successful indexing, but cannot make RAG ingestion fail.
+            course_id = str((request.metadata or {}).get("course_id") or "").strip()
+            if course_id and request.owner_user_id:
+                try:
+                    from ..course_graph import course_graph_store
+                    course_graph_store.add_resource_evidence(
+                        str(request.owner_user_id), course_id, key, fingerprint, text)
+                except Exception:
+                    logger.warning("课程图谱证据更新失败 resource_key=%s", key, exc_info=True)
             elapsed = round((time.perf_counter() - started_at) * 1000)
             logger.info(
                 "sync_resource 完成 resource_key=%s status=indexed text_length=%d chunks=%d embeddings=%d 耗时=%dms",
@@ -279,6 +294,12 @@ class ResourceIndexStore:
             with self._connect() as conn:
                 with conn.cursor() as cur:
                     cur.execute("DELETE FROM a12_resource_index WHERE resource_key = %s", (key,))
+            try:
+                with self._connect() as conn:
+                    with conn.cursor() as cur:
+                        cur.execute("DELETE FROM a12_graph_evidence WHERE resource_key = %s", (key,))
+            except Exception:
+                logger.warning("清除课程图谱证据失败 resource_key=%s", key, exc_info=True)
         else:
             data = self._read_fallback()
             data.get("resources", {}).pop(key, None)
@@ -399,11 +420,15 @@ class ResourceIndexStore:
             return {"context": "", "matches": []}
         key_filter = "AND resource_key = ANY(%s)" if keys else ""
         source_filter = "AND source_type = %s" if source_type else ""
+        user_id = direct_user_id.get()
+        owner_filter = "AND (source_type = 'public' OR metadata->>'owner_user_id' = %s)" if user_id else ""
         params: list[Any] = [query_vector]
         if keys:
             params.append(keys)
         if source_type:
             params.append(source_type)
+        if user_id:
+            params.append(user_id)
         params.extend([query_vector, top_k])
         with self._connect() as conn:
             with conn.cursor() as cur:
@@ -415,6 +440,7 @@ class ResourceIndexStore:
                     WHERE embedding_vector IS NOT NULL
                       {key_filter}
                       {source_filter}
+                      {owner_filter}
                       AND COALESCE((metadata->>'available')::boolean, TRUE) IS TRUE
                       AND COALESCE((metadata->>'allow_ai')::boolean, TRUE) IS TRUE
                     ORDER BY embedding_vector <=> %s::vector
@@ -460,6 +486,10 @@ class ResourceIndexStore:
         if source_type:
             filters.append("source_type = %s")
             params.append(source_type)
+        user_id = direct_user_id.get()
+        if user_id:
+            filters.append("(source_type = 'public' OR metadata->>'owner_user_id' = %s)")
+            params.append(user_id)
         filters.append("(" + " OR ".join("LOWER(content) LIKE %s" for _ in terms) + ")")
         params.extend([f"%{term}%" for term in terms])
         params.append(top_k)
@@ -476,18 +506,22 @@ class ResourceIndexStore:
                  "end_timestamp": (row[5] or {}).get("end_timestamp")} for row in rows]
 
     def overview(self) -> dict[str, Any]:
+        user_id = direct_user_id.get()
+        scope = "WHERE (source_type = 'public' OR metadata->>'owner_user_id' = %s)" if user_id else ""
+        params = (user_id,) if user_id else ()
         if self.available:
             with self._connect() as conn:
                 with conn.cursor() as cur:
-                    cur.execute("SELECT COUNT(*), COALESCE(SUM(chunk_count), 0) FROM a12_resource_index")
+                    cur.execute(f"SELECT COUNT(*), COALESCE(SUM(chunk_count), 0) FROM a12_resource_index {scope}", params)
                     total_resources, total_chunks = cur.fetchone()
                     cur.execute(
                         """
                         SELECT source_type, parse_status, available, allow_ai, COUNT(*), COALESCE(SUM(chunk_count), 0)
                         FROM a12_resource_index
+                        {scope}
                         GROUP BY source_type, parse_status, available, allow_ai
                         ORDER BY source_type, parse_status
-                        """
+                        """.replace("{scope}", scope), params
                     )
                     groups = [
                         {
@@ -500,7 +534,8 @@ class ResourceIndexStore:
                         }
                         for row in cur.fetchall()
                     ]
-                    cur.execute("SELECT COUNT(*) FROM a12_retrieval_log")
+                    log_scope = " WHERE metadata->>'user_id' = %s" if user_id else ""
+                    cur.execute(f"SELECT COUNT(*) FROM a12_retrieval_log{log_scope}", params)
                     retrieval_log_count = cur.fetchone()[0]
             ready_for_rag = total_resources > 0 and total_chunks > 0
             return {
@@ -520,8 +555,9 @@ class ResourceIndexStore:
             }
 
         data = self._read_fallback()
-        resources = list(data.get("resources", {}).values())
-        chunk_count = sum(len(items) for items in data.get("chunks", {}).values())
+        resources = [item for item in data.get("resources", {}).values()
+                     if self._visible(item.get("source_type", ""), item.get("metadata") or {})]
+        chunk_count = sum(len(data.get("chunks", {}).get(item.get("resource_key"), [])) for item in resources)
         ready_for_rag = len(resources) > 0 and chunk_count > 0
         return {
             "postgres_available": False,
@@ -534,7 +570,7 @@ class ResourceIndexStore:
                 if ready_for_rag
                 else "PostgreSQL 不可用且本地知识库为空，请检查数据库后同步资源。"
             ),
-            "retrieval_log_count": self._fallback_log_count(),
+            "retrieval_log_count": self.list_retrieval_logs(1).get("total", 0),
             "groups": self._fallback_groups(resources),
             "fallback_path": str(FALLBACK_INDEX_PATH),
         }
@@ -553,6 +589,10 @@ class ResourceIndexStore:
         if self.available:
             filters = []
             params: list[Any] = []
+            user_id = direct_user_id.get()
+            if user_id:
+                filters.append("(source_type = 'public' OR metadata->>'owner_user_id' = %s)")
+                params.append(user_id)
             if source_type:
                 filters.append("source_type = %s")
                 params.append(source_type)
@@ -585,7 +625,8 @@ class ResourceIndexStore:
                     items = [self._resource_row(row) for row in cur.fetchall()]
             return {"total": total, "limit": limit, "offset": offset, "items": items}
 
-        resources = list(self._read_fallback().get("resources", {}).values())
+        resources = [item for item in self._read_fallback().get("resources", {}).values()
+                     if self._visible(item.get("source_type", ""), item.get("metadata") or {})]
         if source_type:
             resources = [item for item in resources if item.get("source_type") == source_type]
         if available is not None:
@@ -621,6 +662,8 @@ class ResourceIndexStore:
                     if not row:
                         return None
                     resource = self._resource_row(row)
+                    if not self._visible(resource["source_type"], resource["metadata"]):
+                        return None
                     cur.execute(
                         """
                         SELECT chunk_id, chunk_index, content, metadata
@@ -646,6 +689,8 @@ class ResourceIndexStore:
         resource = data.get("resources", {}).get(key)
         if not resource:
             return None
+        if not self._visible(resource.get("source_type", ""), resource.get("metadata") or {}):
+            return None
         result = dict(resource)
         result["chunks"] = data.get("chunks", {}).get(key, [])[:chunk_limit]
         return result
@@ -654,18 +699,22 @@ class ResourceIndexStore:
         limit = max(1, min(limit, 200))
         offset = max(0, offset)
         if self.available:
+            user_id = direct_user_id.get()
+            scope = " WHERE metadata->>'user_id' = %s" if user_id else ""
+            params = (user_id,) if user_id else ()
             with self._connect() as conn:
                 with conn.cursor() as cur:
-                    cur.execute("SELECT COUNT(*) FROM a12_retrieval_log")
+                    cur.execute(f"SELECT COUNT(*) FROM a12_retrieval_log{scope}", params)
                     total = cur.fetchone()[0]
                     cur.execute(
                         """
                         SELECT id, query, resource_ids, match_count, top_score, search_mode, latency_ms, metadata, created_at
                         FROM a12_retrieval_log
+                        {scope}
                         ORDER BY created_at DESC
                         LIMIT %s OFFSET %s
-                        """,
-                        (limit, offset),
+                        """.replace("{scope}", scope),
+                        (*params, limit, offset),
                     )
                     items = [
                         {
@@ -683,6 +732,9 @@ class ResourceIndexStore:
                     ]
             return {"total": total, "limit": limit, "offset": offset, "items": items}
         items = self._read_fallback_logs()
+        user_id = direct_user_id.get()
+        if user_id:
+            items = [item for item in items if str((item.get("metadata") or {}).get("user_id")) == user_id]
         total = len(items)
         return {"total": total, "limit": limit, "offset": offset, "items": items[offset:offset + limit]}
 
@@ -761,6 +813,8 @@ class ResourceIndexStore:
                 for item in matches[:5]
             ],
         }
+        if direct_user_id.get():
+            log_metadata["user_id"] = direct_user_id.get()
         if self.available:
             try:
                 with self._connect() as conn:
@@ -1001,17 +1055,20 @@ class ResourceIndexStore:
 
     def _load_chunks(self, resource_ids: list[str]) -> list[IndexedChunk]:
         keys = [resource_id for resource_id in resource_ids if ":" in resource_id]
+        user_id = direct_user_id.get()
         if self.available:
             with self._connect() as conn:
                 with conn.cursor() as cur:
                     key_filter = "AND resource_key = ANY(%s)" if keys else ""
-                    params: tuple[Any, ...] = (keys,) if keys else ()
+                    owner_filter = "AND (source_type = 'public' OR metadata->>'owner_user_id' = %s)" if user_id else ""
+                    params: tuple[Any, ...] = ((keys,) if keys else ()) + ((user_id,) if user_id else ())
                     cur.execute(
                         f"""
                         SELECT chunk_id, source_type, resource_id, chunk_index, content, embedding_vector::text, metadata
                         FROM a12_resource_index_chunk
                         WHERE COALESCE((metadata->>'available')::boolean, TRUE) IS TRUE
                           {key_filter}
+                          {owner_filter}
                           AND COALESCE((metadata->>'allow_ai')::boolean, TRUE) IS TRUE
                         ORDER BY resource_key, chunk_index
                         """,
@@ -1035,6 +1092,8 @@ class ResourceIndexStore:
         for key in target_keys:
             meta = data.get("resources", {}).get(key, {})
             if not meta.get("available", True) or not meta.get("allow_ai", True):
+                continue
+            if not self._visible(meta.get("source_type", ""), meta.get("metadata") or {}):
                 continue
             chunks.extend(IndexedChunk(**chunk) for chunk in data.get("chunks", {}).get(key, []))
         return chunks

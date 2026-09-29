@@ -1,0 +1,28 @@
+{
+  "course_id": "java-programming",
+  "title": "Java 程序设计（示例课程图谱，需任课教师审核）",
+  "nodes": [
+    {"id": "variables", "label": "变量与数据类型", "kind": "concept", "description": "理解类型、声明和赋值"},
+    {"id": "control_flow", "label": "条件与循环", "kind": "concept", "description": "理解程序分支和重复执行"},
+    {"id": "methods", "label": "方法与参数", "kind": "concept", "description": "理解方法签名、调用与返回值"},
+    {"id": "classes", "label": "类与对象", "kind": "concept", "description": "理解封装与对象实例"},
+    {"id": "collections", "label": "集合框架", "kind": "concept", "description": "理解 List、Set、Map 的用途"},
+    {"id": "hashmap", "label": "HashMap", "kind": "concept", "description": "理解键值映射、常见操作与适用场景"},
+    {"id": "write_method", "label": "编写并测试方法", "kind": "skill", "description": "能定义方法并用测试验证结果"},
+    {"id": "choose_collection", "label": "选择合适的集合", "kind": "skill", "description": "按去重、顺序和键值检索需求选择集合"},
+    {"id": "use_hashmap", "label": "使用 HashMap 解决计数问题", "kind": "skill", "description": "能够实现词频统计并解释键不存在时的处理"},
+    {"id": "test_hashmap", "label": "验证 HashMap 边界情况", "kind": "skill", "description": "使用空输入、重复键等案例检查程序"}
+  ],
+  "edges": [
+    {"source": "variables", "target": "control_flow", "relation": "prerequisite"},
+    {"source": "variables", "target": "methods", "relation": "prerequisite"},
+    {"source": "methods", "target": "write_method", "relation": "supports"},
+    {"source": "classes", "target": "collections", "relation": "prerequisite"},
+    {"source": "collections", "target": "hashmap", "relation": "contains"},
+    {"source": "collections", "target": "choose_collection", "relation": "supports"},
+    {"source": "hashmap", "target": "use_hashmap", "relation": "supports"},
+    {"source": "write_method", "target": "use_hashmap", "relation": "prerequisite"},
+    {"source": "use_hashmap", "target": "test_hashmap", "relation": "prerequisite"},
+    {"source": "test_hashmap", "target": "use_hashmap", "relation": "assesses"}
+  ]
+}

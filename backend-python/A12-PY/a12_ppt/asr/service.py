@@ -3,6 +3,7 @@ from pathlib import Path
 from openai import AsyncOpenAI
 
 from ..config import get_settings
+from ..direct_auth import require_active_browser_token
 
 """语音转文字服务"""
 async def transcribe_audio(path: Path, language: str | None = None) -> dict:
@@ -15,6 +16,7 @@ async def transcribe_audio(path: Path, language: str | None = None) -> dict:
             "status": "unavailable",
             "error_message": "ASR_API_KEY (fallback OPENAI_API_KEY) is not configured",
         }
+    await require_active_browser_token()
     try:
         # ASR 可独立接入第三方平台（ASR_BASE_URL/ASR_API_KEY），未配置时回落 OPENAI_BASE_URL
         client = AsyncOpenAI(

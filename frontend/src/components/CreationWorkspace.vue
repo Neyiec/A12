@@ -4,7 +4,7 @@ import { onBeforeRouteLeave, useRoute, useRouter } from 'vue-router'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import { Aim, ArrowDown, ArrowUp, Plus, Promotion } from '@element-plus/icons-vue'
 import MarkdownRender from 'markstream-vue'
-import { addProjectPermission, archiveProject, batchSaveProjectPages, copyProject, createCommunitySubmission, createProject, createProjectPage, deleteProject, deleteProjectPage, downloadResource, exportLessonPlanDocx, exportPresentationPptx, findUserByEmail, findUserByUsername, generateInteractiveModule, generateLessonPlan, generatePresentationStream, getAiPlan, getProject, getProjectPage, getProjectVersionDiff, listProjectPages, listProjectVersions, listProjects, listResources, modifyPresentation, modifyPresentationSlide, patchProject, recognizeIntent, recordAiFeedback, restoreProject, restoreProjectVersion, reviseProjectWithAi, saveCommunitySubmissionVersion, saveProjectPage, saveProjectVersion, sendAiSessionAudioMessage, sendAiSessionMessage, streamGeneralChat, submitCommunitySubmission, transcribeAudio, uploadResource, validatePresentationHtml, validateProjectComponent } from '../apis/teacher'
+import { addProjectPermission, archiveProject, batchSaveProjectPages, copyProject, createCommunitySubmission, createProject, createProjectPage, deleteProject, deleteProjectPage, downloadResource, exportLessonPlanDocx, exportPresentationPptx, findUserByEmail, findUserByUsername, generateInteractiveModule, generateLessonPlan, generatePresentationStream, getAiPlan, getProject, getProjectPage, getProjectVersionDiff, listProjectPages, listProjectVersions, listProjects, listResources, modifyPresentation, modifyPresentationSlide, patchProject, recognizeIntent, recordAiFeedback, restoreProject, restoreProjectVersion, reviseProjectWithAi, saveCommunitySubmissionVersion, saveProjectPage, saveProjectVersion, sendDirectOutlineSessionMessage, streamGeneralChat, submitCommunitySubmission, transcribeAudio, uploadResource, validatePresentationHtml, validateProjectComponent } from '../apis/teacher'
 import { secureHtmlForSandbox } from '../utils/htmlSecurity'
 import { bindSubjectInteractions } from '../utils/subjectInteraction'
 import { canLandPptDirectEdit, placeLandPptCaret, serializeLandPptEditableDocument, shouldCommitLandPptInlineEdit } from '../utils/landpptQuickEdit'
@@ -237,6 +237,8 @@ const workspaceResourceBindingOverride = ref(null)
 const contextManagerVisible = ref(false)
 const contextManagerIds = ref([])
 const contextManagerSaving = ref(false)
+const contextResourceInput = ref(null)
+const contextResourceUploading = ref(false)
 const lessonPlanEditorRef = ref(null)
 const lessonPlanPreviewVisible = ref(false)
 const lessonPlanPreviewDraft = ref(null)
@@ -718,6 +720,29 @@ const workspaceContextPayload = () => {
 const openWorkspaceContextManager = () => {
   contextManagerIds.value = [...workspaceContextPayload().resource_ids]
   contextManagerVisible.value = true
+}
+const uploadWorkspaceContextResources = async (event) => {
+  const files = Array.from(event.target?.files || [])
+  if (event.target) event.target.value = ''
+  if (!files.length || contextResourceUploading.value) return
+  contextResourceUploading.value = true
+  let uploaded = 0
+  try {
+    for (const file of files) {
+      const result = unwrapResponse(await uploadResource(file)) || {}
+      const id = result.id || result.resource_id || result.resourceId
+      if (!id) throw new Error(`${file.name} 上传成功但未返回资源 ID`)
+      const resource = normalizeWorkspaceResource({ ...result, id, file_name: file.name, file_type: file.type })
+      workspaceResources.value = [resource, ...workspaceResources.value.filter((item) => item.id !== resource.id)]
+      contextManagerIds.value = normalizedResourceIds([...contextManagerIds.value, resource.id])
+      uploaded += 1
+    }
+    WorkspaceMessage.success(`已上传并勾选 ${uploaded} 份资料，保存绑定后用于后续生成`)
+  } catch (error) {
+    WorkspaceMessage.error(error?.message || '资料上传失败')
+  } finally {
+    contextResourceUploading.value = false
+  }
 }
 const removeContextResource = (id) => {
   contextManagerIds.value = contextManagerIds.value.filter((item) => String(item) !== String(id))
@@ -6399,11 +6424,11 @@ const submitRevision = async ({ operation = 'modify_page' } = {}) => {
     }
     else if (sessionId.value) {
       revisionStage.value = '正在处理页面修改请求…'
-      const response = unwrapResponse(await sendAiSessionMessage(sessionId.value, {
-        message: revisionInstruction,
-        messages: JSON.stringify([{ role: 'user', content: revisionInstruction }]),
-        known_context: JSON.stringify({ workspace_context: workspaceContextPayload() }),
-      }))
+      const response = unwrapResponse(await sendDirectOutlineSessionMessage(sessionId.value,
+        revisionInstruction, { workspace_context: workspaceContextPayload() }, workspacePythonSessionId()))
+      if (response?.python_session_id) presentationMetadata.value = {
+        ...(presentationMetadata.value || {}), python_session_id: response.python_session_id,
+      }
       if (showClarificationForResponse(response, 'session')) return
     }
     if (applied) closeDiscussionContext()
@@ -6435,11 +6460,11 @@ const submitClarification = async (selection) => {
   try {
     let response
     if (sessionId.value) {
-      response = unwrapResponse(await sendAiSessionMessage(sessionId.value, {
-        message: selection.answer,
-        messages: JSON.stringify([{ role: 'user', content: selection.answer }]),
-        known_context: JSON.stringify({ ...knownContext, workspace_context: workspaceContextPayload() }),
-      }))
+      response = unwrapResponse(await sendDirectOutlineSessionMessage(sessionId.value,
+        selection.answer, { ...knownContext, workspace_context: workspaceContextPayload() }, workspacePythonSessionId()))
+      if (response?.python_session_id) presentationMetadata.value = {
+        ...(presentationMetadata.value || {}), python_session_id: response.python_session_id,
+      }
     } else {
       response = unwrapResponse(await reviseProjectWithAi(projectId.value, {
         target_type: 'page',
@@ -7506,55 +7531,19 @@ const sendAssistantMessage = async () => {
   if (['modify_page', 'modify_component', 'generate_content'].includes(result.operation)) return submitRevision({ operation: result.operation })
   return submitDiscussion()
 }
-/** 工作台语音输入：有正式 AI 会话时走 API-13A，确保语音和文字共享同一条会话上下文。 */
+/** 工作台语音由浏览器直连 FastAPI 转写，教师确认文字后再发送。 */
 const handleWorkspaceVoice = async (file) => {
   if (!file || workspaceVoiceSubmitting.value || isAssistantSubmitting.value) return
   workspaceVoiceSubmitting.value = true
   try {
-    if (!sessionId.value) {
-      // 直接打开项目时可能没有备课会话；此时仍允许录音转写，随后由教师发送进入 API-13B。
-      const formData = new FormData()
-      formData.append('file', file)
-      formData.append('language', 'zh')
-      const response = await transcribeAudio(formData)
-      const transcript = String(response?.data?.text || response?.text || '').trim()
-      if (!transcript) throw new Error('未能识别到有效语音')
-      prompt.value = prompt.value.trim() ? `${prompt.value.trim()} ${transcript}` : transcript
-      WorkspaceMessage.success('语音已转写，请确认后发送')
-      return
-    }
-
-    const context = workspaceContextPayload()
     const formData = new FormData()
     formData.append('file', file)
     formData.append('language', 'zh')
-    formData.append('resource_ids', JSON.stringify(context.resource_ids || []))
-    formData.append('enable_rag', String(Boolean(context.resource_ids?.length)))
-    formData.append('enable_web', 'false')
-    formData.append('known_context', JSON.stringify({
-      page: current.value ? {
-        page_id: current.value.pageId || current.value.page_id || current.value.componentId || null,
-        title: current.value.title || '',
-        slide_no: selectedSlide.value + 1,
-      } : null,
-      workspace_context: context,
-    }))
-    formData.append('context_summary', workspaceDiscussionContext())
-    const response = await sendAiSessionAudioMessage(sessionId.value, formData)
-    const conversation = unwrapResponse(response) || {}
-    const storedMessages = parseJson(conversation.messages, [])
-      .filter((message) => message && (message.role === 'user' || message.role === 'assistant') && String(message.content || '').trim())
-    const latestUser = [...storedMessages].reverse().find((message) => message.role === 'user')
-    const latestAssistant = [...storedMessages].reverse().find((message) => message.role === 'assistant')
-    if (latestUser) {
-      const text = String(latestUser.content).trim()
-      prompt.value = text
-      messages.push({ role: 'user', text, includeInContext: false, kind: 'voice-session' })
-    }
-    if (latestAssistant) {
-      messages.push({ role: 'assistant', text: String(latestAssistant.content).trim(), includeInContext: false, kind: 'voice-session-reply' })
-    }
-    WorkspaceMessage.success('语音已上传，AI 已沿用当前工作台会话继续处理；确认文字后点击发送即可执行页面操作')
+    const response = await transcribeAudio(formData)
+    const transcript = String(response?.data?.text || response?.text || '').trim()
+    if (!transcript) throw new Error('未能识别到有效语音')
+    prompt.value = prompt.value.trim() ? `${prompt.value.trim()} ${transcript}` : transcript
+    WorkspaceMessage.success('语音已转写，请确认后发送')
   } catch (error) {
     WorkspaceMessage.error(error?.message || '语音会话提交失败，请检查麦克风权限后重试')
   } finally {
@@ -8183,13 +8172,15 @@ const selectSlide = (index) => { selectedSlide.value = index; selectedElementId.
           <small>v{{ workspaceContextPayload().community.version || 1 }} · {{ workspaceContextPayload().community.license || '授权未说明' }}</small>
         </section>
         <p class="dialog-hint">选择后续讨论、修改和生成时允许 AI 检索的个人资料。绑定关系只保存在当前项目，不会写回社区。</p>
+        <input ref="contextResourceInput" type="file" multiple accept=".pdf,.doc,.docx,.ppt,.pptx,.xls,.xlsx,.csv,.tsv,.txt,.md,.jpg,.jpeg,.png,.gif,.webp,.mp3,.wav,.m4a,.ogg,.mp4,.avi,.mov,.mkv,.webm" style="display: none" @change="uploadWorkspaceContextResources" />
+        <el-button :loading="contextResourceUploading" :disabled="contextResourceUploading" @click="contextResourceInput?.click()">上传资料并引用</el-button>
         <el-checkbox-group v-model="contextManagerIds" v-loading="workspaceResourcesLoading" class="context-resource-picker">
           <el-checkbox v-for="resource in workspaceResources" :key="resource.id" :value="resource.id"><span>{{ resource.name }}</span><small>{{ resource.fileType || '资料' }}</small></el-checkbox>
-          <el-empty v-if="!workspaceResourcesLoading && !workspaceResources.length" description="暂无个人资料，请先在首页上传资料" />
+          <el-empty v-if="!workspaceResourcesLoading && !workspaceResources.length" description="暂无个人资料，可在此上传" />
         </el-checkbox-group>
         <div v-if="contextManagerIds.length" class="context-selected-resources"><strong>当前绑定</strong><el-tag v-for="id in contextManagerIds" :key="id" closable @close="removeContextResource(id)">{{ workspaceResources.find((resource) => resource.id === String(id))?.name || `资源 ${id}` }}</el-tag></div>
       </div>
-      <template #footer><el-button @click="contextManagerVisible = false">取消</el-button><el-button type="primary" :loading="contextManagerSaving" @click="saveWorkspaceContextBindings">保存绑定</el-button></template>
+      <template #footer><el-button @click="contextManagerVisible = false">取消</el-button><el-button type="primary" :loading="contextManagerSaving" :disabled="contextResourceUploading" @click="saveWorkspaceContextBindings">保存绑定</el-button></template>
     </el-dialog>
     <el-dialog v-model="versionDialogVisible" align-center title="项目版本历史" width="min(720px, 92vw)" :close-on-click-modal="!versionActionLoading" :close-on-press-escape="!versionActionLoading" :show-close="!versionActionLoading">
       <p class="dialog-hint">保存关键阶段的课件，随时比较或恢复；恢复前会自动备份当前内容。</p>

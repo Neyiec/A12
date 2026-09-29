@@ -53,12 +53,26 @@ def ensure_ai_schema() -> bool:
           session_id VARCHAR(80), student_key VARCHAR(128), event_type VARCHAR(32) NOT NULL,
           question_id VARCHAR(128), answer TEXT, correct BOOLEAN, response_ms INT,
           metadata JSONB NOT NULL DEFAULT '{}'::jsonb, created_at TIMESTAMPTZ NOT NULL DEFAULT NOW())""",
+        """CREATE TABLE IF NOT EXISTS a12_course_graph (
+          user_id VARCHAR(64) NOT NULL, course_id VARCHAR(80) NOT NULL, title VARCHAR(255) NOT NULL,
+          version INT NOT NULL DEFAULT 1, graph_data JSONB NOT NULL, updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+          PRIMARY KEY(user_id, course_id))""",
+        """CREATE TABLE IF NOT EXISTS a12_graph_evidence (
+          id BIGSERIAL PRIMARY KEY, user_id VARCHAR(64) NOT NULL, course_id VARCHAR(80) NOT NULL,
+          resource_key VARCHAR(180) NOT NULL, content_sha256 VARCHAR(64) NOT NULL,
+          node_id VARCHAR(80) NOT NULL, excerpt TEXT NOT NULL, created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+          UNIQUE(user_id, course_id, resource_key, node_id))""",
+        """CREATE TABLE IF NOT EXISTS a12_outline_strategy_run (
+          id BIGSERIAL PRIMARY KEY, user_id VARCHAR(64) NOT NULL, session_id VARCHAR(80) NOT NULL,
+          course_id VARCHAR(80), strategy VARCHAR(32) NOT NULL, graph_version INT,
+          created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(), UNIQUE(user_id, session_id))""",
         "CREATE INDEX IF NOT EXISTS idx_a12_chat_session_user ON a12_outline_chat_session(user_id, updated_at DESC)",
         "CREATE INDEX IF NOT EXISTS idx_a12_chat_message_session ON a12_outline_chat_message(user_id, session_id, created_at)",
         "CREATE INDEX IF NOT EXISTS idx_a12_teacher_memory_user ON a12_teacher_style_memory(user_id, created_at DESC)",
         "CREATE INDEX IF NOT EXISTS idx_a12_ai_feedback_user ON a12_ai_feedback(user_id, created_at DESC)",
         "CREATE INDEX IF NOT EXISTS idx_a12_ai_run_created ON a12_ai_run_log(created_at DESC)",
         "CREATE INDEX IF NOT EXISTS idx_a12_classroom_project ON a12_classroom_event(user_id, project_id, created_at DESC)",
+        "CREATE INDEX IF NOT EXISTS idx_a12_graph_evidence_course ON a12_graph_evidence(user_id, course_id, node_id)",
     ]
     try:
         import psycopg

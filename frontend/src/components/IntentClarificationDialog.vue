@@ -48,7 +48,8 @@ const customValue = (item, index) => customAnswers[keyFor(item, index)] || ''
 const hasAnswer = (item, index) => Boolean(selectedOption(item, index)?.value || customValue(item, index).trim())
 
 const canSubmit = computed(() => questionItems.value.length > 0 && questionItems.value.every((item, index) => !item.required || hasAnswer(item, index)))
-const submitLabel = computed(() => questionItems.value.length > 1 ? '提交并生成大纲' : '继续生成')
+const submitLabel = computed(() => '提交补充信息')
+const clarificationRound = computed(() => Number(props.question?.round) || 1)
 const questionSignature = computed(() => JSON.stringify(questionItems.value.map((item) => ({
   field: item.field,
   label: item.label,
@@ -125,7 +126,7 @@ const close = () => emit('update:modelValue', false)
         <span class="clarification-mark" aria-hidden="true"><el-icon><QuestionFilled /></el-icon></span>
         <div>
           <strong>帮我确认一下方向</strong>
-          <span>AI 对你的意图还不够确定</span>
+          <span>第 {{ clarificationRound }} / 3 次确认，可选择建议或自行填写</span>
         </div>
       </div>
     </template>

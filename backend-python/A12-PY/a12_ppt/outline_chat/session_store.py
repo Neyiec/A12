@@ -52,7 +52,8 @@ class OutlineSessionStore:
         postgres_memory_store.append_message(user_id, session_id, role, content, metadata)
         key = self._key(user_id, session_id)
         if key in self._sessions:
-            self._sessions[key].setdefault("messages", []).append({"role": role, "content": content})
+            self._sessions[key].setdefault("messages", []).append({"role": role, "content": content,
+                                                                     "metadata": metadata or {}})
 
     def get(self, user_id: str, session_id: str) -> dict[str, Any] | None:
         row = postgres_memory_store.get_session(user_id, session_id)

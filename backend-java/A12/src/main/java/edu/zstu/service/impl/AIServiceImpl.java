@@ -14,20 +14,16 @@ import edu.zstu.mapper.AiTaskMapper;
 import edu.zstu.mapper.KbRetrievalLogMapper;
 import edu.zstu.service.AIService;
 import edu.zstu.service.BusinessLogService;
-import edu.zstu.service.PythonPptClient;
 import edu.zstu.utils.CurrentHolder;
 import edu.zstu.vo.ConversationVO;
 import edu.zstu.vo.TaskVO;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
-import org.springframework.web.multipart.MultipartFile;
-import org.springframework.web.servlet.mvc.method.annotation.SseEmitter;
 
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
-import java.util.concurrent.CompletableFuture;
 import java.util.stream.Collectors;
 
 @Slf4j
@@ -36,20 +32,17 @@ public class AIServiceImpl implements AIService {
     private final AiConversationMapper conversationMapper;
     private final AiTaskMapper taskMapper;
     private final BusinessLogService businessLogService;
-    private final PythonPptClient pythonPptClient;
     private final ObjectMapper objectMapper;
     private final KbRetrievalLogMapper retrievalLogMapper;
 
     public AIServiceImpl(AiConversationMapper conversationMapper,
                          AiTaskMapper taskMapper,
                          BusinessLogService businessLogService,
-                         PythonPptClient pythonPptClient,
                          ObjectMapper objectMapper,
                          KbRetrievalLogMapper retrievalLogMapper) {
         this.conversationMapper = conversationMapper;
         this.taskMapper = taskMapper;
         this.businessLogService = businessLogService;
-        this.pythonPptClient = pythonPptClient;
         this.objectMapper = objectMapper;
         this.retrievalLogMapper = retrievalLogMapper;
     }
@@ -62,7 +55,8 @@ public class AIServiceImpl implements AIService {
         if (isBlank(dto.getTitle())) throw new RuntimeException("会话标题不能为空");
 //        if (isBlank(dto.getSubject())) throw new RuntimeException("学科不能为空");
 //        if (isBlank(dto.getGrade())) throw new RuntimeException("年级不能为空");
-        String pythonSessionId = createPythonSessionIfAvailable(userId, dto.getTitle());
+        // Python 会话由浏览器首次直连 FastAPI 时创建，再由 outline-results 回填 ID。
+        String pythonSessionId = null;
 
         AI_Conversation conversation = new AI_Conversation();
         conversation.setUser_id(userId);
@@ -112,7 +106,7 @@ public class AIServiceImpl implements AIService {
             throw new IllegalStateException("此会话已有备课任务");
         }
         String title = defaultString(dto.getTitle(), conversation.getTitle());
-        String pythonSessionId = createPythonSessionIfAvailable(userId, title);
+        String pythonSessionId = null;
         AI_Task task = new AI_Task();
         task.setUser_id(userId);
         task.setConversation_id(conversationId);
@@ -160,7 +154,6 @@ public class AIServiceImpl implements AIService {
         if (conversation.getUser_id() != userId) throw new RuntimeException("无权操作该会话");
         if (dto.getTitle() != null) {
             conversation.setTitle(dto.getTitle());
-            updatePythonSessionTitleIfAvailable(userId, conversation.getPython_session_id(), dto.getTitle());
         }
         // 重命名/改状态只更新元数据；不能用旧快照覆盖正在流式追加的聊天消息。
         conversationMapper.updateMetadata(conversation.getId(), userId,
@@ -174,90 +167,60 @@ public class AIServiceImpl implements AIService {
         AI_Conversation conversation = requireConversation(id);
         Integer userId = requireLogin();
         if (conversation.getUser_id() != userId) throw new RuntimeException("无权操作该会话");
-        deletePythonSessionIfAvailable(userId, conversation.getPython_session_id());
         taskMapper.deleteByConversationId(conversation.getId(), userId);
         conversationMapper.deleteById(conversation.getId(), userId);
     }
 
     @Override
     @Transactional
-    public ConversationVO sendMessage(String id, ConversationDTO dto) {
-        log.info("sendMessage conversationId={}, enableRag={}, enableWeb={}, slideCount={}", id, dto.getEnable_rag(), dto.getEnable_web(), dto.getSlide_count());
+    public ConversationVO saveDirectOutlineResult(String id, Map<String, Object> data) {
         AI_Conversation conversation = requireConversation(id);
         AI_Task task = requireTaskByConversation(id);
         Integer userId = requireLogin();
-        if (conversation.getUser_id() != userId) throw new RuntimeException("无权操作该会话");
-
-        String userMessage = firstNotBlank(dto.getMessage(), latestUserMessage(dto.getMessages()));
-        if (isBlank(userMessage)) throw new RuntimeException("消息内容不能为空");
-
-        log.info("sendMessage callPythonOutline userId={}, conversationId={}, taskId={}", userId, conversation.getId(), task.getId());
-        PythonPptClient.OutlineChatResult pythonResult = callPythonOutline(userId, conversation, task, dto, userMessage);
-        log.info("sendMessage pythonResult conversationId={}, taskId={}, status={}, pythonSessionId={}, outlineId={}", conversation.getId(), task.getId(), pythonResult.status, pythonResult.pythonSessionId, pythonResult.outlineId);
-
-        if (dto.getTitle() != null) conversation.setTitle(dto.getTitle());
-        persistOutlineMessage(conversation, task, dto, userMessage, pythonResult);
+        if (!userId.equals(conversation.getUser_id())) throw new RuntimeException("无权操作该会话");
+        String message = String.valueOf(data.getOrDefault("message", "")).trim();
+        if (message.isEmpty() || message.length() > 60000) throw new RuntimeException("消息长度不合法");
+        String status = String.valueOf(data.getOrDefault("status", ""));
+        if (!List.of("completed", "need_clarification", "failed").contains(status)) throw new RuntimeException("无效大纲状态");
+        Object rawFinal = data.get("final_data");
+        if ("completed".equals(status) && !(rawFinal instanceof Map<?, ?>)) throw new RuntimeException("大纲结果不能为空");
+        OutlineResult pythonResult = new OutlineResult();
+        pythonResult.status = status;
+        pythonResult.pythonSessionId = String.valueOf(data.getOrDefault("python_session_id", ""));
+        pythonResult.question = String.valueOf(data.getOrDefault("question", ""));
+        pythonResult.errorMessage = String.valueOf(data.getOrDefault("error_message", ""));
+        if (rawFinal instanceof Map<?, ?> map) {
+            Map<String, Object> finalData = new LinkedHashMap<>();
+            map.forEach((key, value) -> finalData.put(String.valueOf(key), value));
+            pythonResult.finalData = finalData;
+            Map<String, Object> outline = new LinkedHashMap<>();
+            Object rawOutline = finalData.get("outline");
+            if (rawOutline instanceof Map<?, ?> outlineMap) {
+                outlineMap.forEach((key, value) -> outline.put(String.valueOf(key), value));
+            } else {
+                outline.putAll(finalData);
+            }
+            if (finalData.containsKey("learning_graphs")) outline.put("learning_graphs", finalData.get("learning_graphs"));
+            pythonResult.outline = outline;
+            pythonResult.outlineId = String.valueOf(finalData.getOrDefault("outline_id", ""));
+            pythonResult.title = String.valueOf(finalData.getOrDefault("title", ""));
+            pythonResult.slides = finalData.get("slides");
+            pythonResult.intent = finalData.get("intent");
+        }
+        ConversationDTO dto = new ConversationDTO();
+        persistOutlineMessage(conversation, task, dto, message, pythonResult);
         return toConversationVO(conversationMapper.findById(conversation.getId()));
-    }
-
-    @Override
-    public SseEmitter sendMessageStream(String id, ConversationDTO dto) {
-        SseEmitter emitter = new SseEmitter(620_000L);
-        try {
-            AI_Conversation conversation = requireConversation(id);
-            AI_Task task = requireTaskByConversation(id);
-            Integer userId = requireLogin();
-            if (conversation.getUser_id() != userId) throw new RuntimeException("无权操作该会话");
-            String userMessage = firstNotBlank(dto.getMessage(), latestUserMessage(dto.getMessages()));
-            if (isBlank(userMessage)) throw new RuntimeException("消息内容不能为空");
-
-            Map<String, Object> payload = buildOutlinePayload(userId, conversation, task, dto, userMessage);
-            log.info("sendMessageStream conversationId={}, taskId={}, userMessageLength={}",
-                    id, task.getId(), userMessage.length());
-            CompletableFuture.runAsync(() -> runOutlineStream(emitter, conversation, task, dto, userMessage, payload));
-        } catch (Exception e) {
-            log.warn("sendMessageStream init failed: {}", e.getMessage());
-            emitter.completeWithError(e);
-        }
-        return emitter;
-    }
-
-    /**
-     * 后台线程执行：边透传 Python 事件给前端，边累计解析结果，流结束后统一落库。
-     * 事件流已由 streamOutlineChatStreamed 原样透传（session/outline_delta/question/final/error）。
-     */
-    private void runOutlineStream(SseEmitter emitter, AI_Conversation conversation, AI_Task task,
-                                  ConversationDTO dto, String userMessage, Map<String, Object> payload) {
-        try {
-            PythonPptClient.OutlineChatResult result = pythonPptClient.streamOutlineChatStreamed(payload, emitter);
-            persistOutlineMessage(conversation, task, dto, userMessage, result);
-            sendGatewayEvent(emitter, "done", Map.of("status", result.status,
-                    "message", result.errorMessage == null ? "" : result.errorMessage));
-            emitter.complete();
-        } catch (Exception e) {
-            log.warn("runOutlineStream failed conversationId={}: {}", conversation.getId(), e.getMessage());
-            sendGatewayEvent(emitter, "error", Map.of("message", e.getMessage()));
-            emitter.complete();
-        }
-    }
-
-    private void sendGatewayEvent(SseEmitter emitter, String event, Object data) {
-        try {
-            emitter.send(SseEmitter.event().name(event).data(pythonPptClient.toJson(data)));
-        } catch (Exception ignored) {
-            // 客户端可能已断开，忽略发送失败
-        }
     }
 
     /**
      * 将一次大纲交互的用户消息与 Python 结果落库到会话与任务。
      */
     private void persistOutlineMessage(AI_Conversation conversation, AI_Task task, ConversationDTO dto,
-                                       String userMessage, PythonPptClient.OutlineChatResult pythonResult) {
+                                       String userMessage, OutlineResult pythonResult) {
         if (dto.getTitle() != null) conversation.setTitle(dto.getTitle());
         if (dto.getStatus() != null) conversation.setStatus(dto.getStatus());
         conversation.setMessages(appendMessageJson(conversation.getMessages(), userMessage, pythonResult));
-        conversation.setContext_summary(dto.getContext_summary() != null ? dto.getContext_summary() : pythonPptClient.toJson(pythonResult.intent));
+        conversation.setContext_summary(dto.getContext_summary() != null ? dto.getContext_summary() : toJson(pythonResult.intent));
         if (!isBlank(pythonResult.pythonSessionId)) conversation.setPython_session_id(pythonResult.pythonSessionId);
         conversation.setLast_question(pythonResult.question == null ? "" : pythonResult.question);
         conversationMapper.update(conversation);
@@ -267,28 +230,6 @@ public class AIServiceImpl implements AIService {
 
         businessLogService.record("operation", "ai", "send_message", "ai_conversation", conversation.getId(),
                 Map.of("python_status", pythonResult.status, "python_session_id", defaultString(pythonResult.pythonSessionId, "")));
-    }
-
-    @Override
-    @Transactional
-    public ConversationVO sendAudioMessage(String id, MultipartFile file, String language, ConversationDTO dto) {
-        if (file == null || file.isEmpty()) {
-            throw new RuntimeException("语音文件不能为空");
-        }
-        ConversationDTO actualDto = dto == null ? new ConversationDTO() : dto;
-        Map<String, Object> asrResponse = pythonPptClient.transcribeAudio(
-                readFileBytes(file),
-                file.getOriginalFilename(),
-                file.getContentType(),
-                language
-        );
-        String transcript = extractAsrText(asrResponse);
-        if (isBlank(transcript)) {
-            throw new RuntimeException("语音转文字失败，未返回有效文本");
-        }
-        actualDto.setMessage(mergeVoiceMessage(actualDto.getMessage(), transcript));
-        log.info("sendAudioMessage conversationId={}, filename={}, transcriptLength={}", id, file.getOriginalFilename(), transcript.length());
-        return sendMessage(id, actualDto);
     }
 
     @Override
@@ -344,11 +285,6 @@ public class AIServiceImpl implements AIService {
         return toTaskVO(task);
     }
 
-    private PythonPptClient.OutlineChatResult callPythonOutline(Integer userId, AI_Conversation conversation,
-                                                                AI_Task task, ConversationDTO dto, String userMessage) {
-        return pythonPptClient.streamOutlineChat(buildOutlinePayload(userId, conversation, task, dto, userMessage));
-    }
-
     private Map<String, Object> buildOutlinePayload(Integer userId, AI_Conversation conversation,
                                                     AI_Task task, ConversationDTO dto, String userMessage) {
         Map<String, Object> payload = new LinkedHashMap<>();
@@ -371,46 +307,6 @@ public class AIServiceImpl implements AIService {
         payload.put("model_profile", firstNotBlank(dto.getModel_profile(), "standard"));
         payload.put("reasoning_effort", firstNotBlank(dto.getReasoning_effort(), "medium"));
         return payload;
-    }
-
-    @SuppressWarnings("unchecked")
-    private String createPythonSessionIfAvailable(Integer userId, String title) {
-        try {
-            Map<String, Object> payload = new LinkedHashMap<>();
-            payload.put("user_id", String.valueOf(userId));
-            payload.put("title", title);
-            Map<String, Object> response = pythonPptClient.createOutlineChatSession(payload);
-            Object data = response.get("data");
-            if (data instanceof Map<?, ?> map) {
-                Object sessionId = map.get("session_id");
-                return sessionId == null ? null : String.valueOf(sessionId);
-            }
-        } catch (Exception e) {
-            log.warn("createPythonSessionIfAvailable failed, will create on first message: {}", e.getMessage());
-        }
-        return null;
-    }
-
-    private void updatePythonSessionTitleIfAvailable(Integer userId, String pythonSessionId, String title) {
-        if (isBlank(pythonSessionId)) {
-            return;
-        }
-        try {
-            pythonPptClient.updateOutlineChatSession(String.valueOf(userId), pythonSessionId, Map.of("title", title));
-        } catch (Exception e) {
-            log.warn("updatePythonSessionTitleIfAvailable failed: {}", e.getMessage());
-        }
-    }
-
-    private void deletePythonSessionIfAvailable(Integer userId, String pythonSessionId) {
-        if (isBlank(pythonSessionId)) {
-            return;
-        }
-        try {
-            pythonPptClient.deleteOutlineChatSession(String.valueOf(userId), pythonSessionId);
-        } catch (Exception e) {
-            log.warn("deletePythonSessionIfAvailable failed: {}", e.getMessage());
-        }
     }
 
     private Object requestResourceIds(ConversationDTO dto, AI_Task task) {
@@ -494,14 +390,6 @@ public class AIServiceImpl implements AIService {
         }
     }
 
-    private byte[] readFileBytes(MultipartFile file) {
-        try {
-            return file.getBytes();
-        } catch (Exception e) {
-            throw new RuntimeException("读取语音文件失败: " + e.getMessage(), e);
-        }
-    }
-
     private String extractAsrText(Map<String, Object> response) {
         if (response == null) {
             return "";
@@ -522,7 +410,7 @@ public class AIServiceImpl implements AIService {
         return manualMessage.trim() + "\n" + transcript.trim();
     }
 
-    private void updateTaskFromPythonResult(AI_Task task, PythonPptClient.OutlineChatResult result, String userMessage) {
+    private void updateTaskFromPythonResult(AI_Task task, OutlineResult result, String userMessage) {
         task.setGeneration_mode("python");
         if (!isBlank(result.pythonSessionId)) task.setPython_session_id(result.pythonSessionId);
         if (!isBlank(result.outlineId)) task.setPython_outline_id(result.outlineId);
@@ -534,7 +422,7 @@ public class AIServiceImpl implements AIService {
         } else if ("completed".equals(result.status)) {
             task.setStatus("planning");
             task.setPlan_confirm_status("pending");
-            task.setPlan_json(pythonPptClient.toJson(result.outline != null ? result.outline : result.finalData));
+            task.setPlan_json(toJson(result.outline != null ? result.outline : result.finalData));
             task.setReflections(buildGenerationReflections(result));
             task.setExec_steps("[{\"step\":\"python_outline_chat\",\"status\":\"completed\"}]");
             task.setError_message("");
@@ -551,7 +439,7 @@ public class AIServiceImpl implements AIService {
         return conversation;
     }
 
-    private void recordRetrievalLog(AI_Task task, PythonPptClient.OutlineChatResult result, String userMessage) {
+    private void recordRetrievalLog(AI_Task task, OutlineResult result, String userMessage) {
         try {
             Object toolTrace = result.finalData == null ? null : result.finalData.get("tool_trace");
             if (!(toolTrace instanceof List<?> traces)) {
@@ -609,6 +497,14 @@ public class AIServiceImpl implements AIService {
 
     private String defaultJson(String value, String fallback) {
         return isBlank(value) ? fallback : value;
+    }
+
+    private String toJson(Object value) {
+        try {
+            return objectMapper.writeValueAsString(value);
+        } catch (Exception e) {
+            return "null";
+        }
     }
 
     private String firstNotBlank(String first, String second) {
@@ -671,18 +567,21 @@ public class AIServiceImpl implements AIService {
         }
     }
 
-    private String appendMessageJson(String oldMessages, String userMessage, PythonPptClient.OutlineChatResult result) {
+    private String appendMessageJson(String oldMessages, String userMessage, OutlineResult result) {
         try {
             List<Object> messages = objectMapper.readValue(defaultJson(oldMessages, "[]"), new TypeReference<>() {});
             messages.add(Map.of("role", "user", "content", userMessage));
             if (!isBlank(result.question)) {
                 messages.add(Map.of("role", "assistant", "content", result.question, "type", "question"));
-            } else if (!isBlank(result.outlineId)) {
-                messages.add(Map.of(
-                        "role", "assistant",
-                        "content", assistantOutlineMessage(result),
-                        "outline_id", result.outlineId
-                ));
+            } else if ("completed".equals(result.status)) {
+                Map<String, Object> assistant = new LinkedHashMap<>();
+                assistant.put("role", "assistant");
+                assistant.put("content", assistantOutlineMessage(result));
+                if (!isBlank(result.outlineId)) assistant.put("outline_id", result.outlineId);
+                messages.add(assistant);
+            } else if ("failed".equals(result.status)) {
+                messages.add(Map.of("role", "assistant", "content",
+                        "大纲生成失败：" + defaultString(result.errorMessage, "未知错误"), "type", "error"));
             }
             return objectMapper.writeValueAsString(messages);
         } catch (Exception e) {
@@ -690,7 +589,7 @@ public class AIServiceImpl implements AIService {
         }
     }
 
-    private String assistantOutlineMessage(PythonPptClient.OutlineChatResult result) {
+    private String assistantOutlineMessage(OutlineResult result) {
         String title = isBlank(result.title) ? "未命名大纲" : result.title;
         int slideCount = 0;
         if (result.slides instanceof List<?> list) {
@@ -708,7 +607,7 @@ public class AIServiceImpl implements AIService {
         return message.toString();
     }
 
-    private String buildGenerationReflections(PythonPptClient.OutlineChatResult result) {
+    private String buildGenerationReflections(OutlineResult result) {
         try {
             Map<String, Object> data = result.finalData == null ? Map.of() : result.finalData;
             Object reflection = result.reflection != null ? result.reflection : data.get("reflection");
@@ -740,6 +639,20 @@ public class AIServiceImpl implements AIService {
 
     private String escapeJson(String value) {
         return value == null ? "" : value.replace("\\", "\\\\").replace("\"", "\\\"");
+    }
+
+    private static class OutlineResult {
+        String status;
+        String pythonSessionId;
+        String outlineId;
+        String title;
+        String question;
+        String errorMessage;
+        Object intent;
+        Object outline;
+        Object slides;
+        Object reflection;
+        Map<String, Object> finalData = new LinkedHashMap<>();
     }
 
     private TaskVO toTaskVO(AI_Task task) {

@@ -8,13 +8,11 @@ import edu.zstu.entity.AI_Conversation;
 import edu.zstu.mapper.AiConversationMapper;
 import edu.zstu.utils.CurrentHolder;
 import lombok.RequiredArgsConstructor;
-import lombok.extern.slf4j.Slf4j;
 import org.springframework.http.HttpStatus;
 import org.springframework.stereotype.Service;
+import org.springframework.transaction.annotation.Transactional;
 import org.springframework.web.server.ResponseStatusException;
-import org.springframework.web.servlet.mvc.method.annotation.SseEmitter;
 
-import java.io.IOException;
 import java.time.Instant;
 import java.util.ArrayList;
 import java.util.LinkedHashMap;
@@ -22,30 +20,24 @@ import java.util.List;
 import java.util.Map;
 import java.util.Set;
 import java.util.UUID;
-import java.util.concurrent.CompletableFuture;
 
-/** 普通聊天由 Java 保管会话和逐条消息，Python 只负责生成回复。 */
-@Slf4j
+/** Java 只保管会话与消息；分流和回复由浏览器直连 Python。 */
 @Service
 @RequiredArgsConstructor
 public class GeneralChatService {
     private final AiConversationMapper conversationMapper;
-    private final PythonPptClient pythonPptClient;
     private final ObjectMapper objectMapper;
     private final AIService aiService;
 
-    public SseEmitter stream(GeneralChatDTO request) {
-        Integer userId = CurrentHolder.getCurrentId();
-        if (userId == null) throw new ResponseStatusException(HttpStatus.UNAUTHORIZED, "请先登录");
+    @Transactional
+    public Map<String, Object> beginTurn(GeneralChatDTO request) {
+        Integer userId = requireUser();
         String prompt = request == null || request.getMessage() == null ? "" : request.getMessage().trim();
-        if (prompt.isEmpty() || prompt.length() > 60000) {
-            throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "消息不能为空且不能超过 60000 字");
-        }
-        String modelProfile = allowed(request.getModel_profile(), Set.of("fast", "standard", "deep"), "standard");
-        String reasoningEffort = allowed(request.getReasoning_effort(), Set.of("low", "medium", "high"), "medium");
+        if (prompt.isEmpty() || prompt.length() > 60000) throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "消息长度不合法");
+        String model = allowed(request.getModel_profile(), Set.of("fast", "standard", "deep"), "standard");
+        String effort = allowed(request.getReasoning_effort(), Set.of("low", "medium", "high"), "medium");
         String turnId = UUID.randomUUID().toString();
-        Map<String, Object> userMessage = messageRecord("user", prompt, turnId, "completed", modelProfile, reasoningEffort, null);
-
+        Map<String, Object> userMessage = messageRecord("user", prompt, turnId, "completed", model, effort);
         AI_Conversation conversation;
         if (request.getSession_id() == null) {
             conversation = new AI_Conversation();
@@ -55,97 +47,74 @@ public class GeneralChatService {
             conversation.setMessages(toJson(List.of(userMessage)));
             conversationMapper.insert(conversation);
         } else {
-            conversation = conversationMapper.findById(request.getSession_id());
-            if (conversation == null || conversation.getUser_id() != userId || !"general".equals(conversation.getStatus())) {
-                throw new ResponseStatusException(HttpStatus.NOT_FOUND, "普通聊天会话不存在");
-            }
+            conversation = ownedGeneral(request.getSession_id(), userId);
             append(conversation.getId(), userId, userMessage);
             conversation = conversationMapper.findById(conversation.getId());
         }
+        Map<String, Object> data = new LinkedHashMap<>();
+        data.put("conversation_id", conversation.getId());
+        data.put("title", conversation.getTitle());
+        data.put("turn_id", turnId);
+        data.put("user_message_id", userMessage.get("message_id"));
+        data.put("created_at", userMessage.get("created_at"));
+        data.put("messages", modelHistory(conversation.getMessages()));
+        return data;
+    }
 
-        int conversationId = conversation.getId();
-        RouteDecision decision = decideRoute(request.getRoute_preference(), userId,
-                modelHistory(conversation.getMessages()));
-        if ("planning".equals(decision.route())) {
-            TaskCreateDTO task = new TaskCreateDTO();
-            task.setTitle(prompt.substring(0, Math.min(40, prompt.length())));
-            task.setResource_ids(request.getResource_ids() == null ? "[]" : request.getResource_ids());
-            aiService.promoteGeneralSession(conversationId, task);
-            conversation.setTitle(task.getTitle());
+    @Transactional
+    public Map<String, Object> completeTurn(Integer sessionId, Map<String, Object> result) {
+        Integer userId = requireUser();
+        AI_Conversation conversation = conversationMapper.findById(sessionId);
+        if (conversation == null || !userId.equals(conversation.getUser_id())) {
+            throw new ResponseStatusException(HttpStatus.NOT_FOUND, "普通聊天会话不存在");
         }
-        Map<String, Object> routeRecord = messageRecord("system", "意图分流：" + decision.route(), turnId,
-                "completed", modelProfile, reasoningEffort, null);
-        routeRecord.put("source", "intent_router");
-        routeRecord.put("route", decision.route());
-        routeRecord.put("reason", decision.reason());
-        routeRecord.put("confidence", decision.confidence());
-        routeRecord.put("forced", decision.forced());
-        append(conversationId, userId, routeRecord);
-
-        Map<String, Object> payload = new LinkedHashMap<>();
-        payload.put("user_id", String.valueOf(userId));
-        payload.put("mode", "chat");
-        payload.put("model_profile", modelProfile);
-        payload.put("reasoning_effort", reasoningEffort);
-        payload.put("messages", modelHistory(conversation.getMessages()));
-
-        SseEmitter emitter = new SseEmitter(620_000L);
-        Map<String, Object> sessionEvent = Map.of(
-                "conversation_id", conversationId, "title", conversation.getTitle(),
-                "turn_id", turnId, "user_message_id", userMessage.get("message_id"),
-                "created_at", userMessage.get("created_at"));
-        Map<String, Object> routeEvent = new LinkedHashMap<>();
-        routeEvent.put("target", decision.route());
-        routeEvent.put("reason", decision.reason());
-        routeEvent.put("confidence", decision.confidence());
-        routeEvent.put("forced", decision.forced());
-        routeEvent.put("decision_id", routeRecord.get("message_id"));
-        if ("planning".equals(decision.route())) {
-            String reply = "已进入备课流程，请补充课程信息。";
-            Map<String, Object> assistant = messageRecord("assistant", reply, turnId, "completed",
-                    modelProfile, reasoningEffort, null);
-            assistant.put("type", "workflow_prompt");
-            append(conversationId, userId, assistant);
-            routeEvent.put("assistant_content", reply);
-            routeEvent.put("assistant_message_id", assistant.get("message_id"));
-            routeEvent.put("created_at", assistant.get("created_at"));
+        String turnId = String.valueOf(result.getOrDefault("turn_id", ""));
+        List<Map<String, Object>> saved = storedMessages(conversation.getMessages());
+        if (saved.stream().noneMatch(item -> "user".equals(item.get("role")) && turnId.equals(item.get("turn_id")))) {
+            throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "回合不存在");
         }
-        CompletableFuture.runAsync(() -> {
-            sendEvent(emitter, "session", sessionEvent);
-            sendEvent(emitter, "route", routeEvent);
-            if ("planning".equals(decision.route())) {
-                emitter.complete();
-                return;
+        for (Map<String, Object> item : saved) {
+            if ("assistant".equals(item.get("role")) && turnId.equals(item.get("turn_id"))) {
+                return trace(item, turnId);
             }
-            pythonPptClient.streamWorkspaceChatToEmitter(payload, emitter, result -> {
-                String status = result.error == null ? "completed" : (result.content.isBlank() ? "failed" : "interrupted");
-                String content = result.content.isBlank()
-                        ? "大模型暂时无法回复：" + (result.error == null ? "模型未返回有效内容" : result.error)
-                        : result.content;
-                Map<String, Object> assistant = messageRecord("assistant", content, turnId, status,
-                        modelProfile, reasoningEffort, result.error);
-                append(conversationId, userId, assistant);
-                sendEvent(emitter, "message_saved", Map.of(
-                        "message_id", assistant.get("message_id"), "turn_id", turnId,
-                        "created_at", assistant.get("created_at"), "status", status));
-            });
-        });
-        return emitter;
+        }
+        String route = "planning".equals(result.get("route")) ? "planning" : "chat";
+        String content = String.valueOf(result.getOrDefault("content", "")).trim();
+        if (content.isEmpty() || content.length() > 200000) throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "回复长度不合法");
+        String status = "failed".equals(result.get("status")) ? "failed" : "completed";
+        String model = allowed((String) result.get("model_profile"), Set.of("fast", "standard", "deep"), "standard");
+        String effort = allowed((String) result.get("reasoning_effort"), Set.of("low", "medium", "high"), "medium");
+        Map<String, Object> routeRecord = messageRecord("system", "意图分流：" + route, turnId, "completed", model, effort);
+        routeRecord.put("source", "intent_router");
+        routeRecord.put("route", route);
+        routeRecord.put("reason", String.valueOf(result.getOrDefault("reason", "")));
+        append(sessionId, userId, routeRecord);
+        if ("planning".equals(route) && "general".equals(conversation.getStatus())) {
+            TaskCreateDTO task = new TaskCreateDTO();
+            task.setTitle(conversation.getTitle());
+            task.setResource_ids(String.valueOf(result.getOrDefault("resource_ids", "[]")));
+            aiService.promoteGeneralSession(sessionId, task);
+        }
+        Map<String, Object> assistant = messageRecord("assistant", content, turnId, status, model, effort);
+        if ("failed".equals(status)) assistant.put("error", content);
+        if ("planning".equals(route)) assistant.put("type", "workflow_prompt");
+        append(sessionId, userId, assistant);
+        return trace(assistant, turnId);
     }
 
-    private RouteDecision decideRoute(String preference, Integer userId,
-                                      List<Map<String, String>> history) {
-        Map<String, Object> modelDecision = pythonPptClient.routeTeachingChat(String.valueOf(userId),
-                history.subList(Math.max(0, history.size() - 8), history.size()), preference);
-        if (modelDecision == null) return new RouteDecision("chat", 0, "分流服务不可用，继续普通对话", false);
-        String route = "planning".equals(modelDecision.get("route")) ? "planning" : "chat";
-        double confidence = modelDecision.get("confidence") instanceof Number number ? number.doubleValue() : 0;
-        String reason = String.valueOf(modelDecision.getOrDefault("reason", "模型判断"));
-        boolean forced = Boolean.TRUE.equals(modelDecision.get("forced"));
-        return new RouteDecision(route, confidence, reason, forced);
+    private Integer requireUser() {
+        Integer userId = CurrentHolder.getCurrentId();
+        if (userId == null) throw new ResponseStatusException(HttpStatus.UNAUTHORIZED, "请先登录");
+        return userId;
     }
 
-    private record RouteDecision(String route, double confidence, String reason, boolean forced) {}
+    private AI_Conversation ownedGeneral(Integer id, Integer userId) {
+        AI_Conversation conversation = conversationMapper.findById(id);
+        if (conversation == null || !userId.equals(conversation.getUser_id()) || !"general".equals(conversation.getStatus())) {
+            throw new ResponseStatusException(HttpStatus.NOT_FOUND, "普通聊天会话不存在");
+        }
+        return conversation;
+    }
 
     private void append(Integer conversationId, Integer userId, Map<String, Object> message) {
         if (conversationMapper.appendMessage(conversationId, userId, toJson(message)) != 1) {
@@ -153,57 +122,50 @@ public class GeneralChatService {
         }
     }
 
-    private List<Map<String, String>> modelHistory(String rawMessages) {
+    private List<Map<String, Object>> storedMessages(String raw) {
+        try { return objectMapper.readValue(raw, new TypeReference<>() {}); }
+        catch (Exception e) { throw new IllegalStateException("会话历史读取失败", e); }
+    }
+
+    private List<Map<String, String>> modelHistory(String raw) {
         List<Map<String, String>> history = new ArrayList<>();
-        try {
-            List<Map<String, Object>> saved = objectMapper.readValue(rawMessages, new TypeReference<>() {});
-            for (Map<String, Object> item : saved) {
-                String role = String.valueOf(item.getOrDefault("role", ""));
-                String content = String.valueOf(item.getOrDefault("content", ""));
-                String status = String.valueOf(item.getOrDefault("status", "completed"));
-                if (("user".equals(role) || ("assistant".equals(role) && "completed".equals(status))) && !content.isBlank()) {
-                    history.add(Map.of("role", role, "content", content));
-                }
+        for (Map<String, Object> item : storedMessages(raw)) {
+            String role = String.valueOf(item.getOrDefault("role", ""));
+            String content = String.valueOf(item.getOrDefault("content", ""));
+            String status = String.valueOf(item.getOrDefault("status", "completed"));
+            if (("user".equals(role) || ("assistant".equals(role) && "completed".equals(status))) && !content.isBlank()) {
+                history.add(Map.of("role", role, "content", content));
             }
-        } catch (Exception e) {
-            throw new IllegalStateException("会话历史读取失败", e);
         }
         return history.subList(Math.max(0, history.size() - 30), history.size());
     }
 
     private Map<String, Object> messageRecord(String role, String content, String turnId, String status,
-                                               String modelProfile, String reasoningEffort, String error) {
-        Map<String, Object> record = new LinkedHashMap<>();
-        record.put("message_id", UUID.randomUUID().toString());
-        record.put("turn_id", turnId);
-        record.put("role", role);
-        record.put("content", content);
-        record.put("created_at", Instant.now().toString());
-        record.put("status", status);
-        record.put("source", "general_chat");
-        record.put("model_profile", modelProfile);
-        record.put("reasoning_effort", reasoningEffort);
-        if (error != null) record.put("error", error);
-        return record;
+                                               String model, String effort) {
+        Map<String, Object> item = new LinkedHashMap<>();
+        item.put("message_id", UUID.randomUUID().toString());
+        item.put("turn_id", turnId);
+        item.put("role", role);
+        item.put("content", content);
+        item.put("created_at", Instant.now().toString());
+        item.put("status", status);
+        item.put("source", "general_chat");
+        item.put("model_profile", model);
+        item.put("reasoning_effort", effort);
+        return item;
+    }
+
+    private Map<String, Object> trace(Map<String, Object> item, String turnId) {
+        return Map.of("message_id", item.get("message_id"), "turn_id", turnId,
+                "created_at", item.get("created_at"), "status", item.getOrDefault("status", "completed"));
     }
 
     private String toJson(Object value) {
-        try {
-            return objectMapper.writeValueAsString(value);
-        } catch (Exception e) {
-            throw new IllegalStateException("聊天消息序列化失败", e);
-        }
+        try { return objectMapper.writeValueAsString(value); }
+        catch (Exception e) { throw new IllegalStateException("聊天消息序列化失败", e); }
     }
 
-    private String allowed(String value, Set<String> values, String fallback) {
-        return value != null && values.contains(value) ? value : fallback;
-    }
-
-    private void sendEvent(SseEmitter emitter, String name, Map<String, Object> data) {
-        try {
-            emitter.send(SseEmitter.event().name(name).data(toJson(data)));
-        } catch (IOException | IllegalStateException e) {
-            log.debug("聊天客户端已断开 event={}", name);
-        }
+    private String allowed(String value, Set<String> options, String fallback) {
+        return value != null && options.contains(value) ? value : fallback;
     }
 }

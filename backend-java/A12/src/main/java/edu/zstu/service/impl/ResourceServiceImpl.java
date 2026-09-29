@@ -16,7 +16,7 @@ import edu.zstu.entity.Res_Material;
 import edu.zstu.mapper.ResMetadataDictionaryMapper;
 import edu.zstu.mapper.ResMaterialMapper;
 import edu.zstu.service.BusinessLogService;
-import edu.zstu.service.PythonPptClient;
+import edu.zstu.service.ResourceIndexEventPublisher;
 import edu.zstu.service.ResourceService;
 import edu.zstu.utils.OssUtil;
 import edu.zstu.utils.PageResult;
@@ -51,18 +51,18 @@ public class ResourceServiceImpl implements ResourceService {
     private final ResMetadataDictionaryMapper dictionaryMapper;
     private final OssUtil ossUtil;
     private final BusinessLogService businessLogService;
-    private final PythonPptClient pythonPptClient;
+    private final ResourceIndexEventPublisher indexEvents;
     private final ResourceIndexSyncService resourceIndexSyncService;
 
     public ResourceServiceImpl(ResMaterialMapper materialMapper, ResMetadataDictionaryMapper dictionaryMapper, OssUtil ossUtil,
                                BusinessLogService businessLogService,
-                               PythonPptClient pythonPptClient,
+                               ResourceIndexEventPublisher indexEvents,
                                ResourceIndexSyncService resourceIndexSyncService) {
         this.materialMapper = materialMapper;
         this.dictionaryMapper = dictionaryMapper;
         this.ossUtil = ossUtil;
         this.businessLogService = businessLogService;
-        this.pythonPptClient = pythonPptClient;
+        this.indexEvents = indexEvents;
         this.resourceIndexSyncService = resourceIndexSyncService;
     }
 
@@ -347,11 +347,7 @@ public class ResourceServiceImpl implements ResourceService {
     }
 
     private void deletePersonalResourceIndex(Integer id) {
-        try {
-            pythonPptClient.deleteResourceIndex("personal", id);
-        } catch (Exception e) {
-            log.warn("delete personal resource index failed, materialId={}", id, e);
-        }
+        indexEvents.publish("delete", "personal", id, false);
     }
 
     private void normalizeQuery(MaterialQueryDTO dto) {

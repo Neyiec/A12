@@ -1,5 +1,9 @@
 # API 接口文档
 
+> **当前双端架构（2026-09）**：浏览器对 `/api/v1/python/**` 直接请求 FastAPI（开发环境由 Vite 路由，生产环境使用独立 AI 域名），携带原登录 Bearer；FastAPI 向 Java `/api/v1/users/me` 校验身份，并在请求及模型调用前比对 Redis 的 `token:user:{userId}` 当前令牌。Java 只管理账号、权限、资源、会话、项目、导出任务与成果落库，不转发 AI 请求。资源上传、删除和权限变更由 Java 发布 Redis Stream 事件，Python 后台消费并维护索引。下文 2026-08 的旧“Java 网关”记录是历史说明，不能作为当前可用接口依据。
+
+当前已移除的旧 Java AI 转发入口：`/api/v1/ai/intent/recognize`、`/api/v1/ai/intent/recognize-audio`、`/api/v1/ai/sessions/{id}/messages`、`/api/v1/ai/sessions/{id}/messages/stream`、`/api/v1/ai/sessions/{id}/audio-messages`、`/api/v1/admin/public-resources/ai-index/{overview,tasks,resources,search}`。请分别使用 Python 对应接口；Java 的 `/api/v1/ai/sessions/{id}/outline-results` 仅保存生成结果。导出任务先由 Java 创建并提供 `GET /api/v1/export-tasks/{id}/payload`，浏览器直连 Python 生成文件后上传至 Java `POST /api/v1/export-tasks/{id}/artifact`；失败时调用 `POST /api/v1/export-tasks/{id}/failure`。
+
 
 > 项目: A12 — 智能备课与教学成果管理平台  
 > 基础路径: `/api/v1`  
@@ -46,7 +50,7 @@ RAG 索引现已支持语义分块、学科感知窗口、混合重排、直接�
 |---|---|
 | `POST /api/v1/python/presentations/export/pptx` | 将最终页面 JSON/HTML 转为 `.pptx`；默认以 LandPPT DOM 转换器和 PptxGenJS 生成可编辑对象，复杂 CSS 装饰局部栅格化。 |
 | `POST /api/v1/python/lesson-plans/export/docx` | 将教案 JSON 转为带固定教案章节和页脚的 `.docx`。 |
-| `POST /api/v1/export-tasks` | Java 导出任务调用 Python，在 `a12.export.local-dir` 保存真实文件，填充 `file_size/file_url/download_url` 并写入 `quality_report`。 |
+| `POST /api/v1/export-tasks` | Java 只创建导出任务；浏览器直接调用 Python 生成后，将成果文件交给 Java 保存。 |
 | `/exports/**` | Java 通过静态资源处理器提供本地导出文件。 |
 
 Java 任务模式支持的导出配置键：`slides`、`lesson_plan`、`outline`、`title`、`filename`、`subject`、`grade`、`duration_minutes`、`teaching_goals`、`requirements`、`reference_text`、`fidelity`、`package_static_assets`。
@@ -343,12 +347,12 @@ Java 任务模式支持的导出配置键：`slides`、`lesson_plan`、`outline`
 
 # 三、AI 教学引擎
 
-> 当前定位: Java AI 模块保留为业务网关和任务记录层。真正的大纲生成、RAG/联网增强、长期记忆、教师画像和 HTML PPT 生成由 Python 服务承担。Java 负责登录态、权限、任务状态、项目关联、审计日志，并转发 Python 接口。
+> 当前定位：Java AI 模块负责登录态、权限、聊天记录、任务状态、项目关联与审计日志；前端直接访问 Python 完成大纲生成、RAG/联网增强、长期记忆、教师画像和 HTML PPT 生成。以下旧 Java 转发接口仅为兼容保留，当前前端不再调用。
 > MySQL 建表语句已按该定位更新到 `table_created.txt`；如果旧库已建表，可使用 `mysql_ai_gateway_migration.sql` 做无损增量迁移。
 
 ## API-12 POST /api/v1/ai/sessions
 
-**功能**: 创建 Java 侧备课会话和 AI 任务记录。此接口不直接调用模型，只创建业务壳子，后续消息会转发 Python 对话式大纲接口。
+**功能**: 创建 Java 侧备课会话和 AI 任务记录。此接口不调用模型或创建 Python 会话；后续由前端直连 Python 对话式大纲接口。
 
 **请求体 (JSON)**
 | 字段 | 类型 | 必填 | 说明 |
@@ -2473,17 +2477,16 @@ Java 任务模式支持的导出配置键：`slides`、`lesson_plan`、`outline`
 
 ---
 
-# Java AI 引擎网关（2026-09-12）
+# 双端 API 路由（2026-09-28）
 
-浏览器所有 AI 请求统一发送到 Java（开发默认 `http://localhost:8088`），由 Java JWT 过滤器认证后转发 Python。Python 地址仅配置在 Java `a12.python.base-url` 中；Python 默认监听 `127.0.0.1:8001`。分机部署时将 Python 放在私有网络，仅允许 Java 访问，不将 Python 端口或 `/api/v1/python` 配置为公网直通代理。
+教师端浏览器直接调用 FastAPI 的 `/api/v1/python/**` 完成意图分流、普通聊天、大纲流、语音转写、AI 生成、资源索引和文件导出；登录、聊天记录、正式任务、项目、资源归属及导出任务仍调用 Java。开发环境 Vite 分别代理 Python `8001` 与 Java `8088`；生产环境分别配置 `VITE_PYTHON_API_BASE_URL` 和 `VITE_API_BASE_URL`。FastAPI 使用浏览器 Bearer token 向 Java `/api/v1/users/me` 验证当前会话（包括异地登录后的令牌替换），并按验证的用户 ID 限制个人索引。个人素材索引的下载 URL 由 FastAPI 向 Java 资源服务核验所有权并获取，浏览器提供的 URL 不作为授权依据。
 
-复用已有 `PythonProxyController`、`PythonPptClient`，新增 Java 前缀 `/api/v1/ai/engine`，旧 Java `/api/v1/python` 入口继续兼容。前端已迁移至新前缀，Vite 删除独立 Python 代理；原有 Java 业务 API 不变。
+当前聊天链路：前端先调用 Java `POST /api/v1/ai/general-chat/turns` 保存提问，再直连 Python `POST /api/v1/python/workspace/chat/route` 进行 LangGraph 分流；普通聊天直连 Python `POST /api/v1/python/workspace/chat/stream`，备课直连 Python `POST /api/v1/python/outlines/chat/stream`。生成完成后分别调用 Java `POST /api/v1/ai/general-chat/turns/{sessionId}/result`、`POST /api/v1/ai/sessions/{id}/outline-results` 保存回复、图谱与大纲。后两个 Java 接口只落库，不调用 Python。旧 Java 消息/聊天 SSE 接口保留兼容既有调用，不再由当前前端使用。
 
-| 前端使用的 Java API | Python 内部 API / 说明 |
+Java 的 `/api/v1/ai/engine` 和 `/api/v1/python` 公开转发入口已下线；下表仅保留旧接口到当前 Python API 的迁移对照。`/api/v1/ai/sessions/**`、`/api/v1/ai/intent/recognize` 和 `/api/v1/admin/export-templates/**` 属于 Java 业务接口，仍保持原路径。Java 后台任务调用 Python 时使用双方同名环境变量 `A12_PYTHON_INTERNAL_KEY` 设置的服务密钥，此密钥绝不能放入前端。未配置密钥时后台内部调用会被 FastAPI 拒绝。
+
+| 已下线的 Java 转发 API | 当前 Python API / 说明 |
 |---|---|
-| `POST /api/v1/ai/intent/recognize`、`recognize-audio` | 复用 API-13B/13C，文本/语音意图识别 |
-| `/api/v1/ai/sessions/**` | 复用会话、消息和 `messages/stream`，保留 Java 会话、任务落库 |
-| `/api/v1/admin/export-templates/**` | 复用已有管理员模板增删改和下载 |
 | `GET /api/v1/ai/engine/health` | `GET /api/v1/python/health` |
 | `POST /api/v1/ai/engine/audio/asr` | `POST /api/v1/python/audio/asr`，multipart |
 | `GET /api/v1/ai/engine/templates` | `GET /api/v1/python/templates` |
@@ -2500,13 +2503,13 @@ Java 任务模式支持的导出配置键：`slides`、`lesson_plan`、`outline`
 | `POST /api/v1/ai/engine/lesson-plans/export/docx` | Python 同后缀 DOCX 二进制导出 |
 | `POST /api/v1/ai/engine/workspace/chat/stream` | 转发到 Python `/api/v1/python/workspace/chat/stream`；支持通用讨论、工作台动作分类和大纲修复，使用 OpenAI 兼容 SSE 增量格式 |
 
-请求须带 `Authorization: Bearer <token>`。原生会话、意图、画像接口的 `user_id` 从 Java 登录态取得，客户端传入其他用户 ID 不生效。JSON 和文件载荷继续参见下方保留的 Python API 章节。SSE 超时 620 秒；上游连接失败或非 2xx 返回 `error` 事件并结束，不伪造生成成功。
+直连请求须带 `Authorization: Bearer <token>`。FastAPI 会拒绝与登录用户不一致的 `user_id` 等身份字段；原有 Java 正式会话接口继续由 Java 落库。JSON 和文件载荷继续参见下方保留的 Python API 章节。
 
-注意：这次路由调整不代表完成所有资源级授权。现有原生索引管理/检索接口仍需进一步按资源归属和管理员权限限制，不能仅因经过 JWT 过滤器就宣称具备完整租户隔离。
+个人索引按 `owner_user_id` 隔离，缺少归属信息的旧个人索引不会对浏览器直连请求开放；公共索引只读，新增、更新和删除继续交给 Java 管理流程。检索日志按发起用户隔离。
 
 # 十五、Python PPT 生成服务
 
-> 说明: Python 服务主要承接 AI 大纲生成、整套 PPT 制作、整套课件迭代修改和单页 PPT 修改。返回的 PPT 页面内容均为 HTML 字符串。以下 Python API 保留作为内部协议文档，前端统一使用上方 Java 网关，禁止直连 Python。
+> 说明: Python 服务主要承接 AI 大纲生成、整套 PPT 制作、整套课件迭代修改和单页 PPT 修改。返回的 PPT 页面内容均为 HTML 字符串。以下 Python API 是当前教师端直连接口；正式会话与业务资源仍属于 Java。
 > 建议基础路径: `/api/v1/python`
 > 当前 A12-PY 已实现接口: 健康检查、语音输入 ASR、资料上传、模板列表、大纲生成、对话式 SSE 大纲生成、对话会话查询、教师画像查询、大纲修改/重生成、整套 PPT 生成、整套课件迭代修改、单页 PPT 修改、HTML 校验、高保真 PPTX 导出、Word 教案生成、DOCX 导出、动画/小游戏 HTML5 互动模块生成。
 > 质量策略: 整套 PPT 生成采用 LandPPT 标准高质量链路，包括模板风格基因提取、全局视觉宪法、每页创意 brief、单页 HTML 生成、HTML 清理校验和多轮修复重试。未配置 `OPENAI_API_KEY` 时仅使用本地 fallback 模板，质量不能等同 AI 生成效果。
@@ -3544,7 +3547,7 @@ while (true) {
 
 **响应**: `application/vnd.openxmlformats-officedocument.wordprocessingml.document` 文件流
 
-**Java 代理说明**：`PythonPptClient.generateLessonPlan(...)` 和 `PythonPptClient.exportLessonPlanDocx(...)` 已提供调用方法；Java 可在导出任务中保存返回的二进制文件，前端统一通过 Java 网关下载。
+**调用说明**：教师端生成与直接导出调用 FastAPI；Java 后台导出任务仍可通过 `PythonPptClient.generateLessonPlan(...)` 和 `PythonPptClient.exportLessonPlanDocx(...)` 获取结果并持久化。
 
 ---
 
@@ -3585,13 +3588,13 @@ while (true) {
 
 ## API-145 POST /api/v1/python/workspace/chat/stream
 
-**功能**：工作台通用对话、动作分类与大纲修复的内部流式接口。此接口仅供 Java 网关调用，浏览器应调用 `/api/v1/ai/engine/workspace/chat/stream` 并携带 JWT。Python 默认只监听 `127.0.0.1:8001`，且不配置浏览器跨域访问。
+**功能**：工作台通用对话、动作分类与大纲修复的流式接口。浏览器直接调用此 FastAPI 路径并携带 Java 登录令牌；FastAPI 验证当前登录会话。
 
 **请求类型**：`application/json`
 
 | 字段 | 类型 | 必填 | 说明 |
 |---|---|---|---|
-| `user_id` | String | **是** | 用户 ID；Java 网关会覆盖客户端传入值，防止伪造身份 |
+| `user_id` | String | **是** | 用户 ID；FastAPI 会与已验证的登录用户比对，不一致返回 403 |
 | `mode` | String | 否 | `chat`、`discussion`、`workbench-intent` 或 `outline-repair`，默认 `chat` |
 | `messages` | List<Object> | **是** | 最近对话消息，1 至 60 条；每项包含 `role` 和 `content` |
 
@@ -3740,12 +3743,12 @@ const pptxBlob = await fetch("http://127.0.0.1:8001/api/v1/python/presentations/
 
 ## AI 教学能力增强接口
 
-以下接口均应由前端调用 Java 网关（`http://127.0.0.1:8088/api/v1/python/...`），不要在浏览器中直接暴露 Python 服务地址。Java 会绑定当前登录用户，Python 原始接口仍保留用于内部联调和 API 文档展示。
+以下 AI 接口由前端直连 FastAPI，并携带 Java 登录令牌；FastAPI 向 Java 验证令牌及用户归属。旧 Java 转发路径已下线。
 
-| Java 网关接口 | 方法 | 简体中文说明 |
+| FastAPI 接口 | 方法 | 简体中文说明 |
 |---|---|---|
 | `/api/v1/python/teacher-style/feedback` | POST | 记录教师对生成结果的采纳、拒绝或人工修改，用于更新教学风格记忆 |
-| `/api/v1/python/ai/metrics` | GET | 查询模型调用次数、成功率、平均耗时、令牌用量和降级次数 |
+| `/api/v1/python/ai/metrics` | GET | 查询当前教师的模型调用次数、成功率、平均耗时、令牌用量和降级次数；内部管理调用可查看全局指标 |
 | `/api/v1/python/classroom/events` | POST | 记录课堂正确率、参与度、困惑点等教学效果数据 |
 | `/api/v1/python/classroom/insights/{projectId}` | GET | 汇总指定项目的课堂反馈，为下一次课件生成提供依据 |
 | `/api/v1/python/audio/tts` | POST | 将课件讲解文本合成为语音，返回音频流 |
@@ -3753,3 +3756,14 @@ const pptxBlob = await fetch("http://127.0.0.1:8001/api/v1/python/presentations/
 大纲与 PPT 生成请求支持 `model_profile=fast|standard|deep` 和 `reasoning_effort=low|medium|high`。这两个字段会实际影响后端模型路由和推理配置，而不是仅作为前端展示。生成结果中的 `generation_status` 会明确标识 `model` 或 `fallback`；RAG 结果包含 `citation_id`、`grounding_confidence` 和 `grounding_status`，用于逐页引用和低置信度提示。
 
 知识库概览返回 `ready_for_rag` 与 `readiness_message`。为空时应先上传资料或执行资源索引同步，系统不会把“可调用检索接口”等同于“已经拥有真实教学语料”。
+## API-课程图谱：知识与技能关系（Python 直连）
+
+`PUT /api/v1/python/courses/graph`：导入或替换一门课程的审核版图谱。请求体包含 `user_id`、`course_id`、`title`、`nodes`（`id`、`label`、`kind=concept|skill`、可选 `description`）与 `edges`（`source`、`target`、`relation=prerequisite|contains|supports|assesses|applies`）。每次导入增加 `version`，不能提交悬空关系或重复节点。可从 `backend-python/A12-PY/examples/java_programming_course_graph.json` 复制示例，请先由任课教师确认内容。
+
+`GET /api/v1/python/courses/{course_id}/graph?user_id={user_id}`：返回当前课程图谱及版本，仅能读取当前登录用户自己的图谱。两个接口均需要 Bearer token；内部 Java 调用需要服务密钥。
+
+资源索引 `POST /api/v1/python/resources/index/sync` 可在 `metadata.course_id` 传课程 ID。成功解析并向量化后，Python 为已审核节点补充带 `resource_key`、`content_sha256` 和摘录的证据；同一资源重解析时替换旧证据，删除索引时删除对应证据。新增课程关系仍须审核导入。大纲对话传 `known_context.course_id` 可明确指定课程；未指定时按主题和知识点保守匹配，无法唯一匹配则沿用原流程。
+
+LangGraph 在 `parse_input` 后执行 `select_strategy`：查询课程图谱并在直接、RAG、图谱、图谱+RAG 路径中选择。启用 RAG 的显式请求不会被策略关闭；至少两个候选策略各有 5 条大纲反馈后，才按修改率比较。策略和图谱版本写入 `a12_outline_strategy_run`，教师反馈继续写入 `a12_ai_feedback`，便于审计。数据库不可用时回退原流程。
+
+教学入口的 Python 分流 Graph 会在 `route` 外返回 `next_stage=ordinary_chat|outline_graph`。进入大纲 Graph 且信息足够时，工具检索之后会先发送 `learning_graphs` SSE 事件，结构为 `{knowledge:{title,nodes,edges},skill:{title,nodes,edges},status,course_id,course_version}`；随后才输出大纲增量。最终结果的 `outline.learning_graphs` 同步保存到 Java `plan_json`，历史会话可恢复图谱。前端默认展示知识图谱，切换按钮展示技能图谱；无审核课程图谱时返回标明待核对的草案。
