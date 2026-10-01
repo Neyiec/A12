@@ -11,6 +11,7 @@ import java.util.Map;
 public interface AdminModerationService {
     PageResult<AuditVO> listModerationTasks(String status, String targetType, Integer handlerId, int page, int size);
     AuditVO getModerationTask(Integer id);
+    ContentVO getModerationContent(Integer id);
     void makeDecision(Integer id, AuditDTO dto, Integer adminId);
     ContentVO updateItemStatus(Integer id, String status);
     ContentVO updateRecommendation(Integer id, RecommendationDTO dto);

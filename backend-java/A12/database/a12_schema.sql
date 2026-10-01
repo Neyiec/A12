@@ -159,6 +159,7 @@ CREATE TABLE ws_project (
   KEY idx_task_id (task_id),
   KEY idx_status (status),
   KEY idx_user_status_updated (user_id, status, updated_at),
+  KEY idx_user_deleted_updated (user_id, deleted_at, updated_at),
   KEY idx_deleted_at (deleted_at)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci COMMENT='创作项目表';
 
