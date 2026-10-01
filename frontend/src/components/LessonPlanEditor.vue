@@ -183,6 +183,48 @@ const ensureLessonPlan = () => {
   }
   return lessonPlan.value
 }
+const createBasePlan = () => {
+  const cover = props.slides[0] || {}
+  const isWebStarter = String(cover.title || '').trim() === '勾股定理'
+  const gradeAndSubject = String(cover.eyebrow || '').match(/([一二三四五六七八九0-9]+年级)\s*([^·\s]+)/)
+  const stages = props.slides.slice(1, 6)
+  const process = stages.length
+    ? stages.map((slide, index) => ({
+        stage: String(slide.title || `教学环节 ${index + 1}`),
+        duration_minutes: isWebStarter && stages.length === 4
+          ? [5, 10, 20, 10][index]
+          : Math.floor(45 / stages.length) + (index === stages.length - 1 ? 45 % stages.length : 0),
+        teacher_activity: String(slide.description || ''),
+        student_activity: '',
+        design_intent: '',
+        ppt_reference: `第 ${index + 2} 页`,
+      }))
+    : [
+        { stage: '情境导入', duration_minutes: 5 },
+        { stage: '探究学习', duration_minutes: 30 },
+        { stage: '练习与总结', duration_minutes: 10 },
+      ]
+  return normalizePlan({
+    title: props.title,
+    subject: props.subject || gradeAndSubject?.[2] || '',
+    grade: props.grade || gradeAndSubject?.[1] || '',
+    duration_minutes: 45,
+    teaching_goals: isWebStarter ? '通过观察、猜想与推导理解勾股定理，并能解决简单的直角三角形问题。' : '',
+    key_points: isWebStarter ? ['勾股定理的内容与表达式'] : [],
+    difficult_points: isWebStarter ? ['通过面积关系理解公式的推导过程'] : [],
+    lesson_process: process,
+  })
+}
+const startBasePlan = () => {
+  if (hasGeneratedPlan.value) return deepClone(lessonPlan.value)
+  const draft = createBasePlan()
+  lessonPlan.value = draft
+  hasGeneratedPlan.value = true
+  const snapshot = deepClone(draft)
+  lastSyncedPlanSignature = planSignature(snapshot)
+  emit('autosave', snapshot)
+  return snapshot
+}
 
 const listText = (key) => computed({
   get: () => lessonPlan.value ? (lessonPlan.value[key] || []).join('\n') : '',
@@ -246,6 +288,7 @@ const saveDraft = () => {
 }
 const addProcessStep = () => {
   if (!lessonPlan.value) return
+  const newIndex = lessonPlan.value.lesson_process.length
   lessonPlan.value.lesson_process.push({
     stage: '新教学环节',
     duration_minutes: 5,
@@ -255,6 +298,7 @@ const addProcessStep = () => {
     ppt_reference: '',
     content: '',
   })
+  if (isMobile.value) expandedProcessSteps.value.push(newIndex)
 }
 // 手机档卡片默认收起详情，「编辑详情」展开；删除后同步平移已展开的步骤标记。
 const expandedProcessSteps = ref([])
@@ -348,6 +392,18 @@ watch(lessonPlan, (value) => {
   }, 800)
 }, { deep: true })
 
+const flushAutosave = () => {
+  clearTimeout(autosaveTimer)
+  if (!hasGeneratedPlan.value || !lessonPlan.value) return null
+  const snapshot = deepClone(lessonPlan.value)
+  const signature = planSignature(snapshot)
+  if (signature && signature !== lastSyncedPlanSignature) {
+    lastSyncedPlanSignature = signature
+    emit('autosave', snapshot)
+  }
+  return snapshot
+}
+
 onMounted(() => {
   mobileMediaQuery = window.matchMedia('(max-width: 767.98px)')
   isMobile.value = mobileMediaQuery.matches
@@ -360,13 +416,15 @@ onBeforeUnmount(() => {
 
 defineExpose({
   getLessonPlan: () => hasGeneratedPlan.value && lessonPlan.value ? deepClone(lessonPlan.value) : null,
+  flushAutosave,
   saveDraft,
+  startBasePlan,
 })
 </script>
 
 <template>
   <section class="lesson-plan-editor" aria-label="教学案编辑器">
-    <header class="lesson-plan-editor-toolbar">
+    <header v-if="!isMobile" class="lesson-plan-editor-toolbar">
       <div>
         <span class="lesson-plan-kicker">{{ hasGeneratedPlan ? '教学案编辑' : '生成设置' }}</span>
         <p>{{ hasGeneratedPlan ? '可直接修改各项内容；顶部“在线预览”会读取当前编辑中的教案。' : '填写必要信息后，结合当前课件内容生成完整教学案。' }}</p>
@@ -378,39 +436,49 @@ defineExpose({
       </div>
     </header>
 
-    <section class="lesson-plan-request">
-      <div class="lesson-plan-request-heading"><strong>生成设置</strong><span>模型会参考页面标题、讲稿、大纲和资源上下文。</span></div>
-      <div class="lesson-plan-field-grid">
-        <label>教案标题<el-input v-model="lessonPlan.title" maxlength="80" /></label>
-        <label>学科<el-input v-model="lessonPlan.subject" placeholder="例如：初中生物" /></label>
-        <label>年级<el-input v-model="lessonPlan.grade" placeholder="例如：八年级" /></label>
-        <label>课时（分钟）<el-input-number v-model="lessonPlan.duration_minutes" :min="10" :max="240" controls-position="right" /></label>
+    <details v-if="!isMobile || hasGeneratedPlan" class="lesson-plan-request" :open="!isMobile">
+      <summary class="lesson-plan-request-heading"><strong>{{ isMobile ? '基本信息' : '生成设置' }}</strong><span v-if="isMobile" class="lesson-plan-heading-note">{{ [lessonPlan.subject, lessonPlan.grade, `${lessonPlan.duration_minutes} 分钟`].filter(Boolean).join(' · ') || '查看教案信息' }}</span><span v-else>模型会参考页面标题、讲稿、大纲和资源上下文。</span></summary>
+      <div class="lesson-plan-section-body">
+        <div class="lesson-plan-field-grid">
+          <label>教案标题<el-input v-model="lessonPlan.title" maxlength="80" /></label>
+          <label>学科<el-input v-model="lessonPlan.subject" placeholder="例如：初中生物" /></label>
+          <label>年级<el-input v-model="lessonPlan.grade" placeholder="例如：八年级" /></label>
+          <label>课时（分钟）<el-input-number v-model="lessonPlan.duration_minutes" :min="10" :max="240" controls-position="right" /></label>
+        </div>
+        <label v-if="!isMobile">生成要求<el-input v-model="requirements" type="textarea" :rows="2" maxlength="600" show-word-limit placeholder="例如：增加分层作业，安排一次小组探究活动" /></label>
+        <label v-if="!isMobile">参考资料补充<el-input v-model="referenceText" type="textarea" :rows="2" maxlength="1200" show-word-limit placeholder="可补充教材版本、课堂约束或希望强调的内容" /></label>
       </div>
-      <label>生成要求<el-input v-model="requirements" type="textarea" :rows="2" maxlength="600" show-word-limit placeholder="例如：增加分层作业，安排一次小组探究活动" /></label>
-      <label>参考资料补充<el-input v-model="referenceText" type="textarea" :rows="2" maxlength="1200" show-word-limit placeholder="可补充教材版本、课堂约束或希望强调的内容" /></label>
-    </section>
+    </details>
 
     <el-alert v-if="errorMessage" type="error" :closable="false" show-icon>{{ errorMessage }}</el-alert>
 
-    <el-empty v-if="!hasGeneratedPlan" class="lesson-plan-empty" description="教案尚未生成。确认设置后即可生成并在本页继续编辑。" :image-size="72">
+    <div v-if="isMobile && !hasGeneratedPlan" class="lesson-plan-mobile-empty">
+      <span aria-hidden="true">文</span>
+      <h2>开始写教案</h2>
+      <p>根据当前课件准备基础结构，内容可直接修改。</p>
+      <el-button type="primary" @click="startBasePlan">新建基础教案</el-button>
+    </div>
+    <el-empty v-else-if="!hasGeneratedPlan" class="lesson-plan-empty" description="教案尚未生成。确认设置后即可生成并在本页继续编辑。" :image-size="72">
       <el-button type="primary" :loading="loading" @click="generate">生成教学案</el-button>
     </el-empty>
     <template v-else>
-      <section class="lesson-plan-section">
-        <div class="lesson-plan-section-heading"><strong>教学目标</strong><span>支持直接改写</span></div>
-        <el-input v-model="lessonPlan.teaching_goals" type="textarea" :rows="3" maxlength="1200" show-word-limit placeholder="输入知识、能力与素养目标" />
-      </section>
+      <details class="lesson-plan-section" :open="!isMobile">
+        <summary class="lesson-plan-section-heading"><strong>教学目标</strong><span class="lesson-plan-heading-note">{{ lessonPlan.teaching_goals || '未填写' }}</span></summary>
+        <div class="lesson-plan-section-body"><el-input v-model="lessonPlan.teaching_goals" type="textarea" :rows="3" maxlength="1200" show-word-limit placeholder="输入知识、能力与素养目标" /></div>
+      </details>
 
       <section class="lesson-plan-two-columns">
-        <div class="lesson-plan-section"><div class="lesson-plan-section-heading"><strong>教学重点</strong></div><el-input v-model="keyPointsText" type="textarea" :rows="4" placeholder="一行一个重点" /></div>
-        <div class="lesson-plan-section"><div class="lesson-plan-section-heading"><strong>教学难点</strong></div><el-input v-model="difficultPointsText" type="textarea" :rows="4" placeholder="一行一个难点" /></div>
-        <div class="lesson-plan-section"><div class="lesson-plan-section-heading"><strong>教学方法</strong></div><el-input v-model="teachingMethodsText" type="textarea" :rows="4" placeholder="一行一种方法" /></div>
-        <div class="lesson-plan-section"><div class="lesson-plan-section-heading"><strong>教学资源</strong></div><el-input v-model="teachingResourcesText" type="textarea" :rows="4" placeholder="一行一种资源" /></div>
+        <details class="lesson-plan-section" :open="!isMobile"><summary class="lesson-plan-section-heading"><strong>教学重点</strong><span class="lesson-plan-heading-note">{{ keyPointsText || '未填写' }}</span></summary><div class="lesson-plan-section-body"><el-input v-model="keyPointsText" type="textarea" :rows="4" placeholder="一行一个重点" /></div></details>
+        <details class="lesson-plan-section" :open="!isMobile"><summary class="lesson-plan-section-heading"><strong>教学难点</strong><span class="lesson-plan-heading-note">{{ difficultPointsText || '未填写' }}</span></summary><div class="lesson-plan-section-body"><el-input v-model="difficultPointsText" type="textarea" :rows="4" placeholder="一行一个难点" /></div></details>
+        <details class="lesson-plan-section" :open="!isMobile"><summary class="lesson-plan-section-heading"><strong>教学方法</strong><span class="lesson-plan-heading-note">{{ teachingMethodsText || '未填写' }}</span></summary><div class="lesson-plan-section-body"><el-input v-model="teachingMethodsText" type="textarea" :rows="4" placeholder="一行一种方法" /></div></details>
+        <details class="lesson-plan-section" :open="!isMobile"><summary class="lesson-plan-section-heading"><strong>教学资源</strong><span class="lesson-plan-heading-note">{{ teachingResourcesText || '未填写' }}</span></summary><div class="lesson-plan-section-body"><el-input v-model="teachingResourcesText" type="textarea" :rows="4" placeholder="一行一种资源" /></div></details>
       </section>
 
-      <section class="lesson-plan-section">
-        <div class="lesson-plan-section-heading"><strong>教学过程</strong><el-button text size="small" :icon="Plus" @click="addProcessStep">添加环节</el-button></div>
-        <div class="lesson-plan-process-list">
+      <details class="lesson-plan-section" :open="!isMobile">
+        <summary class="lesson-plan-section-heading"><strong>教学过程</strong><span class="lesson-plan-heading-note">{{ lessonPlan.lesson_process.length }} 个环节</span></summary>
+        <div class="lesson-plan-section-body">
+          <div class="lesson-plan-section-actions"><el-button text size="small" :icon="Plus" @click="addProcessStep">添加环节</el-button></div>
+          <div class="lesson-plan-process-list">
           <template v-for="(step, index) in lessonPlan.lesson_process" :key="`step-${index}`">
             <article v-if="!isMobile" class="lesson-plan-process-row">
               <span class="lesson-plan-index">{{ String(index + 1).padStart(2, '0') }}</span>
@@ -442,29 +510,33 @@ defineExpose({
               </div>
             </article>
           </template>
+          </div>
+          <el-empty v-if="!lessonPlan.lesson_process.length" :image-size="40" description="暂无教学环节" />
         </div>
-        <el-empty v-if="!lessonPlan.lesson_process.length" :image-size="40" description="暂无教学环节" />
-      </section>
+      </details>
 
-      <section class="lesson-plan-section">
-        <div class="lesson-plan-section-heading"><strong>课堂活动</strong><el-button text size="small" :icon="Plus" @click="addActivity">添加活动</el-button></div>
-        <div class="lesson-plan-activity-list">
+      <details class="lesson-plan-section" :open="!isMobile">
+        <summary class="lesson-plan-section-heading"><strong>课堂活动</strong><span class="lesson-plan-heading-note">{{ lessonPlan.classroom_activities.length }} 项活动</span></summary>
+        <div class="lesson-plan-section-body">
+          <div class="lesson-plan-section-actions"><el-button text size="small" :icon="Plus" @click="addActivity">添加活动</el-button></div>
+          <div class="lesson-plan-activity-list">
           <article v-for="(activity, index) in lessonPlan.classroom_activities" :key="`activity-${index}`">
             <div class="lesson-plan-inline-fields"><el-input v-model="activity.name" placeholder="活动名称" /><el-input-number v-model="activity.duration" :min="1" :max="120" controls-position="right" /><el-button text type="danger" :icon="Delete" aria-label="删除课堂活动" @click="removeActivity(index)" /></div>
             <el-input v-model="activity.description" type="textarea" :rows="2" placeholder="描述活动步骤、分组方式和预期产出" />
           </article>
+          </div>
+          <el-empty v-if="!lessonPlan.classroom_activities.length" :image-size="40" description="暂无课堂活动" />
         </div>
-        <el-empty v-if="!lessonPlan.classroom_activities.length" :image-size="40" description="暂无课堂活动" />
-      </section>
+      </details>
 
       <section class="lesson-plan-two-columns">
-        <div class="lesson-plan-section"><div class="lesson-plan-section-heading"><strong>板书设计</strong></div><el-input v-model="lessonPlan.blackboard_design" type="textarea" :rows="4" /></div>
-        <div class="lesson-plan-section"><div class="lesson-plan-section-heading"><strong>课后作业</strong></div><el-input v-model="homeworkText" type="textarea" :rows="4" placeholder="一行一项作业" /></div>
-        <div class="lesson-plan-section"><div class="lesson-plan-section-heading"><strong>形成性评价</strong></div><el-input v-model="lessonPlan.assessment.formative" type="textarea" :rows="3" /></div>
-        <div class="lesson-plan-section"><div class="lesson-plan-section-heading"><strong>总结性评价</strong></div><el-input v-model="lessonPlan.assessment.summative" type="textarea" :rows="3" /></div>
+        <details class="lesson-plan-section" :open="!isMobile"><summary class="lesson-plan-section-heading"><strong>板书设计</strong><span class="lesson-plan-heading-note">{{ lessonPlan.blackboard_design || '未填写' }}</span></summary><div class="lesson-plan-section-body"><el-input v-model="lessonPlan.blackboard_design" type="textarea" :rows="4" /></div></details>
+        <details class="lesson-plan-section" :open="!isMobile"><summary class="lesson-plan-section-heading"><strong>课后作业</strong><span class="lesson-plan-heading-note">{{ homeworkText || '未填写' }}</span></summary><div class="lesson-plan-section-body"><el-input v-model="homeworkText" type="textarea" :rows="4" placeholder="一行一项作业" /></div></details>
+        <details class="lesson-plan-section" :open="!isMobile"><summary class="lesson-plan-section-heading"><strong>形成性评价</strong><span class="lesson-plan-heading-note">{{ lessonPlan.assessment.formative || '未填写' }}</span></summary><div class="lesson-plan-section-body"><el-input v-model="lessonPlan.assessment.formative" type="textarea" :rows="3" /></div></details>
+        <details class="lesson-plan-section" :open="!isMobile"><summary class="lesson-plan-section-heading"><strong>总结性评价</strong><span class="lesson-plan-heading-note">{{ lessonPlan.assessment.summative || '未填写' }}</span></summary><div class="lesson-plan-section-body"><el-input v-model="lessonPlan.assessment.summative" type="textarea" :rows="3" /></div></details>
       </section>
 
-      <section class="lesson-plan-section"><div class="lesson-plan-section-heading"><strong>课后反思</strong></div><el-input v-model="lessonPlan.reflection" type="textarea" :rows="4" placeholder="记录本课实施后的观察与改进方向" /></section>
+      <details class="lesson-plan-section" :open="!isMobile"><summary class="lesson-plan-section-heading"><strong>课后反思</strong><span class="lesson-plan-heading-note">{{ lessonPlan.reflection || '未填写' }}</span></summary><div class="lesson-plan-section-body"><el-input v-model="lessonPlan.reflection" type="textarea" :rows="4" placeholder="记录本课实施后的观察与改进方向" /></div></details>
     </template>
   </section>
 </template>
@@ -476,17 +548,24 @@ defineExpose({
 .lesson-plan-editor-toolbar p { max-width: 47rem; margin: 5px 0 0; color: var(--zh-text-secondary); font-size: 12px; line-height: 1.6; }
 .lesson-plan-editor-actions { display: flex; align-items: center; flex: none; flex-wrap: wrap; justify-content: flex-end; gap: 8px; }
 .lesson-plan-page-count { flex: none; padding: 6px 9px; border-radius: 999px; color: var(--zh-text-theme); background: var(--zh-background-primary); font: 700 11px var(--zh-font-number); }
-.lesson-plan-request, .lesson-plan-section { display: grid; gap: 10px; padding: 16px; border: 1px solid var(--zh-line-border); border-radius: var(--zh-radius10); background: var(--zh-background-primary); }
-.lesson-plan-request-heading { display: flex; align-items: baseline; justify-content: space-between; gap: 12px; }
+.lesson-plan-request, .lesson-plan-section { min-width: 0; border: 1px solid var(--zh-line-border); border-radius: var(--zh-radius10); background: var(--zh-background-primary); }
+.lesson-plan-request-heading, .lesson-plan-section-heading { display: flex; align-items: center; justify-content: space-between; gap: 10px; min-height: 48px; padding: 12px 16px; cursor: pointer; list-style: none; }
+.lesson-plan-request-heading::-webkit-details-marker, .lesson-plan-section-heading::-webkit-details-marker { display: none; }
+.lesson-plan-request-heading::after, .lesson-plan-section-heading::after { width: 7px; height: 7px; flex: none; border-right: 1.5px solid var(--zh-text-caption); border-bottom: 1.5px solid var(--zh-text-caption); content: ''; transform: rotate(45deg); transition: transform .18s ease; }
+.lesson-plan-request[open] > summary::after, .lesson-plan-section[open] > summary::after { transform: rotate(225deg); }
+.lesson-plan-request[open] > summary, .lesson-plan-section[open] > summary { border-bottom: 1px solid var(--zh-line-parting); background: var(--zh-background-light); }
+.lesson-plan-request > summary:focus-visible, .lesson-plan-section > summary:focus-visible { outline: 2px solid var(--zh-text-theme); outline-offset: -2px; }
+.lesson-plan-section-body { display: grid; gap: 10px; padding: 16px; }
+.lesson-plan-heading-note { min-width: 0; flex: 1; overflow: hidden; text-align: right; text-overflow: ellipsis; white-space: nowrap; }
 .lesson-plan-request-heading strong { color: var(--zh-text-primary); font-size: 13px; }
 .lesson-plan-request-heading span { color: var(--zh-text-caption); font-size: 11px; }
 .lesson-plan-field-grid { display: grid; grid-template-columns: 2fr 1fr 1fr 120px; gap: 10px; }
 .lesson-plan-editor label { display: grid; gap: 6px; color: var(--zh-text-secondary); font-size: 11px; font-weight: 600; }
 .lesson-plan-editor :deep(.el-input-number) { width: 100%; }
 .lesson-plan-empty { padding: 32px 18px; border: 1px dashed var(--zh-line-theme20); border-radius: var(--zh-radius10); background: var(--zh-background-primary); }
-.lesson-plan-section-heading { display: flex; align-items: center; justify-content: space-between; gap: 10px; color: var(--zh-text-primary); font-size: 12px; }
+.lesson-plan-section-heading { color: var(--zh-text-primary); font-size: 12px; }
 .lesson-plan-section-heading > span { color: var(--zh-text-caption); font-size: 11px; font-weight: 400; }
-.lesson-plan-section-heading :deep(.el-button) { margin: -5px -7px -5px 0; }
+.lesson-plan-section-actions { display: flex; justify-content: flex-end; }
 .lesson-plan-two-columns { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 12px; }
 .lesson-plan-two-columns .lesson-plan-section { min-width: 0; }
 .lesson-plan-process-list, .lesson-plan-activity-list { display: grid; gap: 8px; }
@@ -504,5 +583,23 @@ defineExpose({
 .lesson-plan-process-card-actions { display: flex; justify-content: flex-end; gap: 8px; padding-top: 8px; border-top: 1px solid var(--zh-line-parting); }
 .lesson-plan-process-card-actions :deep(.el-button) { min-width: 44px; min-height: 44px; margin: 0; }
 @media (max-width: 1023.98px) { .lesson-plan-editor-toolbar { align-items: flex-start; flex-direction: column; } .lesson-plan-editor-actions { justify-content: flex-start; } .lesson-plan-field-grid, .lesson-plan-two-columns, .lesson-plan-process-details { grid-template-columns: 1fr 1fr; } .lesson-plan-process-row { grid-template-columns: 28px 1fr 82px 28px; } .lesson-plan-process-details { grid-column: 2 / -1; } .lesson-plan-process-row > :is(.lesson-plan-index, .el-input, .el-input-number, .el-button) { margin-top: 0; } }
-@media (max-width: 767.98px) { .lesson-plan-editor-toolbar, .lesson-plan-request, .lesson-plan-section { padding: 14px; } .lesson-plan-editor-actions { width: 100%; } .lesson-plan-page-count { margin-right: auto; } .lesson-plan-request-heading { align-items: flex-start; flex-direction: column; gap: 4px; } .lesson-plan-field-grid, .lesson-plan-two-columns, .lesson-plan-process-details { grid-template-columns: 1fr; } .lesson-plan-process-details { grid-column: auto; } .lesson-plan-inline-fields { grid-template-columns: minmax(0, 1fr) 92px 44px; } .lesson-plan-inline-fields :deep(.el-button) { width: 44px; min-height: 44px; } }
+@media (max-width: 767.98px) { .lesson-plan-editor-toolbar { padding: 14px; } .lesson-plan-editor-actions { width: 100%; } .lesson-plan-page-count { margin-right: auto; } .lesson-plan-field-grid, .lesson-plan-two-columns, .lesson-plan-process-details { grid-template-columns: 1fr; } .lesson-plan-process-details { grid-column: auto; } .lesson-plan-inline-fields { grid-template-columns: minmax(0, 1fr) 92px 44px; } .lesson-plan-inline-fields :deep(.el-button) { width: 44px; min-height: 44px; } }
+@media (max-width: 767.98px) {
+  .lesson-plan-editor { gap: 0; padding-bottom: calc(28px + var(--zh-safe-bottom)); background: var(--zh-background-primary); }
+  .lesson-plan-request, .lesson-plan-section { border: 0; border-bottom: 1px solid var(--zh-line-parting); border-radius: 0; box-shadow: none; }
+  .lesson-plan-two-columns { gap: 0; }
+  .lesson-plan-request-heading, .lesson-plan-section-heading { min-height: 52px; padding: 10px 16px; }
+  .lesson-plan-section-body { gap: 14px; padding: 16px; }
+  .lesson-plan-heading-note { max-width: 48%; font-size: 12px !important; }
+  .lesson-plan-request-heading strong, .lesson-plan-section-heading strong { font-size: 16px; font-weight: 600; }
+  .lesson-plan-editor label { gap: 8px; font-size: 13px; }
+  .lesson-plan-editor :deep(.el-input__wrapper), .lesson-plan-editor :deep(.el-input-number .el-input__wrapper) { min-height: 44px; }
+  .lesson-plan-editor :deep(.el-textarea__inner) { min-height: 88px; padding: 11px 12px; border-radius: var(--zh-radius8); font-size: 14px; line-height: 1.6; }
+  .lesson-plan-section-actions :deep(.el-button) { min-height: 44px; padding-inline: 8px; }
+  .lesson-plan-mobile-empty { display: flex; min-height: calc(100dvh - 180px - var(--zh-safe-top) - var(--zh-safe-bottom)); flex-direction: column; align-items: center; justify-content: center; padding: 24px; text-align: center; }
+  .lesson-plan-mobile-empty > span { display: grid; place-items: center; width: 54px; height: 54px; border-radius: var(--zh-radius12); color: var(--zh-text-theme); background: var(--zh-background-weaken); font-size: 23px; font-weight: 700; }
+  .lesson-plan-mobile-empty h2 { margin: 20px 0 6px; color: var(--zh-text-primary); font-size: 22px; font-weight: 600; }
+  .lesson-plan-mobile-empty p { max-width: 250px; margin: 0 0 24px; color: var(--zh-text-secondary); font-size: 13px; line-height: 1.6; }
+  .lesson-plan-mobile-empty :deep(.el-button) { min-height: 44px; padding-inline: 22px; }
+}
 </style>

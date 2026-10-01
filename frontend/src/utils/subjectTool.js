@@ -2,9 +2,16 @@
  * 学科工具的前端协议层。
  *
  * 后端 `POST /projects/tools/validate-component` 只接受这里列出的六种
- * component type。这里集中做旧数据兼容、默认值和无第三方运行时的轻量预览，
+ * component type。这里集中做旧数据兼容、默认值和学科工具的前端预览，
  * 使编辑器、预览和保存都使用同一份组件数据。
  */
+import katex from 'katex'
+import katexStyles from 'katex/dist/katex.min.css?inline'
+import {
+  cachedChemicalStructure,
+  chemicalStructureKey,
+} from './chemicalStructure'
+
 export const subjectToolOptions = [
   { value: 'math_formula', label: '数学公式' },
   { value: 'chemical_formula', label: '化学式 / 分子式' },
@@ -199,16 +206,20 @@ const escapeHtml = (value) => String(value ?? '')
   .replace(/"/g, '&quot;')
   .replace(/'/g, '&#39;')
 
-const formatFormula = (value) => escapeHtml(value || '未填写公式')
-  .replace(/\^\{([^}]+)\}/g, '<sup>$1</sup>')
-  .replace(/\^([0-9a-zA-Z])/g, '<sup>$1</sup>')
-  .replace(/_\{([^}]+)\}/g, '<sub>$1</sub>')
-  .replace(/_([0-9a-zA-Z])/g, '<sub>$1</sub>')
-  .replace(/\\times/g, '×')
-  .replace(/\\cdot/g, '·')
-  .replace(/\\sqrt\{([^}]+)\}/g, '√($1)')
+const formatFormula = (value, displayMode = true) => {
+  const latex = String(value || '')
+  try {
+    return katex.renderToString(latex, {
+      displayMode,
+      throwOnError: false,
+      output: 'htmlAndMathml',
+    })
+  } catch {
+    return escapeHtml(latex)
+  }
+}
 
-const formatChemicalFormula = (value) => escapeHtml(value || '未填写化学式')
+const formatChemicalFormula = (value) => escapeHtml(value || '')
   .replace(/([A-Za-z)])(\d+)/g, '$1<sub>$2</sub>')
 
 const chartRows = (option) => {
@@ -263,50 +274,69 @@ export const geometryMarkup = (data = {}) => {
   return `<svg viewBox="0 0 180 100" role="group" aria-label="几何画板，拖动顶点调整三角形"><path d="${path}"/>${points.map((point, index) => `<circle data-subject-point="${index}" cx="${point.x}" cy="${point.y}" r="5" tabindex="0" role="slider" aria-label="顶点 ${'ABC'[index]}，方向键移动" aria-valuemin="8" aria-valuemax="172" aria-valuenow="${point.x}" aria-valuetext="${point.x}, ${point.y}"/><text x="${point.x}" y="${point.y - 8}">${'ABC'[index]}</text>`).join('')}</svg>`
 }
 
-export const subjectToolMarkup = ({ subjectType, data, title, renderHint } = {}) => {
+export const subjectToolMarkup = ({ subjectType, data, title } = {}) => {
   const type = normalizeSubjectToolType(subjectType)
   const state = normalizeSubjectToolData(data, subjectType || type)
-  const hint = plainObject(renderHint) && Object.keys(renderHint).length
-    ? renderHint
-    : subjectToolDefaultRenderHint(type)
-  const name = text(title, '学科探究工具', 80) || '学科探究工具'
-  const header = `<header class="a12-subject-tool__header"><span>${escapeHtml(subjectToolLabel(type))}</span><strong data-a12-subject-title>${escapeHtml(name)}</strong>${hint.engine ? `<small>${escapeHtml(hint.engine)}</small>` : ''}</header>`
+  const titleText = text(title, '', 80)
+  const genericTitles = new Set(['新增学科工具', '学科探究工具', '学科工具'])
+  const showCustomTitle = Boolean(titleText)
+    && !genericTitles.has(titleText)
+    && !/^学科工具\s*\d+$/.test(titleText)
+    && titleText !== subjectToolLabel(type)
+  const header = `<header class="a12-subject-tool__header" data-a12-subject-v2>${showCustomTitle ? `<strong data-a12-subject-title>${escapeHtml(titleText)}</strong>` : ''}</header>`
+  const noteText = text(state.description || state.instruction, '', 240)
+  const note = noteText ? `<p class="a12-subject-tool__note">${escapeHtml(noteText)}</p>` : ''
+  const withContext = (content) => `${header}${content}${note}`
 
   if (type === 'math_formula') {
-    return `${header}<div class="a12-subject-tool__formula" aria-label="数学公式">${formatFormula(state.latex)}</div><p class="a12-subject-tool__note">可在右侧编辑 LaTeX 公式并使用后端校验。</p>`
+    return withContext(`<div class="a12-subject-tool__formula" aria-label="数学公式">${formatFormula(state.latex, state.display_mode !== false)}</div>`)
   }
   if (type === 'chemical_formula') {
-    const value = state.formula || state.smiles || state.molfile || ''
-    return `${header}<div class="a12-subject-tool__chemical" aria-label="化学式">${formatChemicalFormula(value)}</div><p class="a12-subject-tool__note">支持分子式、SMILES 或 Molfile 数据。</p>`
+    const hasStructureInput = Boolean(state.molfile || state.smiles)
+    if (hasStructureInput) {
+      const key = chemicalStructureKey(state)
+      const cached = cachedChemicalStructure(state)
+      const rendered = cached
+        ? ` data-a12-chemical-rendered-key="${escapeHtml(`${key}:24`)}"`
+        : ''
+      const content = cached?.svg
+        ? cached.svg
+        : cached?.error
+          ? `<span class="a12-subject-tool__molecule-error" role="status">${escapeHtml(cached.error)}</span>`
+          : ''
+      return withContext(`<div class="a12-subject-tool__chemical a12-subject-tool__chemical--structure" aria-label="化学分子结构"><div class="a12-subject-tool__molecule" data-a12-chemical-key="${escapeHtml(key)}"${rendered}>${content}</div></div>`)
+    }
+    return withContext(`<div class="a12-subject-tool__chemical" aria-label="化学式"><span>${formatChemicalFormula(state.formula)}</span></div>`)
   }
   if (type === 'mermaid_diagram') {
     const nodes = diagramNodes(state.mermaid)
     const nodeMarkup = nodes.length
       ? nodes.map((node, index) => `<span>${escapeHtml(node)}${index < nodes.length - 1 ? '<i>→</i>' : ''}</span>`).join('')
-      : '<em>请在右侧填写 Mermaid 描述</em>'
-    return `${header}<div class="a12-subject-tool__diagram" aria-label="流程关系图">${nodeMarkup}</div><p class="a12-subject-tool__note">${escapeHtml(text(state.mermaid, '未填写图表描述', 72))}</p>`
+      : ''
+    return withContext(`<div class="a12-subject-tool__diagram" aria-label="流程关系图">${nodeMarkup}</div>`)
   }
   if (type === 'chart') {
     const rows = chartRows(state.option)
     const max = Math.max(1, ...rows.map((item) => Math.abs(item.value)))
     const bars = rows.map((item) => `<div class="a12-subject-tool__bar"><i style="height:${Math.max(8, Math.min(100, Math.round(Math.abs(item.value) / max * 100)))}%"></i><small>${escapeHtml(item.label)}</small></div>`).join('')
-    return `${header}<div class="a12-subject-tool__chart" aria-label="数据图表">${bars}</div><p class="a12-subject-tool__note">${escapeHtml(text(state.option?.title?.text, '根据右侧 option 配置数据', 72))}</p>`
+    const chartTitle = text(state.option?.title?.text, '', 72)
+    const chartTitleMarkup = chartTitle ? `<strong class="a12-subject-tool__chart-title">${escapeHtml(chartTitle)}</strong>` : ''
+    return withContext(`<div class="a12-subject-tool__chart-area">${chartTitleMarkup}<div class="a12-subject-tool__chart" aria-label="数据图表">${bars}</div></div>`)
   }
   if (type === 'table') {
     const table = tableShape(state)
-    return `${header}<div class="a12-subject-tool__table-wrap"><table><thead><tr>${table.columns.map((column) => `<th>${escapeHtml(column)}</th>`).join('')}</tr></thead><tbody>${table.rows.map((row) => `<tr>${row.map((cell) => `<td>${escapeHtml(cell)}</td>`).join('')}</tr>`).join('')}</tbody></table></div>`
+    return withContext(`<div class="a12-subject-tool__table-wrap"><table><thead><tr>${table.columns.map((column) => `<th>${escapeHtml(column)}</th>`).join('')}</tr></thead><tbody>${table.rows.map((row) => `<tr>${row.map((cell) => `<td>${escapeHtml(cell)}</td>`).join('')}</tr>`).join('')}</tbody></table></div>`)
   }
-  return `${header}<div class="a12-subject-tool__geometry">${geometryMarkup(state)}</div><p class="a12-subject-tool__note">拖动 A、B、C 顶点调整三角形；拖动标题移动整个组件。</p>`
+  return withContext(`<div class="a12-subject-tool__geometry">${geometryMarkup(state)}</div>`)
 }
 
-export const subjectToolRuntimeCss = `
+export const subjectToolRuntimeCss = `${katexStyles}
   .a12-subject-tool .a12-subject-tool__geometry svg{height:100%!important;min-height:60px;overflow:visible}
   .a12-subject-tool [data-subject-point]{cursor:crosshair;touch-action:none;pointer-events:all}
   .a12-subject-tool [data-subject-point]:focus{outline:none;stroke:#ea580c;stroke-width:3}
-  .a12-subject-tool .a12-subject-tool__header{position:static!important;margin:0!important;padding:0!important;background:none!important}
-  .a12-subject-tool .a12-subject-tool__header span{font-size:14px!important}
-  .a12-subject-tool .a12-subject-tool__header strong{font-size:17px!important}
-  .a12-subject-tool .a12-subject-tool__note{position:static!important;margin:0!important;font-size:13px!important}
   .a12-subject-tool{display:grid!important;grid-template-rows:auto minmax(0,1fr) auto;gap:7px!important;width:100%;height:100%;box-sizing:border-box;min-width:0!important;padding:10px 12px!important;overflow:hidden!important;border:var(--widget-border-width,1px) solid var(--widget-border-color,#bfdbfe)!important;border-radius:var(--widget-border-radius,10px)!important;color:var(--widget-color,#27405f)!important;background:var(--widget-background,#f7fbff)!important;font:10px/1.35 "Microsoft YaHei",Arial,sans-serif!important;cursor:move}
-  .a12-subject-tool *{box-sizing:border-box}.a12-subject-tool__header{display:grid;grid-template-columns:minmax(0,1fr) auto;gap:2px 7px;min-width:0}.a12-subject-tool__header span{color:#2563eb;font-size:9px;font-weight:700;letter-spacing:.08em}.a12-subject-tool__header strong{grid-column:1/2;overflow:hidden;color:#173d78;font-size:11px;text-overflow:ellipsis;white-space:nowrap}.a12-subject-tool__header small{grid-column:2;grid-row:1/3;align-self:center;color:#7890ae;font:700 8px ui-monospace,SFMono-Regular,Consolas,monospace}.a12-subject-tool__note{margin:0;overflow:hidden;color:#607491;font-size:9px;line-height:1.45;text-overflow:ellipsis;white-space:nowrap}.a12-subject-tool__formula{display:flex;align-items:center;justify-content:center;min-height:0;overflow:auto;color:#1d4ed8;font:700 clamp(15px,2.1vw,25px)/1.25 Georgia,"Times New Roman",serif;text-align:center}.a12-subject-tool__formula sup,.a12-subject-tool__formula sub{font-size:.62em}.a12-subject-tool__chemical{display:grid;place-items:center;min-height:0;overflow:auto;color:#0f766e;font:700 clamp(20px,3vw,34px)/1.15 Arial,"Microsoft YaHei",sans-serif}.a12-subject-tool__chemical sub{font-size:.58em}.a12-subject-tool__diagram{display:flex;align-items:center;justify-content:center;gap:5px;min-width:0;min-height:0;overflow:hidden}.a12-subject-tool__diagram span{display:inline-flex;align-items:center;gap:5px;min-width:0;padding:5px 7px;border:1px solid #bfdbfe;border-radius:6px;color:#24558d;background:#eff6ff;font-size:9px;white-space:nowrap}.a12-subject-tool__diagram i{margin-right:-12px;color:#6b8bb4;font-size:12px;font-style:normal}.a12-subject-tool__diagram em{color:#8495aa;font-style:normal}.a12-subject-tool__chart{display:flex;align-items:flex-end;justify-content:space-around;gap:6px;min-height:42px;padding:5px 4px 0;border-bottom:1px solid rgb(96 116 145 / 22%)}.a12-subject-tool__bar{display:flex;flex:1 1 0;align-items:center;justify-content:flex-end;gap:3px;min-width:0;height:100%;flex-direction:column}.a12-subject-tool__bar i{display:block;flex:0 0 auto;width:min(20px,70%);min-height:6px;border-radius:4px 4px 1px 1px;background:#3b82f6}.a12-subject-tool__bar small{overflow:hidden;max-width:100%;color:#607491;font-size:8px;text-overflow:ellipsis;white-space:nowrap}.a12-subject-tool__table-wrap{min-height:0;overflow:auto;border:1px solid rgb(37 99 235 / 16%);border-radius:6px}.a12-subject-tool__table-wrap table{width:100%;border-collapse:collapse;font-size:9px}.a12-subject-tool__table-wrap th,.a12-subject-tool__table-wrap td{padding:4px 6px;border:1px solid rgb(37 99 235 / 14%);text-align:left;white-space:nowrap}.a12-subject-tool__table-wrap th{color:#24558d;background:#eff6ff}.a12-subject-tool__geometry{display:grid;place-items:center;min-height:0}.a12-subject-tool__geometry svg{display:block;width:100%;height:58px}.a12-subject-tool__geometry path{fill:none;stroke:#2563eb;stroke-width:2}.a12-subject-tool__geometry circle{fill:#fff;stroke:#2563eb;stroke-width:2}.a12-subject-tool__geometry text{fill:#315f9f;font-size:9px;text-anchor:middle}
+  .a12-subject-tool *{box-sizing:border-box}.a12-subject-tool__header{display:flex;align-items:baseline;gap:8px;min-width:0}.a12-subject-tool__header span{display:none!important}.a12-subject-tool__header strong{overflow:hidden;color:#173d78;font-size:14px;text-overflow:ellipsis;white-space:nowrap}.a12-subject-tool__note{margin:0;max-height:2.9em;overflow:hidden;color:#607491;font-size:11px;line-height:1.45;white-space:normal}.a12-subject-tool__formula{display:flex;align-items:center;justify-content:center;min-height:0;overflow:auto;color:#1d4ed8;font:700 clamp(15px,2.1vw,25px)/1.25 Georgia,"Times New Roman",serif;text-align:center}.a12-subject-tool__formula sup,.a12-subject-tool__formula sub{font-size:.62em}.a12-subject-tool__chemical{display:grid;place-items:center;min-width:0;min-height:0;overflow:hidden;color:#0f766e;font:700 clamp(20px,3vw,34px)/1.15 Arial,"Microsoft YaHei",sans-serif}.a12-subject-tool__chemical span{white-space:nowrap}.a12-subject-tool__chemical sub{font-size:.58em}.a12-subject-tool__chemical--structure{width:100%;height:100%;padding:2px}.a12-subject-tool__molecule{display:grid;place-items:center;width:100%;height:100%;min-width:0;min-height:0;overflow:hidden}.a12-subject-tool__molecule-image{display:block;width:100%;height:100%;min-width:0;min-height:0;object-fit:contain}.a12-subject-tool__molecule-error{max-width:100%;color:#b42318;font-size:.46em;font-weight:500;text-align:center;white-space:normal}.a12-subject-tool__diagram{display:flex;align-items:center;justify-content:center;gap:5px;min-width:0;min-height:0;overflow:hidden}.a12-subject-tool__diagram span{display:inline-flex;align-items:center;gap:5px;min-width:0;padding:5px 7px;border:1px solid #bfdbfe;border-radius:6px;color:#24558d;background:#eff6ff;font-size:9px;white-space:nowrap}.a12-subject-tool__diagram i{margin-right:-12px;color:#6b8bb4;font-size:12px;font-style:normal}.a12-subject-tool__diagram em{color:#8495aa;font-style:normal}.a12-subject-tool__chart-area{display:flex;flex-direction:column;min-width:0;min-height:0}.a12-subject-tool__chart-title{flex:none;overflow:hidden;color:#24558d;font-size:11px;text-overflow:ellipsis;white-space:nowrap}.a12-subject-tool__chart{display:flex;flex:1;align-items:flex-end;justify-content:space-around;gap:6px;min-height:42px;padding:5px 4px 0;border-bottom:1px solid rgb(96 116 145 / 22%)}.a12-subject-tool__bar{display:flex;flex:1 1 0;align-items:center;justify-content:flex-end;gap:3px;min-width:0;height:100%;flex-direction:column}.a12-subject-tool__bar i{display:block;flex:0 0 auto;width:min(20px,70%);min-height:6px;border-radius:4px 4px 1px 1px;background:#3b82f6}.a12-subject-tool__bar small{overflow:hidden;max-width:100%;color:#607491;font-size:8px;text-overflow:ellipsis;white-space:nowrap}.a12-subject-tool__table-wrap{min-height:0;overflow:auto;border:1px solid rgb(37 99 235 / 16%);border-radius:6px}.a12-subject-tool__table-wrap table{width:100%;border-collapse:collapse;font-size:9px}.a12-subject-tool__table-wrap th,.a12-subject-tool__table-wrap td{padding:4px 6px;border:1px solid rgb(37 99 235 / 14%);text-align:left;white-space:nowrap}.a12-subject-tool__table-wrap th{color:#24558d;background:#eff6ff}.a12-subject-tool__geometry{display:grid;place-items:center;min-height:0}.a12-subject-tool__geometry svg{display:block;width:100%;height:58px}.a12-subject-tool__geometry path{fill:none;stroke:#2563eb;stroke-width:2}.a12-subject-tool__geometry circle{fill:#fff;stroke:#2563eb;stroke-width:2}.a12-subject-tool__geometry text{fill:#315f9f;font-size:9px;text-anchor:middle}
+  .a12-subject-tool{font-size:var(--subject-font-size,24px)!important}.a12-subject-tool__header strong{font-size:.6em}.a12-subject-tool__note{font-size:.48em}.a12-subject-tool__formula,.a12-subject-tool__chemical{font-size:1em}.a12-subject-tool__chart-title{font-size:.58em}.a12-subject-tool__bar small{font-size:.4em}.a12-subject-tool__table-wrap table{font-size:.45em}.a12-subject-tool__diagram span{font-size:.42em}.a12-subject-tool__geometry text{font-size:.42em}
+  .a12-subject-tool__molecule-svg{display:block;width:100%;height:100%;min-width:0;min-height:0}
+  .a12-subject-tool__molecule-svg path[class^="atom-"]{stroke:currentColor;stroke-width:.75px;stroke-linejoin:round}
 `
