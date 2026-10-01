@@ -6142,11 +6142,14 @@ const startRun = async () => {
     const numericSessionId = Number(sessionId.value)
     const selectedTheme = String(routeQueryValue(route.query.pptTheme) || '').trim()
     const outlineId = planData.python_outline_id || outline.outline_id
+    // 功能 2：引用资料（含临时上传 res_xxx）随 workspace_context 注入页面生成检索。
+    const generationResourceIds = outline.workspace_context?.resource_ids || []
     const payload = {
       ...(Number.isInteger(numericSessionId) && numericSessionId > 0 ? { session_id: numericSessionId } : {}),
       ...(outlineId ? { outline_id: String(outlineId) } : {}),
       title: String(outline.title || planData.title || 'A12 教学课件'),
       outline,
+      resource_ids: generationResourceIds,
       ...(selectedTheme ? { theme: selectedTheme } : {}),
       aspect_ratio: '16:9',
       language: 'zh-CN',
@@ -6159,7 +6162,9 @@ const startRun = async () => {
         if (!slide) return
         streamedSlides.push(slide)
         const ordered = [...streamedSlides].sort((a, b) => Number(a.slide_no || 0) - Number(b.slide_no || 0))
-        applyGeneratedPresentation({ data: { title: payload.title, slides: ordered } }, { persist: false, notify: false })
+        // 直接传 presentation 字典（与 final 路径一致）；getPresentationPayload 不会解包 { data } 包装，
+        // 多包一层会导致 slides 被判空，第一页事件就抛“生成服务未返回页面”。
+        applyGeneratedPresentation({ title: payload.title, slides: ordered }, { persist: false, notify: false })
         const progress = 22 + Math.round((Number(completed || ordered.length) / Math.max(1, Number(total || ordered.length))) * 58)
         setClientRunStage({
           id: 'presentation-generate',

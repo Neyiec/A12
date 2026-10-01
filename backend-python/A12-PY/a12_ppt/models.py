@@ -42,6 +42,7 @@ class PresentationGenerateRequest(BaseModel):
     outline_id: str | None = None
     title: str
     outline: dict[str, Any]
+    resource_ids: list[str] = Field(default_factory=list)
     theme: str | None = None
     aspect_ratio: Literal["16:9", "4:3"] = "16:9"
     language: str = "zh-CN"
@@ -170,7 +171,7 @@ class InteractiveModuleGenerateRequest(BaseModel):
 
 
 class ResourceIndexSyncRequest(BaseModel):
-    source_type: Literal["public", "personal"]
+    source_type: Literal["public", "personal", "temp"]
     resource_id: str = Field(..., min_length=1)
     title: str
     file_url: str
@@ -190,7 +191,7 @@ class ResourceIndexBootstrapRequest(BaseModel):
 
 
 class ResourceIndexMetadataRequest(BaseModel):
-    source_type: Literal["public", "personal"]
+    source_type: Literal["public", "personal", "temp"]
     resource_id: str = Field(..., min_length=1)
     available: bool | None = None
     allow_ai: bool | None = None
