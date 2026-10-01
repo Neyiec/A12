@@ -1,10 +1,12 @@
 -- =====================================================================
 -- 内容审核与社区治理 — MySQL mock 数据
 -- =====================================================================
--- 适用表      : com_content（社区内容）/ com_interaction（社区互动）/ adm_audit（审核与举报）
--- 覆盖场景    : 技能/案例公开池、待审核、返修中、已下线；收藏/浏览/复用互动；投稿审核与举报处置
--- 执行前提    : 已执行根目录 table_created.txt 中的建表语句（本脚本不含 DDL）
--- 幂等策略    : 使用 9100+ 高位显式主键，重复执行前先删除同段数据，可反复导入
+-- 适用表      : com_content（社区内容）/ com_interaction（社区互动）/ com_like（社区点赞）/ adm_audit（审核与举报）
+-- 覆盖场景    : 技能/案例公开池、待审核、返修中、已下线；收藏/浏览/复用互动；投稿审核与举报处置；
+--               ★功能11 热门榜单（近 1/7/30 天滚动窗口内有点赞+收藏+复用达标的公开内容）
+-- 执行前提    : 已执行根目录 table_created.txt 中的建表语句 + sql/upgrade_feature11_community_likes_ranking.sql
+--              （本脚本不含 DDL，com_like 表与 like_count/favorite_count 冗余列由升级脚本创建）
+-- 幂等策略    : 使用 9100+ 高位显式主键（com_like 占 9401~9499 段），重复执行前先删除同段数据，可反复导入
 -- 用户 ID 约定: 作者/举报人 10001~10005（教师）、审核人 90001（管理员）。
 --              三表均无外键约束，用户不存在也可插入成功；如需界面显示正确，请替换为库中真实用户 ID。
 -- 取值域说明  : com_content.status     = draft / reviewing / public / offline（代码实际使用值，DDL 注释未列 draft）
@@ -22,6 +24,7 @@ START TRANSACTION;
 -- ---------------------------------------------------------------------
 DELETE FROM com_content     WHERE id BETWEEN 9101 AND 9199;
 DELETE FROM com_interaction WHERE id BETWEEN 9201 AND 9299;
+DELETE FROM com_like        WHERE id BETWEEN 9401 AND 9499;
 DELETE FROM adm_audit       WHERE id BETWEEN 9301 AND 9399;
 
 -- ---------------------------------------------------------------------
@@ -150,9 +153,12 @@ INSERT INTO com_content
 --    view 语义：每用户对同一内容仅保留一条最近浏览记录（后端先删后插）
 --    derivation：bind_materials 字段后端暂未读写，保持 NULL；target_project_id 指向
 --    ws_project 派生项目（如库中无对应项目记录，可置 NULL，仅影响追溯展示）
+--    时间戳分两段：9201~9223 为历史互动（已滑出榜单滚动窗口，仅作历史数据演示）；
+--                 9241+ 为近期互动（NOW() 相对时间，始终落在榜单窗口内，★榜单数据源）
 -- ---------------------------------------------------------------------
 INSERT INTO com_interaction
 (id, user_id, action_type, target_type, target_id, target_version, target_project_id, bind_materials, created_at) VALUES
+-- 历史互动（8~9 月固定日期，现已滑出榜单窗口；保留用于「历史数据」演示）
 -- 收藏（教师互藏优质内容）
 (9201, 10002, 'favorite', 'skill',       9101, NULL, NULL, NULL, '2026-08-10 09:12:00'),
 (9202, 10003, 'favorite', 'skill',       9101, NULL, NULL, NULL, '2026-08-15 20:40:00'),
@@ -177,8 +183,92 @@ INSERT INTO com_interaction
 (9222, 10005, 'derivation', 'lesson_case', 9103, 1, 3002, NULL, '2026-09-01 09:30:00'),
 (9223, 10004, 'derivation', 'skill',       9105, 1, NULL,  NULL, '2026-09-06 16:45:00');
 
+-- 近期收藏（与历史收藏不重复「同人同内容」；NOW() 相对时间保证重复执行时始终在窗口内）
+INSERT INTO com_interaction
+(id, user_id, action_type, target_type, target_id, target_version, target_project_id, bind_materials, created_at) VALUES
+(9241, 10001, 'favorite', 'skill',       9101, NULL, NULL, NULL, NOW() - INTERVAL 4 HOUR),
+(9242, 10005, 'favorite', 'skill',       9101, NULL, NULL, NULL, NOW() - INTERVAL 3 DAY),
+(9243, 10004, 'favorite', 'lesson_case', 9103, NULL, NULL, NULL, NOW() - INTERVAL 2 HOUR),
+(9244, 10001, 'favorite', 'lesson_case', 9103, NULL, NULL, NULL, NOW() - INTERVAL 4 DAY),
+(9245, 10001, 'favorite', 'skill',       9105, NULL, NULL, NULL, NOW() - INTERVAL 18 HOUR),
+(9246, 10002, 'favorite', 'skill',       9105, NULL, NULL, NULL, NOW() - INTERVAL 6 DAY),
+(9247, 10002, 'favorite', 'skill',       9102, NULL, NULL, NULL, NOW() - INTERVAL 5 DAY),
+(9248, 10005, 'favorite', 'lesson_case', 9104, NULL, NULL, NULL, NOW() - INTERVAL 26 HOUR),
+(9249, 10001, 'favorite', 'lesson_case', 9104, NULL, NULL, NULL, NOW() - INTERVAL 5 DAY),
+(9250, 10004, 'favorite', 'lesson_case', 9104, NULL, NULL, NULL, NOW() - INTERVAL 6 DAY),
+(9251, 10004, 'favorite', 'lesson_case', 9112, NULL, NULL, NULL, NOW() - INTERVAL 4 DAY),
+(9252, 10002, 'favorite', 'lesson_case', 9112, NULL, NULL, NULL, NOW() - INTERVAL 8 DAY),
+(9253, 10001, 'favorite', 'skill',       9111, NULL, NULL, NULL, NOW() - INTERVAL 6 DAY);
+
+-- 近期浏览（每用户每内容一条：不与历史浏览行重复；浏览只加热度分，不参与上榜门槛）
+INSERT INTO com_interaction
+(id, user_id, action_type, target_type, target_id, target_version, target_project_id, bind_materials, created_at) VALUES
+(9261, 10004, 'view', 'skill',       9101, NULL, NULL, NULL, NOW() - INTERVAL 1 HOUR),
+(9262, 10001, 'view', 'skill',       9101, NULL, NULL, NULL, NOW() - INTERVAL 3 HOUR),
+(9263, 10003, 'view', 'lesson_case', 9103, NULL, NULL, NULL, NOW() - INTERVAL 2 HOUR),
+(9264, 10002, 'view', 'skill',       9105, NULL, NULL, NULL, NOW() - INTERVAL 4 HOUR),
+(9265, 10005, 'view', 'lesson_case', 9104, NULL, NULL, NULL, NOW() - INTERVAL 30 HOUR),
+(9266, 10004, 'view', 'lesson_case', 9112, NULL, NULL, NULL, NOW() - INTERVAL 3 DAY),
+(9267, 10001, 'view', 'skill',       9111, NULL, NULL, NULL, NOW() - INTERVAL 5 DAY);
+
+-- 近期复用派生（不与历史复用行重复）
+INSERT INTO com_interaction
+(id, user_id, action_type, target_type, target_id, target_version, target_project_id, bind_materials, created_at) VALUES
+(9271, 10003, 'derivation', 'skill',       9101, 2, 3001, NULL, NOW() - INTERVAL 6 HOUR),
+(9272, 10001, 'derivation', 'lesson_case', 9103, 1, 3002, NULL, NOW() - INTERVAL 9 HOUR),
+(9273, 10001, 'derivation', 'skill',       9105, 1, NULL,  NULL, NOW() - INTERVAL 22 HOUR),
+(9274, 10005, 'derivation', 'skill',       9102, 1, NULL,  NULL, NOW() - INTERVAL 3 DAY),
+(9275, 10003, 'derivation', 'lesson_case', 9112, 1, NULL,  NULL, NOW() - INTERVAL 6 DAY);
+
 -- ---------------------------------------------------------------------
--- 3. 审核与举报 adm_audit
+-- 3. 社区点赞 com_like（功能11：★热门榜单门槛的核心数据源，此前种子为零）
+--    唯一键 uk_user_target(user_id, target_type, target_id)：同人同内容仅一条，
+--    造数据须用不同用户组合凑量，单账号反复点赞只算 1 次
+--    时间戳统一 NOW() - INTERVAL 相对值：榜单按滚动窗口（日/周/月）聚合，
+--    固定日期会随时间推移滑出窗口，导致榜单再次清空
+--    设计目标（门槛 = 窗口内 点赞+收藏+复用 ≥ 5，浏览不进门槛）：
+--      9101 文言文情景教学技能   日/周/月全部达标（技能榜首）
+--      9105 课堂小组合作技能     日/周/月全部达标
+--      9103 Weather 课件案例     日/周/月全部达标（案例榜首）
+--      9102 错题讲评课技能       周/月达标（不进日榜）
+--      9104 牛顿第二定律案例     周/月达标（不进日榜）
+--      9112 观潮朗读课案例       周/月达标（不进日榜）
+--      9111 化学配平闯关技能     周内仅 2 次互动——刻意保留一个「够不着门槛」的对照
+-- ---------------------------------------------------------------------
+INSERT INTO com_like
+(id, user_id, target_type, target_id, created_at) VALUES
+(9401, 10002, 'skill',       9101, NOW() - INTERVAL 2 HOUR),
+(9402, 10003, 'skill',       9101, NOW() - INTERVAL 5 HOUR),
+(9403, 10004, 'skill',       9101, NOW() - INTERVAL 10 HOUR),
+(9404, 10005, 'skill',       9101, NOW() - INTERVAL 20 HOUR),
+(9405, 10003, 'lesson_case', 9103, NOW() - INTERVAL 1 HOUR),
+(9406, 10004, 'lesson_case', 9103, NOW() - INTERVAL 3 HOUR),
+(9407, 10002, 'lesson_case', 9103, NOW() - INTERVAL 7 HOUR),
+(9408, 10005, 'lesson_case', 9103, NOW() - INTERVAL 26 HOUR),
+(9409, 10001, 'skill',       9105, NOW() - INTERVAL 3 HOUR),
+(9410, 10002, 'skill',       9105, NOW() - INTERVAL 8 HOUR),
+(9411, 10003, 'skill',       9105, NOW() - INTERVAL 12 HOUR),
+(9412, 10001, 'skill',       9102, NOW() - INTERVAL 26 HOUR),
+(9413, 10003, 'skill',       9102, NOW() - INTERVAL 2 DAY),
+(9414, 10004, 'skill',       9102, NOW() - INTERVAL 4 DAY),
+(9415, 10001, 'lesson_case', 9104, NOW() - INTERVAL 2 DAY),
+(9416, 10005, 'lesson_case', 9104, NOW() - INTERVAL 3 DAY),
+(9417, 10004, 'lesson_case', 9112, NOW() - INTERVAL 2 DAY),
+(9418, 10001, 'lesson_case', 9112, NOW() - INTERVAL 3 DAY),
+(9419, 10002, 'lesson_case', 9112, NOW() - INTERVAL 5 DAY),
+(9420, 10005, 'skill',       9111, NOW() - INTERVAL 6 DAY);
+
+-- 冗余计数回填：卡片展示的 like_count/favorite_count 与互动行保持一致
+-- （升级脚本只在执行时回填一次，本脚本新增互动后需同步刷新，否则榜单有数、卡片计数为 0）
+UPDATE com_content c SET
+  like_count = (SELECT COUNT(*) FROM com_like l
+                WHERE l.target_type = c.content_type AND l.target_id = c.id),
+  favorite_count = (SELECT COUNT(*) FROM com_interaction i
+                    WHERE i.action_type = 'favorite'
+                      AND i.target_type = c.content_type AND i.target_id = c.id);
+
+-- ---------------------------------------------------------------------
+-- 4. 审核与举报 adm_audit
 --    audit_type='audit'  : 投稿审核（reporter_id 存投稿人，reason 存提交备注）
 --    audit_type='report' : 举报（reason 存举报原因，comment 存补充说明）
 --    action 取值          : 审核侧 approve/reject/rework；举报侧 approve/offline/ignore/reject/restore
@@ -204,9 +294,23 @@ INSERT INTO adm_audit
 COMMIT;
 
 -- ---------------------------------------------------------------------
--- 4. 自检查询（可选执行）：核对 mock 数据落库与关联关系
+-- 5. 自检查询（可选执行）：核对 mock 数据落库与关联关系
 -- ---------------------------------------------------------------------
 -- 内容分布：SELECT status, COUNT(*) FROM com_content WHERE id BETWEEN 9101 AND 9199 GROUP BY status;
 -- 待办审核：SELECT id, target_type, target_id, reason FROM adm_audit WHERE id BETWEEN 9301 AND 9399 AND status = 'pending';
 -- 互动统计：SELECT action_type, COUNT(*) FROM com_interaction WHERE id BETWEEN 9201 AND 9299 GROUP BY action_type;
 -- 池内内容与计数：SELECT id, title, status, view_count, use_count FROM com_content WHERE id BETWEEN 9101 AND 9199;
+-- ★榜单候选模拟（近 7 天，与 ComContentMapper.selectRankCandidates 同口径，应返回 6 条）：
+-- SELECT c.id, c.title,
+--        COALESCE(l.like_cnt, 0) AS like_cnt, COALESCE(s.fav_cnt, 0) AS fav_cnt, COALESCE(s.use_cnt, 0) AS use_cnt,
+--        COALESCE(l.like_cnt,0)*3 + COALESCE(s.fav_cnt,0)*2 + COALESCE(s.use_cnt,0)*4 + COALESCE(s.view_cnt,0)*0.2 AS hot_score
+-- FROM com_content c
+-- LEFT JOIN (SELECT target_id, COUNT(*) AS like_cnt FROM com_like
+--            WHERE created_at >= NOW() - INTERVAL 7 DAY GROUP BY target_id) l ON l.target_id = c.id
+-- LEFT JOIN (SELECT target_id, SUM(action_type = 'favorite') AS fav_cnt, SUM(action_type = 'derivation') AS use_cnt,
+--                   SUM(action_type = 'view') AS view_cnt
+--            FROM com_interaction WHERE action_type IN ('favorite', 'derivation', 'view')
+--              AND created_at >= NOW() - INTERVAL 7 DAY GROUP BY target_id) s ON s.target_id = c.id
+-- WHERE c.status = 'public'
+--   AND (COALESCE(l.like_cnt, 0) + COALESCE(s.fav_cnt, 0) + COALESCE(s.use_cnt, 0)) >= 5
+-- ORDER BY hot_score DESC;
