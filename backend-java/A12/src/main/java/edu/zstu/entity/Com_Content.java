@@ -28,6 +28,8 @@ public class Com_Content {
     private int is_top; //是否置顶 1是0否
     private int view_count;
     private int use_count;
+    private int like_count;       //点赞数（冗余列，com_like 计数）
+    private int favorite_count;   //收藏数（冗余列，com_interaction favorite 计数）
     private LocalDateTime created_at;
     private LocalDateTime updated_at;
 }

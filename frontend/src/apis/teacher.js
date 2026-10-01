@@ -114,6 +114,10 @@ export const deleteResourceIndex = (sourceType, resourceId) => del(`/api/v1/pyth
 export const listCommunityItems = (params) => get('/api/v1/community/items', params)
 export const favoriteCommunityItem = (id) => put(`/api/v1/community/items/${id}/favorite`)
 export const unfavoriteCommunityItem = (id) => del(`/api/v1/community/items/${id}/favorite`)
+// 功能11：点赞/取消点赞与热门榜单
+export const likeCommunityItem = (id) => put(`/api/v1/community/items/${id}/like`)
+export const unlikeCommunityItem = (id) => del(`/api/v1/community/items/${id}/like`)
+export const listCommunityRankings = (params) => get('/api/v1/community/rankings', params)
 export const reuseCommunityItem = (id, data) => post(`/api/v1/community/items/${id}/reuse`, data)
 export const getCommunityItem = (id) => get(`/api/v1/community/items/${id}`)
 export const recordCommunityView = (id) => post(`/api/v1/community/items/${id}/view-events`)

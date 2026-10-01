@@ -31,6 +31,9 @@ public class ContentVO {
     private int is_top;
     private int view_count;
     private int use_count;
+    private int like_count;       //点赞数
+    private int favorite_count;   //收藏数
+    private boolean liked;        //当前用户是否已点赞（未登录恒为 false，不参与缓存）
     private LocalDateTime created_at;
     private LocalDateTime updated_at;
 }
