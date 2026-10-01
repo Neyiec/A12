@@ -5885,7 +5885,9 @@ const startRun = async () => {
         if (!slide) return
         streamedSlides.push(slide)
         const ordered = [...streamedSlides].sort((a, b) => Number(a.slide_no || 0) - Number(b.slide_no || 0))
-        applyGeneratedPresentation({ data: { title: payload.title, slides: ordered } }, { persist: false, notify: false })
+        // 直接传 presentation 字典（与 final 路径一致）；getPresentationPayload 不会解包 { data } 包装，
+        // 多包一层会导致 slides 被判空，第一页事件就抛“生成服务未返回页面”。
+        applyGeneratedPresentation({ title: payload.title, slides: ordered }, { persist: false, notify: false })
         const progress = 22 + Math.round((Number(completed || ordered.length) / Math.max(1, Number(total || ordered.length))) * 58)
         setClientRunStage({
           id: 'presentation-generate',
