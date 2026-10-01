@@ -7,9 +7,9 @@
 import { computed, onBeforeUnmount, onMounted, ref, watch } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { ElMessage } from 'element-plus'
-import { CollectionTag, Search, Star, User } from '@element-plus/icons-vue'
+import { CollectionTag, Search, Star, Trophy, User } from '@element-plus/icons-vue'
 import { COMMUNITY_PAGE } from '../config/teacherPages.config.js'
-import { createCommunityReport, createCommunitySubmission, favoriteCommunityItem, getCommunityItem, getCommunityReport, getCommunitySubmission, listCommunityFavorites, listCommunityItems, listCommunityRecentViews, listCommunityReports, listCommunitySubmissions, listResources, patchProject, recordCommunityView, removeCommunityRecentView, reuseCommunityItem, saveCommunitySubmissionVersion, submitCommunitySubmission, unfavoriteCommunityItem, updateCommunitySubmission } from '../apis/teacher'
+import { createCommunityReport, createCommunitySubmission, favoriteCommunityItem, getCommunityItem, getCommunityReport, getCommunitySubmission, likeCommunityItem, listCommunityFavorites, listCommunityItems, listCommunityRankings, listCommunityRecentViews, listCommunityReports, listCommunitySubmissions, listResources, patchProject, recordCommunityView, removeCommunityRecentView, reuseCommunityItem, saveCommunitySubmissionVersion, submitCommunitySubmission, unlikeCommunityItem, unfavoriteCommunityItem, updateCommunitySubmission } from '../apis/teacher'
 import { useUserStore } from '../storage/user.js'
 import CommunityContentPreview from './CommunityContentPreview.vue'
 
@@ -29,6 +29,31 @@ const communityPageSize = ref(12)
 const communityError = ref('')
 const usingDemoCards = ref(false)
 const favoriteIds = ref(new Set())
+// 功能11：列表排序维度（sort_by × period）与点赞态
+const sortBy = ref('')
+const sortPeriod = ref('all')
+const sortOptions = [
+  { value: 'like', label: '点赞最多' },
+  { value: 'favorite', label: '收藏最多' },
+  { value: 'use', label: '复用最多' },
+]
+const likedIds = ref(new Set())
+// 功能11：热门榜单（类型 × 时间段，Top10）
+const rankType = ref('skill')
+const rankPeriod = ref('week')
+const rankItems = ref([])
+const rankLoading = ref(false)
+const rankError = ref('')
+const rankTypeTabs = [
+  { value: 'skill', label: 'Skill' },
+  { value: 'lesson_case', label: '教学案例' },
+]
+const rankPeriodTabs = [
+  { value: 'day', label: '日' },
+  { value: 'week', label: '周' },
+  { value: 'month', label: '月' },
+]
+const rankTitle = computed(() => ({ day: '今日热门', week: '本周热门', month: '本月热门' }[rankPeriod.value] || '热门榜单'))
 const loading = ref(false)
 const detailVisible = ref(false), submissionVisible = ref(false), collectionVisible = ref(false), reportVisible = ref(false)
 const detail = ref(null), favorites = ref([]), recentViews = ref([]), submissions = ref([]), reports = ref([])
@@ -454,6 +479,10 @@ const normalizeCard = (item = {}) => {
     stage: item.grade || item.stage || '通用',
     author: item.author_name || item.author || item.creator_name || (item.author_id ? `用户 #${item.author_id}` : '社区教师'),
     uses: Number(item.use_count ?? item.useCount ?? 0),
+    // 功能11：卡片点赞/收藏计数与当前用户点赞态
+    likes: Number(item.like_count ?? item.likeCount ?? 0),
+    favorites: Number(item.favorite_count ?? item.favoriteCount ?? 0),
+    liked: Boolean(item.liked),
     tag: item.lesson_type || item.lessonType || (contentType === 'skill' ? '智能 Skill' : '教学设计'),
     updatedAt: String(item.updated_at || item.updatedAt || item.created_at || ''),
     raw: item,
@@ -472,6 +501,8 @@ const loadCommunity = async () => {
       subject: selectedSubject.value === '全部学科' ? undefined : selectedSubject.value,
       grade: selectedStage.value === '全部学段' ? undefined : selectedStage.value,
       keyword: searchQuery.value || undefined,
+      sort_by: sortBy.value || undefined,
+      period: sortBy.value ? sortPeriod.value : undefined,
       page: communityPage.value,
       size: communityPageSize.value,
     }))
@@ -479,6 +510,7 @@ const loadCommunity = async () => {
     const nextRecords = extractRecords(result)
     communityCards.value = nextRecords.map(normalizeCard)
     communityTotal.value = extractTotal(result, nextRecords.length)
+    syncLikeState(nextRecords)
     usingDemoCards.value = false
   } catch (error) {
     if (requestSeq !== communityRequestSeq) return
@@ -517,7 +549,7 @@ const matchesFilters = (item) => {
   return matchesSearch && matchesStage && matchesSubject
 }
 
-/** 根据当前页签和筛选条件生成社区卡片。 */
+/** 根据当前页签和筛选条件生成社区卡片；选择了排序维度时交由后端排序，「最新」仅在前端按更新时间排序。 */
 const filteredCards = computed(() => {
   const filtered = communityCards.value.filter((card) => {
     const matchesTab = activeTab.value === '精选'
@@ -526,7 +558,7 @@ const filteredCards = computed(() => {
       || activeTab.value === '最新'
     return matchesTab && matchesFilters(card)
   })
-  return activeTab.value === '最新' ? [...filtered].sort((a, b) => b.updatedAt.localeCompare(a.updatedAt)) : filtered
+  return activeTab.value === '最新' && !sortBy.value ? [...filtered].sort((a, b) => b.updatedAt.localeCompare(a.updatedAt)) : filtered
 })
 
 /** 判断精选案例是否仍应展示。 */
@@ -681,6 +713,105 @@ const toggleFavorite = async (item) => {
   }
 }
 
+// ------------------ 功能11：点赞与热门榜单 ------------------
+/** 点赞图标路径（Element Plus 图标库无 thumbs-up，Material thumb_up 单处维护） */
+const LIKE_ICON_PATH = 'M1 21h4V9H1v12zm22-11c0-1.1-.9-2-2-2h-6.31l.95-4.57.03-.32c0-.41-.17-.79-.44-1.06L14.17 1 7.59 7.59C7.22 7.95 7 8.45 7 9v10c0 1.1.9 2 2 2h9c.83 0 1.54-.5 1.84-1.22l3.02-7.05c.09-.23.14-.47.14-.73v-2z'
+/** 进行中的点赞请求集合：防连点产生交错请求 */
+const likePendingIds = ref(new Set())
+
+/** 将后端返回的 liked 字段同步进点赞态集合（分页/刷新后保持一致）。 */
+const syncLikeState = (records) => {
+  const next = new Set(likedIds.value)
+  records.forEach((item) => {
+    if (item?.id === null || item?.id === undefined) return
+    const key = String(item.id)
+    item.liked ? next.add(key) : next.delete(key)
+  })
+  likedIds.value = next
+}
+
+/** 本地点赞计数即时反馈：列表卡片、详情弹窗与榜单行同步增减，接口失败时由调用方回滚。 */
+const adjustLocalLikeCount = (rawId, liked) => {
+  communityCards.value = communityCards.value.map((card) => (
+    String(card.id) === String(rawId) ? { ...card, likes: Math.max(0, card.likes + (liked ? 1 : -1)) } : card
+  ))
+  rankItems.value = rankItems.value.map((row) => (
+    String(row.id) === String(rawId) ? { ...row, likes: Math.max(0, row.likes + (liked ? 1 : -1)) } : row
+  ))
+  if (detail.value && String(detail.value.id) === String(rawId)) {
+    detail.value = {
+      ...detail.value,
+      liked,
+      like_count: Math.max(0, Number(detail.value.like_count ?? 0) + (liked ? 1 : -1)),
+    }
+  }
+}
+
+/** 点赞/取消点赞（乐观更新；后端唯一索引幂等；同内容请求进行中时忽略重复点击）。 */
+const toggleLike = async (item) => {
+  const rawId = item?.id ?? item?.item_id
+  if (rawId === null || rawId === undefined || rawId === '') return ElMessage.info('该内容暂不支持点赞')
+  if (item.testCaseId && !item.id) return ElMessage.info('演示内容暂不支持点赞')
+  const key = String(rawId)
+  if (likePendingIds.value.has(key)) return
+  const next = !likedIds.value.has(key)
+  const previousIds = likedIds.value
+  const pending = new Set(likePendingIds.value)
+  pending.add(key)
+  likePendingIds.value = pending
+  likedIds.value = next ? new Set([...previousIds, key]) : new Set([...previousIds].filter((id) => id !== key))
+  adjustLocalLikeCount(rawId, next)
+  try {
+    if (next) await assertApiSuccess(await likeCommunityItem(rawId)); else await assertApiSuccess(await unlikeCommunityItem(rawId))
+    ElMessage.success(next ? '已点赞' : '已取消点赞')
+  } catch (error) {
+    likedIds.value = previousIds
+    adjustLocalLikeCount(rawId, !next)
+    ElMessage.error(error?.message || '点赞状态未能更新')
+  } finally {
+    const rest = new Set(likePendingIds.value)
+    rest.delete(key)
+    likePendingIds.value = rest
+  }
+}
+
+let rankRequestSeq = 0
+/** 榜单行归一：RankItemVO{rank, hot_score, content} → 展示字段。 */
+const normalizeRankRow = (row = {}) => {
+  const content = row.content || row.item || {}
+  return {
+    rank: Number(row.rank ?? 0),
+    score: Number(row.hot_score ?? row.hotScore ?? 0),
+    id: content.id ?? content.item_id,
+    title: content.title || '未命名内容',
+    author: content.author_name || content.author || (content.author_id ? `用户 #${content.author_id}` : '社区教师'),
+    likes: Number(content.like_count ?? content.likeCount ?? 0),
+    uses: Number(content.use_count ?? content.useCount ?? 0),
+  }
+}
+
+/** 加载热门榜单：内容类型 × 时间段，Top10；ZSET 缺失时后端自动降级 DB 聚合。 */
+const loadRankings = async () => {
+  const requestSeq = ++rankRequestSeq
+  rankLoading.value = true
+  rankError.value = ''
+  try {
+    const result = assertApiSuccess(await listCommunityRankings({
+      content_type: rankType.value,
+      period: rankPeriod.value,
+      limit: 10,
+    }))
+    if (requestSeq !== rankRequestSeq) return
+    rankItems.value = extractRecords(result).map(normalizeRankRow)
+  } catch (error) {
+    if (requestSeq !== rankRequestSeq) return
+    rankItems.value = []
+    rankError.value = error?.message || '热门榜单加载失败'
+  } finally {
+    if (requestSeq === rankRequestSeq) rankLoading.value = false
+  }
+}
+
 const openDetail = async (item) => {
   const rawId = item?.id ?? item?.item_id ?? item?.testCaseId
   if (rawId === null || rawId === undefined || rawId === '') return ElMessage.info('该内容暂时没有可查看的详情')
@@ -829,9 +960,16 @@ watch([activeTab, selectedStage, selectedSubject], () => {
   communityPage.value = 1
   loadCommunity()
 })
+// 功能11：排序维度/时间段变化即时重查；榜单类型/时间段变化即时重查
+watch([sortBy, sortPeriod], () => {
+  communityPage.value = 1
+  loadCommunity()
+})
+watch([rankType, rankPeriod], loadRankings)
 onMounted(() => {
   loadCommunity()
   loadFavoriteState()
+  loadRankings()
 })
 </script>
 
@@ -857,6 +995,16 @@ onMounted(() => {
         <div class="filters">
           <el-select v-model="selectedStage" aria-label="筛选学段"><el-option label="全部学段" value="全部学段" /><el-option label="初中" value="初中" /><el-option label="高中" value="高中" /></el-select>
           <el-select v-model="selectedSubject" aria-label="筛选学科"><el-option label="全部学科" value="全部学科" /><el-option label="数学" value="数学" /><el-option label="物理" value="物理" /><el-option label="语文" value="语文" /><el-option label="生物" value="生物" /></el-select>
+          <el-select v-model="sortBy" aria-label="排序方式" placeholder="默认排序">
+            <el-option label="默认排序" value="" />
+            <el-option v-for="option in sortOptions" :key="option.value" :label="option.label" :value="option.value" />
+          </el-select>
+          <el-select v-model="sortPeriod" aria-label="时间范围" :disabled="!sortBy">
+            <el-option label="全部时间" value="all" />
+            <el-option label="近 1 天" value="day" />
+            <el-option label="近 7 天" value="week" />
+            <el-option label="近 30 天" value="month" />
+          </el-select>
         </div>
       </div>
     </div>
@@ -871,6 +1019,28 @@ onMounted(() => {
       <span>{{ communityError }}</span>
       <el-button text type="primary" @click="loadCommunity">重试</el-button>
     </div>
+
+    <section class="rank-section" aria-label="热门榜单">
+      <header class="rank-header">
+        <div class="rank-title"><el-icon><Trophy /></el-icon><h2>{{ rankTitle }}</h2></div>
+        <div class="rank-controls">
+          <el-segmented v-model="rankPeriod" :options="rankPeriodTabs" size="small" aria-label="榜单时间段" />
+          <el-segmented v-model="rankType" :options="rankTypeTabs" size="small" aria-label="榜单内容类型" />
+        </div>
+      </header>
+      <div v-loading="rankLoading" class="rank-list">
+        <article v-for="row in rankItems" :key="row.id" class="rank-row" role="button" tabindex="0" :aria-label="`第 ${row.rank} 名 ${row.title}`" @click="openDetail({ id: row.id })" @keydown.enter.prevent="openDetail({ id: row.id })" @keydown.space.prevent="openDetail({ id: row.id })">
+          <span class="rank-badge" :class="{ top: row.rank <= 3 }">{{ row.rank }}</span>
+          <div class="rank-info"><strong>{{ row.title }}</strong><span>{{ row.author }} · {{ row.likes }} 赞 · {{ row.uses }} 次使用</span></div>
+          <span class="rank-score" :title="`热度 ${row.score.toFixed(1)}`">{{ row.score.toFixed(1) }}</span>
+        </article>
+        <el-empty v-if="!rankLoading && !rankError && rankItems.length === 0" class="rank-empty" description="近期互动还未达标，暂无上榜内容" />
+        <div v-if="rankError" class="rank-error" role="alert">
+          <span>{{ rankError }}</span>
+          <el-button text type="primary" @click="loadRankings">重试</el-button>
+        </div>
+      </div>
+    </section>
 
     <section v-if="showFeatured" class="featured-case">
       <div class="feature-visual">
@@ -888,7 +1058,7 @@ onMounted(() => {
 
     <section v-loading="loading" class="community-grid" aria-label="社区内容">
       <article v-for="card in filteredCards" :key="card.id || card.testCaseId || card.title" class="community-card" data-hover-lift role="button" tabindex="0" @click="openDetail(card)" @keydown.enter.prevent="openDetail(card)" @keydown.space.prevent="openDetail(card)">
-        <div class="card-top"><span>{{ card.type }}</span><el-button text circle :type="favoriteIds.has(String(card.id ?? card.testCaseId)) ? 'warning' : undefined" aria-label="收藏" @click.stop="toggleFavorite(card)"><el-icon><Star /></el-icon></el-button></div>
+        <div class="card-top"><span>{{ card.type }}</span><div class="card-top-actions"><button class="card-like" :class="{ active: likedIds.has(String(card.id)) }" :aria-pressed="likedIds.has(String(card.id))" aria-label="点赞" @click.stop="toggleLike(card)"><svg viewBox="0 0 24 24" aria-hidden="true"><path :d="LIKE_ICON_PATH" /></svg><span>{{ card.likes }}</span></button><el-button text circle :type="favoriteIds.has(String(card.id ?? card.testCaseId)) ? 'warning' : undefined" aria-label="收藏" @click.stop="toggleFavorite(card)"><el-icon><Star /></el-icon></el-button></div></div>
         <div class="card-icon"><el-icon><CollectionTag /></el-icon></div>
         <h3>{{ card.title }}</h3>
         <p>{{ card.subject }} · {{ card.tag }}</p>
@@ -1035,6 +1205,7 @@ onMounted(() => {
               </div>
               <div class="detail-header-actions">
                 <button class="detail-favorite-button" :class="{ active: favoriteIds.has(String(detail.id)) }" :aria-pressed="favoriteIds.has(String(detail.id))" @click="toggleFavorite(detail)"><el-icon><Star /></el-icon><span>{{ favoriteIds.has(String(detail.id)) ? '已收藏' : '收藏案例' }}</span></button>
+                <button class="detail-favorite-button detail-like-button" :class="{ active: Boolean(detail.liked) }" :aria-pressed="Boolean(detail.liked)" @click="toggleLike(detail)"><svg class="like-icon" viewBox="0 0 24 24" aria-hidden="true"><path :d="LIKE_ICON_PATH" /></svg><span>{{ detail.liked ? '已点赞' : '点赞案例' }}</span></button>
                 <button class="detail-close-button" aria-label="关闭详情" @click="detailVisible = false"><span aria-hidden="true">×</span></button>
               </div>
             </header>
@@ -1067,7 +1238,7 @@ onMounted(() => {
 
                 <section class="detail-aside-card">
                   <div class="detail-aside-label">使用数据</div>
-                  <div class="detail-stat-list"><div><span>使用次数</span><strong>{{ detail.use_count ?? detail.useCount ?? 0 }}</strong></div><div><span>浏览次数</span><strong>{{ detail.view_count ?? detail.viewCount ?? 0 }}</strong></div></div>
+                  <div class="detail-stat-list"><div><span>使用次数</span><strong>{{ detail.use_count ?? detail.useCount ?? 0 }}</strong></div><div><span>浏览次数</span><strong>{{ detail.view_count ?? detail.viewCount ?? 0 }}</strong></div><div><span>点赞数</span><strong>{{ detail.like_count ?? detail.likeCount ?? 0 }}</strong></div></div>
                 </section>
 
                 <section class="detail-aside-card detail-attribute-card">
@@ -1121,11 +1292,16 @@ onMounted(() => {
 .feature-copy { display: flex; flex-direction: column; padding: 32px; }.feature-copy h2 { margin: 18px 0 10px; font-size: 26px; }.feature-copy > p { margin: 0; color: var(--zh-text-secondary); line-height: 1.75; }
 .feature-copy dl { margin: 24px 0; }.feature-copy dl div { display: grid; grid-template-columns: 76px 1fr; padding: 8px 0; border-bottom: 1px solid var(--zh-line-parting); }.feature-copy dt { color: var(--zh-text-caption); font-size: 12px; }.feature-copy dd { margin: 0; font-size: 13px; }
 .feature-copy footer { display: flex; align-items: center; justify-content: space-between; margin-top: auto; color: var(--zh-text-caption); font-size: 12px; }
-.community-status-row { display: flex; align-items: center; gap: 9px; margin-top: 16px; color: var(--zh-text-caption); font-size: 12px; }.status-muted { color: var(--zh-text-caption); font-size: 11px; }.community-error { display: flex; align-items: center; justify-content: space-between; gap: 12px; margin-top: 10px; padding: 9px 12px; border: 1px solid var(--zh-line-danger20, #f3c5c5); border-radius: var(--zh-radius8); color: var(--zh-text-danger, #b42318); background: var(--zh-background-danger-weaken, #fff5f5); font-size: 12px; }.community-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(230px, 1fr)); gap: 12px; margin-top: 18px; }.community-card { padding: 18px; border: 1px solid var(--zh-line-border); border-radius: var(--zh-radius12); background: var(--zh-background-capsule); cursor: pointer; transition: transform 200ms ease, border-color 200ms ease, box-shadow 200ms ease; }.community-card:hover, .community-card:focus-visible { transform: translateY(-3px); border-color: var(--zh-line-theme20); box-shadow: var(--zh-shadow2); outline: none; }
+.community-status-row { display: flex; align-items: center; gap: 9px; margin-top: 16px; color: var(--zh-text-caption); font-size: 12px; }.status-muted { color: var(--zh-text-caption); font-size: 11px; }.community-error { display: flex; align-items: center; justify-content: space-between; gap: 12px; margin-top: 10px; padding: 9px 12px; border: 1px solid color-mix(in srgb, var(--zh-red) 30%, var(--zh-line-border)); border-radius: var(--zh-radius8); color: var(--zh-red); background: var(--zh-danger-background); font-size: 12px; }.community-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(230px, 1fr)); gap: 12px; margin-top: 18px; }.community-card { padding: 18px; border: 1px solid var(--zh-line-border); border-radius: var(--zh-radius12); background: var(--zh-background-capsule); cursor: pointer; transition: transform 200ms ease, border-color 200ms ease, box-shadow 200ms ease; }.community-card:hover, .community-card:focus-visible { transform: translateY(-3px); border-color: var(--zh-line-theme20); box-shadow: var(--zh-shadow2); outline: none; }
 .community-empty { grid-column: 1 / -1; padding: 40px 0; border: 1px dashed var(--zh-line-heavier); border-radius: var(--zh-radius12); }
 .card-top, .community-card footer { display: flex; align-items: center; justify-content: space-between; }.card-top > span { color: var(--zh-text-caption); font-size: 11px; }.card-icon { width: 38px; height: 38px; display: grid; place-items: center; margin-top: 18px; border-radius: var(--zh-radius8); color: var(--zh-text-theme); background: var(--zh-background-weaken); }
+/* 功能11：卡片点赞按钮（图标 + 计数，激活态主题色） */
+.card-top-actions { display: flex; align-items: center; gap: 2px; }.card-like { display: inline-flex; align-items: center; justify-content: center; gap: 4px; min-width: 44px; height: 34px; padding: 0 9px; border: 0; border-radius: 9999px; color: var(--zh-text-caption); background: transparent; cursor: pointer; font-size: 11px; transition: color 200ms ease, background 200ms ease, transform 200ms ease; }.card-like svg { width: 13px; height: 13px; fill: currentColor; }.card-like:hover { color: var(--zh-text-theme); background: var(--zh-background-weaken); }.card-like:active { transform: scale(.94); }.card-like.active { color: var(--zh-text-theme); }
 .community-card h3 { min-height: 44px; margin: 18px 0 8px; font-size: 15px; line-height: 1.5; }.community-card > p { margin: 0 0 28px; color: var(--zh-text-caption); font-size: 12px; }.community-card > p.card-description { display: -webkit-box; min-height: 36px; margin: -16px 0 20px; overflow: hidden; color: var(--zh-text-secondary); line-height: 1.5; -webkit-box-orient: vertical; -webkit-line-clamp: 2; }.community-card footer { gap: 8px; border-top: 1px solid var(--zh-line-parting); padding-top: 12px; font-size: 11px; }.community-card footer span { min-width: 0; display: flex; align-items: center; gap: 4px; overflow: hidden; color: var(--zh-text-caption); text-overflow: ellipsis; white-space: nowrap; }.community-card footer button { flex: none; border: 0; color: var(--zh-text-link); background: transparent; cursor: pointer; font-size: 11px; }.card-actions { display: flex; align-items: center; gap: 8px; }.card-detail { color: var(--zh-text-caption) !important; }.community-pagination { justify-content: center; margin: 24px 0 0; }
 .source-note { margin: 20px 0 0; color: var(--zh-text-caption); font-size: 11px; text-align: center; }
+/* 功能11：热门榜单区（白卡 + el-segmented 类型/时间段切换 + Top10 双列列表） */
+.rank-section { margin-top: 20px; padding: 18px 20px 20px; border: 1px solid var(--zh-line-border); border-radius: var(--zh-radius12); background: var(--zh-background-pop); box-shadow: var(--zh-shadow1); }.rank-header { display: flex; align-items: center; justify-content: space-between; gap: 12px; flex-wrap: wrap; }.rank-title { display: flex; align-items: center; gap: 8px; color: var(--zh-text-theme); }.rank-title .el-icon { font-size: 18px; }.rank-title h2 { margin: 0; color: var(--zh-text-primary); font-size: 16px; font-weight: 600; letter-spacing: var(--zh-tracking-tight); }.rank-controls { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
+.rank-list { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 10px; min-height: 56px; margin-top: 14px; }.rank-row { display: flex; align-items: center; gap: 10px; min-width: 0; padding: 9px 10px; border: 1px solid var(--zh-line-parting); border-radius: var(--zh-radius8); background: var(--zh-background-capsule); cursor: pointer; transition: border-color .15s ease, transform .15s ease, box-shadow .15s ease; }.rank-row:hover, .rank-row:focus-visible { border-color: var(--zh-line-theme20); transform: translateY(-1px); box-shadow: var(--zh-shadow1); }.rank-badge { display: grid; width: 24px; height: 24px; flex: none; place-items: center; border-radius: var(--zh-radius8); color: var(--zh-text-theme); background: var(--zh-background-weaken); font: 600 11px/1 var(--zh-font-number); }.rank-badge.top { color: var(--zh-text-white); background: var(--zh-gradient-blue); }.rank-info { min-width: 0; display: grid; gap: 2px; }.rank-info strong { overflow: hidden; color: var(--zh-text-primary); font-size: 12px; text-overflow: ellipsis; white-space: nowrap; }.rank-info span { overflow: hidden; color: var(--zh-text-caption); font-size: 10px; text-overflow: ellipsis; white-space: nowrap; }.rank-score { flex: none; margin-left: auto; color: var(--zh-text-theme); font: 600 13px/1 var(--zh-font-number); }.rank-empty { grid-column: 1 / -1; padding: 14px 0; border: 1px dashed var(--zh-line-heavier); border-radius: var(--zh-radius8); }.rank-error { grid-column: 1 / -1; display: flex; align-items: center; justify-content: space-between; gap: 12px; padding: 9px 12px; border: 1px solid color-mix(in srgb, var(--zh-red) 30%, var(--zh-line-border)); border-radius: var(--zh-radius8); color: var(--zh-red); background: var(--zh-danger-background); font-size: 12px; }
 @media (max-width: 980px) { .community-grid { grid-template-columns: repeat(2, 1fr); }.featured-case { grid-template-columns: 1fr; }.feature-visual { min-height: 240px; } }
 @media (max-width: 600px) { .community-search-row { align-items: stretch; flex-direction: column; }.community-search-row :deep(.el-input) { width: 100%; flex-basis: auto; }.community-search-row>.submission-button { width: 100%; margin-left: 0; }.community-toolbar { align-items: stretch; flex-direction: column; }.filters { padding-bottom: 12px; }.community-grid { grid-template-columns: 1fr; } }
 .community-actions{display:flex;justify-content:center;gap:8px;margin-top:24px}.submission-dialog{display:grid;gap:12px}.submission-state{display:flex;align-items:center;gap:14px;padding:9px 11px;border-radius:var(--zh-radius8);color:var(--zh-text-caption);background:var(--zh-background-light);font-size:12px}.submission-grid{display:grid;grid-template-columns:2fr 1fr 1fr 1fr;gap:10px}.submission-grid-secondary{grid-template-columns:1fr 1fr 2fr}.submission-grid :deep(.el-form-item){margin-bottom:0}.json-editor-hint{display:flex;align-items:flex-start;justify-content:space-between;gap:8px;margin-top:5px;color:var(--zh-text-caption);font-size:11px;line-height:1.45}.json-editor-hint .el-button{flex:none;padding:0;font-size:11px}.draft-list{display:flex;align-items:center;gap:4px;overflow:auto;padding:10px;border-radius:var(--zh-radius8);background:var(--zh-background-light);font-size:12px}.draft-list span{flex:none;color:var(--zh-text-caption)}.collection-section{margin-bottom:20px}.collection-section h3,.report-list h3{margin:0 0 8px;font-size:14px}.collection-row,.report-row{display:flex;align-items:center;justify-content:space-between;gap:8px;padding:8px 0;border-bottom:1px solid var(--zh-line-parting);color:var(--zh-text-secondary);font-size:13px}.collection-item-link{min-width:0;overflow:hidden;padding:0;border:0;color:var(--zh-text-link);background:transparent;cursor:pointer;font:inherit;text-align:left;text-overflow:ellipsis;white-space:nowrap}.collection-item-link:hover,.collection-item-link:focus-visible{color:var(--zh-text-theme);text-decoration:underline;outline:none}.report-dialog{display:grid;gap:10px}.report-form-grid{display:grid;grid-template-columns:1fr 1fr;gap:0 12px}.report-form-grid :deep(.el-form-item:nth-child(3)),.report-form-grid :deep(.el-form-item:nth-child(4)){grid-column:1 / -1}.report-list{margin-top:16px;padding-top:12px;border-top:1px solid var(--zh-line-border)}.report-row span{min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}.report-detail dl{display:grid;gap:0;margin:0}.report-detail dl div{display:grid;grid-template-columns:90px minmax(0,1fr);gap:12px;padding:10px 0;border-bottom:1px solid var(--zh-line-parting)}.report-detail dt{color:var(--zh-text-caption);font-size:12px}.report-detail dd{margin:0;color:var(--zh-text-secondary);font-size:13px;word-break:break-word}.detail-meta{color:var(--zh-text-caption);font-size:12px}.detail-section-title{margin:18px 0 8px;font-size:14px}.detail-content{max-height:360px;overflow:auto;padding:14px;border-radius:var(--zh-radius8);background:var(--zh-background-light);font:12px/1.65 var(--zh-font-code);white-space:pre-wrap}@media(max-width:600px){.submission-grid,.submission-grid-secondary,.report-form-grid{grid-template-columns:1fr}.report-form-grid :deep(.el-form-item:nth-child(3)),.report-form-grid :deep(.el-form-item:nth-child(4)){grid-column:auto}.community-actions{flex-wrap:wrap}}
@@ -1185,7 +1361,8 @@ onMounted(() => {
 .detail-author { display: flex; align-items: center; gap: 11px; }
 .detail-author-avatar { flex: none; color: var(--zh-text-white); background: var(--zh-theme-primary); font-size: 15px; font-weight: 500; }
 .detail-author strong,.detail-author span { display: block; }.detail-author strong { color: var(--zh-text-primary); font-size: 13px; }.detail-author span { margin-top: 4px; color: var(--zh-text-caption); font-size: 11px; }
-.detail-stat-list { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; }.detail-stat-list div { min-width: 0; padding-right: 10px; border-right: 1px solid var(--zh-line-parting); }.detail-stat-list div:last-child { padding-right: 0; border-right: 0; }.detail-stat-list span,.detail-stat-list strong { display: block; }.detail-stat-list span { color: var(--zh-text-caption); font-size: 11px; }.detail-stat-list strong { margin-top: 5px; color: var(--zh-text-primary); font: 600 24px/1.1 var(--zh-font-number); }
+.detail-stat-list { display: grid; grid-template-columns: 1fr 1fr; gap: 10px 0; }.detail-stat-list div { min-width: 0; padding-right: 10px; border-right: 1px solid var(--zh-line-parting); }.detail-stat-list div:nth-child(2n), .detail-stat-list div:last-child { padding-right: 0; border-right: 0; }.detail-stat-list span,.detail-stat-list strong { display: block; }.detail-stat-list span { color: var(--zh-text-caption); font-size: 11px; }.detail-stat-list strong { margin-top: 5px; color: var(--zh-text-primary); font: 600 24px/1.1 var(--zh-font-number); }
+.detail-like-button .like-icon { width: 13px; height: 13px; fill: currentColor; }.detail-like-button:focus-visible { outline: 2px solid var(--zh-border-focus); outline-offset: 2px; }
 .detail-attribute-card dl { display: grid; gap: 0; margin: 0; }.detail-attribute-card dl div { display: flex; align-items: baseline; justify-content: space-between; gap: 12px; padding: 9px 0; border-bottom: 1px solid var(--zh-line-parting); }.detail-attribute-card dl div:first-child { padding-top: 0; }.detail-attribute-card dl div:last-child { padding-bottom: 0; border-bottom: 0; }.detail-attribute-card dt { color: var(--zh-text-caption); font-size: 11px; }.detail-attribute-card dd { max-width: 170px; margin: 0; color: var(--zh-text-secondary); font-size: 12px; text-align: right; word-break: break-word; }
 .detail-variable-card p { margin: -5px 0 12px; color: var(--zh-text-caption); font-size: 11px; line-height: 1.5; }.detail-variable-list { display: flex; flex-wrap: wrap; gap: 6px; }.detail-variable-list span { padding: 5px 8px; border-radius: var(--zh-radius8); color: var(--zh-text-theme); background: var(--zh-background-weaken); font-size: 11px; }
 .detail-aside-actions { display: grid; gap: 8px; padding-top: 4px; }.detail-primary-action,.detail-report-action { display: flex; align-items: center; justify-content: space-between; width: 100%; min-height: 42px; padding: 0 15px; border-radius: var(--zh-radius8); cursor: pointer; font: inherit; font-size: 13px; transition: background 180ms ease, border-color 180ms ease, color 180ms ease, transform 180ms ease; }.detail-primary-action { border: 1px solid var(--zh-theme-primary); color: var(--zh-text-white); background: var(--zh-background-button); font-weight: 600; }.detail-primary-action:hover,.detail-primary-action:focus-visible { border-color: var(--zh-background-button-hover); background: var(--zh-background-button-hover); outline: none; }.detail-primary-action:active { transform: translateY(1px); }.detail-report-action { justify-content: center; border: 1px solid transparent; color: var(--zh-text-caption); background: transparent; }.detail-report-action:hover,.detail-report-action:focus-visible { border-color: var(--zh-line-border); color: var(--zh-text-danger, var(--zh-red)); background: var(--zh-background-pop); outline: none; }.detail-primary-action:disabled,.detail-report-action:disabled { cursor: not-allowed; opacity: .55; }.detail-aside-actions > span { color: var(--zh-text-caption); font-size: 10px; line-height: 1.45; text-align: center; }
@@ -1211,5 +1388,5 @@ onMounted(() => {
 .submission-content-heading{margin-bottom:14px}.submission-content-heading>div>span{margin:0;color:var(--zh-text-theme);font-size:17px;font-weight:630;letter-spacing:-.01em}
 
 @media (max-width: 1023.98px) { .community-grid { grid-template-columns: repeat(2, 1fr); }.featured-case { grid-template-columns: 1fr; }.feature-visual { min-height: 240px; }.community-toolbar { flex-wrap: wrap; row-gap: 4px; }.toolbar-controls { flex-wrap: wrap; row-gap: 4px; } }
-@media (max-width: 767.98px) { .community-search-row { align-items: stretch; flex-direction: column; }.community-search-row :deep(.el-input) { width: 100%; flex-basis: auto; }.community-search-row>.submission-button { width: 100%; margin-left: 0; }.community-toolbar { align-items: stretch; flex-direction: column; }.tab-list { overflow-x: auto; -webkit-overflow-scrolling: touch; }.filters { padding-bottom: 12px; flex-wrap: wrap; }.community-grid { grid-template-columns: 1fr; }.community-card footer button { min-height: 44px; } }
+@media (max-width: 767.98px) { .community-search-row { align-items: stretch; flex-direction: column; }.community-search-row :deep(.el-input) { width: 100%; flex-basis: auto; }.community-search-row>.submission-button { width: 100%; margin-left: 0; }.community-toolbar { align-items: stretch; flex-direction: column; }.tab-list { overflow-x: auto; -webkit-overflow-scrolling: touch; }.filters { padding-bottom: 12px; flex-wrap: wrap; }.community-grid { grid-template-columns: 1fr; }.community-card footer button { min-height: 44px; }.card-like { min-height: 40px; }.rank-list { grid-template-columns: 1fr; }.rank-section { padding: 16px; } }
 </style>

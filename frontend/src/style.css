@@ -59,6 +59,12 @@
   --zh-orange: #ff6b3f;
   --zh-green: #1f993f;
   --zh-cyan: #29becc;
+  /* 补齐被组件引用但缺失的 Token（design.md 2.5/焦点规范） */
+  --zh-danger-background: #ff40401a;
+  --zh-danger-clicked: #db2323;
+  --zh-border-focus: var(--zh-line-theme);
+  /* 兼容别名：历史组件以 --zh-font-family 引用正文字体 */
+  --zh-font-family: var(--zh-font-text-windows-zh);
   --zh-radius8: 8px;
   --zh-radius10: 10px;
   --zh-radius12: 12px;

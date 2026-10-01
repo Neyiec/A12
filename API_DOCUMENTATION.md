@@ -1593,10 +1593,12 @@ Java 任务模式支持的导出配置键：`slides`、`lesson_plan`、`outline`
 | `subject` | String | 否 | 学科 |
 | `grade` | String | 否 | 年级 |
 | `keyword` | String | 否 | 关键字搜索 |
+| `sort_by` | String | 否 | 功能11 排序维度: `like` / `favorite` / `use`；缺省为默认排序（置顶+更新时间）。非法值返回 400 |
+| `period` | String | 否 | 功能11 时间窗口: `day` / `week` / `month` / `all`（默认 `all`，仅 `sort_by` 非空时生效）。`all`=按总量冗余列排序，日/周/月=按窗口内互动聚合排序 |
 | `page` | int | 否 | 默认1 |
 | `size` | int | 否 | 默认10 |
 
-**后端 DTO**: `ContentQueryDTO extends PageQuery { content_type, subject, grade, status, keyword }`
+**后端 DTO**: `ContentQueryDTO extends PageQuery { content_type, subject, grade, status, keyword, sort_by, period }`
 **响应 VO**: `Result<PageResult<ContentVO>>`
 
 ---
@@ -1626,6 +1628,9 @@ Java 任务模式支持的导出配置键：`slides`、`lesson_plan`、`outline`
 | `is_top` | int | 是否置顶 |
 | `view_count` | int | 浏览数 |
 | `use_count` | int | 使用数 |
+| `like_count` | int | 功能11 点赞数 |
+| `favorite_count` | int | 功能11 收藏数 |
+| `liked` | boolean | 功能11 当前用户是否已点赞（未登录恒为 `false`，该字段不参与服务端缓存，按登录态实时注入） |
 | `created_at` | LocalDateTime | 创建时间 |
 | `updated_at` | LocalDateTime | 更新时间 |
 
@@ -1785,6 +1790,35 @@ Java 任务模式支持的导出配置键：`slides`、`lesson_plan`、`outline`
 **功能**: 获取举报受理状态及处理结果；仅允许举报人读取自己的举报
 **路径参数**: `id` — 举报ID
 **响应 VO**: `Result<AuditVO>`
+
+---
+
+## API-74A PUT /api/v1/community/items/{id}/like
+**功能**: 功能11 点赞指定公开社区内容；幂等（重复点赞返回成功且不重复计数，唯一索引 `uk_user_target` 兜底）；防刷为用户每分钟 20 次上限 + 单内容 2s 操作冷却，超限返回 400
+**路径参数**: `id` — 内容ID
+**鉴权**: 需登录（401 未登录）；内容须 `status=public`（400 否则）
+**响应 VO**: `Result<Void>`
+
+---
+
+## API-74B DELETE /api/v1/community/items/{id}/like
+**功能**: 功能11 取消点赞；幂等（未点赞时同样返回成功），计数带下限保护不会减为负
+**路径参数**: `id` — 内容ID
+**鉴权**: 需登录（401 未登录）
+**响应 VO**: `Result<Void>`
+
+---
+
+## API-74C GET /api/v1/community/rankings
+**功能**: 功能11 热门榜单。Redis ZSET（`community:rank:{content_type}:{period}`，每 10 分钟定时聚合重建）优先，键缺失/为空时自动降级为 DB 窗口聚合。入选前置条件：`status=public` 且窗口内点赞+收藏+复用总数 ≥ 5；热度分 = 点赞×3 + 收藏×2 + 复用×4 + 浏览×0.2；已下线内容即使残留在 ZSET 中也不出榜、不占名次
+**查询参数**:
+| 字段 | 类型 | 必填 | 说明 |
+|---|---|---|---|
+| `content_type` | String | 是 | 内容类型: `skill` / `lesson_case` |
+| `period` | String | 否 | 时间窗口: `day` / `week` / `month`（默认 `week`） |
+| `limit` | int | 否 | 返回条数，默认 10，上限 50 |
+**鉴权**: 公开可读（登录可选，登录时返回 `liked` 点赞态）
+**响应 VO**: `Result<List<RankItemVO>>`，`RankItemVO { rank: int, hot_score: double, content: ContentVO }`
 
 ---
 

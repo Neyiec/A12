@@ -763,6 +763,19 @@
 
 ---
 
+## 10. 页面布局档案
+
+> 各页面经确认的布局规格归档（四件套：整体布局 ASCII / 栅格与容器 / 断点行为 / 宽度约束）。
+
+### 10.1 CommunityHub（教师社区 · 功能11 改造）
+
+- **整体布局**：hero 搜索区 → 工具栏（tab + 操作按钮 + 学段/学科/排序/时间范围筛选）→ 状态行 → 热门榜单区（新增）→ 精选位（演示态）→ 内容卡片网格 → 分页。完整 ASCII 图见 `doc/community-discovery/layout-plan.md`。
+- **栅格与容器**：容器 `min(1180px, calc(100% - 48px))`；榜单区白卡 `--zh-radius12`，内列表两列 `repeat(2, minmax(0, 1fr))` gap 10px；卡片网格沿用 `repeat(auto-fit, minmax(230px, 1fr))`。
+- **断点行为**：≥1280 榜单两列；768–1279 榜单两列、工具栏 flex-wrap 换行；<768 榜单单列、筛选换行、点赞按钮触控热区 ≥40px。
+- **宽度约束**：筛选 `el-select` 统一 120px；榜单条目标题 `min-width:0` ellipsis，热度值 `flex:none` 数字字体。
+
+---
+
 ## 附录 A: Light/Dark 模式快速对照
 
 | Token | Light | Dark |

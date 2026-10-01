@@ -90,6 +90,13 @@
             <scope>test</scope>
         </dependency>
 
+        <!-- H2 内存数据库（仅测试：功能11 集成/功能测试的 MySQL 兼容替身） -->
+        <dependency>
+            <groupId>com.h2database</groupId>
+            <artifactId>h2</artifactId>
+            <scope>test</scope>
+        </dependency>
+
         <!-- Spring Boot Actuator：生产级监控与管理端点 -->
         <dependency>
             <groupId>org.springframework.boot</groupId>
