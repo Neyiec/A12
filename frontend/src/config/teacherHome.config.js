@@ -51,7 +51,7 @@ export const TEACHER_HOME = {
     },
   ],
   composer: {
-    placeholder: '例如：帮我做一份三年级数学《分数的初步认识》的课件……',
+    placeholder: '描述你的教学需求…',
     attach: '添加资料',
     knowledge: '引用知识库',
     send: '发送',

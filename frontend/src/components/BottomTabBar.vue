@@ -12,7 +12,7 @@ import { ChatDotRound, Download, Edit, Files, House } from '@element-plus/icons-
 const route = useRoute()
 const router = useRouter()
 
-/** 底部 5 个一级入口；工作台居中央主操作位（图标恒为主题色作视觉强调） */
+/** 底部 5 个一级入口；工作台居中央主操作位，用品牌实色按钮突出。 */
 const tabs = [
   { path: '/main', label: '主页', icon: House },
   { path: '/main/resources', label: '资源', icon: Files },
@@ -38,11 +38,12 @@ const handleSelect = (tab) => {
       :key="tab.path"
       type="button"
       :class="['tab-item', { 'is-active': activePath === tab.path, 'is-emphasized': tab.emphasized }]"
+      :aria-label="tab.label"
       :aria-current="activePath === tab.path ? 'page' : undefined"
       @click="handleSelect(tab)"
     >
       <el-icon class="tab-icon"><component :is="tab.icon" /></el-icon>
-      <span class="tab-label">{{ tab.label }}</span>
+      <span v-if="!tab.emphasized" class="tab-label">{{ tab.label }}</span>
     </button>
   </nav>
 </template>
@@ -81,8 +82,20 @@ const handleSelect = (tab) => {
 .tab-icon { font-size: 24px; }
 .tab-label { font-size: var(--zh-font-size10); line-height: 1; }
 .tab-item.is-active { color: var(--zh-text-theme); }
-/* 中央主操作位（工作台）图标恒为主题色强调 */
-.tab-item.is-emphasized .tab-icon { color: var(--zh-text-theme); }
+/* 中央主操作位：以更大的品牌实色图标突出，文字由 aria-label 提供。 */
+.tab-item.is-emphasized { gap: 0; padding: 4px; }
+.tab-item.is-emphasized .tab-icon {
+  display: grid;
+  flex: 0 0 48px;
+  width: 48px;
+  height: 48px;
+  place-items: center;
+  border-radius: var(--zh-radius16);
+  color: var(--zh-background-primary);
+  background: var(--zh-theme-primary);
+  font-size: 26px;
+}
+.tab-item.is-emphasized.is-active .tab-icon { background: var(--zh-background-button-hover); }
 .tab-item:active { color: var(--zh-text-theme); background: var(--zh-background-option); transform: scale(0.92); }
 /* 横屏矮屏：隐藏文字仅留图标，高度降为 48px */
 @media (orientation: landscape) and (max-height: 480px) {

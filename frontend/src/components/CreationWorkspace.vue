@@ -1,12 +1,13 @@
 <script setup>
 import { computed, nextTick, onBeforeUnmount, onMounted, reactive, ref, watch } from 'vue'
-import { onBeforeRouteLeave, useRoute, useRouter } from 'vue-router'
+import { onBeforeRouteLeave, onBeforeRouteUpdate, useRoute, useRouter } from 'vue-router'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import { Aim, ArrowDown, ArrowUp, Plus, Promotion } from '@element-plus/icons-vue'
 import MarkdownRender from 'markstream-vue'
 import { addProjectPermission, archiveProject, batchSaveProjectPages, copyProject, createCommunitySubmission, createProject, createProjectPage, deleteProject, deleteProjectPage, downloadResource, exportLessonPlanDocx, exportPresentationPptx, findUserByEmail, findUserByUsername, generateInteractiveModule, generateLessonPlan, generatePresentationStream, getAiPlan, getProject, getProjectPage, getProjectVersionDiff, listProjectPages, listProjectVersions, listProjects, listResources, modifyPresentation, modifyPresentationSlide, patchProject, recognizeIntent, recordAiFeedback, restoreProject, restoreProjectVersion, reviseProjectWithAi, saveCommunitySubmissionVersion, saveProjectPage, saveProjectVersion, sendDirectOutlineSessionMessage, streamGeneralChat, submitCommunitySubmission, transcribeAudio, uploadResource, validatePresentationHtml, validateProjectComponent } from '../apis/teacher'
 import { secureHtmlForSandbox } from '../utils/htmlSecurity'
 import { bindSubjectInteractions } from '../utils/subjectInteraction'
+import { cachedChemicalStructure, chemicalStructureKey, prepareChemicalStructure, renderChemicalStructure } from '../utils/chemicalStructure'
 import { canLandPptDirectEdit, placeLandPptCaret, serializeLandPptEditableDocument, shouldCommitLandPptInlineEdit } from '../utils/landpptQuickEdit'
 import IntentClarificationDialog from './IntentClarificationDialog.vue'
 import CreationWorkspaceToolbar from './CreationWorkspaceToolbar.vue'
@@ -16,7 +17,7 @@ import LessonPlanEditor from './LessonPlanEditor.vue'
 import LessonPlanPreview from './LessonPlanPreview.vue'
 import VoiceRecorderButton from './VoiceRecorderButton.vue'
 import SubjectToolRuntime from './SubjectToolRuntime.vue'
-import { createSubjectToolData, normalizeSubjectToolData, normalizeSubjectToolType, subjectToolDefaultRenderHint, subjectToolMarkup, subjectToolPayload, subjectToolRuntimeCss } from '../utils/subjectTool'
+import { createSubjectToolData, normalizeSubjectToolData, normalizeSubjectToolType, subjectToolDefaultRenderHint, subjectToolLabel, subjectToolMarkup, subjectToolPayload, subjectToolRuntimeCss } from '../utils/subjectTool'
 import { INTERACTIVE_MODULE_TYPES, interactiveModuleTypeInfo, normalizeInteractiveModuleType } from '../utils/interactiveModule'
 import { useUserStore } from '../storage/user.js'
 import { readOutlineDraft, readPresentationDraft, savePresentationDraft } from '../utils/presentationDraft.js'
@@ -46,6 +47,7 @@ let canvasCenterFrame = null
 let canvasViewportObserver = null
 const previewVisible = ref(false)
 const previewSlideIndex = ref(0)
+const chemicalStructureRenderRevision = ref(0)
 const previewDeckRef = ref(null)
 const previewStageRef = ref(null)
 const presentationMode = ref(false)
@@ -281,6 +283,7 @@ let localStructureVersion = 0
 let savedChangeVersion = 0
 let savedStructureVersion = 0
 let autosaveQueued = false
+let suppressAutosaveAfterDiscard = false
 let workspaceMessageInstance = null
 const showWorkspaceMessage = (type, message, options = {}) => {
   workspaceMessageInstance?.close()
@@ -491,6 +494,7 @@ const project = ref(null)
 const projectLoadError = ref('')
 const unsavedProjectPromptVisible = ref(false)
 const unsavedProjectSaving = ref(false)
+const pendingWorkspaceTransition = ref('leave')
 let pendingWorkspaceLeavePromise = null
 let resolvePendingWorkspaceLeave = null
 const defaultSlide = (index = 1) => ({ title: `新建页面 ${index}`, eyebrow: '教学内容', description: '在右侧完善页面文案与布局，或通过 AI 对话继续创作。', layout: '图文并置', theme: 'blue', pageType: index === 1 ? 'cover' : 'content', page_type: index === 1 ? 'cover' : 'content', elements: createMockElements() })
@@ -524,33 +528,149 @@ const currentDraftStorageId = computed(() => String(sessionId.value || localDraf
 const assistantDrawerVisible = ref(false)
 const propertiesDrawerVisible = ref(false)
 const assistantDock = ref('side')
+const workspaceGridRef = ref(null)
+const workspaceGridWidth = ref(window.innerWidth)
+const assistantPanelWidth = ref(286)
+const propertiesPanelWidth = ref(270)
+const assistantPanelResizeActive = ref(false)
+const propertiesPanelResizeActive = ref(false)
+const ASSISTANT_PANEL_MIN_WIDTH = 220
+const ASSISTANT_PANEL_MAX_WIDTH = 480
+const PROPERTIES_PANEL_MIN_WIDTH = 240
+const PROPERTIES_PANEL_MAX_WIDTH = 520
+const PROPERTIES_RESIZE_HANDLE_WIDTH = 8
+let workspaceGridResizeObserver = null
+let assistantPanelResizePointerId = null
+let assistantPanelResizeStartX = 0
+let assistantPanelResizeStartWidth = assistantPanelWidth.value
+let propertiesPanelResizePointerId = null
+let propertiesPanelResizeStartX = 0
+let propertiesPanelResizeStartWidth = propertiesPanelWidth.value
+const assistantPanelMaxWidth = computed(() => Math.max(
+  ASSISTANT_PANEL_MIN_WIDTH,
+  Math.min(
+    ASSISTANT_PANEL_MAX_WIDTH,
+    workspaceGridWidth.value - 500 - propertiesPanelWidth.value - PROPERTIES_RESIZE_HANDLE_WIDTH * 2,
+  ),
+))
+const propertiesPanelMaxWidth = computed(() => {
+  const assistantWidth = assistantDock.value === 'bottom' ? 0 : assistantPanelWidth.value
+  const resizeWidth = assistantDock.value === 'bottom' ? PROPERTIES_RESIZE_HANDLE_WIDTH : PROPERTIES_RESIZE_HANDLE_WIDTH * 2
+  return Math.max(
+    PROPERTIES_PANEL_MIN_WIDTH,
+    Math.min(PROPERTIES_PANEL_MAX_WIDTH, workspaceGridWidth.value - assistantWidth - 500 - resizeWidth),
+  )
+})
+const setAssistantPanelWidth = (width) => {
+  assistantPanelWidth.value = Math.round(Math.max(
+    ASSISTANT_PANEL_MIN_WIDTH,
+    Math.min(assistantPanelMaxWidth.value, width),
+  ))
+}
+const setPropertiesPanelWidth = (width) => {
+  propertiesPanelWidth.value = Math.round(Math.max(
+    PROPERTIES_PANEL_MIN_WIDTH,
+    Math.min(propertiesPanelMaxWidth.value, width),
+  ))
+}
+const clampWorkspacePanelWidths = () => {
+  if (workspaceGridWidth.value <= 1023) return
+  setPropertiesPanelWidth(propertiesPanelWidth.value)
+  if (assistantDock.value === 'side') setAssistantPanelWidth(assistantPanelWidth.value)
+  setPropertiesPanelWidth(propertiesPanelWidth.value)
+}
+const refreshWorkspaceGridWidth = () => {
+  const width = workspaceGridRef.value?.getBoundingClientRect().width
+  if (width) {
+    workspaceGridWidth.value = width
+    if (!assistantPanelResizeActive.value && !propertiesPanelResizeActive.value) clampWorkspacePanelWidths()
+  }
+}
+const startAssistantPanelResize = (event) => {
+  if (event.button !== 0) return
+  event.preventDefault()
+  event.stopPropagation()
+  assistantPanelResizePointerId = event.pointerId
+  assistantPanelResizeStartX = event.clientX
+  assistantPanelResizeStartWidth = assistantPanelWidth.value
+  assistantPanelResizeActive.value = true
+  event.currentTarget.setPointerCapture?.(event.pointerId)
+}
+const moveAssistantPanelResize = (event) => {
+  if (!assistantPanelResizeActive.value || event.pointerId !== assistantPanelResizePointerId) return
+  setAssistantPanelWidth(assistantPanelResizeStartWidth + event.clientX - assistantPanelResizeStartX)
+}
+const endAssistantPanelResize = (event) => {
+  if (!assistantPanelResizeActive.value || (event?.pointerId != null && event.pointerId !== assistantPanelResizePointerId)) return
+  assistantPanelResizeActive.value = false
+  assistantPanelResizePointerId = null
+  clampWorkspacePanelWidths()
+}
+const handleAssistantPanelResizeKeydown = (event) => {
+  const step = event.shiftKey ? 48 : 16
+  if (event.key === 'ArrowRight') setAssistantPanelWidth(assistantPanelWidth.value + step)
+  else if (event.key === 'ArrowLeft') setAssistantPanelWidth(assistantPanelWidth.value - step)
+  else if (event.key === 'Home') setAssistantPanelWidth(ASSISTANT_PANEL_MIN_WIDTH)
+  else if (event.key === 'End') setAssistantPanelWidth(assistantPanelMaxWidth.value)
+  else return
+  event.preventDefault()
+}
+const startPropertiesPanelResize = (event) => {
+  if (event.button !== 0) return
+  event.preventDefault()
+  event.stopPropagation()
+  propertiesPanelResizePointerId = event.pointerId
+  propertiesPanelResizeStartX = event.clientX
+  propertiesPanelResizeStartWidth = propertiesPanelWidth.value
+  propertiesPanelResizeActive.value = true
+  event.currentTarget.setPointerCapture?.(event.pointerId)
+}
+const movePropertiesPanelResize = (event) => {
+  if (!propertiesPanelResizeActive.value || event.pointerId !== propertiesPanelResizePointerId) return
+  setPropertiesPanelWidth(propertiesPanelResizeStartWidth + propertiesPanelResizeStartX - event.clientX)
+}
+const endPropertiesPanelResize = (event) => {
+  if (!propertiesPanelResizeActive.value || (event?.pointerId != null && event.pointerId !== propertiesPanelResizePointerId)) return
+  propertiesPanelResizeActive.value = false
+  propertiesPanelResizePointerId = null
+  clampWorkspacePanelWidths()
+}
+const handlePropertiesPanelResizeKeydown = (event) => {
+  const step = event.shiftKey ? 48 : 16
+  if (event.key === 'ArrowLeft') setPropertiesPanelWidth(propertiesPanelWidth.value + step)
+  else if (event.key === 'ArrowRight') setPropertiesPanelWidth(propertiesPanelWidth.value - step)
+  else if (event.key === 'Home') setPropertiesPanelWidth(PROPERTIES_PANEL_MIN_WIDTH)
+  else if (event.key === 'End') setPropertiesPanelWidth(propertiesPanelMaxWidth.value)
+  else return
+  event.preventDefault()
+}
+watch(assistantDock, clampWorkspacePanelWidths)
 const assistantTargetScope = ref('auto')
-// ===== 手机档（<768px）分段切换：对话 / 大纲 / 预览 / 教案，同一时刻只渲染一段 =====
+// 手机工作台上方切换课件与教案，下方始终保留 AI 对话。
 const isMobile = ref(window.matchMedia('(max-width: 767.98px)').matches)
-const activeSegment = ref('chat')
+const activeSegment = ref(workspaceMode.value === 'document' ? 'plan' : 'ppt')
+const mobileLessonMode = ref('preview')
 // hover: none 的触屏设备没有鼠标指针，激光笔（mousemove）与拖拽不可用。
 const presentationPointerAvailable = typeof window !== 'undefined' && !window.matchMedia?.('(hover: none)')?.matches
 // 触屏设备（无 hover + 粗指针）一次性判定：Enter 仅换行不发送，发送走按钮（参照 ChatView.vue）。
 const isTouchDevice = window.matchMedia('(hover: none) and (pointer: coarse)').matches
 let mobileViewportMq = null
 const handleMobileViewportChange = (event) => { isMobile.value = Boolean(event?.matches) }
-const mobileSegments = computed(() => (
-  workspaceMode.value === 'document'
-    ? [{ label: '对话', value: 'chat' }, { label: '教案', value: 'plan' }]
-    : [{ label: '对话', value: 'chat' }, { label: '大纲', value: 'outline' }, { label: '预览', value: 'preview' }, { label: '教案', value: 'plan' }]
-))
+const mobileSegments = [
+  { label: 'PPT', value: 'ppt' },
+  { label: '教案', value: 'plan' },
+]
 const handleMobileSegmentChange = (value) => {
+  if (value === 'ppt') lessonPlanEditorRef.value?.flushAutosave?.()
+  else clearPreviewFrameObservers('inline')
   activeSegment.value = value
-  // PPT 模式下切到教案段：直接进入教案工作台（document 模式），分段随之收敛为 对话/教案。
-  if (value === 'plan' && workspaceMode.value !== 'document') openLessonPlanWorkspace()
+}
+const setMobileLessonMode = (mode) => {
+  if (mode === 'preview') lessonPlanEditorRef.value?.flushAutosave?.()
+  mobileLessonMode.value = mode
 }
 watch(workspaceMode, (mode) => {
-  if (!isMobile.value) return
-  if (mode === 'document') {
-    if (!['chat', 'plan'].includes(activeSegment.value)) activeSegment.value = 'plan'
-  } else if (!['chat', 'outline', 'preview'].includes(activeSegment.value)) {
-    activeSegment.value = 'preview'
-  }
+  if (isMobile.value && mode === 'document') activeSegment.value = 'plan'
 })
 // 手机档大纲段：以上下移按钮替代 HTML5 拖拽排序（复用 reorderSlides）。
 const moveSlideRelative = (index, delta) => {
@@ -611,6 +731,7 @@ const lessonPlanGrade = computed(() => String(
   || '',
 ))
 const documentPlan = computed(() => lessonPlanDraft.value && typeof lessonPlanDraft.value === 'object' ? lessonPlanDraft.value : {})
+const hasDocumentPlan = computed(() => Object.keys(documentPlan.value).length > 0)
 const normalizedResourceIds = (values = []) => [...new Set(
   (Array.isArray(values) ? values : [values])
     .map((item) => String(item ?? '').trim())
@@ -1578,7 +1699,10 @@ const attachHtmlDragEditor = (iframe, { structuredMode = false, onCommit = null 
       const opacity = Number(style.opacity)
       if (Number.isFinite(opacity)) element.style.opacity = String(opacity > 1 ? opacity / 100 : opacity)
     }
-    if (style.fontSize !== undefined) setLength('fontSize', style.fontSize)
+    if (style.fontSize !== undefined) {
+      setLength('fontSize', style.fontSize)
+      element.style.setProperty('--subject-font-size', typeof style.fontSize === 'number' ? `${style.fontSize}px` : String(style.fontSize))
+    }
     if (style.fontWeight !== undefined) element.style.fontWeight = String(style.fontWeight)
     if (style.textAlign !== undefined) element.style.textAlign = String(style.textAlign)
     if (style.lineHeight !== undefined) element.style.lineHeight = String(style.lineHeight)
@@ -1623,6 +1747,8 @@ const attachHtmlDragEditor = (iframe, { structuredMode = false, onCommit = null 
       title: currentTitle,
       renderHint: normalizedHint,
     })
+      const moleculeElement = element.querySelector('.a12-subject-tool__molecule')
+      if (moleculeElement) void renderChemicalStructure(moleculeElement, normalizedData)
   }
 
   let selected = null
@@ -1788,7 +1914,17 @@ const attachHtmlDragEditor = (iframe, { structuredMode = false, onCommit = null 
     const nextElements = candidates.map((element, index) => {
       const type = elementType(element)
       if (type === 'chart' && !element.querySelector('[data-a12-chart-title]')) renderHtmlChart(element)
-      if (type === 'subject' && !element.querySelector('.a12-subject-tool__header')) renderHtmlSubjectTool(element)
+      const hasSubjectDisplayContent = element.querySelector('.a12-subject-tool__formula, .a12-subject-tool__chemical, .a12-subject-tool__diagram, .a12-subject-tool__chart, .a12-subject-tool__table-wrap, .a12-subject-tool__geometry')
+      const hasLegacySubjectHeader = element.querySelector('.a12-subject-tool__header:not([data-a12-subject-v2])')
+      if (type === 'subject' && (hasLegacySubjectHeader || !hasSubjectDisplayContent)) renderHtmlSubjectTool(element)
+      if (type === 'subject' && normalizeSubjectToolType(element.getAttribute('data-subject-type')) === 'chemical_formula') {
+        const chemicalData = getSubjectData(element)
+        if (chemicalData.smiles || chemicalData.molfile) {
+          const moleculeElement = element.querySelector('.a12-subject-tool__molecule')
+          if (moleculeElement) void renderChemicalStructure(moleculeElement, chemicalData)
+          else renderHtmlSubjectTool(element)
+        }
+      }
       const preferredId = element.getAttribute('data-ppt-element') || element.id || `html-${index + 1}`
       let id = preferredId
       let suffix = 2
@@ -2294,6 +2430,8 @@ const attachHtmlDragEditor = (iframe, { structuredMode = false, onCommit = null 
       const style = parseJson(selected.getAttribute('data-subject-style'), {})
       style[key] = value
       selected.setAttribute('data-subject-style', JSON.stringify(style))
+      if (key === 'backgroundColor') selected.style.setProperty('--widget-background', String(value || '#eff6ff'))
+      if (key === 'fontSize') selected.style.setProperty('--subject-font-size', selected.style.fontSize || '24px')
       selected.removeAttribute('data-subject-validation')
     }
     updateOverlay()
@@ -2725,9 +2863,12 @@ const fitHtmlFrame = (event) => {
   if (pendingHtmlPanelSelection?.slide === current.value && controller?.selectById?.(pendingHtmlPanelSelection.id)) pendingHtmlPanelSelection = null
   flushPendingHtmlToolbarTool()
 }
-const clearPreviewFrameObservers = () => {
-  previewFrameObservers.forEach(({ observer }) => observer?.disconnect())
-  previewFrameObservers.clear()
+const clearPreviewFrameObservers = (scope = 'dialog') => {
+  for (const entry of [...previewFrameObservers]) {
+    if (scope !== 'all' && (scope === 'inline') !== entry.inline) continue
+    entry.observer?.disconnect()
+    previewFrameObservers.delete(entry)
+  }
 }
 const fitPreviewHtmlFrame = (event) => {
   const iframe = event?.currentTarget
@@ -2746,17 +2887,19 @@ const fitPreviewHtmlFrame = (event) => {
   }
 
   resize()
+  const inline = Boolean(iframe.closest('.workspace-mobile-ppt'))
   if (typeof ResizeObserver === 'undefined') {
-    previewFrameObservers.add({ iframe, observer: null })
+    previewFrameObservers.add({ iframe, observer: null, inline })
     return
   }
   const observer = new ResizeObserver(resize)
   observer.observe(container)
-  previewFrameObservers.add({ iframe, observer })
+  previewFrameObservers.add({ iframe, observer, inline })
 }
 const openPreview = () => {
   previewSlideIndex.value = selectedSlide.value
   previewVisible.value = true
+  void prepareChemicalStructuresForPreview()
 }
 const previewSpeakerNotes = (slide) => String(slide?.notes || slide?.speaker_notes || slide?.speakerNotes || slide?.description || '暂无备注提示')
 const updatePresentationPointer = (event) => {
@@ -2788,6 +2931,7 @@ const enterPresentationMode = async () => {
   presentationNotesVisible.value = false
   previewVisible.value = true
   await requestPresentationFullscreen()
+  void prepareChemicalStructuresForPreview()
 }
 const exitPresentationMode = async () => {
   presentationMode.value = false
@@ -3047,6 +3191,9 @@ const elementStyleFromElement = (element, slide = current.value) => {
     result['--widget-border-width'] = style.borderWidth !== undefined ? `${style.borderWidth}px` : '1px'
     result['--widget-border-radius'] = style.borderRadius !== undefined ? `${style.borderRadius}px` : '12px'
   }
+  if (element?.type === 'subject' && style.fontSize !== undefined) {
+    result['--subject-font-size'] = typeof style.fontSize === 'number' ? `${style.fontSize}px` : String(style.fontSize)
+  }
   return result
 }
 const elementStyle = (id) => elementStyleFromElement(elementById(id))
@@ -3249,6 +3396,76 @@ function buildStructuredHtmlSlide(slide) {
   const body = elements.map((element) => structuredElementMarkup(element, slide)).join('')
   return `<!DOCTYPE html><html lang="zh-CN"><head><meta charset="UTF-8"><title>${escapeStructuredHtml(slide?.title || '教学页面')}</title><style>${styles}</style></head><body><main class="slide structured-slide layout-${layoutClass}" style="${escapeStructuredAttribute(rootStyle)}"><span class="structured-slide-eyebrow">${pageEyebrow}</span>${body}</main></body></html>`
 }
+const chemicalDataForElement = (element) => {
+  const type = normalizeSubjectToolType(element?.subjectType || element?.subject_type || element?.type)
+  if (type !== 'chemical_formula') return null
+  const data = normalizeSubjectToolData(element?.data, type)
+  return data.smiles || data.molfile ? data : null
+}
+const chemicalStructuresInSavedHtml = (html) => {
+  const source = String(html || '')
+  if (!source.includes('data-subject-data')) return source
+  let parsed
+  try { parsed = new DOMParser().parseFromString(source, 'text/html') } catch { return source }
+  let changed = false
+  const elements = parsed.querySelectorAll('.a12-subject-tool[data-subject-type], [data-ppt-type="subject"][data-subject-type]')
+  elements.forEach((element) => {
+    if (element.matches('[data-subject-type]:not(.a12-subject-tool)') && element.querySelector('.a12-subject-tool')) return
+    const data = chemicalDataForElement({
+      subjectType: element.getAttribute('data-subject-type'),
+      data: (() => { try { return JSON.parse(element.getAttribute('data-subject-data') || '{}') } catch { return {} } })(),
+    })
+    if (!data) return
+    const cache = cachedChemicalStructure(data)
+    if (!cache) return
+    const chemical = element.querySelector('.a12-subject-tool__chemical')
+    if (!chemical) return
+    const key = chemicalStructureKey(data)
+    chemical.classList.add('a12-subject-tool__chemical--structure')
+    chemical.setAttribute('aria-label', '化学分子结构')
+    chemical.style.display = 'grid'
+    chemical.style.placeItems = 'center'
+    chemical.style.width = '100%'
+    chemical.style.height = '100%'
+    chemical.style.overflow = 'hidden'
+    chemical.innerHTML = cache.svg
+      ? `<div class="a12-subject-tool__molecule" data-a12-chemical-key="${escapeStructuredAttribute(key)}" data-a12-chemical-rendered-key="${escapeStructuredAttribute(`${key}:24`)}">${cache.svg}</div>`
+      : `<span class="a12-subject-tool__molecule-error" role="status">${escapeStructuredHtml(cache.error)}</span>`
+    changed = true
+  })
+  if (!changed) return source
+  if (parsed.head && !parsed.head.querySelector('[data-a12-subject-runtime]')) {
+    const style = parsed.createElement('style')
+    style.setAttribute('data-a12-subject-runtime', '')
+    style.textContent = subjectToolRuntimeCss
+    parsed.head.appendChild(style)
+  }
+  return `${/^\s*<!doctype/i.test(source) ? '<!doctype html>' : ''}${parsed.documentElement.outerHTML}`
+}
+const prepareChemicalStructuresForPreview = async () => {
+  const tasks = []
+  slides.forEach((slide) => {
+    ;(Array.isArray(slide?.elements) ? slide.elements : []).forEach((element) => {
+      const data = chemicalDataForElement(element)
+      if (data) tasks.push(prepareChemicalStructure(data))
+    })
+    if (slide?.html && typeof DOMParser !== 'undefined') {
+      try {
+        const parsed = new DOMParser().parseFromString(String(slide.html), 'text/html')
+        parsed.querySelectorAll('.a12-subject-tool[data-subject-type], [data-ppt-type="subject"][data-subject-type]').forEach((element) => {
+          const data = chemicalDataForElement({
+            subjectType: element.getAttribute('data-subject-type'),
+            data: (() => { try { return JSON.parse(element.getAttribute('data-subject-data') || '{}') } catch { return {} } })(),
+          })
+          if (data) tasks.push(prepareChemicalStructure(data))
+        })
+      } catch { /* 保存页面不是标准 HTML 时忽略结构预热 */ }
+    }
+  })
+  if (!tasks.length) return
+  await Promise.allSettled(tasks)
+  chemicalStructureRenderRevision.value += 1
+}
 // Initialize after the structured renderer and its canvas dimensions are ready.
 // This also ensures the initial iframe starts from a frozen srcdoc snapshot.
 watch(current, (slide) => syncHtmlCanvasSource(slide), { immediate: true })
@@ -3256,9 +3473,11 @@ watch(current, (slide) => syncHtmlCanvasSource(slide), { immediate: true })
 // 工作台的唯一渲染源。结构化页面仍保留 elements 作为持久化/编辑数据，
 // 这里仅把它投影成与 AI PPT 相同的 HTML 画布。
 function slideHtmlSource(slide) {
+  // Molecule SVGs are prepared asynchronously before presentation preview/export.
+  void chemicalStructureRenderRevision.value
   if (!slide) return ''
   const persistedHtml = String(slide.html || '').trim()
-  return persistedHtml || buildStructuredHtmlSlide(slide)
+  return persistedHtml ? chemicalStructuresInSavedHtml(persistedHtml) : buildStructuredHtmlSlide(slide)
 }
 const structuredHistoryClone = (value) => {
   try { return JSON.parse(JSON.stringify(value)) } catch { return [] }
@@ -3461,6 +3680,8 @@ const placementInstruction = computed(() => {
   if (placementMode.value.type === 'text') return '点击画布放置文本'
   const label = placementMode.value.type === 'shape'
     ? shapeDefaults[placementMode.value.shapeKind]?.label || '形状'
+    : placementMode.value.type === 'subject'
+      ? subjectToolLabel(placementMode.value.subjectType)
     : elementTypeLabels[placementMode.value.type] || '元素'
   return `拖动生成${label}`
 })
@@ -3489,8 +3710,8 @@ const beginElementPlacement = (tool) => {
   if (!placementTypes.includes(type)) return
   cancelCanvasPlacement()
   suppressNextCanvasClick.value = false
-  placementMode.value = { type, shapeKind: tool?.shapeKind }
-  placementDraft.value = createElement(type, { shapeKind: tool?.shapeKind })
+  placementMode.value = { type, shapeKind: tool?.shapeKind, subjectType: tool?.subjectType }
+  placementDraft.value = createElement(type, { shapeKind: tool?.shapeKind, subjectType: tool?.subjectType })
   activeTool.value = type
   selectedElementId.value = null
 }
@@ -3531,7 +3752,7 @@ const finishCanvasPlacement = () => {
   placementDragState.value = null
   suppressNextCanvasClick.value = true
   if (mode && preview && state?.hasDragged) {
-    insertElement(mode.type, { shapeKind: mode.shapeKind }, preview, draft)
+    insertElement(mode.type, { shapeKind: mode.shapeKind, subjectType: mode.subjectType }, preview, draft)
   } else if (mode) {
     WorkspaceMessage.warning('拖动范围太小，请重新拖动生成元素')
   }
@@ -4125,7 +4346,8 @@ const createElement = (type, options = {}, positionOverride = {}) => {
   }
   if (type === 'subject') {
     const subjectType = normalizeSubjectToolType(options.subjectType || 'geometry')
-    element.content = '新增学科工具'
+    element.name = `${elementTypeLabels[type]}·${subjectToolLabel(subjectType)} ${count}`
+    element.content = `${subjectToolLabel(subjectType)}工具`
     element.subjectType = subjectType
     element.subject_type = subjectType
     element.data = createSubjectToolData(subjectType)
@@ -4161,8 +4383,31 @@ const insertElement = (type, options = {}, positionOverride = {}, preparedElemen
   markSlideComponentDirty(current.value, element.id)
   WorkspaceMessage.success(`${elementTypeLabels[type] || '元素'}已添加`)
 }
-const handleToolSelect = (tool) => {
-  if (!current.value) return
+const handleToolSelect = async (tool) => {
+  if (!current.value) {
+    if (tool?.id === 'subject') WorkspaceMessage.warning('请先选择一页画布，再添加学科工具')
+    return
+  }
+  if (tool?.id === 'subject') {
+    const slide = current.value
+    if (!workspaceUsesHtmlEditor.value) {
+      insertElement('subject', tool)
+      activeTool.value = ''
+      return
+    }
+    // 画布 iframe 可能刚切页仍在加载。直接等待控制器可用，避免只更新菜单选中态却漏掉插入。
+    const controller = await waitForHtmlController(slide)
+    if (slide !== current.value) return
+    if (!controller) {
+      activeTool.value = ''
+      WorkspaceMessage.error('画布尚未就绪，学科工具没有插入，请稍后重试')
+      return
+    }
+    const inserted = controller.insertElement('subject', tool)
+    activeTool.value = ''
+    if (!inserted) WorkspaceMessage.error('学科工具插入失败，请重新选择工具')
+    return
+  }
   if (!workspaceUsesHtmlEditor.value) {
     beginElementPlacement(tool)
     return
@@ -4878,7 +5123,7 @@ const openLessonPlanPreview = () => {
   const currentPlan = lessonPlanEditorRef.value?.getLessonPlan?.()
   const candidate = currentPlan || lessonPlanDraft.value
   if (!candidate || typeof candidate !== 'object' || !Object.keys(candidate).length) {
-    WorkspaceMessage.warning('请先生成教学案后再预览')
+    WorkspaceMessage.warning(isMobile.value ? '请先新建教案后再预览' : '请先生成教学案后再预览')
     return
   }
   lessonPlanPreviewDraft.value = parseJson(JSON.stringify(candidate), {})
@@ -4967,8 +5212,40 @@ const retryProjectLoad = async () => {
 }
 // 工作台组件在切换项目时会被 Vue 复用，不会重新执行 onMounted；监听项目 ID，确保“打开”真正加载新项目。
 watch(projectId, async (nextId, previousId) => {
-  if (!nextId || String(nextId) === String(previousId) || testCaseBootstrapping.value) return
+  if (String(nextId || '') === String(previousId || '') || testCaseBootstrapping.value) return
   clearTimeout(autosaveTimer)
+  suppressAutosaveAfterDiscard = false
+  if (!nextId) {
+    versionPage.value = 1
+    versions.value = []
+    versionDiff.value = null
+    compareVersionId.value = ''
+    versionDescription.value = ''
+    localChangeVersion += 1
+    localStructureVersion = localChangeVersion
+    savedChangeVersion = localChangeVersion
+    savedStructureVersion = localStructureVersion
+    autosaveQueued = false
+    project.value = null
+    projectLoadError.value = ''
+    workspaceResourceBindingOverride.value = null
+    autosaveState.value = '本地草稿 · 尚未保存为项目'
+    presentationMetadata.value = null
+    lessonPlanDraft.value = null
+    qualityReport.value = null
+    qualityReportSource.value = ''
+    presentationId.value = ''
+    slides.splice(0, slides.length, defaultSlide())
+    selectedSlide.value = 0
+    workspaceMode.value = normalizeWorkspaceMode(routeQueryValue(route.query.workspaceMode || route.query.mode))
+    const nextLocalDraftId = routeQueryValue(route.query.localDraftId)
+    if (nextLocalDraftId) localDraftId.value = String(nextLocalDraftId)
+    if (route.query.testCase) loadTestCase()
+    else restoreLocalWorkspaceDraft({ allowSessionDraft: true })
+    await nextTick()
+    centerCanvasView()
+    return
+  }
   versionPage.value = 1
   versions.value = []
   versionDiff.value = null
@@ -5212,7 +5489,7 @@ const generationErrorMessage = (error) => {
  */
 const intentSubmitting = ref(false)
 const isAssistantSubmitting = computed(() => intentSubmitting.value || discussionSubmitting.value || revisionSubmitting.value || workspaceVoiceSubmitting.value)
-const assistantPlaceholder = computed(() => '例如：讨论一下怎样让导入更贴近学生，或把当前页标题改得更简洁')
+const assistantPlaceholder = computed(() => isMobile.value ? '描述你想修改的课件内容…' : '例如：讨论一下怎样让导入更贴近学生，或把当前页标题改得更简洁')
 const assistantStatusText = computed(() => {
   if (workspaceVoiceSubmitting.value) return '正在上传语音并续接 AI 会话…'
   if (intentSubmitting.value) return 'AI 正在判断意图…'
@@ -6542,8 +6819,8 @@ const handleWorkspaceKeydown = (event) => {
     copyElement(selectedId)
   }
 }
-const restoreLocalWorkspaceDraft = () => {
-  if (projectId.value || sessionId.value || route.query.testCase) return false
+const restoreLocalWorkspaceDraft = ({ allowSessionDraft = false } = {}) => {
+  if (projectId.value || (sessionId.value && !allowSessionDraft) || route.query.testCase) return false
   const cached = readPresentationDraft(currentDraftStorageId.value)
   if (!cached?.slides?.length) return false
   let repairedRotationDrift = false
@@ -6571,7 +6848,12 @@ onMounted(async () => {
     await router.replace({ query: { ...route.query, localDraftId: localDraftId.value, workspaceMode: workspaceMode.value } })
   }
   loadTestCase()
-  restoreLocalWorkspaceDraft()
+  const restoredLocalDraft = restoreLocalWorkspaceDraft()
+  const shouldSeedMobileProject = isMobile.value
+    && !projectId.value
+    && !sessionId.value
+    && !route.query.testCase
+    && !restoredLocalDraft
   initializeSessionFlow()
   void loadWorkspaceResources()
   await bootstrapTestCaseProject()
@@ -6579,6 +6861,10 @@ onMounted(async () => {
   const interruptedRunNeedsAttention = restoreTrackedRun()
   if (!interruptedRunNeedsAttention && !projectId.value && (sessionId.value || presentationFixtureMode.value)) await startRun()
   await nextTick()
+  if (shouldSeedMobileProject) {
+    lessonPlanEditorRef.value?.startBasePlan?.()
+    await lessonPlanAutosavePromise
+  }
   centerCanvasView()
   if (typeof ResizeObserver !== 'undefined' && canvasAreaRef.value) {
     canvasViewportObserver = new ResizeObserver(() => centerCanvasView())
@@ -6590,7 +6876,19 @@ onMounted(async () => {
   window.addEventListener('keydown', handlePresentationKeydown)
   document.addEventListener('fullscreenchange', handlePresentationFullscreenChange)
 })
-onBeforeUnmount(() => { mobileViewportMq?.removeEventListener('change', handleMobileViewportChange); mobileViewportMq = null; if (canvasCenterFrame != null) cancelAnimationFrame(canvasCenterFrame); canvasViewportObserver?.disconnect(); canvasViewportObserver = null; interactivePreviewResizeObserver?.disconnect(); interactivePreviewResizeObserver = null; htmlFrameObservers.forEach(({ observer, cleanup }) => { observer?.disconnect(); cleanup?.() }); htmlFrameObservers.clear(); clearPreviewFrameObservers(); stopCanvasPan(); stopElementDrag(); cancelCanvasPlacement(); workspaceMessageInstance?.close(); window.removeEventListener('beforeunload', handleWorkspaceBeforeUnload); window.removeEventListener('keydown', handleWorkspaceKeydown); window.removeEventListener('keydown', handlePresentationKeydown); document.removeEventListener('fullscreenchange', handlePresentationFullscreenChange); if (document.fullscreenElement && document.exitFullscreen) void document.exitFullscreen() })
+onMounted(() => {
+  refreshWorkspaceGridWidth()
+  if (typeof ResizeObserver !== 'undefined' && workspaceGridRef.value) {
+    workspaceGridResizeObserver = new ResizeObserver(refreshWorkspaceGridWidth)
+    workspaceGridResizeObserver.observe(workspaceGridRef.value)
+  }
+})
+onBeforeUnmount(() => {
+  workspaceGridResizeObserver?.disconnect()
+  workspaceGridResizeObserver = null
+  endPropertiesPanelResize()
+})
+onBeforeUnmount(() => { mobileViewportMq?.removeEventListener('change', handleMobileViewportChange); mobileViewportMq = null; if (canvasCenterFrame != null) cancelAnimationFrame(canvasCenterFrame); canvasViewportObserver?.disconnect(); canvasViewportObserver = null; interactivePreviewResizeObserver?.disconnect(); interactivePreviewResizeObserver = null; htmlFrameObservers.forEach(({ observer, cleanup }) => { observer?.disconnect(); cleanup?.() }); htmlFrameObservers.clear(); clearPreviewFrameObservers('all'); stopCanvasPan(); stopElementDrag(); cancelCanvasPlacement(); workspaceMessageInstance?.close(); window.removeEventListener('beforeunload', handleWorkspaceBeforeUnload); window.removeEventListener('keydown', handleWorkspaceKeydown); window.removeEventListener('keydown', handlePresentationKeydown); document.removeEventListener('fullscreenchange', handlePresentationFullscreenChange); if (document.fullscreenElement && document.exitFullscreen) void document.exitFullscreen() })
 const currentPagePayload = (slide = current.value, index = selectedSlide.value, overrides = {}) => pagePayloadForSlide(slide, index, {
   // 普通内容保存不修改页面顺序，避免旧顺序与当前数组索引不一致时触发唯一索引冲突。
   includePageOrder: false,
@@ -6813,7 +7111,7 @@ const openOnlinePreview = async () => {
   }
 }
 const openWorkspacePreview = () => {
-  if (workspaceMode.value === 'document') {
+  if (isMobile.value ? activeSegment.value === 'plan' : workspaceMode.value === 'document') {
     openLessonPlanPreview()
     return
   }
@@ -7122,15 +7420,11 @@ const openWorkspaceProject = async (item) => {
   const id = item?.id || item?.project_id
   if (!id) return
   if (String(id) === String(projectId.value)) return
-  try {
-    if (projectId.value) await persistSlideOrder({ throwOnError: true })
-    else saveCurrentPresentationDraft()
-  } catch (error) { WorkspaceMessage.error(error?.message || '当前项目保存失败，未切换项目'); return }
-  projectManagerVisible.value = false
   await router.push({
     path: '/main/workspace',
     query: { projectId: String(id) },
   })
+  if (String(projectId.value) === String(id)) projectManagerVisible.value = false
 }
 const archiveWorkspaceProject = async (id = projectId.value) => {
   if (!id) return
@@ -7165,7 +7459,7 @@ const removeWorkspaceProject = async (id = projectId.value) => {
   finally { projectActionLoading.value = false }
 }
 const scheduleWorkspaceAutosave = (delay = 700, { force = false } = {}) => {
-  if (!projectId.value || testCaseBootstrapping.value || hydratingProject.value) return
+  if (!projectId.value || testCaseBootstrapping.value || hydratingProject.value || suppressAutosaveAfterDiscard) return
   clearTimeout(autosaveTimer)
   autosaveState.value = '待保存'
   autosaveTimer = setTimeout(() => {
@@ -7281,6 +7575,35 @@ const saveWorkspaceAsProject = async () => {
     WorkspaceMessage.error(workspaceRequestErrorMessage(error, '保存为项目失败，本地草稿仍已保留'))
   }
 }
+const currentLessonPlanIsDirty = () => {
+  if (workspaceMode.value !== 'document') return false
+  const currentPlan = lessonPlanEditorRef.value?.getLessonPlan?.()
+  if (!currentPlan) return false
+  const history = parseJson(project.value?.edit_history, {})
+  const savedPlan = history?.lesson_plan || history?.lessonPlan || null
+  return JSON.stringify(currentPlan) !== JSON.stringify(savedPlan || {})
+}
+const hasUnsavedProjectChanges = () => Boolean(projectId.value) && (
+  localChangeVersion > savedChangeVersion
+  || localStructureVersion > savedStructureVersion
+  || savingPage.value
+  || Boolean(autosaveTimer || pageSavePromise || orderSavePromise || autosaveQueued)
+  || currentLessonPlanIsDirty()
+)
+const flushProjectChangesBeforeSwitch = async () => {
+  clearTimeout(autosaveTimer)
+  lessonPlanEditorRef.value?.flushAutosave?.()
+  if (lessonPlanAutosavePromise) await lessonPlanAutosavePromise.catch(() => {})
+
+  const liveLessonPlan = lessonPlanEditorRef.value?.getLessonPlan?.()
+  if (liveLessonPlan && currentLessonPlanIsDirty()) {
+    await saveLessonPlanDraft(liveLessonPlan, { throwOnError: true, notify: false })
+  }
+  await persistSlideOrder({ throwOnError: true })
+  if (localChangeVersion > savedChangeVersion || localStructureVersion > savedStructureVersion) {
+    throw new Error('当前仍有修改未保存，请重试后再切换项目')
+  }
+}
 const settleWorkspaceLeave = (allowLeave) => {
   unsavedProjectPromptVisible.value = false
   const resolve = resolvePendingWorkspaceLeave
@@ -7289,26 +7612,50 @@ const settleWorkspaceLeave = (allowLeave) => {
   resolve?.(allowLeave)
 }
 const keepWorkspaceOpen = () => settleWorkspaceLeave(false)
-const leaveWorkspaceWithoutSaving = () => {
-  saveCurrentPresentationDraft()
-  settleWorkspaceLeave(true)
+const continueWithoutSaving = async () => {
+  if (unsavedProjectSaving.value) return
+  const switchingProject = pendingWorkspaceTransition.value === 'switch'
+  if (!switchingProject || !projectId.value) {
+    saveCurrentPresentationDraft()
+    settleWorkspaceLeave(true)
+    return
+  }
+
+  unsavedProjectSaving.value = true
+  clearTimeout(autosaveTimer)
+  suppressAutosaveAfterDiscard = true
+  autosaveQueued = false
+  try {
+    const pendingWrites = [pageSavePromise, orderSavePromise, lessonPlanAutosavePromise].filter(Boolean)
+    if (pendingWrites.length) await Promise.allSettled(pendingWrites)
+    clearTimeout(autosaveTimer)
+    autosaveQueued = false
+    settleWorkspaceLeave(true)
+  } finally {
+    unsavedProjectSaving.value = false
+  }
 }
 const saveProjectAndLeaveWorkspace = async () => {
   if (unsavedProjectSaving.value) return
   unsavedProjectSaving.value = true
   try {
-    await createWorkspaceProject()
-    WorkspaceMessage.success('已保存为项目，正在离开工作台')
+    const switchingProject = pendingWorkspaceTransition.value === 'switch'
+    if (projectId.value) await flushProjectChangesBeforeSwitch()
+    else await createWorkspaceProject()
+    WorkspaceMessage.success(switchingProject
+      ? '当前内容已保存，正在切换项目'
+      : '已保存为项目，正在离开工作台')
     settleWorkspaceLeave(true)
   } catch (error) {
-    autosaveState.value = '本地草稿 · 保存为项目失败'
-    WorkspaceMessage.error(workspaceRequestErrorMessage(error, '保存为项目失败，本地草稿仍已保留'))
+    if (!projectId.value) autosaveState.value = '本地草稿 · 保存为项目失败'
+    WorkspaceMessage.error(workspaceRequestErrorMessage(error, projectId.value ? '当前项目保存失败，未切换项目' : '保存为项目失败，本地草稿仍已保留'))
   } finally {
     unsavedProjectSaving.value = false
   }
 }
-const requestWorkspaceLeaveConfirmation = () => {
+const requestWorkspaceLeaveConfirmation = (transition = 'leave') => {
   if (pendingWorkspaceLeavePromise) return pendingWorkspaceLeavePromise
+  pendingWorkspaceTransition.value = transition
   pendingWorkspaceLeavePromise = new Promise((resolve) => { resolvePendingWorkspaceLeave = resolve })
   unsavedProjectPromptVisible.value = true
   return pendingWorkspaceLeavePromise
@@ -7319,7 +7666,18 @@ const handleWorkspaceBeforeUnload = (event) => {
   event.preventDefault()
   event.returnValue = ''
 }
-onBeforeRouteLeave(() => shouldPromptBeforeWorkspaceLeave() ? requestWorkspaceLeaveConfirmation() : true)
+onBeforeRouteLeave(() => shouldPromptBeforeWorkspaceLeave() ? requestWorkspaceLeaveConfirmation('leave') : true)
+onBeforeRouteUpdate(async (to, from) => {
+  const nextProjectId = routeQueryValue(to.query.projectId)
+  const previousProjectId = routeQueryValue(from.query.projectId)
+  if (!nextProjectId || String(nextProjectId) === String(previousProjectId)) return true
+
+  // 保存新建项目、创建导出项目时会先落库，再把新 ID 写回路由，不应再次弹窗。
+  if (!previousProjectId && project.value?.id) return true
+  if (shouldPromptBeforeWorkspaceLeave()) return requestWorkspaceLeaveConfirmation('switch')
+  if (previousProjectId && hasUnsavedProjectChanges()) return requestWorkspaceLeaveConfirmation('switch')
+  return true
+})
 const openExportCenter = async ({ autoExport = false, exportType = '', precheck = false } = {}) => {
   clearTimeout(autosaveTimer)
   try {
@@ -7571,7 +7929,8 @@ const selectSlide = (index) => { selectedSlide.value = index; selectedElementId.
   <div class="workspace">
     <CreationWorkspaceToolbar
       v-model="activeTool"
-      :title="current.title"
+      :title="isMobile && activeSegment === 'plan' ? lessonPlanTitle : current.title"
+      :mobile-view="activeSegment"
       :autosave-state="autosaveState"
       :project-id="route.query.projectId"
       :workspace-mode="workspaceMode"
@@ -7588,7 +7947,7 @@ const selectSlide = (index) => { selectedSlide.value = index; selectedElementId.
       @return-ppt="returnToPptWorkspace"
       @project-manage="openProjectManager"
       @save-as-project="saveWorkspaceAsProject"
-      @toggle-assistant="isMobile ? (activeSegment = 'chat') : (assistantDrawerVisible = !assistantDrawerVisible)"
+      @toggle-assistant="isMobile ? assistantConversationRef?.scrollIntoView?.({ block: 'nearest' }) : (assistantDrawerVisible = !assistantDrawerVisible)"
       @toggle-properties="propertiesDrawerVisible = !propertiesDrawerVisible"
       @online-preview="openWorkspacePreview"
       @export="exportProject"
@@ -7604,13 +7963,41 @@ const selectSlide = (index) => { selectedSlide.value = index; selectedElementId.
         v-model="activeSegment"
         :options="mobileSegments"
         block
-        aria-label="工作台分区切换"
+        aria-label="预览内容切换"
         @change="handleMobileSegmentChange"
       />
     </div>
 
-    <div class="workspace-grid" :class="{ 'is-assistant-bottom': assistantDock === 'bottom', 'is-mobile-segmented': isMobile }" :data-mobile-segment="activeSegment">
-      <aside v-if="!isMobile || activeSegment === 'chat'" class="assistant-panel" :class="{ 'is-mobile-open': assistantDrawerVisible }" aria-label="AI 教学助手">
+    <div ref="workspaceGridRef" class="workspace-grid" :class="{ 'is-assistant-bottom': assistantDock === 'bottom', 'is-mobile-segmented': isMobile, 'is-panel-resizing': assistantPanelResizeActive || propertiesPanelResizeActive }" :style="{ '--workspace-assistant-width': `${assistantPanelWidth}px`, '--workspace-properties-width': `${propertiesPanelWidth}px` }" :data-mobile-segment="activeSegment">
+      <section v-if="isMobile && activeSegment === 'ppt'" class="workspace-mobile-ppt" aria-label="PPT 课件预览">
+        <header class="workspace-mobile-content-head">
+          <div><span>课件预览</span><strong>{{ current?.title || '新建课件' }}</strong></div>
+          <button v-if="current" type="button" class="workspace-mobile-text-action" @click="openPreview">放大</button>
+        </header>
+        <div v-if="projectId && projectLoadError" class="workspace-mobile-ppt-empty" role="alert">
+          <p>{{ projectLoadError }}</p>
+          <button type="button" class="workspace-mobile-text-action" @click="retryProjectLoad">重新加载</button>
+        </div>
+        <div v-else-if="current" class="workspace-mobile-ppt-body">
+          <div class="html-preview-shell workspace-mobile-ppt-frame">
+            <iframe
+              :srcdoc="secureHtmlForSandbox(withHtmlPageBackground(slideHtmlSource(current), current))"
+              sandbox="allow-scripts"
+              :title="`第 ${selectedSlide + 1} 页：${current.title} 预览`"
+              class="preview-html-frame"
+              @load="fitPreviewHtmlFrame"
+            ></iframe>
+          </div>
+          <nav class="workspace-mobile-page-nav" aria-label="PPT 页面切换">
+            <button type="button" :disabled="selectedSlide <= 0" aria-label="上一页" @click="selectSlide(selectedSlide - 1)">‹</button>
+            <span>第 {{ selectedSlide + 1 }} / {{ slides.length }} 页</span>
+            <button type="button" :disabled="selectedSlide >= slides.length - 1" aria-label="下一页" @click="selectSlide(selectedSlide + 1)">›</button>
+          </nav>
+        </div>
+        <div v-else class="workspace-mobile-ppt-empty" role="status">暂无课件页面</div>
+      </section>
+
+      <aside class="assistant-panel" :class="{ 'is-mobile-open': assistantDrawerVisible }" aria-label="AI 教学助手">
         <header class="assistant-header">
           <div class="assistant-identity">
             <div class="assistant-mark" aria-hidden="true"><span>AI</span></div>
@@ -7654,7 +8041,11 @@ const selectSlide = (index) => { selectedSlide.value = index; selectedElementId.
             </el-select>
           </div>
         </div>
+        <header v-if="isMobile" class="workspace-mobile-chat-heading"><strong>AI 对话</strong><span>描述你想修改的课件内容</span></header>
         <section ref="assistantConversationRef" class="conversation workspace-conversation">
+          <div v-if="isMobile && !messages.length && !intentSubmitting && !revisionSubmitting" class="workspace-mobile-empty">
+            <p>想修改哪一页？直接告诉我。</p>
+          </div>
           <TransitionGroup name="workspace-msg-enter" tag="div" class="workspace-message-list">
             <article v-for="(message, index) in messages" :key="`${message.kind || message.role}-${index}`" :class="['workspace-chat-message', `is-${message.role}`]">
               <div v-if="message.role === 'user'" class="workspace-user-bubble">{{ message.text }}</div>
@@ -7676,6 +8067,7 @@ const selectSlide = (index) => { selectedSlide.value = index; selectedElementId.
             <el-input v-model="prompt" type="textarea" :rows="2" resize="none" :disabled="isAssistantSubmitting" :placeholder="assistantPlaceholder" @keydown.enter="handleAssistantKeydown" />
             <div class="workspace-composer-buttons">
               <VoiceRecorderButton
+                v-if="!isMobile"
                 :disabled="isAssistantSubmitting"
                 :busy="workspaceVoiceSubmitting"
                 label="上传语音并继续工作台会话"
@@ -7689,8 +8081,37 @@ const selectSlide = (index) => { selectedSlide.value = index; selectedElementId.
         </footer>
       </aside>
 
-      <section v-if="workspaceMode === 'document' && (!isMobile || activeSegment === 'plan')" class="editor-stage document-editor-stage">
+      <div
+        v-if="!isMobile"
+        class="panel-resize-handle assistant-resize-handle"
+        role="separator"
+        aria-orientation="vertical"
+        aria-label="教学助手面板宽度"
+        :aria-valuenow="assistantPanelWidth"
+        :aria-valuemin="ASSISTANT_PANEL_MIN_WIDTH"
+        :aria-valuemax="assistantPanelMaxWidth"
+        :aria-valuetext="`${assistantPanelWidth} 像素`"
+        title="拖动调整教学助手宽度，也可用方向键微调"
+        tabindex="0"
+        @pointerdown="startAssistantPanelResize"
+        @pointermove="moveAssistantPanelResize"
+        @pointerup="endAssistantPanelResize"
+        @pointercancel="endAssistantPanelResize"
+        @lostpointercapture="endAssistantPanelResize"
+        @keydown.stop="handleAssistantPanelResizeKeydown"
+      ><span aria-hidden="true"></span></div>
+      <section v-if="workspaceMode === 'document' || isMobile" v-show="!isMobile || activeSegment === 'plan'" class="editor-stage document-editor-stage">
         <main class="document-workspace" aria-label="教学案文档工作区">
+          <header v-if="isMobile" class="workspace-mobile-plan-head">
+            <strong>教案</strong>
+            <div class="workspace-mobile-plan-actions" aria-label="教案查看方式">
+              <button type="button" :class="{ active: mobileLessonMode === 'preview' && hasDocumentPlan }" :disabled="!hasDocumentPlan" @click="setMobileLessonMode('preview')">预览</button>
+              <button type="button" :class="{ active: mobileLessonMode === 'edit' || !hasDocumentPlan }" @click="setMobileLessonMode('edit')">编辑</button>
+            </div>
+          </header>
+          <div v-if="isMobile && mobileLessonMode === 'preview' && hasDocumentPlan" class="workspace-mobile-plan-preview">
+            <LessonPlanPreview embedded :title="lessonPlanTitle" :subject="lessonPlanSubject" :grade="lessonPlanGrade" :plan="lessonPlanDraft" />
+          </div>
           <header class="document-workspace-header">
             <div>
               <span>教学案文档</span>
@@ -7703,8 +8124,9 @@ const selectSlide = (index) => { selectedSlide.value = index; selectedElementId.
             </div>
           </header>
           <LessonPlanEditor
+            v-show="!isMobile || mobileLessonMode === 'edit' || !hasDocumentPlan"
             ref="lessonPlanEditorRef"
-            :key="`${projectId || currentDraftStorageId}:${workspaceMode}`"
+            :key="`${projectId || currentDraftStorageId}:lesson-plan`"
             :title="lessonPlanTitle"
             :subject="lessonPlanSubject"
             :grade="lessonPlanGrade"
@@ -7714,11 +8136,11 @@ const selectSlide = (index) => { selectedSlide.value = index; selectedElementId.
             @save="saveLessonPlanDraft"
             @autosave="autosaveLessonPlanDraft"
           />
-          <WorkspaceProjectActions v-if="projectId" class="document-project-actions" :status="autosaveState" :saving-version="versionActionLoading" :can-undo="Boolean(revisionUndoSnapshot?.length)" @undo="undoLastAiRevision" @quality="openQualityPanel" @save-version="createVersion" @versions="loadVersions" @permissions="openPermissionDialog" />
+          <WorkspaceProjectActions v-if="projectId && !isMobile" class="document-project-actions" :status="autosaveState" :saving-version="versionActionLoading" :can-undo="Boolean(revisionUndoSnapshot?.length)" @undo="undoLastAiRevision" @quality="openQualityPanel" @save-version="createVersion" @versions="loadVersions" @permissions="openPermissionDialog" />
         </main>
       </section>
 
-      <section v-else-if="workspaceMode !== 'document' && (!isMobile || activeSegment === 'outline' || activeSegment === 'preview')" class="editor-stage">
+      <section v-else-if="workspaceMode !== 'document' && !isMobile" class="editor-stage">
         <aside class="slide-rail" aria-label="课件页面列表">
           <button
             v-for="(slide, index) in slides"
@@ -7900,7 +8322,27 @@ const selectSlide = (index) => { selectedSlide.value = index; selectedElementId.
         </main>
       </section>
 
+      <div
+        v-if="!isMobile"
+        class="panel-resize-handle properties-resize-handle"
+        role="separator"
+        aria-orientation="vertical"
+        aria-label="属性面板宽度"
+        :aria-valuenow="propertiesPanelWidth"
+        :aria-valuemin="PROPERTIES_PANEL_MIN_WIDTH"
+        :aria-valuemax="propertiesPanelMaxWidth"
+        :aria-valuetext="`${propertiesPanelWidth} 像素`"
+        title="拖动调整属性面板宽度，也可用方向键微调"
+        tabindex="0"
+        @pointerdown="startPropertiesPanelResize"
+        @pointermove="movePropertiesPanelResize"
+        @pointerup="endPropertiesPanelResize"
+        @pointercancel="endPropertiesPanelResize"
+        @lostpointercapture="endPropertiesPanelResize"
+        @keydown.stop="handlePropertiesPanelResizeKeydown"
+      ><span aria-hidden="true"></span></div>
       <WorkspacePropertiesPanel
+        v-if="!isMobile"
         :class="{ 'is-mobile-open': propertiesDrawerVisible }"
         :elements="workspaceElements"
         :selected-element="workspaceSelectedElement"
@@ -8324,16 +8766,18 @@ const selectSlide = (index) => { selectedSlide.value = index; selectedElementId.
       <template #header>
         <div class="workspace-unsaved-project-heading">
           <div class="workspace-unsaved-project-eyebrow"><i aria-hidden="true"></i>保存提醒</div>
-          <h2>课件尚未保存为项目</h2>
-          <p>保存为项目后可从“我的项目”继续编辑；直接退出只保留本地草稿。</p>
+          <h2>{{ pendingWorkspaceTransition === 'switch' && projectId ? '当前项目有未保存的修改' : '课件尚未保存为项目' }}</h2>
+          <p v-if="pendingWorkspaceTransition === 'switch' && projectId">保存后再切换会保留当前课件和教案；不保存会放弃尚未提交的修改。</p>
+          <p v-else-if="pendingWorkspaceTransition === 'switch'">保存为项目后可从“我的项目”继续编辑；不保存切换后仍可通过返回恢复本地草稿。</p>
+          <p v-else>保存为项目后可从“我的项目”继续编辑；直接退出只保留本地草稿。</p>
         </div>
       </template>
       <template #footer>
         <div class="workspace-unsaved-project-footer">
           <div class="workspace-unsaved-project-actions">
-            <el-button text :disabled="unsavedProjectSaving" @click="leaveWorkspaceWithoutSaving">不保存，直接退出</el-button>
+            <el-button text :disabled="unsavedProjectSaving" @click="continueWithoutSaving">{{ pendingWorkspaceTransition === 'switch' ? '不保存，直接切换' : '不保存，直接退出' }}</el-button>
             <el-button :disabled="unsavedProjectSaving" @click="keepWorkspaceOpen">继续编辑</el-button>
-            <el-button type="primary" :loading="unsavedProjectSaving" @click="saveProjectAndLeaveWorkspace">保存并退出</el-button>
+            <el-button type="primary" :loading="unsavedProjectSaving" @click="saveProjectAndLeaveWorkspace">{{ pendingWorkspaceTransition === 'switch' ? '保存并切换' : '保存并退出' }}</el-button>
           </div>
         </div>
       </template>
@@ -10056,6 +10500,177 @@ const selectSlide = (index) => { selectedSlide.value = index; selectedElementId.
   .workspace-unsaved-project-actions { display: grid; width: 100%; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 8px; }
   .workspace-unsaved-project-actions :deep(.el-button:first-child) { grid-column: 1 / -1; justify-self: end; }
   .workspace-unsaved-project-actions :deep(.el-button:not(:first-child)) { width: 100%; }
+}
+
+/* Desktop panel splitters; narrow layouts keep their existing drawer behavior. */
+.workspace-grid {
+  grid-template-columns: var(--workspace-assistant-width, 286px) 8px minmax(500px, 1fr) 8px var(--workspace-properties-width, 270px);
+}
+.workspace-grid.is-assistant-bottom {
+  grid-template-columns: minmax(500px, 1fr) 8px var(--workspace-properties-width, 270px);
+}
+.workspace-grid.is-assistant-bottom .properties { grid-column: 3; }
+.panel-resize-handle {
+  z-index: 4;
+  display: grid;
+  grid-row: 1;
+  place-items: center;
+  width: 16px;
+  min-width: 16px;
+  margin-inline: -4px;
+  padding: 0;
+  border: 0;
+  border-radius: 4px;
+  background: transparent;
+  cursor: col-resize;
+  touch-action: none;
+  user-select: none;
+}
+.assistant-resize-handle { grid-column: 2; }
+.properties-resize-handle { grid-column: 4; }
+.panel-resize-handle > span {
+  width: 3px;
+  height: 38px;
+  border-radius: 999px;
+  background: var(--zh-line-heavier);
+  transition: height 160ms ease, background-color 160ms ease;
+}
+.panel-resize-handle:hover,
+.panel-resize-handle:focus-visible,
+.workspace-grid.is-panel-resizing .panel-resize-handle {
+  background: var(--zh-background-weaken);
+}
+.panel-resize-handle:hover > span,
+.panel-resize-handle:focus-visible > span,
+.workspace-grid.is-panel-resizing .panel-resize-handle > span {
+  height: 52px;
+  background: var(--zh-line-theme);
+}
+.panel-resize-handle:focus-visible { outline: 2px solid var(--zh-line-theme); outline-offset: -2px; }
+.workspace-grid.is-panel-resizing,
+.workspace-grid.is-panel-resizing * { cursor: col-resize !important; user-select: none !important; }
+.workspace-grid.is-assistant-bottom .assistant-resize-handle { display: none; }
+.workspace-grid.is-assistant-bottom .properties-resize-handle { grid-column: 2; }
+
+@media (max-width: 1023.98px) {
+  .workspace-grid { grid-template-columns: 250px minmax(0, 1fr); }
+  .workspace-grid.is-assistant-bottom { grid-template-columns: minmax(0, 1fr); }
+  .panel-resize-handle { display: none; }
+}
+
+@media (max-width: 767.98px) {
+  .workspace {
+    box-sizing: border-box;
+    height: 100dvh;
+    min-height: 0;
+    grid-template-rows: auto auto minmax(0, 1fr);
+    overflow: hidden;
+    padding-top: var(--zh-safe-top);
+    padding-bottom: var(--zh-safe-bottom);
+    background: var(--zh-background-primary);
+  }
+  .workspace-mobile-segments { padding: 8px 16px 12px; border-bottom-color: var(--zh-line-parting); }
+  .workspace-mobile-segments :deep(.el-segmented__item) { min-height: 44px; font-size: 14px; }
+  .workspace-grid.is-mobile-segmented,
+  .workspace-grid.is-mobile-segmented.is-assistant-bottom {
+    min-height: 0;
+    overflow: hidden;
+    grid-template-columns: minmax(0, 1fr);
+    grid-template-rows: minmax(0, 48%) minmax(0, 52%);
+  }
+  .workspace-grid.is-mobile-segmented .workspace-mobile-ppt,
+  .workspace-grid.is-mobile-segmented .document-editor-stage { grid-column: 1; grid-row: 1; }
+  .workspace-grid.is-mobile-segmented .assistant-panel,
+  .workspace-grid.is-mobile-segmented.is-assistant-bottom .assistant-panel {
+    position: static;
+    display: flex;
+    grid-column: 1;
+    grid-row: 2;
+    width: auto;
+    min-width: 0;
+    min-height: 0;
+    height: 100%;
+    border: 0;
+    border-top: 1px solid var(--zh-line-border);
+    box-shadow: none;
+  }
+  .workspace-mobile-ppt {
+    display: flex;
+    min-width: 0;
+    min-height: 0;
+    flex-direction: column;
+    overflow-y: auto;
+    background: var(--zh-background-light);
+  }
+  .workspace-mobile-content-head,
+  .workspace-mobile-plan-head {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 12px;
+    min-height: 48px;
+    padding: 4px 16px;
+    background: var(--zh-background-primary);
+  }
+  .workspace-mobile-content-head > div { display: flex; align-items: baseline; min-width: 0; gap: 8px; }
+  .workspace-mobile-content-head span { flex: none; color: var(--zh-text-caption); font-size: 12px; }
+  .workspace-mobile-content-head strong { overflow: hidden; color: var(--zh-text-primary); font-size: 14px; font-weight: 600; text-overflow: ellipsis; white-space: nowrap; }
+  .workspace-mobile-text-action { flex: none; min-width: 44px; min-height: 44px; padding: 0 8px; border: 0; border-radius: var(--zh-radius8); color: var(--zh-text-theme); background: transparent; font-size: 13px; font-weight: 600; }
+  .workspace-mobile-text-action:active { background: var(--zh-background-weaken); }
+  .workspace-mobile-ppt-body { display: flex; min-height: 0; flex: 1; flex-direction: column; align-items: center; justify-content: center; gap: 6px; padding: 8px 16px 10px; }
+  .workspace-mobile-ppt-frame { flex: none; width: 100%; max-width: 520px; border: 1px solid var(--zh-line-border); border-radius: var(--zh-radius8); box-shadow: 0 3px 12px color-mix(in srgb, var(--zh-text-primary) 6%, transparent); }
+  .workspace-mobile-page-nav { display: flex; align-items: center; justify-content: space-between; width: 100%; max-width: 520px; min-height: 44px; }
+  .workspace-mobile-page-nav button { width: 44px; height: 44px; padding: 0; border: 0; border-radius: var(--zh-radius8); color: var(--zh-text-theme); background: transparent; font-size: 30px; line-height: 1; }
+  .workspace-mobile-page-nav button:disabled { color: var(--zh-text-disabled); }
+  .workspace-mobile-page-nav button:not(:disabled):active { background: var(--zh-background-option-on); }
+  .workspace-mobile-page-nav span { color: var(--zh-text-secondary); font: 600 12px var(--zh-font-number); }
+  .workspace-mobile-ppt-empty { display: grid; flex: 1; place-items: center; gap: 8px; padding: 16px; color: var(--zh-text-secondary); font-size: 13px; text-align: center; }
+  .workspace-mobile-ppt-empty p { margin: 0; }
+  .workspace-mobile-plan-head { position: sticky; z-index: 2; top: 0; border-bottom: 1px solid var(--zh-line-parting); }
+  .workspace-mobile-plan-head > strong { color: var(--zh-text-primary); font-size: 14px; font-weight: 600; }
+  .workspace-mobile-plan-actions { display: flex; align-items: center; gap: 4px; padding: 3px; border-radius: var(--zh-radius10); background: var(--zh-background-light); }
+  .workspace-mobile-plan-actions button { min-width: 56px; min-height: 44px; padding: 0 10px; border: 0; border-radius: var(--zh-radius8); color: var(--zh-text-secondary); background: transparent; font-size: 13px; }
+  .workspace-mobile-plan-actions button.active { color: var(--zh-text-theme); background: var(--zh-background-option-on); font-weight: 600; }
+  .workspace-mobile-plan-actions button:disabled { color: var(--zh-text-disabled); }
+  .workspace-mobile-plan-preview { padding: 12px 16px 20px; }
+  .workspace-mobile-plan-preview :deep(.lesson-plan-preview) { gap: 8px; }
+  .workspace-mobile-plan-preview :deep(.lesson-plan-preview-header) { padding: 14px 16px; }
+  .workspace-mobile-plan-preview :deep(.lesson-plan-preview-header h1) { font-size: 18px; }
+  .workspace-mobile-plan-preview :deep(.lesson-plan-preview-section) { padding: 0; }
+  .workspace-mobile-plan-preview :deep(.lesson-plan-preview-fold > summary) { min-height: 44px; padding: 12px 16px; }
+  .workspace-mobile-plan-preview :deep(.lesson-plan-preview-fold > p),
+  .workspace-mobile-plan-preview :deep(.lesson-plan-preview-fold > ul),
+  .workspace-mobile-plan-preview :deep(.lesson-plan-preview-fold > ol) { margin: 0 16px 16px; }
+  .workspace-grid.is-mobile-segmented .document-editor-stage :deep(.lesson-plan-mobile-empty) { min-height: 230px; }
+  .workspace-grid.is-mobile-segmented .assistant-header,
+  .workspace-grid.is-mobile-segmented .assistant-target-bar { display: none; }
+  .workspace-grid.is-mobile-segmented .workspace-mobile-chat-heading { display: flex; min-height: 42px; justify-content: space-between; padding: 8px 16px; border-bottom: 1px solid var(--zh-line-parting); }
+  .workspace-mobile-chat-heading strong { color: var(--zh-text-primary); font-size: 13px; font-weight: 600; }
+  .workspace-mobile-chat-heading span { color: var(--zh-text-caption); font-size: 11px; }
+  .workspace-grid.is-mobile-segmented .workspace-conversation {
+    display: flex;
+    min-height: 0;
+    flex: 1;
+    flex-direction: column;
+    overflow-y: auto;
+    padding: 12px 16px;
+    background: var(--zh-background-primary);
+  }
+  .workspace-mobile-empty { display: grid; min-height: 0; flex: 1; place-items: center; text-align: center; }
+  .workspace-mobile-empty p { margin: 0; color: var(--zh-text-caption); font-size: 13px; line-height: 1.5; }
+  .workspace-grid.is-mobile-segmented .assistant-composer {
+    position: static;
+    flex: none;
+    padding: 8px 16px 12px;
+    border-top: 1px solid var(--zh-line-parting);
+    box-shadow: none;
+  }
+  .assistant-input-shell :deep(.el-textarea__inner) { min-height: 84px !important; padding: 13px 60px 42px 14px; border-radius: var(--zh-radius12); background: var(--zh-background-primary); font-size: 14px; }
+  .assistant-composer .workspace-composer-buttons { right: 8px; bottom: 8px; padding: 0; border: 0; background: transparent; box-shadow: none; }
+  .assistant-composer .workspace-composer-buttons :deep(.el-button) { width: 44px; height: 44px; margin: 0; font-size: 19px; }
+  .workspace-grid.is-mobile-segmented .document-editor-stage { display: block; height: 100%; min-height: 0; overflow-y: auto; background: var(--zh-background-primary); }
+  .workspace-grid.is-mobile-segmented .document-workspace { display: block; width: 100%; min-height: 100%; margin: 0; }
+  .workspace-grid.is-mobile-segmented .document-workspace-header { display: none; }
 }
 
 </style>

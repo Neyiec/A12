@@ -679,7 +679,12 @@ watch(viewMode, (value) => {
       </div>
     </section>
 
-    <div class="suggestion-grid motion-stage motion-stage-3">
+    <section class="suggestions-section motion-stage motion-stage-3" aria-label="快速开始">
+      <div class="suggestions-heading">
+        <h2>快速开始</h2>
+        <span>选择一项，快速填入需求</span>
+      </div>
+      <div class="suggestion-grid">
       <el-card
         v-for="suggestion in TEACHER_HOME.suggestions"
         :key="suggestion.id"
@@ -697,6 +702,12 @@ watch(viewMode, (value) => {
         <p>{{ suggestion.description }}</p>
         <el-icon class="card-arrow"><Promotion /></el-icon>
       </el-card>
+      </div>
+    </section>
+
+    <div class="mobile-welcome-center" aria-label="智核教学助手">
+      <img src="/branding/logo-intro.png" alt="智核" />
+      <p>{{ TEACHER_HOME.greeting.title }}</p>
     </div>
     </div>
 
@@ -756,7 +767,10 @@ watch(viewMode, (value) => {
       </div>
     </section>
 
-    <p class="composer-hint motion-stage motion-stage-4">{{ TEACHER_HOME.composer.hint }} · Enter 发送 · Shift + Enter 换行</p>
+    <p class="composer-hint motion-stage motion-stage-4">
+      <span>{{ TEACHER_HOME.composer.hint }}</span>
+      <span class="composer-shortcut-hint"> · Enter 发送 · Shift + Enter 换行</span>
+    </p>
     </template>
 
     <!-- 聊天视图 -->
@@ -858,6 +872,7 @@ watch(viewMode, (value) => {
 }
 
 .welcome-copy { max-width: 720px; }
+.mobile-welcome-center { display: none; }
 .welcome-actions { display: flex; gap: 10px; margin-top: 24px; }
 .motion-stage { animation: fadeIn 300ms cubic-bezier(0, 0, 0.2, 1) both; }
 .motion-stage-1 { animation-delay: 0ms; }
@@ -868,6 +883,11 @@ watch(viewMode, (value) => {
 h1 { margin: 0; font-size: clamp(36px, 4vw, 48px); line-height: 1.15; letter-spacing: var(--zh-tracking-tight); text-wrap: balance; }
 .intro { max-width: 660px; margin: 18px 0 0; color: var(--zh-text-secondary); font-size: 16px; line-height: 1.75; text-wrap: pretty; }
 .suggestion-grid { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 12px; margin-top: 38px; }
+.suggestions-section { margin-top: 34px; }
+.suggestions-heading { display: flex; align-items: baseline; justify-content: space-between; gap: 12px; }
+.suggestions-heading h2 { margin: 0; font-size: 16px; font-weight: 600; }
+.suggestions-heading span { color: var(--zh-text-caption); font-size: 12px; }
+.suggestions-section .suggestion-grid { margin-top: 12px; }
 .suggestion-card { position: relative; cursor: pointer; transition: transform 200ms cubic-bezier(0.4, 0, 0.2, 1), box-shadow 200ms cubic-bezier(0.4, 0, 0.2, 1), border-color 200ms cubic-bezier(0.4, 0, 0.2, 1), background-color 200ms cubic-bezier(0.4, 0, 0.2, 1); }
 .suggestion-card:hover, .suggestion-card:focus-visible { transform: translateY(-3px); border-color: var(--zh-line-theme20); box-shadow: var(--zh-shadow2); }
 .suggestion-card:focus-visible { outline: 3px solid var(--zh-line-theme20); outline-offset: 2px; }
@@ -926,14 +946,99 @@ h1 { margin: 0; font-size: clamp(36px, 4vw, 48px); line-height: 1.15; letter-spa
 @media (max-width: 767.98px) {
   .home-welcome:not(.is-chat-mode) {
     /* 手机档顶栏 48px+safe-top，底部 TabBar 56px+safe-bottom */
+    width: 100%;
+    max-width: none;
+    margin: 0;
     height: calc(100dvh - 48px - var(--zh-safe-top) - var(--zh-tabbar-h) - var(--zh-safe-bottom));
+    padding: 0 0 10px;
   }
-  .home-welcome:not(.is-chat-mode),
-  .welcome-scroll { width: min(100% - 28px, 540px); }
-  .welcome-scroll { padding-top: 32px; }
-  .suggestion-grid, .project-grid { grid-template-columns: 1fr; }
-  .suggestion-card :deep(.el-card__body) { min-height: 118px; }
-  .suggestion-icon { margin-bottom: 16px; }
+  .welcome-scroll {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    width: 100%;
+    min-width: 0;
+    padding: 16px calc(18px + var(--zh-safe-right)) 20px calc(18px + var(--zh-safe-left));
+    scrollbar-gutter: auto;
+    overscroll-behavior-y: contain;
+    text-align: center;
+  }
+  .welcome-copy, .recent-projects, .suggestions-section, .composer-hint { display: none; }
+  .mobile-welcome-center {
+    display: grid;
+    justify-items: center;
+    gap: 14px;
+    width: 100%;
+    margin: auto 0;
+  }
+  .mobile-welcome-center img {
+    width: 96px;
+    height: 96px;
+    border-radius: var(--zh-radius20);
+    object-fit: contain;
+    mix-blend-mode: multiply;
+  }
+  .mobile-welcome-center p {
+    max-width: 100%;
+    margin: 0;
+    color: var(--zh-text-primary);
+    font-size: clamp(20px, 5.6vw, 24px);
+    font-weight: 600;
+    line-height: 1.45;
+    letter-spacing: var(--zh-tracking-tight);
+    text-wrap: balance;
+  }
+  .welcome-copy { max-width: none; order: 0; }
+  .eyebrow { margin-bottom: 8px; font-size: 13px; }
+  .welcome-copy h1 { max-width: 12em; font-size: clamp(30px, 8vw, 36px); line-height: 1.2; letter-spacing: -0.035em; }
+  .intro { max-width: 36ch; margin-top: 12px; font-size: 15px; line-height: 1.65; }
+  .welcome-actions { margin-top: 18px; }
+  .welcome-actions :deep(.el-button) { min-height: 46px; padding-inline: 18px; }
+
+  .suggestions-section { order: 1; margin-top: 28px; }
+  .suggestions-heading h2 { font-size: 16px; }
+  .suggestions-heading span { font-size: 11px; }
+  .suggestion-grid {
+    display: flex;
+    gap: 10px;
+    margin: 12px calc(-18px - var(--zh-safe-right)) 0 calc(-18px - var(--zh-safe-left));
+    padding: 2px calc(18px + var(--zh-safe-right)) 12px calc(18px + var(--zh-safe-left));
+    overflow-x: auto;
+    overscroll-behavior-x: contain;
+    scroll-snap-type: x mandatory;
+    scrollbar-width: none;
+  }
+  .suggestion-grid::-webkit-scrollbar { display: none; }
+  .suggestion-card { flex: 0 0 min(246px, calc(100vw - 72px)); scroll-snap-align: start; }
+  .suggestion-card :deep(.el-card) { border-color: var(--zh-line-border); border-radius: var(--zh-radius12); background: var(--zh-background-light); }
+  .suggestion-card :deep(.el-card__body) { min-height: 126px; padding: 16px; }
+  .suggestion-icon { width: 34px; height: 34px; margin-bottom: 14px; }
+  .suggestion-card h2 { font-size: 15px; }
+  .suggestion-card p { font-size: 12px; }
+
+  .recent-projects { order: 2; margin-top: 26px; }
+  .recent-projects-heading { align-items: center; }
+  .recent-projects-heading h2 { font-size: 16px; }
+  .project-grid { grid-template-columns: 1fr; gap: 8px; }
+  .project-card { padding: 12px 14px; border-radius: var(--zh-radius12); }
+
+  .composer {
+    margin: 12px calc(12px + var(--zh-safe-right)) 0 calc(12px + var(--zh-safe-left));
+    padding: 8px;
+    border-radius: var(--zh-radius16);
+    box-shadow: 0 -4px 18px rgb(31 63 120 / 6%);
+  }
+  .composer :deep(.el-textarea__inner) { min-height: 70px !important; padding: 8px 10px 4px; font-size: 16px; }
+  .composer-toolbar { gap: 4px; }
+  .composer-tools { min-width: 0; gap: 0; }
+  .composer-tools :deep(.el-select) { width: 90px !important; flex: 0 0 90px; }
+  .composer-tools :deep(.el-select .el-input__wrapper) { padding-inline: 8px; }
+  .composer-tools :deep(.el-button) { padding-inline: 8px; }
+  .composer-tool-label { display: none; }
+  .composer-hint { margin-top: 7px; font-size: 11px; text-align: left; }
+  .composer-shortcut-hint { display: none; }
+
   .session-fields { grid-template-columns:1fr; }
   .knowledge-picker-header { grid-template-columns:1fr; }
 }

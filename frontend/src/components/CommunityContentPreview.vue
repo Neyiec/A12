@@ -421,7 +421,6 @@ onBeforeUnmount(() => {
 .ppt-slide-picker button > span { display: grid; width: 26px; height: 26px; place-items: center; border-radius: 6px; color: var(--zh-text-theme); background: var(--zh-background-option-on); font: 600 10px/1 var(--zh-font-number, inherit); }
 .ppt-slide-picker button > strong { overflow: hidden; color: inherit; font-size: 11px; text-overflow: ellipsis; white-space: nowrap; }
 .lesson-plan-preview-shell { min-width: 0; }
-.lesson-plan-preview-shell :deep(.lesson-plan-preview) { max-height: min(56vh, 610px); padding-right: 4px; }
 .community-overview { display: grid; gap: 14px; }
 .overview-intro { padding: 18px 20px; border: 1px solid var(--zh-line-theme20); border-radius: var(--zh-radius12); background: var(--zh-background-weaken); }
 .overview-intro h4 { margin: 8px 0 6px; color: var(--zh-text-primary); font-size: 18px; line-height: 1.35; }
