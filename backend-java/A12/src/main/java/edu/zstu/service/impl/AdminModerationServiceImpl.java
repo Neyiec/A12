@@ -101,6 +101,19 @@ public class AdminModerationServiceImpl implements AdminModerationService {
                 Map.of("action", action, "content_id", content.getId(), "new_status", newStatus));
     }
 
+    /**
+     * 管理员读取审核目标社区内容完整详情（含待审核/未公开稿件，不过滤状态），用于审核抽屉预览。
+     */
+    @Override
+    public ContentVO getModerationContent(Integer id) {
+        log.info("getModerationContent id={}", id);
+        Com_Content content = contentMapper.findById(id);
+        if (content == null) throw new RuntimeException("Community content not found");
+        ContentVO vo = new ContentVO();
+        BeanUtil.copyProperties(content, vo);
+        return vo;
+    }
+
     @Override
     @Transactional
     public ContentVO updateItemStatus(Integer id, String status) {

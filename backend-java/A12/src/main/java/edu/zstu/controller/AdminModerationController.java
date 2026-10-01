@@ -41,6 +41,14 @@ public class AdminModerationController {
         } catch (RuntimeException e) { return Result.error(400, e.getMessage()); }
     }
 
+    /** 读取审核目标社区内容完整详情（含待审核/未公开稿件），供审核抽屉只读预览 */
+    @GetMapping("/moderation/content/{id}")
+    public Result<ContentVO> getModerationContent(@PathVariable Integer id) {
+        try {
+            return Result.success(adminModerationService.getModerationContent(id));
+        } catch (RuntimeException e) { return Result.error(400, e.getMessage()); }
+    }
+
     @PostMapping("/moderation/tasks/{id}/decisions")
     public Result<Void> makeDecision(@PathVariable Integer id, @RequestBody AuditDTO dto) {
         try {

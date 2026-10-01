@@ -57,6 +57,7 @@ public class AdminAuthFilter implements Filter {
             // 内容审核与社区治理
             new PermRule("GET", "/api/v1/admin/moderation/tasks", "audit:view"),
             new PermRule("GET", "/api/v1/admin/moderation/tasks/{id}", "audit:view"),
+            new PermRule("GET", "/api/v1/admin/moderation/content/{id}", "audit:view"),
             new PermRule("POST", "/api/v1/admin/moderation/tasks/{id}/decisions", "audit:audit"),
             new PermRule("PUT", "/api/v1/admin/community-items/{id}/status", "audit:audit"),
             new PermRule("PUT", "/api/v1/admin/community-items/{id}/recommendation", "audit:audit"),

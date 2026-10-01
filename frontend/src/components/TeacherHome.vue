@@ -4,13 +4,17 @@
   - 输出: 教师端默认首页内容，由 `TeacherLayout.vue` 承载全局导航
 -->
 <script setup>
-import { computed, onMounted, onUnmounted, ref, watch } from 'vue'
+import { computed, onMounted, onUnmounted, reactive, ref, watch } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import {
+  CircleCheck,
+  CircleClose,
+  Close,
   Collection,
   Document,
   EditPen,
+  Loading,
   MagicStick,
   Microphone,
   Monitor,
@@ -22,7 +26,7 @@ import { TEACHER_HOME } from '../config/teacherHome.config.js'
 import { INFO_FORM_DEFAULTS, requestNewChat, openChatSession } from '../config/teacherChat.config.js'
 import { useUserStore } from '../storage/user'
 import ChatView from './ChatView.vue'
-import { archiveProject, copyProject, createAiSession, createProject, deleteProject, listProjects, listResources, transcribeAudio, uploadResource } from '../apis/teacher'
+import { archiveProject, cleanupTempResources, copyProject, createAiSession, createProject, deleteProject, forgetTempResource, listProjects, listResources, listTempResourceIds, rememberTempResource, transcribeAudio, uploadResource, uploadTempResource } from '../apis/teacher'
 
 const router = useRouter()
 const route = useRoute()
@@ -53,14 +57,8 @@ const projectsLoading = ref(true)
 const resourcesLoading = ref(false)
 const availableResources = ref([])
 const selectedResourceIds = ref([])
-const uploadDialogVisible = ref(false)
 const knowledgeDialogVisible = ref(false)
 const resourceSearch = ref('')
-const resourceUploading = ref(false)
-const resourceUploadProgress = ref(0)
-const resourceFileInput = ref(null)
-const uploadedResourceNames = ref([])
-const uploadDragging = ref(false)
 const voiceDialogVisible = ref(false)
 const voiceLanguage = ref('zh-CN')
 /** 语音录音与转写状态 */
@@ -82,6 +80,9 @@ const chatResourceIds = ref([])
 /** 从欢迎页/聊天页一路带到工作台的资料、上传文件和社区内容上下文。 */
 const chatWorkspaceContext = ref({ resourceIds: [], resource_ids: [], uploadedResources: [], uploaded_resources: [], community: null })
 const pendingUploadedResources = ref([])
+/** 功能 2（临时上传）：不入素材库的本次引用资料；status: parsing | ready | error。 */
+const tempUploads = ref([])
+const tempFileInput = ref(null)
 /** 普通对话切换到备课流时，保留切换前的消息用于页面续接和首次模型上下文。 */
 const chatContinuationHistory = ref([])
 /** 欢迎页输入的会话类型：普通对话不进入备课补充信息流程。 */
@@ -260,10 +261,14 @@ const handleVoiceRecordingStop = async () => {
 const startPlanningSession = async (text, resourceIds = [], history = null, workspaceContext = {}) => {
   const previousMode = chatMode.value
   const normalizedText = String(text || '').trim()
-  const normalizedResourceIds = normalizeResourceIds(resourceIds)
+  // 功能 2：兜底并入已就绪的临时上传 id，保证 resource_ids 与 uploadedResources 一致。
+  const normalizedResourceIds = normalizeResourceIds([...(resourceIds || []), ...readyTempIds.value])
   const normalizedWorkspaceContext = normalizeWorkspaceContext({
     ...workspaceContext,
-    uploadedResources: workspaceContext.uploadedResources || workspaceContext.uploaded_resources || pendingUploadedResources.value,
+    uploadedResources: [
+      ...(workspaceContext.uploadedResources || workspaceContext.uploaded_resources || pendingUploadedResources.value),
+      ...tempContextEntries.value,
+    ],
   }, normalizedResourceIds)
   const normalizedPreviousHistory = Array.isArray(history)
     ? history
@@ -318,10 +323,10 @@ const sendPrompt = async () => {
   chatMode.value = 'general'
   chatSessionId.value = null
   chatPrompt.value = text
-  chatResourceIds.value = [...selectedResourceIds.value]
-  chatWorkspaceContext.value = normalizeWorkspaceContext({
-    uploadedResources: pendingUploadedResources.value,
-  }, selectedResourceIds.value)
+  // 功能 2：临时上传 res_xxx 与素材库勾选一并并入本次引用集合与会话上下文。
+  const workspaceContext = buildChatContext(selectedResourceIds.value)
+  chatResourceIds.value = workspaceContext.resourceIds
+  chatWorkspaceContext.value = workspaceContext
   chatContinuationHistory.value = []
   chatResume.value = false
   viewMode.value = 'chat'
@@ -459,18 +464,36 @@ const loadAvailableResources = async () => {
     availableResources.value = result?.data?.records || result?.data?.list || result?.data?.items || []
   } catch { availableResources.value = [] } finally { resourcesLoading.value = false }
 }
-const openUploadDialog = () => {
-  uploadedResourceNames.value = []
-  resourceUploadProgress.value = 0
-  uploadDialogVisible.value = true
-}
 const openKnowledgeDialog = async () => {
   resourceSearch.value = ''
   knowledgeDialogVisible.value = true
   await loadAvailableResources()
 }
-const triggerResourceUpload = () => resourceFileInput.value?.click()
-const uploadLocalFiles = async (rawFiles) => {
+
+// ========== 功能 2：临时上传（「添加资料」直达，不入素材库仅本次引用；需要入库时用芯片上的「转存」） ==========
+const TEMP_BADGES = [
+  { match: ['doc', 'docx'], label: 'W', type: 'word' },
+  { match: ['ppt', 'pptx'], label: 'P', type: 'ppt' },
+  { match: ['pdf'], label: 'PDF', type: 'pdf' },
+  { match: ['jpg', 'jpeg', 'png', 'gif', 'webp', 'svg'], label: '图', type: 'image' },
+  { match: ['mp3', 'wav', 'm4a', 'ogg'], label: '音', type: 'audio' },
+  { match: ['mp4', 'avi', 'mov', 'mkv', 'webm'], label: '视', type: 'video' },
+  { match: ['txt', 'md'], label: 'T', type: 'text' },
+]
+const tempBadgeFor = (filename) => {
+  const ext = String(filename || '').split('.').pop()?.toLowerCase() || ''
+  const badge = TEMP_BADGES.find((item) => item.match.includes(ext))
+  return badge ? { badgeLabel: badge.label, badgeType: badge.type } : { badgeLabel: '文', badgeType: 'other' }
+}
+const triggerTempUpload = () => tempFileInput.value?.click()
+const handleTempFilesPicked = async (event) => {
+  const files = Array.from(event.target?.files || [])
+  if (event.target) event.target.value = ''
+  await uploadTempFiles(files)
+}
+/** 直连 Python 上传临时资料；请求期间芯片显示「解析中」，返回 res_xxx 即转「已就绪」。 */
+const uploadTempFiles = async (rawFiles) => {
+  // 与素材库上传共用同一扩展名白名单，绕过 accept 的文件提前拦截
   const supportedExtensions = [
     'pdf', 'doc', 'docx', 'ppt', 'pptx', 'txt', 'md',
     'jpg', 'jpeg', 'png', 'gif', 'webp', 'svg',
@@ -480,42 +503,98 @@ const uploadLocalFiles = async (rawFiles) => {
   const files = candidates.filter((file) => supportedExtensions.includes(file.name.split('.').pop()?.toLowerCase()))
   if (files.length !== candidates.length) ElMessage.warning('已忽略不支持的文件格式')
   if (!files.length) return
-  resourceUploading.value = true; resourceUploadProgress.value = 0
-  try {
-    for (let index = 0; index < files.length; index += 1) {
-      const file = files[index]
-      const resource = await uploadResource(file, (progress) => { resourceUploadProgress.value = Math.round(((index + progress / 100) / files.length) * 100) })
-      const resourceId = resource?.id || resource?.resource_id
-      if (resourceId && !selectedResourceIds.value.includes(resourceId)) selectedResourceIds.value.push(resourceId)
-      if (resourceId) {
-        pendingUploadedResources.value = [
-          ...pendingUploadedResources.value.filter((item) => String(item.resource_id || item.id) !== String(resourceId)),
-          {
-            resource_id: String(resourceId),
-            id: String(resourceId),
-            file_name: file.name,
-            file_type: file.type || file.name.split('.').pop()?.toLowerCase() || '',
-            file_size: file.size,
-            source: 'teacher_upload',
-          },
-        ]
+  for (const file of files) {
+    const entry = reactive({
+      key: `${file.name}-${file.size}-${Date.now()}-${Math.random().toString(36).slice(2, 6)}`,
+      file,
+      name: file.name,
+      size: file.size,
+      status: 'parsing',
+      resourceId: '',
+      error: '',
+      transferring: false,
+      cancelled: false,
+      ...tempBadgeFor(file.name),
+    })
+    tempUploads.value.push(entry)
+    try {
+      const formData = new FormData()
+      formData.append('file', file)
+      const result = await uploadTempResource(formData)
+      const resourceId = result?.resource_id || result?.data?.resource_id
+      if (!resourceId) throw new Error(result?.message || '上传成功但未返回资源 ID')
+      if (entry.cancelled) {
+        // 「解析中」时已移除芯片：登记表未写入，直接回收服务端临时索引，避免孤儿残留
+        cleanupTempResources([String(resourceId)]).catch(() => {})
+        continue
       }
-      uploadedResourceNames.value.push(file.name)
+      entry.resourceId = String(resourceId)
+      entry.status = 'ready'
+      rememberTempResource(entry.resourceId)
+    } catch (error) {
+      if (entry.cancelled) continue
+      entry.status = 'error'
+      // FastAPI HTTPException 返回 {"detail"}（如 413 限额），优先透出中文提示
+      entry.error = error?.response?.data?.detail || error?.message || '临时上传失败'
     }
-    ElMessage.success(`${files.length} 份资料已上传并引用`)
-  } catch (error) { ElMessage.error(error?.message || '资料上传失败') }
-  finally { resourceUploading.value = false }
+  }
 }
-const uploadPickedResource = async (event) => {
-  const files = Array.from(event.target.files || [])
-  event.target.value = ''
-  await uploadLocalFiles(files)
+const readyTempUploads = computed(() => tempUploads.value.filter((item) => item.status === 'ready' && item.resourceId))
+const readyTempIds = computed(() => readyTempUploads.value.map((item) => item.resourceId))
+/** 已就绪临时资料的上下文明细（并入 uploadedResources，带 temp 标记）。 */
+const tempContextEntries = computed(() => readyTempUploads.value.map((item) => ({
+  resource_id: item.resourceId,
+  id: item.resourceId,
+  file_name: item.name,
+  file_type: item.file?.type || item.name.split('.').pop()?.toLowerCase() || '',
+  file_size: item.size,
+  temp: true,
+  source: 'temp_upload',
+})))
+const removeTempUpload = (entry) => {
+  // 解析中移除：标记取消，待上传返回后回收服务端临时索引（见 uploadTempFiles）
+  entry.cancelled = true
+  tempUploads.value = tempUploads.value.filter((item) => item.key !== entry.key)
+  if (entry.resourceId) {
+    forgetTempResource(entry.resourceId)
+    cleanupTempResources([entry.resourceId]).catch(() => {})
+  }
 }
-const dropResourceFiles = async (event) => {
-  uploadDragging.value = false
-  const files = Array.from(event.dataTransfer?.files || [])
-  if (!files.length) return
-  await uploadLocalFiles(files)
+/** 一键转存：复用素材库 OSS 三段式上传链路，成功后自动勾选并清理临时索引。 */
+const transferTempToLibrary = async (entry) => {
+  if (entry.status !== 'ready' || entry.transferring) return
+  entry.transferring = true
+  try {
+    const resource = await uploadResource(entry.file)
+    const resourceId = String(resource?.id || resource?.resource_id || '')
+    if (!resourceId) throw new Error('转存成功但未返回资源 ID')
+    if (!selectedResourceIds.value.includes(resourceId)) selectedResourceIds.value.push(resourceId)
+    pendingUploadedResources.value = [
+      ...pendingUploadedResources.value.filter((item) => String(item.resource_id || item.id) !== resourceId),
+      { resource_id: resourceId, id: resourceId, file_name: entry.name, file_type: entry.file?.type || '', file_size: entry.size, source: 'teacher_upload' },
+    ]
+    if (entry.resourceId) {
+      forgetTempResource(entry.resourceId)
+      cleanupTempResources([entry.resourceId]).catch(() => {})
+    }
+    tempUploads.value = tempUploads.value.filter((item) => item.key !== entry.key)
+    ElMessage.success('已转存到个人素材库并引用')
+  } catch (error) {
+    ElMessage.error(error?.message || '转存失败，请重试')
+  } finally {
+    entry.transferring = false
+  }
+}
+/** 会话删除会清空临时登记表：回到欢迎页时同步摘除已被清理的芯片。 */
+const pruneMissingTempUploads = () => {
+  const registry = listTempResourceIds()
+  tempUploads.value = tempUploads.value.filter((item) => !item.resourceId || registry.includes(item.resourceId))
+}
+/** 组装本次会话的引用上下文：素材库勾选 + 已就绪临时上传（双写由 normalizeWorkspaceContext 收口）。 */
+const buildChatContext = (baseResourceIds = []) => {
+  const ids = normalizeResourceIds([...(baseResourceIds || []), ...readyTempIds.value])
+  const uploaded = [...pendingUploadedResources.value, ...tempContextEntries.value]
+  return normalizeWorkspaceContext({ uploadedResources: uploaded }, ids)
 }
 const openProjectManager = async () => {
   projectManagerVisible.value = true; projectManagerLoading.value = true
@@ -554,7 +633,12 @@ onUnmounted(() => {
 
 onMounted(() => {
   loadProjects()
+  pruneMissingTempUploads()
   greetingClockTimer = window.setInterval(() => { currentTime.value = new Date() }, 60_000)
+})
+// 聊天侧栏删除会话会清空临时登记表：切回欢迎页时同步摘除已被清理的芯片
+watch(viewMode, (value) => {
+  if (value === 'welcome') pruneMissingTempUploads()
 })
 </script>
 
@@ -617,6 +701,28 @@ onMounted(() => {
     </div>
 
     <section class="composer motion-stage motion-stage-4" aria-label="AI 教学任务输入">
+      <!-- 功能 2：临时上传芯片（不入素材库，仅本次生成引用） -->
+      <div v-if="tempUploads.length" class="temp-resource-list" role="list" aria-label="本次临时引用资料">
+        <div v-for="entry in tempUploads" :key="entry.key" class="temp-resource-chip" role="listitem">
+          <span class="temp-resource-badge" :class="`badge-${entry.badgeType}`" aria-hidden="true">{{ entry.badgeLabel }}</span>
+          <div class="temp-resource-meta">
+            <p class="temp-resource-name" :title="entry.name">{{ entry.name }}</p>
+            <p
+              class="temp-resource-status"
+              :class="{ 'is-ready': entry.status === 'ready', 'is-error': entry.status === 'error' }"
+              aria-live="polite"
+            >
+              <template v-if="entry.status === 'parsing'"><el-icon class="is-loading"><Loading /></el-icon><span>解析中</span></template>
+              <template v-else-if="entry.status === 'ready'"><el-icon><CircleCheck /></el-icon><span>已就绪 · 本次生成可引用</span></template>
+              <template v-else><el-icon><CircleClose /></el-icon><span>{{ entry.error }}</span></template>
+            </p>
+          </div>
+          <div class="temp-resource-actions">
+            <el-tooltip content="转存到个人素材库" placement="top"><span><el-button text size="small" :icon="Collection" :loading="entry.transferring" :disabled="entry.status !== 'ready'" aria-label="转存到个人素材库" @click="transferTempToLibrary(entry)" /></span></el-tooltip>
+            <el-tooltip content="移除临时资料" placement="top"><span><el-button text size="small" :icon="Close" :disabled="entry.transferring" aria-label="移除临时资料" @click="removeTempUpload(entry)" /></span></el-tooltip>
+          </div>
+        </div>
+      </div>
       <el-input
         ref="composerInput"
         v-model="prompt"
@@ -633,7 +739,8 @@ onMounted(() => {
             <el-option label="仅对话" value="chat" />
             <el-option label="直接备课" value="planning" />
           </el-select>
-          <el-tooltip content="从电脑上传本次备课要使用的资料"><span><el-button text :icon="Paperclip" @click="openUploadDialog">{{ TEACHER_HOME.composer.attach }}</el-button></span></el-tooltip>
+          <el-tooltip content="上传本地资料：本次生成直接引用，可一键转存到素材库"><span><el-button text :icon="Paperclip" @click="triggerTempUpload">{{ TEACHER_HOME.composer.attach }}</el-button></span></el-tooltip>
+          <input ref="tempFileInput" class="resource-file-input" type="file" multiple accept=".pdf,.doc,.docx,.ppt,.pptx,.txt,.md,.jpg,.jpeg,.png,.gif,.webp,.svg,.mp3,.wav,.m4a,.ogg,.mp4,.avi,.mov,.mkv,.webm" @change="handleTempFilesPicked" />
           <el-tooltip content="从个人知识库中检索并引用已有资料"><span><el-button text :icon="Collection" @click="openKnowledgeDialog">{{ TEACHER_HOME.composer.knowledge }}</el-button></span></el-tooltip>
           <el-tooltip content="打开语音输入"><span><el-button text circle aria-label="语音输入" @click="voiceDialogVisible = true"><el-icon><Microphone /></el-icon></el-button></span></el-tooltip>
         </div>
@@ -671,28 +778,7 @@ onMounted(() => {
       @general-session="handleGeneralSession"
     />
 
-    <!-- 资料上传 / 知识库 / 语音对话框（欢迎视图和聊天视图共用）-->
-    <el-dialog v-model="uploadDialogVisible" title="添加资料" width="min(560px, 92vw)">
-      <input ref="resourceFileInput" class="resource-file-input" type="file" multiple accept=".pdf,.doc,.docx,.ppt,.pptx,.txt,.md,.jpg,.jpeg,.png,.gif,.webp,.svg,.mp3,.wav,.m4a,.ogg,.mp4,.avi,.mov,.mkv,.webm" @change="uploadPickedResource" />
-      <button
-        type="button"
-        :class="['upload-dropzone', { 'is-dragging': uploadDragging, 'is-touch': isMobile }]"
-        :disabled="resourceUploading"
-        @click="triggerResourceUpload"
-        @dragenter.prevent="uploadDragging = true"
-        @dragover.prevent="uploadDragging = true"
-        @dragleave.prevent="uploadDragging = false"
-        @drop.prevent="dropResourceFiles"
-      >
-        <el-icon><Paperclip /></el-icon>
-        <strong class="dropzone-title-default">{{ uploadDragging ? '松开即可添加资料' : '点击选择或拖入本地资料' }}</strong>
-        <strong class="dropzone-title-touch">选择文件</strong>
-        <span>支持 PDF、Word、PowerPoint、TXT 和 Markdown，可多选</span>
-      </button>
-      <el-progress v-if="resourceUploading" :percentage="resourceUploadProgress" :show-text="true" />
-      <div v-if="uploadedResourceNames.length" class="uploaded-resource-list"><span>已自动引用</span><p v-for="name in uploadedResourceNames" :key="name">{{ name }}</p></div>
-      <template #footer><el-button @click="uploadDialogVisible = false">完成</el-button></template>
-    </el-dialog>
+    <!-- 知识库 / 语音对话框（欢迎视图和聊天视图共用）-->
 
     <el-dialog v-model="knowledgeDialogVisible" title="引用知识库" width="min(640px, 92vw)">
       <div class="knowledge-picker-header"><p>从已经上传并入库的资料中选择，AI 将结合这些内容生成大纲。</p><el-input v-model="resourceSearch" placeholder="搜索知识库资料" clearable /></div>
@@ -804,16 +890,32 @@ h1 { margin: 0; font-size: clamp(36px, 4vw, 48px); line-height: 1.15; letter-spa
 .composer-tools :deep(.el-button) { color: var(--zh-text-secondary); }
 .composer-toolbar :deep(.el-button.is-ready) { animation: pulse 200ms cubic-bezier(0.4, 0, 0.2, 1); }
 .composer-hint { margin: 10px 0 0; color: var(--zh-text-caption); font-size: 11px; text-align: center; }
-.session-fields { display:grid; grid-template-columns: 1.5fr 1fr 1fr; gap:12px; }.session-fields :deep(.el-form-item){margin-bottom:0}.prompt-preview{width:100%;padding:10px 12px;border-radius:var(--zh-radius8);color:var(--zh-text-secondary);background:var(--zh-background-light);line-height:1.65;white-space:pre-wrap}.resource-picker{display:grid;gap:8px;max-height:160px;overflow:auto;padding:10px 12px;border:1px solid var(--zh-line-border);border-radius:var(--zh-radius8);background:var(--zh-background-light)}.empty-resources{color:var(--zh-text-caption);font-size:12px}
-.resource-file-input{display:none}.resource-picker-dialog{max-height:280px;margin-top:12px}.upload-dropzone{width:100%;min-height:180px;display:grid;place-items:center;align-content:center;gap:9px;padding:24px;border:1px dashed var(--zh-line-theme50);border-radius:var(--zh-radius12);color:var(--zh-text-theme);background:var(--zh-background-weaken);cursor:pointer;transition:border-color 200ms cubic-bezier(.4,0,.2,1),background-color 200ms cubic-bezier(.4,0,.2,1),transform 200ms cubic-bezier(.4,0,.2,1),box-shadow 200ms cubic-bezier(.4,0,.2,1)}.upload-dropzone:hover,.upload-dropzone:focus-visible{border-color:var(--zh-line-theme);background:var(--zh-background-option-on);transform:translateY(-1px)}.upload-dropzone.is-dragging{border-color:var(--zh-line-theme);background:var(--zh-background-option-on);box-shadow:0 0 0 4px var(--zh-line-theme20);transform:scale(1.01)}.upload-dropzone:disabled{cursor:wait;opacity:.65}.upload-dropzone .el-icon{font-size:28px}.upload-dropzone strong{color:var(--zh-text-primary);font-size:16px}.upload-dropzone span{color:var(--zh-text-caption);font-size:12px}.uploaded-resource-list{display:grid;gap:6px;margin-top:14px;padding:12px;border-radius:var(--zh-radius8);background:var(--zh-background-light)}.uploaded-resource-list>span{color:var(--zh-text-caption);font-size:12px}.uploaded-resource-list p{margin:0;color:var(--zh-text-secondary);font-size:13px}.knowledge-picker-header{display:grid;grid-template-columns:minmax(0,1fr) 240px;align-items:center;gap:16px}.knowledge-picker-header p{margin:0;color:var(--zh-text-secondary);font-size:13px;line-height:1.6}.selected-resource-count{display:inline-block;margin-right:16px;color:var(--zh-text-caption);font-size:12px}
-/* 触屏降级：无拖拽能力，隐藏拖拽提示文案；dropzone 本体即「选择文件」按钮，点击复用既有文件选择入口 */
-.dropzone-title-touch{display:none}
-.upload-dropzone.is-touch .dropzone-title-default{display:none}
-.upload-dropzone.is-touch .dropzone-title-touch{display:block}
-@media (hover: none) and (pointer: coarse) {
-  .upload-dropzone .dropzone-title-default{display:none}
-  .upload-dropzone .dropzone-title-touch{display:block}
+
+/* 功能 2：临时上传芯片（横向单行 + 固定宽度卡片 + 超宽横向滚动），见 doc/pending-specs/TempResourceChip.md */
+.temp-resource-list { display: flex; flex-direction: row; align-items: stretch; gap: 8px; margin-bottom: 8px; overflow-x: auto; padding-bottom: 4px; scrollbar-width: thin; }
+.temp-resource-list::-webkit-scrollbar { height: 6px; }
+.temp-resource-list::-webkit-scrollbar-thumb { background: var(--zh-line-heavier); border-radius: 3px; }
+.temp-resource-chip { flex: 0 0 auto; width: 230px; display: flex; align-items: center; gap: 8px; padding: 8px 10px; border: 1px solid var(--zh-line-border); border-radius: var(--zh-radius12); background: var(--zh-background-pop); box-shadow: var(--zh-shadow1); }
+.temp-resource-badge { display: inline-flex; align-items: center; justify-content: center; width: 28px; height: 28px; border-radius: var(--zh-radius8); color: var(--zh-text-white); font-size: var(--zh-font-size11); font-weight: 700; letter-spacing: 0.02em; flex-shrink: 0; }
+.temp-resource-badge.badge-word { background: #2563eb; }
+.temp-resource-badge.badge-ppt { background: #d97706; }
+.temp-resource-badge.badge-pdf { background: #dc2626; }
+.temp-resource-badge.badge-image { background: #059669; }
+.temp-resource-badge.badge-audio, .temp-resource-badge.badge-video { background: #7c3aed; }
+.temp-resource-badge.badge-text, .temp-resource-badge.badge-other { background: #64748b; }
+.temp-resource-meta { min-width: 0; flex: 1; }
+.temp-resource-name { margin: 0; color: var(--zh-text-primary); font-size: var(--zh-font-size13); font-weight: 600; line-height: 1.4; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.temp-resource-status { display: flex; align-items: center; gap: 4px; margin: 2px 0 0; color: var(--zh-text-caption); font-size: var(--zh-font-size11); white-space: nowrap; overflow: hidden; }
+.temp-resource-status.is-ready { color: var(--zh-green); }
+.temp-resource-status.is-error { color: var(--zh-red); }
+.temp-resource-actions { display: flex; align-items: center; gap: 2px; opacity: 0; transition: opacity 200ms cubic-bezier(0.4, 0, 0.2, 1); }
+.temp-resource-chip:hover .temp-resource-actions, .temp-resource-chip:focus-within .temp-resource-actions { opacity: 1; }
+/* 无 hover（触屏/平板）常显动作按钮，避免转存/移除不可达 */
+@media (hover: none) and (pointer: coarse), (max-width: 767.98px) {
+  .temp-resource-actions { opacity: 1; }
 }
+.session-fields { display:grid; grid-template-columns: 1.5fr 1fr 1fr; gap:12px; }.session-fields :deep(.el-form-item){margin-bottom:0}.prompt-preview{width:100%;padding:10px 12px;border-radius:var(--zh-radius8);color:var(--zh-text-secondary);background:var(--zh-background-light);line-height:1.65;white-space:pre-wrap}.resource-picker{display:grid;gap:8px;max-height:160px;overflow:auto;padding:10px 12px;border:1px solid var(--zh-line-border);border-radius:var(--zh-radius8);background:var(--zh-background-light)}.empty-resources{color:var(--zh-text-caption);font-size:12px}
+.resource-file-input{display:none}.resource-picker-dialog{max-height:280px;margin-top:12px}.knowledge-picker-header{display:grid;grid-template-columns:minmax(0,1fr) 240px;align-items:center;gap:16px}.knowledge-picker-header p{margin:0;color:var(--zh-text-secondary);font-size:13px;line-height:1.6}.selected-resource-count{display:inline-block;margin-right:16px;color:var(--zh-text-caption);font-size:12px}
 .voice-panel{display:grid;justify-items:center;padding:8px 8px 0;text-align:center}.voice-orb{width:78px;height:78px;display:grid;place-items:center;padding:0;margin:4px 0 18px;border:1px solid var(--zh-line-theme20);border-radius:50%;color:var(--zh-text-theme);background:var(--zh-background-weaken);box-shadow:0 0 0 10px var(--zh-background-weaken);font-family:inherit;cursor:pointer;transition:border-color 200ms cubic-bezier(.4,0,.2,1),background-color 200ms cubic-bezier(.4,0,.2,1),box-shadow 200ms cubic-bezier(.4,0,.2,1),transform 200ms cubic-bezier(.4,0,.2,1)}.voice-orb:hover,.voice-orb:focus-visible{border-color:var(--zh-line-theme);box-shadow:0 0 0 10px var(--zh-line-theme20);transform:translateY(-1px)}.voice-orb:active{transform:scale(.96)}.voice-orb:disabled{cursor:wait;opacity:.75}.voice-orb.is-recording{border-color:var(--zh-red);color:var(--zh-red);background:var(--zh-danger-background);box-shadow:0 0 0 10px var(--zh-danger-background)}.voice-orb .el-icon{font-size:30px}.voice-panel>strong{font-size:18px}.voice-panel>p{max-width:350px;margin:8px 0 20px;color:var(--zh-text-secondary);font-size:13px;line-height:1.65}.voice-wave{height:42px;display:flex;align-items:center;gap:5px}.voice-wave i{width:3px;height:10px;border-radius:999px;background:var(--zh-line-theme50)}.voice-wave i:nth-child(2),.voice-wave i:nth-child(8){height:16px}.voice-wave i:nth-child(3),.voice-wave i:nth-child(7){height:24px}.voice-wave i:nth-child(4),.voice-wave i:nth-child(6){height:32px}.voice-wave i:nth-child(5){height:40px}.voice-status{width:100%;display:grid;grid-template-columns:auto 1fr auto;align-items:center;gap:8px;margin-top:16px;padding:12px 14px;border-radius:var(--zh-radius8);color:var(--zh-text-secondary);background:var(--zh-background-light);font-size:12px;text-align:left}.voice-status-dot{width:7px;height:7px;border-radius:50%;background:var(--zh-text-disabled)}
 .voice-status-dot.is-recording{background:var(--zh-red);animation:pulse 200ms cubic-bezier(.4,0,.2,1) infinite}
 .voice-status-dot.is-busy{background:var(--zh-text-theme)}.voice-status time{color:var(--zh-text-caption);font-family:var(--zh-font-number)}.voice-settings{width:100%;margin-top:18px;text-align:left}.voice-settings :deep(.el-select){width:100%}
