@@ -5865,11 +5865,14 @@ const startRun = async () => {
     const numericSessionId = Number(sessionId.value)
     const selectedTheme = String(routeQueryValue(route.query.pptTheme) || '').trim()
     const outlineId = planData.python_outline_id || outline.outline_id
+    // 功能 2：引用资料（含临时上传 res_xxx）随 workspace_context 注入页面生成检索。
+    const generationResourceIds = outline.workspace_context?.resource_ids || []
     const payload = {
       ...(Number.isInteger(numericSessionId) && numericSessionId > 0 ? { session_id: numericSessionId } : {}),
       ...(outlineId ? { outline_id: String(outlineId) } : {}),
       title: String(outline.title || planData.title || 'A12 教学课件'),
       outline,
+      resource_ids: generationResourceIds,
       ...(selectedTheme ? { theme: selectedTheme } : {}),
       aspect_ratio: '16:9',
       language: 'zh-CN',

@@ -136,9 +136,11 @@ CREATE INDEX IF NOT EXISTS idx_a12_teacher_style_memory_style_gin ON a12_teacher
 -- source_type:
 --   public   -> Java MySQL adm_resource
 --   personal -> Java MySQL res_material
+--   temp     -> 临时上传（browser direct /resources/upload），仅本次生成会话命中
 -- resource_key format:
 --   public:{adm_resource.id}
 --   personal:{res_material.id}
+--   temp:{res_xxx}（upload_store 生成的 resource_id，会话结束清理）
 -- =============================================
 CREATE TABLE IF NOT EXISTS a12_resource_index (
   resource_key TEXT PRIMARY KEY,
@@ -157,7 +159,7 @@ CREATE TABLE IF NOT EXISTS a12_resource_index (
   created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
   updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
   indexed_at TIMESTAMPTZ DEFAULT NULL,
-  CONSTRAINT ck_a12_resource_index_source CHECK (source_type IN ('public', 'personal')),
+  CONSTRAINT ck_a12_resource_index_source CHECK (source_type IN ('public', 'personal', 'temp')),
   CONSTRAINT ck_a12_resource_index_status CHECK (parse_status IN ('pending', 'completed', 'failed'))
 );
 

@@ -1,5 +1,6 @@
 import json
 import re
+import shutil
 import uuid
 from dataclasses import dataclass
 from pathlib import Path
@@ -86,6 +87,36 @@ def build_rag_context(resource_ids: list[str], limit: int = 12000) -> str:
         if remaining <= 0:
             break
     return "\n\n".join(chunks)
+
+
+def delete_temp_upload_resources(resource_ids: list[str], owner_user_id: str | None = None) -> dict:
+    """按 res_xxx 清理临时上传：删除 data/resources/{rid} 目录（owner 校验通过时）。
+
+    只删磁盘目录；temp 向量索引由调用方走 index_store.delete_resource('temp', rid) 清理。
+    """
+    deleted: list[str] = []
+    missing: list[str] = []
+    denied: list[str] = []
+    for raw_id in resource_ids or []:
+        resource_id = str(raw_id or "").strip()
+        if not re.fullmatch(r"res_[0-9a-f]{16}", resource_id):
+            missing.append(resource_id)
+            continue
+        resource_dir = DATA_DIR / resource_id
+        if not resource_dir.exists():
+            missing.append(resource_id)
+            continue
+        if owner_user_id:
+            try:
+                metadata = json.loads((resource_dir / "metadata.json").read_text(encoding="utf-8"))
+            except (OSError, ValueError):
+                metadata = {}
+            if str(metadata.get("owner_user_id") or "") != owner_user_id:
+                denied.append(resource_id)
+                continue
+        shutil.rmtree(resource_dir, ignore_errors=True)
+        deleted.append(resource_id)
+    return {"deleted": deleted, "missing": missing, "denied": denied}
 
 
 def extract_text(path: Path) -> str:

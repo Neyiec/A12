@@ -154,6 +154,21 @@ export const pythonPptHandlers = [
       content_type: 'application/pdf',
       text_length: 2048,
       text_preview: '这是一段模拟的教材文本内容…光合作用是绿色植物利用光能…',
+      temp: true,
+      index_status: 'indexed',
+      index_error: '',
+    }))
+  }),
+
+  // ========== API-135-0 清理临时上传（temp 索引 + 磁盘目录） ==========
+  http.delete('/api/v1/python/resources/temp', ({ request }) => {
+    const url = new URL(request.url)
+    const ids = String(url.searchParams.get('resource_ids') || '').split(',').filter(Boolean)
+    return HttpResponse.json(success({
+      deleted: ids,
+      missing: [],
+      denied: [],
+      index_removed: ids,
     }))
   }),
 
