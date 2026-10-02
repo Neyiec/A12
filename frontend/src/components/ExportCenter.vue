@@ -1052,23 +1052,57 @@ onBeforeUnmount(() => {
   .task-table { overflow-x: auto; }
 }
 @media (max-width: 767.98px) {
-  .export-page { width: min(100% - 28px, 1220px); padding-top: 26px; }
-  .export-heading, .flow-console-header, .history-header, .quality-card-heading { align-items: stretch; flex-direction: column; }
+  .export-page { display: flex; flex-direction: column; width: min(100% - 28px, 1220px); padding: 20px 0 calc(100px + env(safe-area-inset-bottom)); }
+  .export-heading, .flow-console-header, .history-header, .quality-card-heading { align-items: stretch; flex-direction: column; gap: 14px; }
+  .export-heading h1 { font-size: 26px; }
+  .export-heading > div:first-child > span { margin-top: 8px; font-size: 13px; line-height: 1.5; }
   .heading-actions, .history-controls { justify-content: space-between; }
-  .history-controls .el-input { width: 100%; }
+  .heading-actions .el-button { width: 100%; min-height: 44px; margin: 0; }
+  .history-controls .el-input { flex: 1; min-width: 0; width: auto; }
+  .history-controls .el-button { flex: none; min-height: 40px; margin: 0; }
   .flow-console { padding: 17px; }
-  .flow-steps { grid-template-columns: 1fr; }
+  .flow-steps { grid-template-columns: 1fr; gap: 0; margin-top: 14px; }
+  .flow-steps li { padding: 10px 4px; border: 0; border-bottom: 1px solid var(--zh-line-parting); border-radius: 0; background: transparent; transform: none; }
+  .flow-steps li.current { background: transparent; transform: none; }
   .flow-context { align-items: flex-start; flex-direction: column; gap: 7px; }
-  .export-stats { grid-template-columns: 1fr; }
-  .export-stats article + article::before { top: 0; right: 20px; bottom: auto; left: 20px; width: auto; height: 1px; }
-  .active-task { grid-template-columns: auto 1fr; padding: 16px; }
+  .export-stats { grid-template-columns: repeat(3, minmax(0, 1fr)); margin-top: 16px; }
+  .export-stats article { min-width: 0; min-height: 78px; padding: 13px 10px; }
+  .export-stats article + article::before { top: 13px; right: auto; bottom: 13px; left: 0; width: 1px; height: auto; }
+  .export-stats span { font-size: 11px; line-height: 1.3; }
+  .export-stats strong { margin: 5px 0 0; font-size: 22px; }
+  .export-stats small { display: none; }
+  .active-task { grid-template-columns: auto 1fr; gap: 11px; margin-top: 10px; padding: 14px; box-shadow: none; }
+  .active-task-icon { width: 40px; height: 40px; }
+  .active-task-copy h2 { font-size: 15px; }
   .active-task-progress { grid-column: 1 / -1; }
-  .active-task > .el-button { grid-column: 1 / -1; justify-self: stretch; }
+  .active-task > .el-button { grid-column: 1 / -1; justify-self: stretch; min-height: 40px; margin: 0; }
+  .history-section { margin-top: 22px; }
+  .history-header h2 { font-size: 20px; }
+  .history-header > div:first-child > span { display: none; }
+  .history-tabs { margin-top: 14px; }
+  .task-card { padding: 13px; }
+  .task-card-title strong { font-size: 14px; }
+  .task-card-actions :deep(.el-button) { min-height: 40px; }
+  .quality-card { order: 1; margin-top: 22px; padding: 17px; }
   .quality-meta { grid-template-columns: 1fr; }
   .quality-card-heading .el-button { align-self: flex-start; padding-left: 0; }
+  .quality-card :deep(.el-empty) { padding: 6px 0 0; }
+  .quality-card :deep(.el-empty__image) { display: none; }
   .flow-task-actions { align-items: stretch; flex-wrap: wrap; justify-content: flex-start; }
+  .flow-task-actions .el-button { min-height: 40px; margin: 0; }
   .flow-delivery-strip { align-items: stretch; flex-direction: column; }
   .detail-grid { grid-template-columns: 1fr; }
-  .preview-frame { height: calc(100dvh - 140px); }
+  .detail-grid strong, .report-item strong, .report-item span { overflow-wrap: anywhere; }
+  .report-summary { align-items: flex-start; flex-direction: column; gap: 12px; }
+  .report-item { grid-template-columns: auto minmax(0, 1fr) auto; }
+  .preview-frame { height: min(60dvh, 520px); }
+  :global(.export-dialog.el-dialog), :global(.detail-dialog.el-dialog), :global(.quality-dialog.el-dialog), :global(.preview-dialog.el-dialog) { display: flex; flex-direction: column; width: calc(100vw - 20px) !important; max-height: calc(100dvh - 20px - env(safe-area-inset-top) - env(safe-area-inset-bottom)); margin: calc(10px + env(safe-area-inset-top)) auto calc(10px + env(safe-area-inset-bottom)) !important; border-radius: 16px; }
+  :global(.export-dialog .el-dialog__header), :global(.detail-dialog .el-dialog__header), :global(.quality-dialog .el-dialog__header), :global(.preview-dialog .el-dialog__header) { flex: none; padding: 17px 16px 12px; }
+  :global(.export-dialog .el-dialog__body), :global(.detail-dialog .el-dialog__body), :global(.quality-dialog .el-dialog__body), :global(.preview-dialog .el-dialog__body) { min-height: 0; overflow-y: auto; padding: 12px 16px; overscroll-behavior: contain; }
+  :global(.export-dialog .el-dialog__footer), :global(.detail-dialog .el-dialog__footer) { display: grid; flex: none; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 8px; padding: 12px 16px calc(14px + env(safe-area-inset-bottom)); border-top: 1px solid var(--zh-line-parting); }
+  :global(.export-dialog .el-dialog__footer .el-button), :global(.detail-dialog .el-dialog__footer .el-button) { width: 100%; min-height: 44px; margin: 0; }
+  :global(.export-dialog .el-radio-group) { display: grid; grid-template-columns: 1fr; gap: 2px; }
+  :global(.export-dialog .el-radio) { min-height: 36px; margin: 0; }
+  :global(.export-dialog .el-input__inner) { font-size: 16px; }
 }
 </style>

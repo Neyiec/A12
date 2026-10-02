@@ -4,7 +4,7 @@
   - 输出: 教师个人资源库页面
 -->
 <script setup>
-import { computed, onBeforeUnmount, onMounted, ref } from 'vue'
+import { computed, onBeforeUnmount, onMounted, ref, watch } from 'vue'
 import { ElMessage } from 'element-plus'
 import { Delete, Edit, Folder, Loading, Lock, MoreFilled, Plus, Refresh, Search, Setting, Upload } from '@element-plus/icons-vue'
 import {
@@ -38,6 +38,7 @@ const activeFolder = ref('全部素材')
 const selectedRows = ref([])
 const resources = ref([])
 const resourceTotal = ref(0)
+const resourcesError = ref('')
 const uploadInput = ref(null)
 const loading = ref(false)
 const uploading = ref(false)
@@ -144,9 +145,9 @@ const resourceStats = computed(() => {
   const totalSize = resources.value.reduce((sum, item) => sum + item.fileSize, 0)
   const aiAvailable = resources.value.filter((item) => item.status === '已启用').length
   return [
-    { label: '全部素材', value: String(resourceTotal.value), detail: `当前已加载 ${resources.value.length} 项` },
-    { label: '可供 AI 引用', value: String(aiAvailable), detail: '依据资源授权状态统计' },
-    { label: '已加载空间', value: formatFileSize(totalSize), detail: '当前列表资源总大小' },
+    { label: '全部素材', value: resourcesError.value ? '—' : String(resourceTotal.value), detail: `当前已加载 ${resources.value.length} 项` },
+    { label: '可供 AI 引用', value: resourcesError.value ? '—' : String(aiAvailable), detail: '依据资源授权状态统计' },
+    { label: '已加载空间', value: resourcesError.value ? '—' : formatFileSize(totalSize), detail: '当前列表资源总大小' },
   ]
 })
 
@@ -163,11 +164,26 @@ const taxonomyTitle = computed(() => taxonomyTab.value === 'category' ? '分类�
 const taxonomyTypeLabel = computed(() => taxonomyTab.value === 'category' ? '分类' : '标签')
 const indexGroups = computed(() => Array.isArray(indexOverview.value.groups) ? indexOverview.value.groups : [])
 
+const resourceTypeGroups = {
+  ppt: ['PPT', 'PPTX'],
+  word: ['DOC', 'DOCX', 'TXT', 'MD', 'XLS', 'XLSX', 'CSV'],
+  pdf: ['PDF'],
+  image: ['JPG', 'JPEG', 'PNG', 'GIF', 'BMP', 'WEBP'],
+  audio: ['MP3', 'WAV', 'M4A', 'AAC', 'OGG', 'MP4', 'AVI', 'MOV', 'MKV', 'WEBM', 'WMV', 'FLV', 'SRT', 'VTT', 'ASS'],
+}
+const matchesResourceType = (file, filter) => !filter || (resourceTypeGroups[filter] || [filter.toUpperCase()]).includes(file.type)
+
 const visibleFiles = computed(() => resources.value.filter((file) => (
   (activeFolder.value === '全部素材' || file.course.split(' · ').includes(activeFolder.value)) &&
-  (!typeFilter.value || file.type.toLowerCase() === typeFilter.value) &&
+  matchesResourceType(file, typeFilter.value) &&
   file.name.toLowerCase().includes(keyword.value.toLowerCase())
 )))
+watch([keyword, activeFolder, typeFilter], () => { selectedRows.value = [] })
+const clearResourceFilters = () => {
+  keyword.value = ''
+  activeFolder.value = '全部素材'
+  typeFilter.value = ''
+}
 const filteredFiles = computed(() => resources.value.filter((file) => (
   (activeFolder.value === '全部素材' || activeFolder.value === '我的课件' && file.type === 'PPT') &&
   file.name.toLowerCase().includes(keyword.value.toLowerCase())
@@ -182,12 +198,16 @@ const normalizeResource = (item) => ({
 
 const loadResources = async () => {
   loading.value = true
+  resourcesError.value = ''
+  selectedRows.value = []
   try {
     const result = await listResources({ keyword: keyword.value || undefined, page: 1, size: 50 })
     const records = result?.data?.records || result?.data?.list || result?.data?.items || result?.records || []
     resources.value = records.map(normalizeRealResource)
     resourceTotal.value = Number(result?.data?.total ?? result?.total ?? resources.value.length)
-  } catch { /* 开发环境保留示例数据，接口上线后自动替换。 */ } finally { loading.value = false }
+  } catch {
+    resourcesError.value = '素材加载失败，请检查登录状态或网络连接后重试。'
+  } finally { loading.value = false }
 }
 
 const clearUploadProgressTimers = () => {
@@ -619,6 +639,24 @@ const syncIndexResource = async (row, forceReparse = false) => {
   } catch (error) { ElMessage.error(error?.message || '资源索引同步失败，请稍后重试') } finally { indexActionLoading.value = false }
 }
 
+const syncIndexedResource = (row) => syncIndexResource({
+  id: row.resource_id,
+  raw: {
+    id: row.resource_id,
+    source_type: row.source_type ?? row.metadata?.source_type,
+    file_name: row.title,
+    file_url: row.metadata?.file_url,
+    file_type: row.metadata?.file_type,
+    file_size: row.metadata?.file_size,
+    allow_ai: row.allow_ai,
+    status: row.available ? 1 : 0,
+    user_id: row.metadata?.owner_user_id,
+    categories: row.metadata?.categories,
+    tags: row.metadata?.tags,
+    access_type: row.metadata?.access_type,
+  },
+})
+
 const bootstrapIndex = async (forceReparse = false) => {
   const payloads = resources.value.map((row) => resourceIndexPayload(row)).filter(Boolean)
   if (!payloads.length) return ElMessage.warning('当前资源列表没有可同步的文件')
@@ -698,22 +736,27 @@ onBeforeUnmount(() => {
       </aside>
 
       <div class="resource-content">
-        <el-select
-          v-if="isMobile"
-          v-model="activeFolder"
-          class="mobile-folder-select"
-          aria-label="选择分类目录"
-        >
-          <el-option v-for="folder in resourceFolders" :key="folder" :label="folder" :value="folder" />
-        </el-select>
         <div class="resource-toolbar">
-          <el-input v-model="keyword" :prefix-icon="Search" placeholder="搜索文件名、课程或标签" clearable />
+          <el-input v-model="keyword" :prefix-icon="Search" placeholder="搜索素材名称" clearable aria-label="搜索素材名称" />
+          <el-select
+            v-if="isMobile"
+            v-model="activeFolder"
+            class="mobile-folder-select"
+            aria-label="选择分类目录"
+          >
+            <el-option v-for="folder in resourceFolders" :key="folder" :label="folder" :value="folder" />
+          </el-select>
           <el-select v-model="typeFilter" aria-label="资源类型" clearable placeholder="全部类型"><el-option label="全部类型" value="" /><el-option label="课件" value="ppt" /><el-option label="文档" value="word" /><el-option label="PDF" value="pdf" /><el-option label="图片" value="image" /><el-option label="音视频" value="audio" /></el-select>
           <div class="resource-toolbar-actions">
             <el-button :icon="Setting" @click="openTaxonomyDialog('category')">词典管理</el-button>
-            <el-button :icon="Delete" :disabled="selectedRows.length === 0" @click="openBatchDialog">批量管理</el-button>
+            <el-button v-if="!isMobile || selectedRows.length" :icon="Delete" :disabled="selectedRows.length === 0" @click="openBatchDialog">批量管理{{ isMobile ? `（${selectedRows.length}）` : '' }}</el-button>
           </div>
         </div>
+        <div v-if="isMobile" class="mobile-list-heading">
+          <strong>我的素材</strong>
+          <span>{{ resourcesError ? '加载失败' : `当前显示 ${visibleFiles.length} 项${selectedRows.length ? ` · 已选 ${selectedRows.length} 项` : ''}` }}</span>
+        </div>
+        <div v-if="resourcesError && !isMobile" class="resource-load-error" role="alert"><span>{{ resourcesError }}</span><el-button type="primary" plain @click="loadResources">重试</el-button></div>
         <el-table v-if="!isMobile" v-loading="loading" :data="visibleFiles" @selection-change="selectedRows = $event">
           <el-table-column type="selection" width="42" />
           <el-table-column label="素材" min-width="260">
@@ -728,26 +771,34 @@ onBeforeUnmount(() => {
             </template>
           </el-table-column>
           <el-table-column prop="date" label="更新时间" min-width="120" />
-          <el-table-column label="解析状态" width="110"><template #default="{ row }"><el-tag :type="row.status === '已解析' ? 'success' : row.status === '解析中' ? 'warning' : 'info'" effect="light">{{ row.status }}</el-tag></template></el-table-column>
+          <el-table-column label="解析状态" width="110"><template #default="{ row }"><el-tag :type="row.status === '已启用' ? 'success' : row.status === '索引中' ? 'warning' : 'info'" effect="light">{{ row.status }}</el-tag></template></el-table-column>
           <el-table-column label="权限" width="108"><template #default="{ row }"><span class="private-label"><el-icon><Lock /></el-icon> {{ row.private ? '私有' : '共享' }}</span></template></el-table-column>
           <el-table-column class-name="resource-action-column" width="54" align="center"><template #default="{ row }"><el-dropdown trigger="click" @command="handleAction(row, $event)"><el-button class="resource-more-button" text circle data-hover-reveal aria-label="更多操作"><el-icon><MoreFilled /></el-icon></el-button><template #dropdown><el-dropdown-menu><el-dropdown-item command="edit"><el-icon><Edit /></el-icon>编辑信息</el-dropdown-item><el-dropdown-item command="permission">权限设置</el-dropdown-item><el-dropdown-item command="download">下载</el-dropdown-item><el-dropdown-item class="resource-danger-menu-item" command="delete" divided><el-icon><Delete /></el-icon>删除</el-dropdown-item></el-dropdown-menu></template></el-dropdown></template></el-table-column>
         </el-table>
-        <div v-if="isMobile" v-loading="loading" class="resource-card-list">
-          <el-empty v-if="!visibleFiles.length" description="暂无素材" />
-          <article v-for="row in visibleFiles" :key="row.id" class="resource-card">
+        <div v-if="isMobile" class="resource-card-list" aria-live="polite">
+          <template v-if="loading">
+            <div v-for="index in 3" :key="index" class="resource-card resource-card-skeleton" aria-hidden="true"><span class="skeleton-mark" /><span class="skeleton-lines"><i /><i /></span></div>
+          </template>
+          <div v-else-if="resourcesError" class="resource-load-error" role="alert"><span>{{ resourcesError }}</span><el-button type="primary" plain @click="loadResources">重试加载</el-button></div>
+          <div v-else-if="!visibleFiles.length" class="resource-empty-state">
+            <el-empty :description="resources.length ? '没有匹配的素材' : '还没有上传素材'" />
+            <el-button v-if="resources.length" type="primary" plain @click="clearResourceFilters">清除筛选</el-button>
+            <el-button v-else type="primary" :icon="Upload" @click="startUpload">上传第一份素材</el-button>
+          </div>
+          <template v-else><article v-for="row in visibleFiles" :key="row.id" class="resource-card">
             <div class="resource-card-main">
               <el-checkbox
                 class="resource-card-check"
                 :model-value="selectedRows.some((item) => item.id === row.id)"
-                aria-label="选择该资源"
+                :aria-label="`选择${row.name}`"
                 @change="toggleCardSelection(row)"
               />
               <span class="file-mark">{{ row.type.slice(0, 1) }}</span>
               <div class="resource-card-info">
-                <strong>{{ row.name }}</strong>
+                <strong :title="row.name">{{ row.name }}</strong>
                 <small>{{ row.course }} · {{ row.size }} · {{ row.date }}</small>
                 <div class="resource-card-meta">
-                  <el-tag size="small" :type="row.status === '已解析' ? 'success' : row.status === '解析中' ? 'warning' : 'info'" effect="light">{{ row.status }}</el-tag>
+                  <el-tag size="small" :type="row.status === '已启用' ? 'success' : row.status === '索引中' ? 'warning' : 'info'" effect="light">{{ row.status }}</el-tag>
                   <span class="private-label"><el-icon><Lock /></el-icon>{{ row.private ? '私有' : '共享' }}</span>
                 </div>
               </div>
@@ -764,12 +815,14 @@ onBeforeUnmount(() => {
               </template>
             </el-dropdown>
           </article>
+          </template>
         </div>
       </div>
     </section>
 
     <el-dialog
       v-model="uploadDialogVisible"
+      class="resource-dialog"
       title="上传素材"
       width="min(680px, 92vw)"
       align-center
@@ -787,7 +840,9 @@ onBeforeUnmount(() => {
         @change="handleUploadInputChange"
       >
 
-      <div
+      <button
+        type="button"
+        :disabled="uploading"
         class="upload-dropzone"
         :class="{ 'is-dragover': isDragOver, 'is-uploading': uploading }"
         @click="openFilePicker"
@@ -800,9 +855,9 @@ onBeforeUnmount(() => {
           <Loading v-if="uploading" class="upload-loading-icon" />
           <Upload v-else />
         </el-icon>
-        <strong>{{ uploading ? '正在上传文件，请稍候…' : '拖拽文件到这里，或点击选择文件' }}</strong>
+        <strong>{{ uploading ? '正在上传文件，请稍候…' : isMobile ? '点击选择文件' : '拖拽文件到这里，或点击选择文件' }}</strong>
         <span>支持文档、图片、音视频与字幕文件，单文件最大 500MB，最多 20 个文件</span>
-      </div>
+      </button>
 
       <section v-if="uploadQueue.length" class="upload-queue" aria-label="待上传文件列表">
         <div class="upload-summary">
@@ -873,7 +928,7 @@ onBeforeUnmount(() => {
       </template>
     </el-dialog>
 
-    <el-dialog v-model="editDialogVisible" title="编辑资源信息" width="min(520px, 92vw)" align-center destroy-on-close>
+    <el-dialog v-model="editDialogVisible" class="resource-dialog" title="编辑资源信息" width="min(520px, 92vw)" align-center destroy-on-close>
       <el-form label-position="top">
         <el-form-item label="资源名称"><el-input v-model="editForm.file_name" maxlength="100" show-word-limit /></el-form-item>
         <el-form-item label="描述"><el-input v-model="editForm.description" type="textarea" :rows="3" maxlength="500" show-word-limit /></el-form-item>
@@ -883,7 +938,7 @@ onBeforeUnmount(() => {
       <template #footer><el-button @click="editDialogVisible = false">取消</el-button><el-button type="primary" :loading="saving" @click="submitEdit">保存</el-button></template>
     </el-dialog>
 
-    <el-dialog v-model="taxonomyDialogVisible" :title="`${taxonomyTitle}管理`" width="min(720px, 92vw)" align-center destroy-on-close>
+    <el-dialog v-model="taxonomyDialogVisible" class="resource-dialog" :title="`${taxonomyTitle}管理`" width="min(720px, 92vw)" align-center destroy-on-close>
       <el-tabs v-model="taxonomyTab" @tab-change="resetTaxonomyForm">
         <el-tab-pane label="分类词典" name="category" />
         <el-tab-pane label="标签词典" name="tag" />
@@ -894,16 +949,23 @@ onBeforeUnmount(() => {
         <label class="taxonomy-field taxonomy-order"><span>排序值</span><el-input-number v-model="taxonomyForm.sort_order" :min="0" :max="99999" controls-position="right" /></label>
         <div class="taxonomy-actions"><el-button type="primary" :loading="taxonomySaving" @click="saveTaxonomy">{{ taxonomyEditing ? '保存修改' : `新增${taxonomyTypeLabel}` }}</el-button><el-button v-if="taxonomyEditing" @click="resetTaxonomyForm">取消编辑</el-button></div>
       </div>
-      <div class="taxonomy-table-shell"><el-table v-loading="taxonomyLoading" :data="taxonomyItems" size="small" row-key="name">
+      <div v-if="!isMobile" class="taxonomy-table-shell"><el-table v-loading="taxonomyLoading" :data="taxonomyItems" size="small" row-key="name">
           <el-table-column prop="name" :label="taxonomyTypeLabel" min-width="220" />
           <el-table-column prop="count" label="使用资源数" width="110" />
           <el-table-column label="来源" width="100"><template #default="{ row }"><el-tag size="small" :type="row.managed ? 'success' : 'info'">{{ row.managed ? '词典' : '历史值' }}</el-tag></template></el-table-column>
           <el-table-column label="操作" width="150" align="right"><template #default="{ row }"><el-button v-if="row.managed" link type="primary" @click="editTaxonomy(row)">编辑</el-button><el-button v-if="row.managed" link type="danger" @click="removeTaxonomy(row)">删除</el-button></template></el-table-column>
         </el-table></div>
+      <div v-else v-loading="taxonomyLoading" class="taxonomy-mobile-list">
+        <el-empty v-if="!taxonomyLoading && !taxonomyItems.length" :description="`暂无${taxonomyTypeLabel}`" />
+        <article v-for="item in taxonomyItems" :key="item.id || item.name" class="taxonomy-mobile-item">
+          <div class="taxonomy-mobile-summary"><strong>{{ item.name }}</strong><el-tag size="small" :type="item.managed ? 'success' : 'info'">{{ item.managed ? '词典' : '历史值' }}</el-tag></div>
+          <div class="taxonomy-mobile-bottom"><span>使用资源 {{ item.count ?? 0 }}</span><div v-if="item.managed" class="taxonomy-mobile-actions"><el-button text type="primary" @click="editTaxonomy(item)">编辑</el-button><el-button text type="danger" @click="removeTaxonomy(item)">删除</el-button></div></div>
+        </article>
+      </div>
       <p class="dialog-hint">删除词典项不会清除已有资源中的分类或标签；编辑资源时仍可选择历史值或新增词条。</p>
     </el-dialog>
 
-    <el-dialog v-model="indexDialogVisible" title="知识库索引管理" width="min(1000px, 94vw)" align-center destroy-on-close>
+    <el-dialog v-model="indexDialogVisible" class="resource-dialog resource-index-dialog" title="知识库索引管理" width="min(1000px, 94vw)" align-center destroy-on-close>
       <el-tabs v-model="indexTab">
         <el-tab-pane label="索引概览" name="overview">
           <div v-loading="indexLoading" class="index-panel">
@@ -914,20 +976,22 @@ onBeforeUnmount(() => {
               <article><span>存储状态</span><strong>{{ indexOverview.postgres_available ? 'PostgreSQL' : '本地回退' }}</strong></article>
             </div>
             <div class="index-panel-heading"><div><strong>索引分组</strong><span>按来源、解析状态和可用状态统计</span></div><el-button :icon="Refresh" :loading="indexLoading" @click="loadIndexPanel">刷新</el-button></div>
-            <el-table :data="indexGroups" size="small"><el-table-column prop="source_type" label="来源" width="100" /><el-table-column prop="parse_status" label="解析状态" width="120" /><el-table-column label="可检索" width="100"><template #default="{ row }">{{ row.available ? '是' : '否' }}</template></el-table-column><el-table-column label="允许 AI" width="100"><template #default="{ row }">{{ row.allow_ai ? '是' : '否' }}</template></el-table-column><el-table-column prop="resource_count" label="资源数" width="100" /><el-table-column prop="chunk_count" label="分块数" width="100" /></el-table>
+            <el-table v-if="!isMobile" :data="indexGroups" size="small"><el-table-column prop="source_type" label="来源" width="100" /><el-table-column prop="parse_status" label="解析状态" width="120" /><el-table-column label="可检索" width="100"><template #default="{ row }">{{ row.available ? '是' : '否' }}</template></el-table-column><el-table-column label="允许 AI" width="100"><template #default="{ row }">{{ row.allow_ai ? '是' : '否' }}</template></el-table-column><el-table-column prop="resource_count" label="资源数" width="100" /><el-table-column prop="chunk_count" label="分块数" width="100" /></el-table>
+            <div v-else class="index-mobile-list"><el-empty v-if="!indexLoading && !indexGroups.length" description="暂无索引分组" /><article v-for="(row, index) in indexGroups" :key="`${row.source_type}-${row.parse_status}-${index}`" class="index-mobile-item"><div class="index-mobile-top"><strong>{{ row.source_type || '未知来源' }}</strong><el-tag size="small" :type="row.available ? 'success' : 'info'">{{ row.available ? '可检索' : '不可检索' }}</el-tag></div><p>解析状态：{{ row.parse_status || '未知' }}</p><div class="index-mobile-meta"><span>资源 {{ row.resource_count ?? 0 }}</span><span>分块 {{ row.chunk_count ?? 0 }}</span><span>{{ row.allow_ai ? '允许 AI' : '未允许 AI' }}</span></div></article></div>
           </div>
         </el-tab-pane>
         <el-tab-pane label="索引资源" name="resources">
           <div class="index-panel">
             <div class="index-panel-heading"><div><strong>已进入 RAG 的资源</strong><span>共 {{ indexResourceTotal }} 项；删除索引不会删除原始素材</span></div><div class="index-actions"><el-select v-model="indexAvailable" size="small" style="width: 120px" @change="loadIndexResources"><el-option label="全部状态" value="" /><el-option label="可检索" value="true" /><el-option label="不可检索" value="false" /></el-select><el-button size="small" :icon="Refresh" :loading="indexLoading" @click="loadIndexPanel">刷新</el-button><el-button size="small" :loading="indexActionLoading" @click="bootstrapIndex(false)">同步当前资源</el-button><el-button size="small" type="warning" plain :loading="indexActionLoading" @click="bootstrapIndex(true)">重建索引</el-button></div></div>
-            <el-table v-loading="indexLoading" :data="indexResources" size="small" max-height="460">
+            <el-table v-if="!isMobile" v-loading="indexLoading" :data="indexResources" size="small" max-height="460">
               <el-table-column prop="title" label="资源" min-width="220" show-overflow-tooltip />
               <el-table-column prop="resource_key" label="索引键" width="150" />
               <el-table-column prop="parse_status" label="解析状态" width="110" />
               <el-table-column prop="chunk_count" label="分块" width="70" />
               <el-table-column label="AI" width="70"><template #default="{ row }"><el-tag size="small" :type="row.allow_ai ? 'success' : 'info'">{{ row.allow_ai ? '允许' : '关闭' }}</el-tag></template></el-table-column>
-              <el-table-column label="操作" width="170" align="right"><template #default="{ row }"><el-button link type="primary" :loading="indexActionLoading" @click="syncIndexResource({ raw: { id: row.resource_id, file_name: row.title, file_url: row.metadata?.file_url, file_type: row.metadata?.file_type, file_size: row.metadata?.file_size, allow_ai: row.allow_ai, status: row.available ? 1 : 0, user_id: row.metadata?.owner_user_id, categories: row.metadata?.categories, tags: row.metadata?.tags, access_type: row.metadata?.access_type }, id: row.resource_id })">同步</el-button><el-button link type="danger" :loading="indexActionLoading" @click="removeIndex(row)">删除</el-button></template></el-table-column>
+              <el-table-column label="操作" width="170" align="right"><template #default="{ row }"><el-button link type="primary" :loading="indexActionLoading" @click="syncIndexedResource(row)">同步</el-button><el-button link type="danger" :loading="indexActionLoading" @click="removeIndex(row)">删除</el-button></template></el-table-column>
             </el-table>
+            <div v-else v-loading="indexLoading" class="index-mobile-list"><el-empty v-if="!indexLoading && !indexResources.length" description="暂无索引资源" /><article v-for="row in indexResources" :key="row.resource_key" class="index-mobile-item"><div class="index-mobile-top"><strong>{{ row.title || '未命名资源' }}</strong><el-tag size="small" :type="row.allow_ai ? 'success' : 'info'">{{ row.allow_ai ? '允许 AI' : 'AI 关闭' }}</el-tag></div><p class="index-resource-key">{{ row.resource_key }}</p><div class="index-mobile-meta"><span>{{ row.parse_status || '未解析' }}</span><span>分块 {{ row.chunk_count ?? 0 }}</span></div><div class="index-mobile-actions"><el-button text type="primary" :loading="indexActionLoading" @click="syncIndexedResource(row)">同步</el-button><el-button text type="danger" :loading="indexActionLoading" @click="removeIndex(row)">删除索引</el-button></div></article></div>
           </div>
         </el-tab-pane>
         <el-tab-pane label="检索测试" name="search">
@@ -940,13 +1004,14 @@ onBeforeUnmount(() => {
         <el-tab-pane label="检索日志" name="logs">
           <div class="index-panel">
             <div class="index-panel-heading"><div><strong>Python RAG 检索日志</strong><span>共 {{ indexLogTotal }} 条</span></div><el-button :icon="Refresh" :loading="indexLoading" @click="loadIndexLogs">刷新</el-button></div>
-            <el-table v-loading="indexLoading" :data="indexLogs" size="small" max-height="460"><el-table-column prop="query" label="查询内容" min-width="260" show-overflow-tooltip /><el-table-column prop="match_count" label="命中" width="70" /><el-table-column prop="top_score" label="最高分" width="90" /><el-table-column prop="search_mode" label="模式" width="140" /><el-table-column prop="latency_ms" label="耗时（ms）" width="100" /><el-table-column label="时间" width="155"><template #default="{ row }">{{ formatUpdatedAt(row.created_at) }}</template></el-table-column></el-table>
+            <el-table v-if="!isMobile" v-loading="indexLoading" :data="indexLogs" size="small" max-height="460"><el-table-column prop="query" label="查询内容" min-width="260" show-overflow-tooltip /><el-table-column prop="match_count" label="命中" width="70" /><el-table-column prop="top_score" label="最高分" width="90" /><el-table-column prop="search_mode" label="模式" width="140" /><el-table-column prop="latency_ms" label="耗时（ms）" width="100" /><el-table-column label="时间" width="155"><template #default="{ row }">{{ formatUpdatedAt(row.created_at) }}</template></el-table-column></el-table>
+            <div v-else v-loading="indexLoading" class="index-mobile-list"><el-empty v-if="!indexLoading && !indexLogs.length" description="暂无检索日志" /><article v-for="(row, index) in indexLogs" :key="row.id || index" class="index-mobile-item"><div class="index-mobile-top"><strong>{{ row.query || '空查询' }}</strong><time>{{ formatUpdatedAt(row.created_at) }}</time></div><div class="index-mobile-meta"><span>命中 {{ row.match_count ?? 0 }}</span><span>最高分 {{ row.top_score ?? '—' }}</span><span>{{ row.search_mode || '—' }}</span><span>{{ row.latency_ms ?? '—' }} ms</span></div></article></div>
           </div>
         </el-tab-pane>
       </el-tabs>
     </el-dialog>
 
-    <el-dialog v-model="permissionDialogVisible" title="资源权限设置" width="min(480px, 92vw)" align-center destroy-on-close>
+    <el-dialog v-model="permissionDialogVisible" class="resource-dialog" title="资源权限设置" width="min(480px, 92vw)" align-center destroy-on-close>
       <el-form label-position="top" v-loading="saving">
         <el-form-item label="访问范围"><el-radio-group v-model="permissionForm.access_type"><el-radio value="private">仅自己</el-radio><el-radio value="shared">所有成员</el-radio><el-radio value="authorized">指定成员</el-radio></el-radio-group></el-form-item>
         <el-form-item v-if="permissionForm.access_type === 'authorized'" label="授权用户 ID"><el-input v-model="permissionForm.authorized_users" placeholder="多个用户 ID 请用逗号分隔" /></el-form-item>
@@ -955,7 +1020,7 @@ onBeforeUnmount(() => {
       <template #footer><el-button @click="permissionDialogVisible = false">取消</el-button><el-button type="primary" :loading="saving" @click="submitPermission">保存权限</el-button></template>
     </el-dialog>
 
-    <el-dialog v-model="batchDialogVisible" title="批量管理资源" width="min(480px, 92vw)" align-center destroy-on-close>
+    <el-dialog v-model="batchDialogVisible" class="resource-dialog" title="批量管理资源" width="min(480px, 92vw)" align-center destroy-on-close>
       <p class="batch-summary">已选择 {{ selectedRows.length }} 个资源</p>
       <el-form label-position="top"><el-form-item label="操作"><el-radio-group v-model="batchForm.action"><el-radio value="delete">批量删除</el-radio><el-radio value="move">移动目录</el-radio><el-radio value="categorize">修改分类</el-radio></el-radio-group></el-form-item><el-form-item v-if="batchForm.action !== 'delete'" :label="batchForm.action === 'move' ? '目标目录' : '目标分类'"><el-input v-model="batchForm.target" /></el-form-item></el-form>
       <template #footer><el-button @click="batchDialogVisible = false">取消</el-button><el-button type="primary" :loading="saving" @click="submitBatchAction">确认操作</el-button></template>
@@ -1066,10 +1131,119 @@ onBeforeUnmount(() => {
 .index-result-list strong em { display: inline-flex; margin-left: 6px; padding: 1px 7px; border-radius: 999px; background: var(--zh-primary-soft); color: var(--zh-primary); font-size: 11px; font-style: normal; font-weight: 600; }
 .index-result-list span { color: var(--zh-text-caption); font-size: 11px; }
 .index-result-list p { margin: 8px 0 0; color: var(--zh-text-secondary); font-size: 12px; line-height: 1.65; white-space: pre-wrap; }
+.resource-load-error { display: flex; align-items: center; justify-content: space-between; gap: 12px; padding: 16px; border: 1px solid #fecaca; border-radius: var(--zh-radius12); color: #b91c1c; background: #fff7f7; font-size: 13px; line-height: 1.6; }
 /* 平板（768–1023.98）与手机（<768）共用：布局收单列、知识库 header 转单列 */
 @media (max-width: 1023.98px) { .page-heading { align-items: flex-start; flex-direction: column; }.resource-layout { grid-template-columns: 1fr; }.stat-strip { grid-template-columns: repeat(2, 1fr); }.stat-strip article:nth-child(2n) { border-right: 0; }.resource-toolbar { grid-template-columns: 1fr 1fr; }.resource-toolbar > .el-input { grid-column: 1 / -1; }.resource-toolbar-actions { justify-content: flex-start; flex-wrap: wrap; }.taxonomy-editor { grid-template-columns: 1fr 1fr; }.taxonomy-editor .el-button:last-child { grid-column: 2; }.index-overview-grid { grid-template-columns: repeat(2, 1fr); }.index-panel-heading { align-items: flex-start; flex-direction: column; }.index-actions { justify-content: flex-start; } }
 /* 平板档：分类面板收为 76px 图标态（点击仍可切换分类，入口不丢） */
 @media (min-width: 768px) and (max-width: 1023.98px) { .folder-panel { width: 76px; padding: 12px 6px; }.panel-title { justify-content: center; padding: 0 0 8px; }.panel-title > span { display: none; }.folder-panel > button { flex-direction: column; gap: 4px; padding: 8px 2px; }.folder-panel > button .el-icon { display: none; }.folder-panel > button > span { display: block; max-width: 100%; overflow: hidden; font-size: 11px; text-align: center; text-overflow: ellipsis; white-space: nowrap; }.privacy-note { display: none; } }
 /* 手机档：分类面板隐藏（顶部 el-select 承载入口）、主表格切换为卡片列表 */
-@media (max-width: 767.98px) { .folder-panel { display: none; }.stat-strip { grid-template-columns: 1fr; }.stat-strip article { border-right: 0; }.resource-toolbar { grid-template-columns: 1fr; }.resource-toolbar > .el-input { grid-column: auto; }.mobile-folder-select { width: 100%; margin-bottom: 12px; }.resource-card-list { display: grid; gap: 10px; min-height: 120px; }.resource-card { display: flex; align-items: center; justify-content: space-between; gap: 10px; padding: 12px; border: 1px solid var(--zh-line-border); border-radius: var(--zh-radius12); background: var(--zh-background-light); }.resource-card-main { display: flex; align-items: center; gap: 10px; min-width: 0; flex: 1; }.resource-card-info { display: flex; flex-direction: column; gap: 4px; min-width: 0; flex: 1; }.resource-card-info strong { overflow: hidden; color: var(--zh-text-primary); font-size: 14px; text-overflow: ellipsis; white-space: nowrap; }.resource-card-info small { color: var(--zh-text-caption); font-size: 12px; }.resource-card-meta { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }.resource-card :deep(.resource-more-button) { width: 40px; height: 40px; flex: 0 0 auto; }.taxonomy-editor { grid-template-columns: 1fr; }.taxonomy-editor .el-button:last-child { grid-column: auto; }.index-overview-grid { grid-template-columns: 1fr; }.index-search-bar { grid-template-columns: 1fr; }.index-result-list article > div { align-items: flex-start; flex-direction: column; gap: 4px; } }
+/* 手机资源页：概览压缩为一行，搜索和素材列表进入首屏。 */
+@media (max-width: 767.98px) {
+  .folder-panel { display: none; }
+  .resource-card-list { display: grid; }
+  .resource-card { display: flex; justify-content: space-between; border: 1px solid var(--zh-line-border); border-radius: var(--zh-radius12); }
+  .resource-card-main { display: flex; min-width: 0; flex: 1; }
+  .resource-card-info { display: flex; flex: 1; flex-direction: column; min-width: 0; }
+  .resource-card-info small { color: var(--zh-text-caption); font-size: 12px; }
+  .resource-card-meta { display: flex; align-items: center; flex-wrap: wrap; }
+  .taxonomy-editor { grid-template-columns: 1fr; }
+  .index-search-bar { grid-template-columns: 1fr; }
+  .index-result-list article > div { align-items: flex-start; flex-direction: column; gap: 4px; }
+  .page-wrap { width: calc(100% - 32px); padding: 24px 0 calc(96px + var(--zh-safe-bottom, 0px)); }
+  .page-heading { gap: 16px; }
+  .page-kicker { margin-bottom: 4px !important; font-size: 11px !important; }
+  .page-heading h1 { font-size: 24px; line-height: 1.25; }
+  .page-heading p { max-width: 36ch; margin-top: 6px; font-size: 12px; line-height: 1.55; }
+  .heading-actions { display: grid; grid-template-columns: 1fr 1fr; width: 100%; gap: 8px; }
+  .heading-actions :deep(.el-button) { min-width: 0; min-height: 42px; margin: 0; }
+  .stat-strip { grid-template-columns: repeat(3, minmax(0, 1fr)); margin-top: 20px; overflow: hidden; border: 1px solid var(--zh-line-border); border-radius: var(--zh-radius12); background: var(--zh-background-light); }
+  .stat-strip article { min-width: 0; display: flex; flex-direction: column; align-items: flex-start; gap: 5px; padding: 12px 9px; border-right: 1px solid var(--zh-line-border) !important; }
+  .stat-strip article:last-child { border-right: 0 !important; }
+  .stat-strip span { color: var(--zh-text-secondary); font-size: 10px; line-height: 1.3; white-space: nowrap; }
+  .stat-strip strong { grid-row: auto; grid-column: auto; max-width: 100%; overflow: hidden; color: var(--zh-text-primary); font-size: 17px; line-height: 1.1; text-overflow: ellipsis; white-space: nowrap; font-variant-numeric: tabular-nums; }
+  .stat-strip small { display: none; }
+  .resource-layout { margin-top: 19px; }
+  .resource-toolbar { grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 9px; margin-bottom: 10px; }
+  .resource-toolbar > .el-input { grid-column: 1 / -1; }
+  .resource-toolbar :deep(.el-input__wrapper), .resource-toolbar :deep(.el-select__wrapper) { min-height: 42px; }
+  .mobile-folder-select { width: 100%; min-width: 0; margin-bottom: 0; }
+  .resource-toolbar > .el-select { min-width: 0; }
+  .resource-toolbar-actions { grid-column: 1 / -1; min-height: 36px; justify-content: flex-start; gap: 8px; }
+  .resource-toolbar-actions :deep(.el-button) { min-height: 36px; margin: 0; padding-inline: 9px; }
+  .mobile-list-heading { display: flex; align-items: baseline; justify-content: space-between; gap: 8px; padding: 0 2px 10px; }
+  .mobile-list-heading strong { color: var(--zh-text-primary); font-size: 15px; font-weight: 600; }
+  .mobile-list-heading span { color: var(--zh-text-caption); font-size: 12px; font-variant-numeric: tabular-nums; }
+  .resource-card-list { gap: 9px; min-height: 0; }
+  .resource-load-error { align-items: stretch; flex-direction: column; }
+  .resource-load-error :deep(.el-button) { min-height: 44px; margin: 0; }
+  .resource-card { align-items: flex-start; gap: 7px; padding: 12px 9px; background: var(--zh-background-primary); }
+  .resource-card-main { align-items: flex-start; gap: 7px; }
+  .resource-card-check { min-width: 28px; min-height: 44px; margin: 0; padding-top: 4px; }
+  .resource-card-check :deep(.el-checkbox__inner) { width: 18px; height: 18px; }
+  .resource-card .file-mark { width: 31px; height: 35px; flex: 0 0 31px; font-size: 11px; }
+  .resource-card-info { gap: 5px; }
+  .resource-card-info strong { display: -webkit-box; overflow: hidden; color: var(--zh-text-primary); font-size: 13px; line-height: 1.4; text-overflow: initial; white-space: normal; -webkit-box-orient: vertical; -webkit-line-clamp: 2; }
+  .resource-card-info small { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .resource-card-meta { gap: 6px; }
+  .resource-card :deep(.el-dropdown) { flex: 0 0 auto; }
+  .resource-card :deep(.resource-more-button) { width: 44px; height: 44px; margin-top: -5px; }
+  .resource-card-skeleton { align-items: center; min-height: 77px; }
+  .skeleton-mark { width: 34px; height: 38px; flex: 0 0 34px; border-radius: 7px; background: var(--zh-background-weaken); }
+  .skeleton-lines { display: grid; flex: 1; gap: 9px; }
+  .skeleton-lines i { width: 78%; height: 10px; border-radius: 5px; background: var(--zh-background-option); }
+  .skeleton-lines i:last-child { width: 48%; }
+  .resource-empty-state { padding: 6px 12px 24px; border: 1px dashed var(--zh-line-heavier); border-radius: var(--zh-radius12); background: var(--zh-background-light); text-align: center; }
+  .resource-empty-state :deep(.el-empty) { padding-bottom: 8px; }
+  .resource-empty-state :deep(.el-button) { min-height: 42px; }
+
+  .upload-dropzone { width: 100%; min-height: 142px; padding: 18px 14px; font: inherit; text-align: center; }
+  .upload-dropzone:focus-visible { outline: 2px solid var(--zh-border-focus); outline-offset: 2px; }
+  .upload-dropzone-icon { font-size: 34px !important; }
+  .upload-file-item { display: grid; grid-template-columns: 36px minmax(0, 1fr) auto; gap: 3px 8px; min-height: 76px; padding: 9px; }
+  .upload-file-mark { grid-row: 1 / 3; grid-column: 1; align-self: start; width: 34px; height: 34px; flex: none; }
+  .upload-file-info { grid-row: 1; grid-column: 2; }
+  .upload-file-size { grid-row: 2; grid-column: 2; flex: none; text-align: left; }
+  .upload-file-status { grid-row: 1; grid-column: 3; flex: none; }
+  .upload-file-item > .el-button { grid-row: 2; grid-column: 3; justify-self: end; min-width: 36px; min-height: 36px; }
+  .upload-dialog-footer { display: grid; grid-template-columns: 1fr 1fr; }
+  .upload-dialog-footer :deep(.el-button) { width: 100%; margin: 0; }
+
+  .taxonomy-editor { gap: 12px; }
+  .taxonomy-actions { display: grid; grid-template-columns: 1fr 1fr; }
+  .taxonomy-actions :deep(.el-button) { width: 100%; min-height: 42px; }
+  .taxonomy-actions :deep(.el-button:only-child) { grid-column: 1 / -1; }
+  .taxonomy-mobile-list, .index-mobile-list { display: grid; gap: 9px; min-height: 72px; }
+  .taxonomy-mobile-item, .index-mobile-item { min-width: 0; padding: 12px; border: 1px solid var(--zh-line-border); border-radius: var(--zh-radius8); background: var(--zh-background-light); }
+  .taxonomy-mobile-summary, .taxonomy-mobile-bottom, .index-mobile-top { display: flex; align-items: flex-start; justify-content: space-between; gap: 10px; }
+  .taxonomy-mobile-summary strong, .index-mobile-top strong { min-width: 0; overflow-wrap: anywhere; color: var(--zh-text-primary); font-size: 13px; line-height: 1.5; }
+  .taxonomy-mobile-bottom { align-items: center; margin-top: 8px; }
+  .taxonomy-mobile-bottom > span, .index-mobile-meta, .index-mobile-top time { color: var(--zh-text-caption); font-size: 11px; }
+  .taxonomy-mobile-actions, .index-mobile-actions { display: flex; align-items: center; gap: 4px; }
+  .taxonomy-mobile-actions :deep(.el-button), .index-mobile-actions :deep(.el-button) { min-height: 36px; margin: 0; padding-inline: 9px; }
+  .index-overview-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 8px; margin-bottom: 18px; }
+  .index-overview-grid article { min-width: 0; padding: 11px; }
+  .index-overview-grid strong { font-size: 17px; overflow-wrap: anywhere; }
+  .index-panel-heading { gap: 10px; }
+  .index-panel-heading > .el-button { min-height: 40px; }
+  .index-actions { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); width: 100%; gap: 8px; }
+  .index-actions :deep(.el-select) { grid-column: 1 / -1; width: 100% !important; }
+  .index-actions :deep(.el-button) { min-width: 0; min-height: 40px; margin: 0; padding-inline: 5px; }
+  .index-search-bar :deep(.el-button) { min-height: 42px; }
+  .index-mobile-top time { flex: 0 0 auto; white-space: nowrap; }
+  .index-mobile-item p { margin: 7px 0; color: var(--zh-text-secondary); font-size: 12px; line-height: 1.5; }
+  .index-mobile-item .index-resource-key { overflow-wrap: anywhere; color: var(--zh-text-caption); font-size: 11px; }
+  .index-mobile-meta { display: flex; flex-wrap: wrap; gap: 5px 12px; font-variant-numeric: tabular-nums; }
+  .index-mobile-actions { justify-content: flex-end; margin-top: 6px; }
+  .index-result-list { max-height: none; overflow: visible; }
+  .index-result-list article { overflow-wrap: anywhere; }
+  :global(.resource-dialog) { display: flex; flex-direction: column; width: calc(100vw - 24px) !important; max-height: calc(100dvh - max(12px, var(--zh-safe-top)) - max(12px, var(--zh-safe-bottom))); margin: max(12px, var(--zh-safe-top)) auto !important; overflow: hidden; border-radius: var(--zh-radius16); }
+  :global(.resource-dialog .el-dialog__header) { flex: 0 0 auto; padding: 18px 18px 12px; }
+  :global(.resource-dialog .el-dialog__body) { flex: 1 1 auto; min-height: 0; padding: 8px 16px 18px; overflow-y: auto; overscroll-behavior: contain; }
+  :global(.resource-dialog .el-dialog__footer) { flex: 0 0 auto; padding: 12px 16px calc(12px + var(--zh-safe-bottom, 0px)); border-top: 1px solid var(--zh-line-border); }
+  :global(.resource-dialog .el-form-item__label) { font-size: 13px; }
+  :global(.resource-dialog .el-input__wrapper), :global(.resource-dialog .el-select__wrapper) { min-height: 42px; }
+  :global(.resource-dialog .el-radio-group) { display: grid; align-items: start; gap: 5px; }
+  :global(.resource-dialog .el-radio) { min-height: 36px; margin-right: 0; }
+  :global(.resource-index-dialog .el-tabs__item) { padding-inline: 12px; font-size: 12px; }
+}
 </style>
