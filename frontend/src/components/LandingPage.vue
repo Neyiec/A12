@@ -13,7 +13,7 @@ const entering = ref(false)
 
 /** 移动端锚点菜单：平滑滚动到对应区块 */
 const scrollToSection = (command) => {
-  const target = document.querySelector(command)
+  const target = document.getElementById(String(command || '').replace(/^#/, ''))
   if (target) {
     target.scrollIntoView({ behavior: 'smooth', block: 'start' })
   }
@@ -75,8 +75,8 @@ const enterProgram = async () => {
         <template #dropdown>
           <el-dropdown-menu>
             <el-dropdown-item command="#features">核心能力</el-dropdown-item>
-            <el-dropdown-item command="#workflow">使用流程</el-dropdown-item>
-            <el-dropdown-item command="#results">教学成果</el-dropdown-item>
+            <el-dropdown-item command="tutorial">使用流程</el-dropdown-item>
+            <el-dropdown-item command="showcase">教学成果</el-dropdown-item>
           </el-dropdown-menu>
         </template>
       </el-dropdown>
@@ -305,7 +305,8 @@ const enterProgram = async () => {
   grid-template-columns: 1fr auto 1fr;
   align-items: center;
   width: min(1180px, calc(100% - 48px));
-  min-height: 82px;
+  min-height: calc(82px + var(--zh-safe-top));
+  padding-top: var(--zh-safe-top);
   margin: 0 auto;
 }
 
@@ -754,12 +755,12 @@ h1 span {
 .site-nav-mobile { display: none; }
 
 @media (max-width: 1023.98px) {
-  .site-header { grid-template-columns: 1fr auto; }
+  .site-header { grid-template-columns: minmax(0, 1fr) auto auto; gap: 8px; }
   .site-nav { display: none; }
   .site-nav-mobile {
     display: inline-flex;
     justify-self: end;
-    margin-right: 10px;
+    margin-right: 0;
   }
   .site-nav-mobile-trigger {
     min-width: 44px;
@@ -782,8 +783,8 @@ h1 span {
 
 @media (max-width: 767.98px) {
   .site-header, .hero-section { width: min(100% - 32px, 1180px); }
-  .site-header { min-height: 70px; }
-  .header-action { min-height: 40px; padding: 0 15px; }
+  .site-header { min-height: calc(70px + var(--zh-safe-top)); }
+  .header-action { min-height: 44px; padding: 0 13px; }
   .hero-section { min-height: auto; padding: 55px 0 72px; }
   h1 { font-size: clamp(32px, 9vw, 40px); letter-spacing: -.055em; }
   .hero-description { font-size: 16px; }

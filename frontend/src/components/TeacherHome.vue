@@ -648,7 +648,10 @@ watch(viewMode, (value) => {
     <template v-if="viewMode === 'welcome'">
     <div class="welcome-scroll">
     <div class="welcome-copy motion-stage motion-stage-1">
-      <p class="eyebrow">{{ teacherGreeting }}</p>
+      <div class="welcome-greeting">
+        <img src="/branding/logo-intro.png" alt="" aria-hidden="true" />
+        <p class="eyebrow">{{ teacherGreeting }}</p>
+      </div>
       <h1>{{ TEACHER_HOME.greeting.title }}</h1>
       <p class="intro">{{ TEACHER_HOME.greeting.description }}</p>
       <div class="welcome-actions motion-stage motion-stage-2">
@@ -705,10 +708,6 @@ watch(viewMode, (value) => {
       </div>
     </section>
 
-    <div class="mobile-welcome-center" aria-label="智核教学助手">
-      <img src="/branding/logo-intro.png" alt="智核" />
-      <p>{{ TEACHER_HOME.greeting.title }}</p>
-    </div>
     </div>
 
     <section class="composer motion-stage motion-stage-4" aria-label="AI 教学任务输入">
@@ -750,9 +749,9 @@ watch(viewMode, (value) => {
             <el-option label="仅对话" value="chat" />
             <el-option label="直接备课" value="planning" />
           </el-select>
-          <el-tooltip content="上传本地资料：本次生成直接引用，可一键转存到素材库"><span><el-button text :icon="Paperclip" @click="triggerTempUpload">{{ TEACHER_HOME.composer.attach }}</el-button></span></el-tooltip>
+          <el-tooltip content="上传本地资料：本次生成直接引用，可一键转存到素材库"><span><el-button text :icon="Paperclip" aria-label="添加资料" @click="triggerTempUpload"><span class="composer-tool-label">{{ TEACHER_HOME.composer.attach }}</span></el-button></span></el-tooltip>
           <input ref="tempFileInput" class="resource-file-input" type="file" multiple accept=".pdf,.doc,.docx,.ppt,.pptx,.txt,.md,.jpg,.jpeg,.png,.gif,.webp,.svg,.mp3,.wav,.m4a,.ogg,.mp4,.avi,.mov,.mkv,.webm" @change="handleTempFilesPicked" />
-          <el-tooltip content="从个人知识库中检索并引用已有资料"><span><el-button text :icon="Collection" @click="openKnowledgeDialog">{{ TEACHER_HOME.composer.knowledge }}</el-button></span></el-tooltip>
+          <el-tooltip content="从个人知识库中检索并引用已有资料"><span><el-button text :icon="Collection" aria-label="引用知识库" @click="openKnowledgeDialog"><span class="composer-tool-label">{{ TEACHER_HOME.composer.knowledge }}</span></el-button></span></el-tooltip>
           <el-tooltip content="打开语音输入"><span><el-button text circle aria-label="语音输入" @click="voiceDialogVisible = true"><el-icon><Microphone /></el-icon></el-button></span></el-tooltip>
         </div>
         <el-button
@@ -872,7 +871,8 @@ watch(viewMode, (value) => {
 }
 
 .welcome-copy { max-width: 720px; }
-.mobile-welcome-center { display: none; }
+.welcome-greeting { display: block; }
+.welcome-greeting img { display: none; }
 .welcome-actions { display: flex; gap: 10px; margin-top: 24px; }
 .motion-stage { animation: fadeIn 300ms cubic-bezier(0, 0, 0.2, 1) both; }
 .motion-stage-1 { animation-delay: 0ms; }
@@ -955,73 +955,73 @@ h1 { margin: 0; font-size: clamp(36px, 4vw, 48px); line-height: 1.15; letter-spa
   .welcome-scroll {
     display: flex;
     flex-direction: column;
-    align-items: center;
-    justify-content: center;
+    align-items: stretch;
+    justify-content: flex-start;
     width: 100%;
     min-width: 0;
-    padding: 16px calc(18px + var(--zh-safe-right)) 20px calc(18px + var(--zh-safe-left));
+    padding: 18px calc(18px + var(--zh-safe-right)) 20px calc(18px + var(--zh-safe-left));
     scrollbar-gutter: auto;
     overscroll-behavior-y: contain;
-    text-align: center;
+    text-align: left;
   }
-  .welcome-copy, .recent-projects, .suggestions-section, .composer-hint { display: none; }
-  .mobile-welcome-center {
-    display: grid;
-    justify-items: center;
-    gap: 14px;
-    width: 100%;
-    margin: auto 0;
+  .composer-hint { display: none; }
+  .welcome-copy { max-width: none; padding: 0 2px; }
+  .welcome-greeting {
+    display: flex;
+    align-items: center;
+    gap: 9px;
+    margin-bottom: 8px;
   }
-  .mobile-welcome-center img {
-    width: 96px;
-    height: 96px;
-    border-radius: var(--zh-radius20);
+  .welcome-greeting img {
+    display: block;
+    width: 30px;
+    height: 30px;
+    flex: 0 0 30px;
     object-fit: contain;
-    mix-blend-mode: multiply;
   }
-  .mobile-welcome-center p {
-    max-width: 100%;
-    margin: 0;
-    color: var(--zh-text-primary);
-    font-size: clamp(20px, 5.6vw, 24px);
-    font-weight: 600;
-    line-height: 1.45;
-    letter-spacing: var(--zh-tracking-tight);
-    text-wrap: balance;
-  }
-  .welcome-copy { max-width: none; order: 0; }
-  .eyebrow { margin-bottom: 8px; font-size: 13px; }
-  .welcome-copy h1 { max-width: 12em; font-size: clamp(30px, 8vw, 36px); line-height: 1.2; letter-spacing: -0.035em; }
-  .intro { max-width: 36ch; margin-top: 12px; font-size: 15px; line-height: 1.65; }
-  .welcome-actions { margin-top: 18px; }
-  .welcome-actions :deep(.el-button) { min-height: 46px; padding-inline: 18px; }
+  .eyebrow { margin: 0; font-size: 12px; }
+  .welcome-copy h1 { max-width: 16em; font-size: clamp(22px, 6vw, 26px); line-height: 1.3; letter-spacing: -0.035em; }
+  .intro { max-width: 42ch; margin-top: 8px; font-size: 13px; line-height: 1.6; }
+  .welcome-actions { display: none; }
 
-  .suggestions-section { order: 1; margin-top: 28px; }
+  .suggestions-section { order: 1; margin-top: 22px; }
   .suggestions-heading h2 { font-size: 16px; }
-  .suggestions-heading span { font-size: 11px; }
+  .suggestions-heading span { font-size: 10px; white-space: nowrap; }
   .suggestion-grid {
     display: flex;
-    gap: 10px;
-    margin: 12px calc(-18px - var(--zh-safe-right)) 0 calc(-18px - var(--zh-safe-left));
-    padding: 2px calc(18px + var(--zh-safe-right)) 12px calc(18px + var(--zh-safe-left));
+    gap: 9px;
+    margin: 10px calc(-18px - var(--zh-safe-right)) 0 calc(-18px - var(--zh-safe-left));
+    padding: 2px calc(18px + var(--zh-safe-right)) 8px calc(18px + var(--zh-safe-left));
     overflow-x: auto;
     overscroll-behavior-x: contain;
     scroll-snap-type: x mandatory;
     scrollbar-width: none;
   }
   .suggestion-grid::-webkit-scrollbar { display: none; }
-  .suggestion-card { flex: 0 0 min(246px, calc(100vw - 72px)); scroll-snap-align: start; }
+  .suggestion-card { flex: 0 0 min(216px, calc(100vw - 82px)); scroll-snap-align: start; }
   .suggestion-card :deep(.el-card) { border-color: var(--zh-line-border); border-radius: var(--zh-radius12); background: var(--zh-background-light); }
-  .suggestion-card :deep(.el-card__body) { min-height: 126px; padding: 16px; }
-  .suggestion-icon { width: 34px; height: 34px; margin-bottom: 14px; }
-  .suggestion-card h2 { font-size: 15px; }
-  .suggestion-card p { font-size: 12px; }
+  .suggestion-card :deep(.el-card__body) { min-height: 108px; padding: 13px; }
+  .suggestion-icon { width: 30px; height: 30px; margin-bottom: 10px; }
+  .suggestion-card h2 { font-size: 14px; }
+  .suggestion-card p { margin-top: 5px; font-size: 11px; line-height: 1.45; }
+  .suggestion-card .card-arrow { right: 12px; bottom: 13px; }
 
-  .recent-projects { order: 2; margin-top: 26px; }
+  .recent-projects { order: 2; margin-top: 20px; }
   .recent-projects-heading { align-items: center; }
   .recent-projects-heading h2 { font-size: 16px; }
-  .project-grid { grid-template-columns: 1fr; gap: 8px; }
-  .project-card { padding: 12px 14px; border-radius: var(--zh-radius12); }
+  .project-grid {
+    display: flex;
+    gap: 9px;
+    margin: 10px calc(-18px - var(--zh-safe-right)) 0 calc(-18px - var(--zh-safe-left));
+    padding: 0 calc(18px + var(--zh-safe-right)) 4px calc(18px + var(--zh-safe-left));
+    overflow-x: auto;
+    overscroll-behavior-x: contain;
+    scroll-snap-type: x mandatory;
+    scrollbar-width: none;
+  }
+  .project-grid::-webkit-scrollbar { display: none; }
+  .project-card, .project-skeleton { flex: 0 0 min(236px, calc(100vw - 74px)); scroll-snap-align: start; }
+  .project-card { min-height: 66px; justify-content: center; padding: 11px 13px; border-radius: var(--zh-radius12); }
 
   .composer {
     margin: 12px calc(12px + var(--zh-safe-right)) 0 calc(12px + var(--zh-safe-left));

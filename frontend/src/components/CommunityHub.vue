@@ -21,6 +21,7 @@ const searchQuery = ref('')
 const activeTab = ref('精选')
 const selectedStage = ref('全部学段')
 const selectedSubject = ref('全部学科')
+const showMobileFilters = ref(false)
 const tabs = ['精选', '最新', 'Skill', '教学案例']
 const communityCards = ref([])
 const communityTotal = ref(0)
@@ -990,9 +991,10 @@ onMounted(() => {
     <div class="community-toolbar">
       <div class="tab-list"><button v-for="tab in tabs" :key="tab" :class="{ active: activeTab === tab }" @click="activeTab = tab">{{ tab }}</button></div>
       <div class="toolbar-controls">
+        <button type="button" class="mobile-filter-toggle" :aria-expanded="showMobileFilters" aria-controls="community-filters" @click="showMobileFilters = !showMobileFilters">筛选与排序 <span aria-hidden="true">{{ showMobileFilters ? '−' : '＋' }}</span></button>
         <el-button text @click="openCollections">收藏与浏览</el-button>
         <el-button text @click="openReports">举报进度</el-button>
-        <div class="filters">
+        <div id="community-filters" class="filters" :class="{ 'mobile-open': showMobileFilters }">
           <el-select v-model="selectedStage" aria-label="筛选学段"><el-option label="全部学段" value="全部学段" /><el-option label="初中" value="初中" /><el-option label="高中" value="高中" /></el-select>
           <el-select v-model="selectedSubject" aria-label="筛选学科"><el-option label="全部学科" value="全部学科" /><el-option label="数学" value="数学" /><el-option label="物理" value="物理" /><el-option label="语文" value="语文" /><el-option label="生物" value="生物" /></el-select>
           <el-select v-model="sortBy" aria-label="排序方式" placeholder="默认排序">
@@ -1138,7 +1140,7 @@ onMounted(() => {
       </div>
       <template #footer><el-button :disabled="submissionSaving || submissionLoading" @click="submissionVisible = false">{{ submissionReadOnly ? '关闭' : '稍后继续' }}</el-button><el-button v-if="!submissionReadOnly" :loading="submissionSaving" :disabled="submissionLoading" @click="saveSubmission(false)">保存草稿</el-button><el-button v-if="!submissionReadOnly" type="primary" :loading="submissionSaving" :disabled="submissionLoading" @click="saveSubmission(true)">提交审核</el-button></template>
     </el-dialog>
-    <el-dialog v-model="collectionVisible" title="我的收藏与最近浏览" width="min(680px, 92vw)">
+    <el-dialog v-model="collectionVisible" class="community-collection-dialog" title="我的收藏与最近浏览" width="min(680px, 92vw)">
       <div v-loading="collectionsLoading">
         <el-alert v-if="collectionError" :title="collectionError" type="error" show-icon :closable="false"><template #default><el-button text type="primary" @click="loadCollections">重试</el-button></template></el-alert>
         <section class="collection-section">
@@ -1159,7 +1161,7 @@ onMounted(() => {
         </section>
       </div>
     </el-dialog>
-    <el-dialog v-model="reportVisible" title="举报与处理进度" width="min(640px, 92vw)">
+    <el-dialog v-model="reportVisible" class="community-report-dialog" title="举报与处理进度" width="min(640px, 92vw)">
       <div v-loading="reportsLoading" class="report-dialog">
         <el-form label-position="top" class="report-form-grid">
           <el-form-item label="内容类型" required><el-select v-model="reportForm.target_type"><el-option label="教学案例" value="lesson_case" /><el-option label="Skill" value="skill" /></el-select></el-form-item>
@@ -1171,7 +1173,7 @@ onMounted(() => {
         <div class="report-list"><h3>我的举报记录</h3><div v-for="report in reports" :key="report.id" class="report-row"><span>#{{ report.id }} · {{ statusLabel(report.status) }} · {{ report.reason || report.comment || '未填写原因' }}</span><el-button text size="small" @click="openReportDetail(report)">查看详情</el-button></div><el-empty v-if="!reports.length" description="暂无举报记录" /></div>
       </div>
     </el-dialog>
-    <el-dialog v-model="reportDetailVisible" title="举报详情" width="min(560px, 92vw)">
+    <el-dialog v-model="reportDetailVisible" class="community-report-detail-dialog" title="举报详情" width="min(560px, 92vw)">
       <div v-loading="reportDetailLoading" class="report-detail">
         <el-alert v-if="reportDetail?.detail_error" :title="reportDetail.detail_error" type="error" show-icon :closable="false" />
         <dl v-if="reportDetail">
@@ -1255,11 +1257,15 @@ onMounted(() => {
                 <div class="detail-aside-actions"><button class="detail-primary-action" :disabled="detailLoading || !detail" @click="reuse(detail)">配置复用 <span aria-hidden="true">↗</span></button><button class="detail-report-action" :disabled="detailLoading || !detail" @click="openReportForDetail">举报内容</button><span>复用会创建你的独立草稿，不会改动社区原件</span></div>
               </aside>
             </div>
+            <div class="detail-mobile-footer">
+              <button class="detail-primary-action" :disabled="detailLoading || !detail" @click="reuse(detail)">配置复用 <span aria-hidden="true">↗</span></button>
+              <button class="detail-report-action" :disabled="detailLoading || !detail" @click="openReportForDetail">举报内容</button>
+            </div>
           </div>
         </template>
       </div>
     </el-dialog>
-    <el-dialog v-model="reuseVisible" :title="`配置复用 · ${reuseDetail?.title || reuseTarget?.title || '社区内容'}`" width="min(760px, 94vw)" :close-on-click-modal="false">
+    <el-dialog v-model="reuseVisible" class="community-reuse-dialog" :title="`配置复用 · ${reuseDetail?.title || reuseTarget?.title || '社区内容'}`" width="min(760px, 94vw)" :close-on-click-modal="false">
       <div v-loading="reuseLoading" class="reuse-dialog">
         <p class="reuse-intro">复用会创建个人派生项目，不会修改社区原件。请先确认来源版本、授权条件，并选择要绑定给 AI 的个人资料。</p>
         <el-form label-position="top">
@@ -1389,4 +1395,115 @@ onMounted(() => {
 
 @media (max-width: 1023.98px) { .community-grid { grid-template-columns: repeat(2, 1fr); }.featured-case { grid-template-columns: 1fr; }.feature-visual { min-height: 240px; }.community-toolbar { flex-wrap: wrap; row-gap: 4px; }.toolbar-controls { flex-wrap: wrap; row-gap: 4px; } }
 @media (max-width: 767.98px) { .community-search-row { align-items: stretch; flex-direction: column; }.community-search-row :deep(.el-input) { width: 100%; flex-basis: auto; }.community-search-row>.submission-button { width: 100%; margin-left: 0; }.community-toolbar { align-items: stretch; flex-direction: column; }.tab-list { overflow-x: auto; -webkit-overflow-scrolling: touch; }.filters { padding-bottom: 12px; flex-wrap: wrap; }.community-grid { grid-template-columns: 1fr; }.community-card footer button { min-height: 44px; }.card-like { min-height: 40px; }.rank-list { grid-template-columns: 1fr; }.rank-section { padding: 16px; } }
+.mobile-filter-toggle,.detail-mobile-footer{display:none}
+@media (max-width: 767.98px) {
+  .community-page{display:flex;flex-direction:column;width:calc(100% - 32px);padding:12px 0 24px;}
+  .community-hero{order:1;padding:8px 0 12px;}
+  .community-hero>p{margin-bottom:7px;font-size:11px;}
+  .community-hero h1{max-width:24rem;font-size:clamp(24px,6.3vw,29px);line-height:1.24;letter-spacing:-.035em;}
+  .community-hero>span{margin-top:8px;font-size:12px;line-height:1.55;}
+  .community-search-row{display:grid;grid-template-columns:minmax(0,1fr) 88px;align-items:stretch;gap:8px;margin-top:15px;}
+  .community-search-row :deep(.el-input){width:100%;min-width:0;flex-basis:auto;}
+  .community-search-row>.submission-button{width:88px;min-width:0;min-height:42px;margin:0;padding:0 6px;font-size:13px;}
+  .community-hero :deep(.el-input__wrapper){min-width:0;padding-left:10px;}
+  .community-hero :deep(.el-input__inner){font-size:13px;}
+  .community-hero :deep(.community-search-button){width:52px;min-width:52px;height:42px;}
+  .community-toolbar{order:2;gap:0;margin-top:0;}
+  .tab-list{width:100%;gap:16px;scrollbar-width:none;}
+  .tab-list::-webkit-scrollbar{display:none;}
+  .tab-list button{flex:none;min-height:42px;padding:10px 2px;font-size:13px;white-space:nowrap;}
+  .toolbar-controls{width:100%;justify-content:space-between;gap:4px;padding:3px 0 8px;}
+  .toolbar-controls :deep(.el-button){min-height:34px;margin:0;padding:0 5px;font-size:12px;}
+  .mobile-filter-toggle{display:inline-flex;align-items:center;gap:5px;min-height:34px;padding:0 5px;border:0;border-radius:var(--zh-radius8);color:var(--zh-text-theme);background:transparent;cursor:pointer;font:600 12px var(--zh-font-family);white-space:nowrap;}
+  .mobile-filter-toggle span{font-size:17px;font-weight:400;line-height:1;}
+  .mobile-filter-toggle:focus-visible{outline:2px solid var(--zh-border-focus);outline-offset:2px;}
+  .filters{display:none;flex-basis:100%;width:100%;margin:4px 0 0;padding:12px;border:1px solid var(--zh-line-border);border-radius:var(--zh-radius10);background:var(--zh-background-light);}
+  .filters.mobile-open{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:8px;}
+  .filters :deep(.el-select){width:100%;min-width:0;}
+  .community-status-row{order:3;margin-top:10px;}
+  .community-error{order:4;}
+  .community-grid{order:5;grid-template-columns:1fr;gap:10px;margin-top:12px;}
+  .community-pagination{order:6;}
+  .rank-section{order:7;margin-top:24px;padding:15px;box-shadow:none;}
+  .featured-case{order:8;margin-top:20px;}
+  .source-note{order:9;text-align:left;line-height:1.5;}
+  .community-card{display:grid;grid-template-columns:38px minmax(0,1fr);column-gap:12px;padding:14px 15px;box-shadow:none;}
+  .card-top{grid-column:1/-1;}
+  .card-icon{grid-column:1;grid-row:2 / span 2;margin-top:12px;}
+  .community-card h3{grid-column:2;min-height:0;margin:11px 0 3px;font-size:15px;line-height:1.35;}
+  .community-card>p{grid-column:2;margin:0 0 11px;}
+  .community-card>p.card-description{grid-column:1/-1;min-height:0;margin:0 0 12px;}
+  .community-card footer{grid-column:1/-1;flex-wrap:wrap;min-width:0;padding-top:8px;}
+  .community-card footer button{min-height:36px;}
+  .card-actions{margin-left:auto;}
+  .rank-header{align-items:flex-start;}
+  .rank-controls{width:100%;justify-content:space-between;gap:6px;}
+  .rank-controls :deep(.el-segmented){max-width:100%;}
+  .rank-row{min-height:46px;}
+  .feature-visual{min-height:130px;}
+  .feature-copy{padding:18px;}
+  .feature-copy h2{margin:12px 0 7px;font-size:20px;}
+  .feature-copy dl{margin:14px 0;}
+}
+@media (max-width: 600px) {
+  :global(.community-collection-dialog.el-dialog),:global(.community-report-dialog.el-dialog),:global(.community-report-detail-dialog.el-dialog),:global(.community-reuse-dialog.el-dialog){box-sizing:border-box;display:flex;flex-direction:column;width:100vw!important;height:100dvh;max-height:100dvh;margin:0!important;overflow:hidden;padding:env(safe-area-inset-top, 0px) 0 0;border-radius:0;}
+  :global(.community-collection-dialog .el-dialog__header),:global(.community-report-dialog .el-dialog__header),:global(.community-report-detail-dialog .el-dialog__header),:global(.community-reuse-dialog .el-dialog__header){flex:none;margin:0;padding:17px 18px 13px;border-bottom:1px solid var(--zh-line-parting);}
+  :global(.community-collection-dialog .el-dialog__headerbtn),:global(.community-report-dialog .el-dialog__headerbtn),:global(.community-report-detail-dialog .el-dialog__headerbtn),:global(.community-reuse-dialog .el-dialog__headerbtn){top:calc(env(safe-area-inset-top, 0px) + 2px);right:6px;width:44px;height:44px;}
+  :global(.community-collection-dialog .el-dialog__title),:global(.community-report-dialog .el-dialog__title),:global(.community-report-detail-dialog .el-dialog__title),:global(.community-reuse-dialog .el-dialog__title){display:block;max-width:calc(100% - 36px);overflow:hidden;font-size:17px;font-weight:650;text-overflow:ellipsis;white-space:nowrap;}
+  :global(.community-collection-dialog .el-dialog__body),:global(.community-report-dialog .el-dialog__body),:global(.community-report-detail-dialog .el-dialog__body),:global(.community-reuse-dialog .el-dialog__body){flex:1;min-height:0;overflow-y:auto;padding:18px;-webkit-overflow-scrolling:touch;overscroll-behavior:contain;}
+  :global(.community-collection-dialog .el-dialog__body),:global(.community-report-dialog .el-dialog__body),:global(.community-report-detail-dialog .el-dialog__body){padding-bottom:calc(18px + env(safe-area-inset-bottom, 0px));}
+  :global(.community-reuse-dialog .el-dialog__footer){display:grid;grid-template-columns:auto minmax(0,1fr);gap:8px;flex:none;padding:10px 18px calc(10px + env(safe-area-inset-bottom));border-top:1px solid var(--zh-line-parting);}
+  :global(.community-reuse-dialog .el-dialog__footer .el-button){margin:0;min-height:44px;}
+  .collection-row,.report-row{align-items:flex-start;min-height:52px;}
+  .collection-item-link{padding:8px 0;white-space:normal;overflow-wrap:anywhere;}
+  .collection-row>.el-button,.collection-row>div,.report-row>.el-button{flex:none;}
+  .report-row span{padding:8px 0;white-space:normal;overflow-wrap:anywhere;}
+  .report-form-grid{grid-template-columns:1fr;}
+  .report-form-grid :deep(.el-form-item:nth-child(3)),.report-form-grid :deep(.el-form-item:nth-child(4)){grid-column:auto;}
+  .report-dialog>.el-button{width:100%;min-height:44px;}
+  .report-detail dl div{grid-template-columns:78px minmax(0,1fr);gap:10px;}
+  .reuse-section>header{align-items:flex-start;flex-direction:column;gap:4px;}
+  .reuse-resource-picker :deep(.el-checkbox__label){align-items:flex-start;flex-wrap:wrap;white-space:normal;overflow-wrap:anywhere;}
+  .reuse-meta-card strong{white-space:normal;overflow-wrap:anywhere;}
+}
+@media (max-width: 560px) {
+  :global(.community-detail-dialog.el-dialog){box-sizing:border-box;display:flex;flex-direction:column;width:100vw!important;height:100dvh;max-height:100dvh;margin:0!important;padding:env(safe-area-inset-top, 0px) 0 0;border:0;border-radius:0;}
+  :global(.community-detail-dialog.el-dialog .el-dialog__body){flex:1;min-height:0;overflow:hidden;}
+  .detail-dialog{height:100%;min-height:0;overflow:hidden;}
+  .detail-shell{display:flex;flex-direction:column;height:100%;min-height:0;}
+  .detail-header{position:relative;display:block;flex:none;padding:17px 18px 13px;}
+  .detail-heading{padding-right:30px;}
+  .detail-heading h2{display:-webkit-box;max-height:3.75em;margin:8px 0 6px;overflow:hidden;font-size:23px;line-height:1.25;-webkit-box-orient:vertical;-webkit-line-clamp:3;}
+  .detail-heading>p{display:-webkit-box;overflow:hidden;font-size:12px;line-height:1.5;-webkit-box-orient:vertical;-webkit-line-clamp:2;}
+  .detail-tags{gap:5px;margin-top:9px;font-size:11px;}
+  .detail-header-actions{gap:8px;margin-top:12px;}
+  .detail-favorite-button{width:auto;min-height:36px;padding:0 11px;}
+  .detail-favorite-button span{display:inline;}
+  .detail-close-button{position:absolute;top:13px;right:13px;width:38px;height:38px;}
+  .detail-layout{display:block;flex:1;min-height:0;overflow-y:auto;padding:14px 16px 22px;-webkit-overflow-scrolling:touch;overscroll-behavior:contain;}
+  .detail-main{gap:12px;}
+  .detail-content-section{padding:15px;}
+  .detail-section-heading{margin-bottom:12px;}
+  .detail-section-heading h3{font-size:17px;}
+  .detail-section-note{display:none;}
+  .detail-highlight{padding:15px;}
+  .detail-aside{gap:9px;margin-top:12px;}
+  .detail-aside-card{padding:15px;}
+  .detail-aside-actions{display:none;}
+  .detail-mobile-footer{display:grid;grid-template-columns:minmax(0,1fr) auto;align-items:center;gap:8px;flex:none;padding:10px 16px calc(10px + env(safe-area-inset-bottom));border-top:1px solid var(--zh-line-parting);background:var(--zh-background-pop);box-shadow:0 -8px 20px rgb(24 49 85 / 6%);}
+  .detail-mobile-footer .detail-primary-action,.detail-mobile-footer .detail-report-action{min-height:44px;}
+  .detail-mobile-footer .detail-report-action{width:auto;padding:0 8px;}
+}
+@media (max-width: 700px) {
+  :global(.community-submission-dialog.el-dialog){box-sizing:border-box;display:flex;flex-direction:column;height:100dvh;max-height:100dvh;padding:env(safe-area-inset-top, 0px) 0 0;}
+  :global(.community-submission-dialog .el-dialog__body){flex:1;min-height:0;overflow:hidden;}
+  :global(.community-submission-dialog .el-dialog__footer){flex:none;padding-bottom:calc(12px + env(safe-area-inset-bottom));}
+  .submission-dialog{display:flex;flex-direction:column;height:100%;min-height:0;}
+  .submission-header{flex:none;padding:16px 18px 13px;}
+  .submission-heading h2{font-size:22px;}
+  .submission-heading p{font-size:12px;line-height:1.45;}
+  .submission-layout{flex:1;min-height:0;max-height:none;overflow-y:auto;padding:14px 16px 22px;-webkit-overflow-scrolling:touch;overscroll-behavior:contain;}
+  .submission-section{padding:15px;}
+  .submission-aside-card{padding:14px;}
+}
 </style>

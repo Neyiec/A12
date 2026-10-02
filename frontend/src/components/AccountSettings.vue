@@ -319,6 +319,7 @@ onBeforeUnmount(() => clearInterval(contactTimer))
               type="button"
               class="pref-card"
               data-hover-lift
+              :aria-pressed="preferences.teachingStyle === style.value"
               :class="{ selected: preferences.teachingStyle === style.value }"
               @click="preferences.teachingStyle = style.value"
             >
@@ -344,12 +345,12 @@ onBeforeUnmount(() => clearInterval(contactTimer))
               type="button"
               class="pref-card pref-card--template"
               data-hover-lift
+              :aria-pressed="preferences.templateStyle === tpl.value"
               :class="{ selected: preferences.templateStyle === tpl.value }"
               @click="preferences.templateStyle = tpl.value"
             >
               <span class="pref-thumb">
                 <el-icon><component :is="iconMap[tpl.icon]" /></el-icon>
-                <span class="pref-thumb-tag">[模板缩略图]</span>
               </span>
               <span class="pref-card-copy">
                 <strong>{{ tpl.label }}</strong>
@@ -372,6 +373,7 @@ onBeforeUnmount(() => clearInterval(contactTimer))
               :key="form.value"
               type="button"
               class="pref-chip"
+              :aria-pressed="preferences.interactionForms.includes(form.value)"
               :class="{ on: preferences.interactionForms.includes(form.value) }"
               @click="toggleInteraction(form.value)"
             >
@@ -391,7 +393,7 @@ onBeforeUnmount(() => clearInterval(contactTimer))
 
     <el-card class="settings-card danger-zone" shadow="never"><div><h2>退出登录</h2><p>立即结束本浏览器中的服务端会话。</p></div><el-button plain type="danger" @click="signOut">退出当前账号</el-button></el-card>
 
-    <el-dialog v-model="passwordDialogVisible" title="修改登录密码" width="min(460px, calc(100vw - 24px))" align-center :close-on-click-modal="false">
+    <el-dialog v-model="passwordDialogVisible" title="修改登录密码" width="min(460px, calc(100vw - 24px))" align-center :close-on-click-modal="false" class="account-dialog">
       <p class="dialog-tip">修改成功后，请使用新密码完成后续登录。</p>
       <el-form ref="formRef" :model="form" :rules="rules" label-position="top" @submit.prevent="submit">
         <el-form-item label="当前密码" prop="current_password"><el-input v-model="form.current_password" :prefix-icon="Lock" type="password" show-password autocomplete="current-password" /></el-form-item>
@@ -401,7 +403,7 @@ onBeforeUnmount(() => clearInterval(contactTimer))
       <template #footer><el-button @click="passwordDialogVisible = false">取消</el-button><el-button type="primary" :loading="saving" @click="submit">确认修改</el-button></template>
     </el-dialog>
 
-    <el-dialog v-model="contactDialogVisible" title="修改个人信息" width="min(500px, calc(100vw - 24px))" align-center :close-on-click-modal="false">
+    <el-dialog v-model="contactDialogVisible" title="修改个人信息" width="min(500px, calc(100vw - 24px))" align-center :close-on-click-modal="false" class="account-dialog">
       <div class="verification-notice">
         <el-icon><Message /></el-icon>
         <div><strong>验证原邮箱</strong><p>为保护账号安全，验证码将发送至 {{ maskedEmail }}。</p></div>
@@ -540,10 +542,6 @@ onBeforeUnmount(() => clearInterval(contactTimer))
   background: var(--zh-background-light);
   font-size: 24px;
 }
-.pref-thumb-tag {
-  font-size: 11px; color: var(--zh-text-disabled);
-}
-
 /* 互动形式 芯片网格 */
 .pref-chip-grid {
   display: flex; flex-wrap: wrap; gap: 10px;
@@ -570,6 +568,8 @@ onBeforeUnmount(() => clearInterval(contactTimer))
   font-weight: 500;
 }
 .pref-chip .el-icon { font-size: 14px; }
+.pref-chip:focus-visible, .pref-card:focus-visible { outline: 2px solid var(--zh-line-theme); outline-offset: 2px; }
+.pref-chip:active, .pref-card:active { transform: scale(.98); }
 
 /* 操作区 */
 .pref-footer {
@@ -579,20 +579,54 @@ onBeforeUnmount(() => clearInterval(contactTimer))
 
 /* 响应式（断点已按 design.md §9.3 收敛：平板 1023.98 / 手机 767.98） */
 @media(max-width:1023.98px){
+  .settings-page { padding: 28px 16px; }
+  .settings-grid { grid-template-columns: 1fr; }
+  .danger-zone :deep(.el-card__body) { align-items: flex-start; flex-direction: column; }
   .pref-option-grid--5{grid-template-columns:repeat(3,minmax(0,1fr))}
   .pref-option-grid--4{grid-template-columns:repeat(2,minmax(0,1fr))}
 }
 @media(max-width:767.98px){
-  .pref-option-grid--5{grid-template-columns:repeat(2,minmax(0,1fr))}
-  .pref-option-grid--4{grid-template-columns:1fr}
-  .pref-card{padding:10px 12px}
+  .settings-page { max-width: none; padding: 20px 14px calc(100px + env(safe-area-inset-bottom)); }
+  .settings-heading { margin-bottom: 20px; }
+  .settings-heading h1 { margin: 5px 0 7px; font-size: 26px; letter-spacing: var(--zh-tracking-tight); }
+  .settings-heading p { font-size: 13px; line-height: 1.5; }
+  .settings-grid { gap: 12px; }
+  .settings-card :deep(.el-card__body) { padding: 18px; }
+  .card-title { gap: 10px; margin-bottom: 17px; }
+  .card-title h2, .danger-zone h2 { font-size: 16px; }
+  .card-title p, .danger-zone p { font-size: 12px; line-height: 1.5; }
+  .profile-summary { padding-bottom: 17px; }
+  .profile-summary :deep(.el-avatar) { width: 52px; height: 52px; font-size: 22px; }
+  dl > div { align-items: flex-start; padding-top: 12px; font-size: 13px; }
+  dd { max-width: 62%; }
   .card-title-with-action { flex-wrap: wrap; }
-  .card-action { width: 100%; margin-left: 34px; }
-  .security-action-row { align-items: stretch; flex-direction: column; }
-  .security-action-row .el-button { width: 100%; }
+  .card-action { width: 100%; min-height: 44px; margin: 4px 0 0; }
+  .security-action-row { align-items: stretch; flex-direction: column; gap: 14px; min-height: 0; padding: 15px; }
+  .security-action-row .el-button { width: 100%; min-height: 44px; margin: 0; }
+  .preferences-card, .danger-zone { margin-top: 12px; }
+  .preferences-body { gap: 22px; }
+  .pref-option-grid--5 { grid-template-columns: 1fr; gap: 8px; }
+  .pref-option-grid--4 { grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 8px; }
+  .pref-card { min-height: 60px; padding: 10px 12px; }
+  .pref-card-copy strong { font-size: 13px; }
+  .pref-card-copy small { overflow: visible; text-overflow: clip; white-space: normal; }
+  .pref-card--template { min-height: 0; padding: 0; }
+  .pref-card--template .pref-card-copy { padding: 0 10px 11px; }
+  .pref-thumb { height: 68px; font-size: 22px; }
+  .pref-chip-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 8px; }
+  .pref-chip { justify-content: center; min-height: 44px; padding: 8px 10px; }
+  .pref-footer { flex-direction: column; align-items: stretch; gap: 4px; padding-top: 2px; }
+  .pref-footer .el-button { width: 100%; min-height: 44px; margin: 0; }
+  .danger-zone :deep(.el-card__body) { gap: 14px; }
+  .danger-zone .el-button { width: 100%; min-height: 44px; margin: 0; }
   .verification-code-row { grid-template-columns: 1fr; }
-  .verification-code-row .el-button { width: 100%; }
+  .verification-code-row .el-button { width: 100%; min-height: 44px; margin: 0; }
+  :global(.account-dialog.el-dialog) { display: flex; flex-direction: column; width: calc(100vw - 20px) !important; max-height: calc(100dvh - 20px - env(safe-area-inset-top) - env(safe-area-inset-bottom)); margin: calc(10px + env(safe-area-inset-top)) auto calc(10px + env(safe-area-inset-bottom)) !important; border-radius: 16px; }
+  :global(.account-dialog .el-dialog__header) { flex: none; padding: 17px 16px 12px; }
+  :global(.account-dialog .el-dialog__body) { min-height: 0; overflow-y: auto; padding: 12px 16px; overscroll-behavior: contain; }
+  :global(.account-dialog .el-dialog__footer) { display: grid; flex: none; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 8px; padding: 12px 16px calc(14px + env(safe-area-inset-bottom)); border-top: 1px solid var(--zh-line-parting); }
+  :global(.account-dialog .el-dialog__footer .el-button) { width: 100%; min-height: 44px; margin: 0; }
+  :global(.account-dialog .el-input__inner) { font-size: 16px; }
 }
 
-@media(max-width:1023.98px){.settings-page{padding:28px 16px}.settings-grid{grid-template-columns:1fr}.danger-zone :deep(.el-card__body){align-items:flex-start;flex-direction:column}}
 </style>
