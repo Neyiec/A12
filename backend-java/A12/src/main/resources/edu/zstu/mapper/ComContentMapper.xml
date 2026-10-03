@@ -13,10 +13,9 @@
         <result column="status" property="status"/><result column="is_top" property="is_top"/>
         <result column="view_count" property="view_count"/><result column="use_count" property="use_count"/>
         <result column="like_count" property="like_count"/><result column="favorite_count" property="favorite_count"/>
-        <result column="liked" property="liked"/>
         <result column="created_at" property="created_at"/><result column="updated_at" property="updated_at"/>
     </resultMap>
-    <sql id="Base_Columns">id, content_type, author_id, title, description, subject, grade, lesson_type, keywords, content_data, input_variables, example_effect, version, version_history, license, status, is_top, view_count, use_count, created_at, updated_at</sql>
+    <sql id="Base_Columns">id, content_type, author_id, title, description, subject, grade, lesson_type, keywords, content_data, input_variables, example_effect, version, version_history, license, status, is_top, view_count, use_count, like_count, favorite_count, created_at, updated_at</sql>
     <select id="findPptIndexCandidates" resultMap="BaseResultMap">
         SELECT <include refid="Base_Columns"/> FROM com_content
         WHERE content_type = 'ppt' AND id &gt; #{afterId} ORDER BY id LIMIT #{limit}
@@ -29,10 +28,10 @@
     <insert id="insert" useGeneratedKeys="true" keyProperty="id">
         INSERT INTO com_content(content_type, author_id, title, description, subject, grade, lesson_type, keywords, content_data,
                                 input_variables, example_effect, version, version_history, license,
-                                status, is_top, view_count, use_count, created_at, updated_at)
+                                status, is_top, view_count, use_count, like_count, favorite_count, created_at, updated_at)
         VALUES(#{content_type}, #{author_id}, #{title}, #{description}, #{subject}, #{grade}, #{lesson_type}, #{keywords}, #{content_data},
                #{input_variables}, #{example_effect}, #{version}, #{version_history}, #{license},
-               #{status}, #{is_top}, #{view_count}, #{use_count}, NOW(), NOW())
+               #{status}, #{is_top}, #{view_count}, #{use_count}, #{like_count}, #{favorite_count}, NOW(), NOW())
     </insert>
     <update id="update">
         UPDATE com_content <set>
@@ -49,59 +48,69 @@
         <if test="is_top != null">is_top = #{is_top},</if><if test="version != null">version = #{version},</if>
         <if test="version_history != null">version_history = #{version_history},</if>
         <if test="view_count != null">view_count = #{view_count},</if><if test="use_count != null">use_count = #{use_count},</if>
+        <if test="like_count != null">like_count = #{like_count},</if><if test="favorite_count != null">favorite_count = #{favorite_count},</if>
         updated_at = NOW()</set> WHERE id = #{id}
     </update>
     <update id="incrementViewCount">UPDATE com_content SET view_count = view_count + 1 WHERE id = #{id}</update>
     <update id="incrementUseCount">UPDATE com_content SET use_count = use_count + 1 WHERE id = #{id}</update>
     <update id="incrementViewCountBy">UPDATE com_content SET view_count = view_count + #{delta} WHERE id = #{id}</update>
     <update id="incrementUseCountBy">UPDATE com_content SET use_count = use_count + #{delta} WHERE id = #{id}</update>
+    <!-- GREATEST 下限保护：并发取消点赞时计数不减为负 -->
+    <update id="incrementLikeCountBy">UPDATE com_content SET like_count = GREATEST(like_count + #{delta}, 0) WHERE id = #{id}</update>
+    <update id="incrementFavoriteCountBy">UPDATE com_content SET favorite_count = GREATEST(favorite_count + #{delta}, 0) WHERE id = #{id}</update>
     <select id="searchPublic" resultMap="BaseResultMap">
-        SELECT c.*, COALESCE(s.like_count, 0) AS like_count,
-               COALESCE(s.favorite_count, 0) AS favorite_count,
-               <choose><when test="viewer_id != null">
-                   EXISTS(SELECT 1 FROM com_interaction mine WHERE mine.user_id = #{viewer_id}
-                          AND mine.action_type = 'like' AND mine.target_id = c.id) AS liked
-               </when><otherwise>0 AS liked</otherwise></choose>
+        SELECT c.* FROM com_content c
+        <if test="window">
+            LEFT JOIN (
+                SELECT target_id,
+                       SUM(CASE WHEN action_type = 'favorite' THEN 1 ELSE 0 END) AS fav_cnt,
+                       SUM(CASE WHEN action_type = 'derivation' THEN 1 ELSE 0 END) AS use_cnt
+                FROM com_interaction
+                WHERE action_type IN ('favorite', 'derivation') AND created_at &gt;= #{since}
+                GROUP BY target_id
+            ) stat ON stat.target_id = c.id
+            LEFT JOIN (
+                SELECT target_id, COUNT(*) AS like_cnt
+                FROM com_like
+                WHERE created_at &gt;= #{since}
+                GROUP BY target_id
+            ) lik ON lik.target_id = c.id
+        </if>
+        WHERE c.status = 'public'
+        <if test="dto.content_type != null and dto.content_type != ''">AND c.content_type = #{dto.content_type}</if>
+        <if test="dto.subject != null and dto.subject != ''">AND c.subject = #{dto.subject}</if>
+        <if test="dto.grade != null and dto.grade != ''">AND c.grade = #{dto.grade}</if>
+        <if test="dto.keyword != null and dto.keyword != ''">AND (c.title LIKE CONCAT('%',#{dto.keyword},'%') OR c.description LIKE CONCAT('%',#{dto.keyword},'%') OR c.keywords LIKE CONCAT('%',#{dto.keyword},'%') OR c.lesson_type LIKE CONCAT('%',#{dto.keyword},'%'))</if>
+        <!-- orderClause 由 ServiceImpl 白名单拼装（is_top/like_count/favorite_count/use_count/聚合别名），无注入面 -->
+        ORDER BY ${orderClause}
+    </select>
+    <!-- 榜单候选：窗口内互动聚合，互动总数达阈值，按热度分降序（分数公式须与 ServiceImpl 一致） -->
+    <select id="selectRankCandidates" resultType="map">
+        SELECT c.id AS id,
+               COALESCE(lik.like_cnt, 0) AS like_cnt,
+               COALESCE(stat.fav_cnt, 0) AS fav_cnt,
+               COALESCE(stat.use_cnt, 0) AS use_cnt,
+               COALESCE(stat.view_cnt, 0) AS view_cnt
         FROM com_content c
         LEFT JOIN (
+            SELECT target_id, COUNT(*) AS like_cnt
+            FROM com_like WHERE created_at &gt;= #{since}
+            GROUP BY target_id
+        ) lik ON lik.target_id = c.id
+        LEFT JOIN (
             SELECT target_id,
-                   SUM(CASE WHEN action_type = 'like' THEN 1 ELSE 0 END) AS like_count,
-                   SUM(CASE WHEN action_type = 'favorite' THEN 1 ELSE 0 END) AS favorite_count,
-                   SUM(CASE WHEN action_type = 'like' AND created_at &gt;= DATE_SUB(NOW(), INTERVAL 7 DAY) THEN 1 ELSE 0 END) AS week_likes,
-                   SUM(CASE WHEN action_type = 'favorite' AND created_at &gt;= DATE_SUB(NOW(), INTERVAL 7 DAY) THEN 1 ELSE 0 END) AS week_favorites,
-                   SUM(CASE WHEN action_type = 'derivation' AND created_at &gt;= DATE_SUB(NOW(), INTERVAL 7 DAY) THEN 1 ELSE 0 END) AS week_uses,
-                   SUM(CASE WHEN action_type = 'like' AND created_at &gt;= DATE_SUB(NOW(), INTERVAL 30 DAY) THEN 1 ELSE 0 END) AS month_likes,
-                   SUM(CASE WHEN action_type = 'favorite' AND created_at &gt;= DATE_SUB(NOW(), INTERVAL 30 DAY) THEN 1 ELSE 0 END) AS month_favorites,
-                   SUM(CASE WHEN action_type = 'derivation' AND created_at &gt;= DATE_SUB(NOW(), INTERVAL 30 DAY) THEN 1 ELSE 0 END) AS month_uses
-            FROM com_interaction WHERE action_type IN ('like', 'favorite', 'derivation') GROUP BY target_id
-        ) s ON s.target_id = c.id
-        WHERE c.status = 'public'
-        <if test="content_type != null and content_type != ''">AND c.content_type = #{content_type}</if>
-        <if test="subject != null and subject != ''">AND c.subject = #{subject}</if>
-        <if test="grade != null and grade != ''">AND c.grade = #{grade}</if>
-        <if test="keyword != null and keyword != ''">
-            AND (c.title LIKE CONCAT('%',#{keyword},'%') OR c.description LIKE CONCAT('%',#{keyword},'%')
-                 OR c.keywords LIKE CONCAT('%',#{keyword},'%') OR c.lesson_type LIKE CONCAT('%',#{keyword},'%'))
-        </if>
-        <choose>
-            <when test="sort == 'likes'">ORDER BY COALESCE(s.like_count, 0) DESC, c.id DESC</when>
-            <when test="sort == 'favorites'">ORDER BY COALESCE(s.favorite_count, 0) DESC, c.id DESC</when>
-            <when test="sort == 'uses'">ORDER BY c.use_count DESC, c.id DESC</when>
-            <when test="sort == 'newest'">ORDER BY c.created_at DESC, c.id DESC</when>
-            <when test="sort == 'hot' and period == 'month'">
-                ORDER BY (COALESCE(s.month_uses, 0) * 4 + COALESCE(s.month_favorites, 0) * 3 + COALESCE(s.month_likes, 0) * 2) DESC, c.id DESC
-            </when>
-            <when test="sort == 'hot'">
-                ORDER BY (COALESCE(s.week_uses, 0) * 4 + COALESCE(s.week_favorites, 0) * 3 + COALESCE(s.week_likes, 0) * 2) DESC, c.id DESC
-            </when>
-            <otherwise>
-                ORDER BY
-                <if test="keyword != null and keyword != ''">CASE WHEN c.title LIKE CONCAT('%',#{keyword},'%') THEN 1 ELSE 0 END DESC,</if>
-                c.is_top DESC,
-                (LOG(1 + c.use_count) * 4 + LOG(1 + COALESCE(s.favorite_count, 0)) * 3 + LOG(1 + COALESCE(s.like_count, 0)) * 2) DESC,
-                c.updated_at DESC, c.id DESC
-            </otherwise>
-        </choose>
+                   SUM(CASE WHEN action_type = 'favorite' THEN 1 ELSE 0 END) AS fav_cnt,
+                   SUM(CASE WHEN action_type = 'derivation' THEN 1 ELSE 0 END) AS use_cnt,
+                   SUM(CASE WHEN action_type = 'view' THEN 1 ELSE 0 END) AS view_cnt
+            FROM com_interaction
+            WHERE action_type IN ('favorite', 'derivation', 'view') AND created_at &gt;= #{since}
+            GROUP BY target_id
+        ) stat ON stat.target_id = c.id
+        WHERE c.status = 'public' AND c.content_type = #{contentType}
+          AND (COALESCE(lik.like_cnt, 0) + COALESCE(stat.fav_cnt, 0) + COALESCE(stat.use_cnt, 0)) &gt;= #{threshold}
+        ORDER BY (COALESCE(lik.like_cnt, 0) * 3 + COALESCE(stat.fav_cnt, 0) * 2
+                  + COALESCE(stat.use_cnt, 0) * 4 + COALESCE(stat.view_cnt, 0) * 0.2) DESC
+        LIMIT #{limit}
     </select>
     <select id="findByAuthorAndStatus" resultMap="BaseResultMap">
         SELECT <include refid="Base_Columns"/> FROM com_content

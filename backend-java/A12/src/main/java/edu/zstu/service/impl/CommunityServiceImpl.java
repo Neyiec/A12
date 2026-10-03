@@ -9,9 +9,11 @@ import edu.zstu.dto.*;
 import edu.zstu.entity.Adm_Audit;
 import edu.zstu.entity.Com_Content;
 import edu.zstu.entity.Com_Interaction;
+import edu.zstu.entity.Com_Like;
 import edu.zstu.mapper.AdmAuditMapper;
 import edu.zstu.mapper.ComContentMapper;
 import edu.zstu.mapper.ComInteractionMapper;
+import edu.zstu.mapper.ComLikeMapper;
 import edu.zstu.service.BusinessLogService;
 import edu.zstu.service.CommunityService;
 import edu.zstu.service.CommunityReviewEventPublisher;
@@ -19,11 +21,14 @@ import edu.zstu.service.ProjectService;
 import edu.zstu.utils.CurrentHolder;
 import edu.zstu.utils.PageResult;
 import edu.zstu.utils.RedisCacheUtil;
+import edu.zstu.utils.RedisRateLimiter;
 import edu.zstu.vo.AuditVO;
 import edu.zstu.vo.ContentVO;
 import edu.zstu.vo.ProjectVO;
+import edu.zstu.vo.RankItemVO;
 import edu.zstu.vo.RecentViewVO;
 import lombok.extern.slf4j.Slf4j;
+import org.springframework.dao.DuplicateKeyException;
 import org.springframework.data.redis.core.StringRedisTemplate;
 import org.springframework.data.redis.core.ZSetOperations;
 import org.springframework.scheduling.annotation.Scheduled;
@@ -42,62 +47,90 @@ public class CommunityServiceImpl implements CommunityService {
 
     private static final long COUNTER_FLUSH_THRESHOLD = 20;
 
+    // ---------- 功能11：点赞/排序/榜单常量 ----------
+    /** 榜单热度权重：like×3 + favorite×2 + reuse×4 + view×0.2（复用成本最高权重最大） */
+    private static final double WEIGHT_LIKE = 3.0;
+    private static final double WEIGHT_FAVORITE = 2.0;
+    private static final double WEIGHT_REUSE = 4.0;
+    private static final double WEIGHT_VIEW = 0.2;
+    /** 榜单入选门槛：窗口内点赞+收藏+复用总数 */
+    private static final int HOT_THRESHOLD = 5;
+    /** 榜单候选上限（ZSET 成员规模） */
+    private static final int RANK_CANDIDATE_LIMIT = 100;
+    /** 榜单返回条数上限 */
+    private static final int RANK_LIMIT_CAP = 50;
+    /** 点赞防刷：用户每分钟点赞上限 + 单内容操作冷却 */
+    private static final int LIKE_PER_MINUTE_LIMIT = 20;
+    private static final Duration LIKE_COOLDOWN = Duration.ofSeconds(2);
+    /** 榜单聚合覆盖的内容类型与时间窗口 */
+    private static final List<String> RANK_CONTENT_TYPES = List.of("skill", "lesson_case");
+    private static final List<String> RANK_PERIODS = List.of("day", "week", "month");
+    /** 排序白名单：sort_by 与 period 的合法取值 */
+    private static final List<String> SORT_BY_WHITELIST = List.of("like", "favorite", "use");
+    private static final List<String> PERIOD_WHITELIST = List.of("day", "week", "month", "all");
+
     private final ComContentMapper contentMapper;
     private final ComInteractionMapper interactionMapper;
+    private final ComLikeMapper comLikeMapper;
     private final AdmAuditMapper auditMapper;
     private final ProjectService projectService;
     private final BusinessLogService businessLogService;
     private final RedisCacheUtil redisCacheUtil;
+    private final RedisRateLimiter rateLimiter;
     private final StringRedisTemplate redisTemplate;
     private final ObjectMapper objectMapper;
     private final CommunityReviewEventPublisher reviewEvents;
 
     public CommunityServiceImpl(ComContentMapper contentMapper, ComInteractionMapper interactionMapper,
-                                AdmAuditMapper auditMapper, ProjectService projectService,
+                                ComLikeMapper comLikeMapper, AdmAuditMapper auditMapper,
+                                ProjectService projectService,
                                 BusinessLogService businessLogService, RedisCacheUtil redisCacheUtil,
+                                RedisRateLimiter rateLimiter,
                                 StringRedisTemplate redisTemplate,
                                 ObjectMapper objectMapper, CommunityReviewEventPublisher reviewEvents) {
         this.contentMapper = contentMapper;
         this.interactionMapper = interactionMapper;
+        this.comLikeMapper = comLikeMapper;
         this.auditMapper = auditMapper;
         this.projectService = projectService;
         this.businessLogService = businessLogService;
         this.redisCacheUtil = redisCacheUtil;
+        this.rateLimiter = rateLimiter;
         this.redisTemplate = redisTemplate;
         this.objectMapper = objectMapper;
         this.reviewEvents = reviewEvents;
     }
 
+    /**
+     * 功能11：公开内容检索（缓存整体分页结果；liked 点赞态按用户在缓存外注入，避免污染共享缓存）
+     */
     @Override
-    public PageResult<ContentVO> listItems(ContentQueryDTO dto) {
+    public PageResult<ContentVO> listItems(ContentQueryDTO dto, Integer userId) {
         if (dto == null) throw new RuntimeException("查询条件不能为空");
-        if (!Set.of("recommended", "newest", "likes", "favorites", "uses", "hot").contains(String.valueOf(dto.getSort()))) {
-            dto.setSort("recommended");
-        }
-        dto.setPeriod("month".equals(dto.getPeriod()) ? "month" : "week");
-        dto.setViewer_id(CurrentHolder.getCurrentId());
-        log.info("listItems contentType={}, subject={}, grade={}, status={}, keyword={}, page={}, size={}", dto.getContent_type(), dto.getSubject(), dto.getGrade(), dto.getStatus(), dto.getKeyword(), dto.getPage(), dto.getSize());
-        return redisCacheUtil.getOrLoad(publicListKey(dto),
+        log.info("listItems contentType={}, subject={}, grade={}, status={}, keyword={}, sortBy={}, period={}, page={}, size={}",
+                dto.getContent_type(), dto.getSubject(), dto.getGrade(), dto.getStatus(), dto.getKeyword(),
+                dto.getSort_by(), dto.getPeriod(), dto.getPage(), dto.getSize());
+        SortSpec spec = resolveSortSpec(dto);
+        PageResult<ContentVO> page = redisCacheUtil.getOrLoad(publicListKey(dto),
                 new com.fasterxml.jackson.core.type.TypeReference<PageResult<ContentVO>>() {},
-                Duration.ofMinutes(3), () -> {
+                spec.window() ? Duration.ofMinutes(1) : Duration.ofMinutes(3), () -> {
                     PageHelper.startPage(dto.getPage(), dto.getSize());
-                    List<Com_Content> list = contentMapper.searchPublic(dto);
+                    List<Com_Content> list = contentMapper.searchPublic(dto, spec.orderClause(), spec.window(), spec.since());
                     PageInfo<Com_Content> info = new PageInfo<>(list);
                     return toContentPageResult(info, dto.getPage(), dto.getSize());
                 });
+        injectLikeState(page.getRecords(), userId);
+        return page;
     }
 
     @Override
-    public ContentVO getItem(Integer id) {
-        log.info("getItem itemId={}", id);
+    public ContentVO getItem(Integer id, Integer userId) {
+        log.info("getItem itemId={}, userId={}", id, userId);
         Com_Content content = requirePublicContent(id);
         ContentVO vo = toContentVO(content);
-        vo.setLike_count(interactionMapper.countByTargetAndAction(id, "like"));
-        vo.setFavorite_count(interactionMapper.countByTargetAndAction(id, "favorite"));
-        Integer viewerId = CurrentHolder.getCurrentId();
-        vo.setLiked(viewerId != null && interactionMapper.findByUserAndTarget(viewerId, "like", content.getContent_type(), id) != null);
         vo.setView_count(vo.getView_count() + pendingCounter(id, "view"));
         vo.setUse_count(vo.getUse_count() + pendingCounter(id, "use"));
+        vo.setLiked(userId != null && comLikeMapper.countByUserAndTarget(userId, content.getContent_type(), id) > 0);
         return vo;
     }
 
@@ -121,6 +154,9 @@ public class CommunityServiceImpl implements CommunityService {
             inter.setTarget_type(c.getContent_type());
             inter.setTarget_id(itemId);
             interactionMapper.insert(inter);
+            //功能11：维护收藏数冗余列并失效列表/详情缓存（列表需展示 favorite_count）
+            contentMapper.incrementFavoriteCountBy(itemId, 1);
+            evictContentCache(itemId);
             redisCacheUtil.deleteByPattern("community:favorites:" + userId + ":*");
             redisCacheUtil.deleteByPattern("community:public:*");
             log.info("favorite success userId={}, itemId={}", userId, itemId);
@@ -136,48 +172,95 @@ public class CommunityServiceImpl implements CommunityService {
         log.info("unfavorite userId={}, itemId={}", userId, itemId);
         Com_Content c = contentMapper.findById(itemId);
         if (c == null) throw new RuntimeException("内容不存在");
-        interactionMapper.deleteByUserAndTarget(userId, c.getContent_type(), itemId, "favorite");
+        int removed = interactionMapper.deleteByUserAndTarget(userId, c.getContent_type(), itemId, "favorite");
+        //功能11：仅真实删除时递减冗余列，避免并发重复取消导致负数
+        if (removed > 0) {
+            contentMapper.incrementFavoriteCountBy(itemId, -1);
+            evictContentCache(itemId);
+        }
         redisCacheUtil.deleteByPattern("community:favorites:" + userId + ":*");
         redisCacheUtil.deleteByPattern("community:public:*");
         businessLogService.record("operation", "community", "unfavorite", "content", itemId);
     }
 
+    /**
+     * 功能11：点赞。唯一索引 uk_user_target 兜底幂等（替代 Redis 防重锁）；
+     * 用户级每分钟上限 + 单内容冷却双层限流防刷；同步维护 like_count 冗余列并失效缓存。
+     */
     @Override
     @Transactional
     public void like(Integer itemId, Integer userId) {
-        Com_Content content = requirePublicContent(itemId);
-        String lockKey = "lock:community:like:" + userId + ":" + itemId;
-        Boolean locked = redisTemplate.opsForValue().setIfAbsent(lockKey, "1", Duration.ofSeconds(5));
-        if (!Boolean.TRUE.equals(locked)) return;
+        log.info("like userId={}, itemId={}", userId, itemId);
+        Com_Content c = requirePublicContent(itemId);
+        rateLimiter.assertWithinLimit("community:rl:like:" + userId, LIKE_PER_MINUTE_LIMIT,
+                Duration.ofMinutes(1), "点赞过于频繁，请稍后再试");
+        rateLimiter.assertCooldown("community:rl:like:" + userId + ":" + itemId, LIKE_COOLDOWN,
+                "操作太快啦，请稍后再试");
+        Com_Like like = new Com_Like();
+        like.setUser_id(userId);
+        like.setTarget_type(c.getContent_type());
+        like.setTarget_id(itemId);
         try {
-            if (interactionMapper.findByUserAndTarget(userId, "like", content.getContent_type(), itemId) != null) return;
-            Com_Interaction interaction = new Com_Interaction();
-            interaction.setUser_id(userId);
-            interaction.setAction_type("like");
-            interaction.setTarget_type(content.getContent_type());
-            interaction.setTarget_id(itemId);
-            interactionMapper.insert(interaction);
-            redisCacheUtil.deleteByPattern("community:public:*");
-            businessLogService.record("operation", "community", "like", "content", itemId);
-        } finally {
-            redisTemplate.delete(lockKey);
+            comLikeMapper.insert(like);
+        } catch (DuplicateKeyException e) {
+            //重复点赞：唯一索引拦截，幂等返回成功
+            log.info("like idempotent hit, userId={}, itemId={}", userId, itemId);
+            return;
         }
+        contentMapper.incrementLikeCountBy(itemId, 1);
+        evictContentCache(itemId);
+        log.info("like success userId={}, itemId={}", userId, itemId);
+        businessLogService.record("operation", "community", "like", "content", itemId);
     }
 
+    /**
+     * 功能11：取消点赞（幂等）。删除行数 &gt; 0 才递减计数，防并发重复取消减为负。
+     */
     @Override
     @Transactional
     public void unlike(Integer itemId, Integer userId) {
-        Com_Content content = contentMapper.findById(itemId);
-        if (content == null) throw new RuntimeException("内容不存在");
-        interactionMapper.deleteByUserAndTarget(userId, content.getContent_type(), itemId, "like");
-        redisCacheUtil.deleteByPattern("community:public:*");
-        businessLogService.record("operation", "community", "unlike", "content", itemId);
+        log.info("unlike userId={}, itemId={}", userId, itemId);
+        Com_Content c = contentMapper.findById(itemId);
+        if (c == null) throw new RuntimeException("内容不存在");
+        rateLimiter.assertCooldown("community:rl:like:" + userId + ":" + itemId, LIKE_COOLDOWN,
+                "操作太快啦，请稍后再试");
+        int removed = comLikeMapper.deleteByUserAndTarget(userId, c.getContent_type(), itemId);
+        if (removed > 0) {
+            contentMapper.incrementLikeCountBy(itemId, -1);
+            evictContentCache(itemId);
+            log.info("unlike success userId={}, itemId={}", userId, itemId);
+            businessLogService.record("operation", "community", "unlike", "content", itemId);
+        }
+    }
+
+    /**
+     * 功能11：热门榜单读取。优先 Redis ZSET（community:rank:{type}:{period}），
+     * ZSET 缺失/为空时降级为 DB 窗口聚合；下线内容读时过滤，不占名次。
+     */
+    @Override
+    public List<RankItemVO> listRankings(String contentType, String period, int limit, Integer userId) {
+        String type = normalizeContentType(contentType);
+        String p = isBlank(period) ? "week" : period.trim().toLowerCase();
+        if (!RANK_PERIODS.contains(p)) {
+            throw new RuntimeException("Unsupported period: " + period);
+        }
+        int capped = Math.min(Math.max(limit, 1), RANK_LIMIT_CAP);
+        log.info("listRankings type={}, period={}, limit={}", type, p, capped);
+        Set<ZSetOperations.TypedTuple<String>> tuples =
+                redisTemplate.opsForZSet().reverseRangeWithScores(rankKey(type, p), 0, capped - 1L);
+        List<Map.Entry<Integer, Double>> entries = (tuples == null || tuples.isEmpty())
+                ? rankFallback(type, windowStart(p), capped)
+                : tuples.stream()
+                        .<Map.Entry<Integer, Double>>map(t -> new AbstractMap.SimpleEntry<>(Integer.valueOf(t.getValue()),
+                                t.getScore() == null ? 0.0 : t.getScore()))
+                        .toList();
+        return buildRankItems(entries, userId);
     }
 
     @Override
     public PageResult<ContentVO> listFavorites(int page, int size, Integer userId) {
         log.info("listFavorites userId={}, page={}, size={}", userId, page, size);
-        return redisCacheUtil.getOrLoad("community:favorites:" + userId + ":p" + page + ":s" + size,
+        PageResult<ContentVO> result = redisCacheUtil.getOrLoad("community:favorites:" + userId + ":p" + page + ":s" + size,
                 new com.fasterxml.jackson.core.type.TypeReference<PageResult<ContentVO>>() {},
                 Duration.ofMinutes(3), () -> {
                     PageHelper.startPage(page, size);
@@ -190,6 +273,9 @@ public class CommunityServiceImpl implements CommunityService {
                             .toList();
                     return new PageResult<>(info.getTotal(), page, size, records);
                 });
+        //功能11：收藏列表也注入当前用户点赞态
+        injectLikeState(result.getRecords(), userId);
+        return result;
     }
 
     @Override
@@ -326,6 +412,8 @@ public class CommunityServiceImpl implements CommunityService {
         c.setStatus("draft");
         c.setView_count(0);
         c.setUse_count(0);
+        c.setLike_count(0);
+        c.setFavorite_count(0);
         c.setIs_top(0);
         contentMapper.insert(c);
         evictContentCache(c.getId());
@@ -521,6 +609,8 @@ public class CommunityServiceImpl implements CommunityService {
                 .filter(v -> v.getItem() != null && "public".equals(v.getItem().getStatus()))
                 .toList();
         redisTemplate.expire(recentViewsKey(userId), Duration.ofDays(30));
+        //功能11：最近浏览条目也注入当前用户点赞态
+        injectLikeState(records.stream().map(RecentViewVO::getItem).filter(Objects::nonNull).toList(), userId);
         return new PageResult<>(info.getTotal(), page, size, records);
     }
 
@@ -586,6 +676,181 @@ public class CommunityServiceImpl implements CommunityService {
     private int pendingCounter(Integer id, String type) {
         String raw = redisTemplate.opsForValue().get("community:counter:" + type + ":" + id);
         return raw == null ? 0 : Integer.parseInt(raw);
+    }
+
+    // ==================== 功能11：排序/榜单/点赞态辅助 ====================
+
+    /** 排序规格：orderClause（白名单拼装结果）+ 是否叠加窗口聚合 + 窗口起点 */
+    private record SortSpec(String orderClause, boolean window, LocalDateTime since) {}
+
+    /**
+     * 解析排序参数为 SQL 排序规格。sort_by/period 均做白名单校验，
+     * orderClause 只允许固定字面量与聚合别名，禁止任何用户输入直拼。
+     * 语义：无 sort_by=默认排序；sort_by+all=按冗余总量列；sort_by+day/week/month=窗口聚合排序。
+     */
+    private SortSpec resolveSortSpec(ContentQueryDTO dto) {
+        String legacySort = isBlank(dto.getSort()) ? "" : dto.getSort().trim().toLowerCase();
+        if (!legacySort.isEmpty() && !Set.of("recommended", "newest", "likes", "favorites", "uses", "hot").contains(legacySort)) {
+            throw new RuntimeException("Unsupported sort: " + dto.getSort());
+        }
+        String sortBy = isBlank(dto.getSort_by()) ? "" : dto.getSort_by().trim().toLowerCase();
+        String period = isBlank(dto.getPeriod()) ? "all" : dto.getPeriod().trim().toLowerCase();
+        if (sortBy.isEmpty()) {
+            sortBy = switch (legacySort) {
+                case "likes" -> "like";
+                case "favorites" -> "favorite";
+                case "uses" -> "use";
+                default -> "";
+            };
+        }
+        if ("hot".equals(legacySort) && "all".equals(period)) period = "week";
+        if (!sortBy.isEmpty() && !SORT_BY_WHITELIST.contains(sortBy)) {
+            throw new RuntimeException("Unsupported sort_by: " + dto.getSort_by());
+        }
+        if (!PERIOD_WHITELIST.contains(period)) {
+            throw new RuntimeException("Unsupported period: " + dto.getPeriod());
+        }
+        //未选择排序维度：保持原有默认排序（回归保障）
+        if (sortBy.isEmpty()) {
+            if ("newest".equals(legacySort)) return new SortSpec("c.created_at DESC, c.id DESC", false, null);
+            if ("hot".equals(legacySort)) return new SortSpec("(COALESCE(stat.use_cnt, 0) * 4 + COALESCE(stat.fav_cnt, 0) * 3 + COALESCE(lik.like_cnt, 0) * 2) DESC, c.id DESC", true, windowStart(period));
+            if ("recommended".equals(legacySort)) return new SortSpec("c.is_top DESC, (LOG(1 + c.use_count) * 4 + LOG(1 + c.favorite_count) * 3 + LOG(1 + c.like_count) * 2) DESC, c.updated_at DESC, c.id DESC", false, null);
+            return new SortSpec("is_top DESC, updated_at DESC", false, null);
+        }
+        String totalColumn = switch (sortBy) {
+            case "like" -> "like_count";
+            case "favorite" -> "favorite_count";
+            default -> "use_count"; //use
+        };
+        //全部时间段：按冗余总量列排序，无窗口聚合
+        if ("all".equals(period)) {
+            return new SortSpec("is_top DESC, " + totalColumn + " DESC, updated_at DESC", false, null);
+        }
+        //日/周/月：叠加窗口聚合子查询，按窗口内计数排序
+        String aggColumn = switch (sortBy) {
+            case "like" -> "COALESCE(lik.like_cnt, 0)";
+            case "favorite" -> "COALESCE(stat.fav_cnt, 0)";
+            default -> "COALESCE(stat.use_cnt, 0)"; //use
+        };
+        return new SortSpec("is_top DESC, " + aggColumn + " DESC, updated_at DESC", true, windowStart(period));
+    }
+
+    /**
+     * 批量注入当前用户点赞态：先按内容类型分组，再逐类型批量查询，避免循环单查。
+     * 共享缓存中 liked 恒为 false，本方法在缓存读取后调用。
+     */
+    private void injectLikeState(List<ContentVO> records, Integer userId) {
+        if (records == null || records.isEmpty()) return;
+        if (userId == null) {
+            records.forEach(v -> v.setLiked(false));
+            return;
+        }
+        Map<String, List<Integer>> idsByType = new LinkedHashMap<>();
+        for (ContentVO v : records) {
+            idsByType.computeIfAbsent(v.getContent_type(), k -> new ArrayList<>()).add(v.getId());
+        }
+        Set<Integer> likedIds = new HashSet<>();
+        for (Map.Entry<String, List<Integer>> entry : idsByType.entrySet()) {
+            likedIds.addAll(comLikeMapper.findLikedTargetIds(userId, entry.getKey(), entry.getValue()));
+        }
+        for (ContentVO v : records) {
+            v.setLiked(likedIds.contains(v.getId()));
+        }
+    }
+
+    /**
+     * 功能11：热门榜单定时聚合任务（每 10 分钟，错开 60s 计数 flush）。
+     * 整体重建 ZSET（先删后加）防脏数据累积；单类型/窗口失败不影响其余榜单。
+     */
+    @Scheduled(cron = "0 2/10 * * * *")
+    public void rebuildRankings() {
+        for (String type : RANK_CONTENT_TYPES) {
+            for (String period : RANK_PERIODS) {
+                try {
+                    rebuildRanking(type, period);
+                } catch (Exception e) {
+                    log.warn("rebuild community ranking failed, type={}, period={}", type, period, e);
+                }
+            }
+        }
+    }
+
+    /** 重建单个榜单 ZSET：key=community:rank:{type}:{period}，member=content_id，score=热度分 */
+    private void rebuildRanking(String type, String period) {
+        LocalDateTime since = windowStart(period);
+        List<Map<String, Object>> rows = contentMapper.selectRankCandidates(type, since, HOT_THRESHOLD, RANK_CANDIDATE_LIMIT);
+        String key = rankKey(type, period);
+        redisTemplate.delete(key);
+        if (rows.isEmpty()) {
+            //无达标内容：清掉旧榜，读接口走 DB 降级同样返回空
+            return;
+        }
+        for (Map<String, Object> row : rows) {
+            double score = hotScore(num(row, "like_cnt"), num(row, "fav_cnt"), num(row, "use_cnt"), num(row, "view_cnt"));
+            redisTemplate.opsForZSet().add(key, String.valueOf(((Number) row.get("id")).intValue()), score);
+        }
+        redisTemplate.expire(key, rankTtl(period));
+        log.info("rebuild community ranking done, key={}, members={}", key, rows.size());
+    }
+
+    /** ZSET 榜单读路径降级：直接 DB 窗口聚合（榜单键缺失/为空时） */
+    private List<Map.Entry<Integer, Double>> rankFallback(String type, LocalDateTime since, int limit) {
+        List<Map<String, Object>> rows = contentMapper.selectRankCandidates(type, since, HOT_THRESHOLD, limit);
+        List<Map.Entry<Integer, Double>> entries = new ArrayList<>();
+        for (Map<String, Object> row : rows) {
+            double score = hotScore(num(row, "like_cnt"), num(row, "fav_cnt"), num(row, "use_cnt"), num(row, "view_cnt"));
+            entries.add(new AbstractMap.SimpleEntry<>(((Number) row.get("id")).intValue(), score));
+        }
+        return entries;
+    }
+
+    /** 组装榜单 VO：逐条校验 status='public'（防下线内容经 ZSET 残留出榜） */
+    private List<RankItemVO> buildRankItems(List<Map.Entry<Integer, Double>> entries, Integer userId) {
+        List<RankItemVO> result = new ArrayList<>();
+        int rank = 1;
+        for (Map.Entry<Integer, Double> entry : entries) {
+            Com_Content c = contentMapper.findById(entry.getKey());
+            if (c == null || !"public".equals(c.getStatus())) continue;
+            ContentVO vo = toContentVO(c);
+            vo.setLiked(userId != null && comLikeMapper.countByUserAndTarget(userId, c.getContent_type(), entry.getKey()) > 0);
+            result.add(new RankItemVO(rank++, entry.getValue() == null ? 0.0 : entry.getValue(), vo));
+        }
+        return result;
+    }
+
+    /** 热度分公式：须与 ComContentMapper.selectRankCandidates 的 ORDER BY 表达式保持一致 */
+    private double hotScore(double likeCnt, double favCnt, double useCnt, double viewCnt) {
+        return likeCnt * WEIGHT_LIKE + favCnt * WEIGHT_FAVORITE + useCnt * WEIGHT_REUSE + viewCnt * WEIGHT_VIEW;
+    }
+
+    /** map 取数兜底（不同数据源数值类型不一致） */
+    private double num(Map<String, Object> row, String key) {
+        Object v = row.get(key);
+        return v instanceof Number n ? n.doubleValue() : 0.0;
+    }
+
+    /** 榜单 ZSET key */
+    private String rankKey(String type, String period) {
+        return "community:rank:" + type + ":" + period;
+    }
+
+    /** 榜单 TTL：窗口时长 + 1h 缓冲（重建任务每 10 分钟续期，TTL 仅兜底清理） */
+    private Duration rankTtl(String period) {
+        return switch (period) {
+            case "day" -> Duration.ofHours(25);
+            case "week" -> Duration.ofDays(8);
+            default -> Duration.ofDays(32); //month
+        };
+    }
+
+    /** 时间窗口起点：day/近1天、week/近7天、month/近30天，all 用于无窗口场景 */
+    private LocalDateTime windowStart(String period) {
+        return switch (period) {
+            case "day" -> LocalDateTime.now().minusDays(1);
+            case "week" -> LocalDateTime.now().minusDays(7);
+            case "month" -> LocalDateTime.now().minusDays(30);
+            default -> LocalDateTime.now().minusYears(10); //all：等效不设窗口
+        };
     }
 
     private Com_Content requirePublicContent(Integer id) {
@@ -722,7 +987,8 @@ public class CommunityServiceImpl implements CommunityService {
                 blankToAll(dto.getGrade()) + ":" +
                 blankToAll(dto.getStatus()) + ":" +
                 blankToAll(dto.getKeyword()) + ":" +
-                blankToAll(dto.getSort()) + ":" + blankToAll(dto.getPeriod()) + ":p" +
+                blankToAll(dto.getSort()) + ":" + blankToAll(dto.getSort_by()) + ":" +
+                blankToAll(dto.getPeriod()) + ":p" +
                 dto.getPage() + ":s" + dto.getSize();
     }
 

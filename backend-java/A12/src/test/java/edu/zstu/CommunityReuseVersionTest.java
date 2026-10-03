@@ -24,8 +24,8 @@ class CommunityReuseVersionTest {
     @Test
     void historicalVersionUsesItsOwnSnapshotInsteadOfCurrentSlides() {
         var service = new CommunityServiceImpl(mock(ComContentMapper.class), mock(ComInteractionMapper.class),
-                mock(AdmAuditMapper.class), mock(ProjectService.class), mock(BusinessLogService.class),
-                mock(RedisCacheUtil.class), mock(StringRedisTemplate.class), new ObjectMapper(),
+                mock(edu.zstu.mapper.ComLikeMapper.class), mock(AdmAuditMapper.class), mock(ProjectService.class), mock(BusinessLogService.class),
+                mock(RedisCacheUtil.class), mock(edu.zstu.utils.RedisRateLimiter.class), mock(StringRedisTemplate.class), new ObjectMapper(),
                 mock(CommunityReviewEventPublisher.class));
         Com_Content content = new Com_Content();
         content.setVersion(3);

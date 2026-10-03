@@ -2,6 +2,7 @@ import asyncio
 import base64
 import html
 import json
+import logging
 import re
 import uuid
 from typing import Any, AsyncIterator
@@ -22,6 +23,8 @@ from ..llm import LLMClient
 from ..models import InteractiveModuleGenerateRequest, OutlineGenerateRequest, OutlineUpdateRequest, PresentationGenerateRequest, PresentationModifyRequest, SlideModifyRequest
 from ..resources import build_rag_context
 from .template_store import DEFAULT_THEME, get_template
+
+logger = logging.getLogger("a12_ppt.presentation.generator")
 
 
 class PPTGenerator:
@@ -163,6 +166,10 @@ scaffolding, feedback_strategy。
         template_html = str(template.get("html_template") or "")
         missing_template = bool(template.get("_missing_template"))
         request_context = self._request_context(req)
+        rag_context = await self._collect_generation_rag_context(req)
+        if rag_context:
+            # 功能 2：临时上传/引用资料命中内容并入生成上下文（ constitution/逐页 brief 提示词均序列化 request_context）。
+            request_context["rag_context"] = rag_context
         selected_asset_policy, asset_policy_reason, asset_plan = await self._resolve_asset_plan(req, slides)
         for index, slide in enumerate(slides, 1):
             slide["asset_plan"] = asset_plan.get(str(index), {"type": "layout", "reason": "使用可编辑排版表达"})
@@ -968,6 +975,42 @@ preferred_format(html5|gif|mp4)、integration(ppt_video|static_link)、descripti
             "description": outline.get("summary"),
             "language": req.language,
         }
+
+    async def _collect_generation_rag_context(self, req: PresentationGenerateRequest) -> str:
+        """功能 2：临时上传/引用资料随 workspace_context 注入页面生成。
+
+        资料来源 = 显式 req.resource_ids + outline.workspace_context（resource_ids/resourceIds）；
+        res_xxx 临时资料命中 temp 分区，素材库 id 命中全局知识库（rag_search 内部分流）。
+        检索失败不阻断生成——仅返回空串。
+        """
+        outline = req.outline if isinstance(req.outline, dict) else {}
+        workspace_context = outline.get("workspace_context")
+        if not isinstance(workspace_context, dict):
+            workspace_context = {}
+        raw_ids = [
+            *(req.resource_ids or []),
+            *(workspace_context.get("resource_ids") or []),
+            *(workspace_context.get("resourceIds") or []),
+        ]
+        # 去重：payload.resource_ids 与 workspace_context 常为同一列表，重复会导致全文上下文双份注入
+        resource_ids = list(dict.fromkeys(
+            str(item).strip() for item in raw_ids if str(item or "").strip()
+        ))
+        if not resource_ids or not self.llm.available:
+            return ""
+        try:
+            from ..tools.rag import rag_search
+            query = "\n".join([
+                req.title or "",
+                str(outline.get("summary") or ""),
+                str(outline.get("subject") or ""),
+                str(outline.get("requirements") or ""),
+            ]).strip()
+            rag_result = await rag_search(resource_ids, query, limit=6000)
+            return str(rag_result.get("context") or "")
+        except Exception:
+            logger.warning("页面生成 RAG 上下文收集失败 title=%s", req.title, exc_info=True)
+            return ""
 
     def _resolve_asset_policy(
         self, req: PresentationGenerateRequest, slides: list[dict[str, Any]]

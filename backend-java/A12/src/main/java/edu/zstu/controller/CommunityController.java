@@ -8,9 +8,11 @@ import edu.zstu.utils.Result;
 import edu.zstu.vo.AuditVO;
 import edu.zstu.vo.ContentVO;
 import edu.zstu.vo.ProjectVO;
+import edu.zstu.vo.RankItemVO;
 import edu.zstu.vo.RecentViewVO;
 import org.springframework.web.bind.annotation.*;
 
+import java.util.List;
 import java.util.Map;
 
 /**
@@ -30,22 +32,61 @@ public class CommunityController {
     }
 
     /**
-     * API-53 搜索公开社区内容
+     * API-53 搜索公开社区内容（功能11 支持 sort_by/period 排序，登录可选以返回 liked 点赞态）
      */
     @GetMapping("/items")
     public Result<PageResult<ContentVO>> listItems(ContentQueryDTO dto) {
         try {
-            return Result.success(communityService.listItems(dto));
+            return Result.success(communityService.listItems(dto, CurrentHolder.getCurrentId()));
         } catch (RuntimeException e) { return Result.error(400, e.getMessage()); }
     }
 
     /**
-     * API-54 获取社区内容详情
+     * API-54 获取社区内容详情（登录可选以返回 liked 点赞态）
      */
     @GetMapping("/items/{id}")
     public Result<ContentVO> getItem(@PathVariable Integer id) {
         try {
-            return Result.success(communityService.getItem(id));
+            return Result.success(communityService.getItem(id, CurrentHolder.getCurrentId()));
+        } catch (RuntimeException e) { return Result.error(400, e.getMessage()); }
+    }
+
+    /**
+     * API-71 点赞社区内容（功能11，幂等；限流防刷）
+     */
+    @PutMapping("/items/{id}/like")
+    public Result<Void> like(@PathVariable Integer id) {
+        try {
+            Integer userId = CurrentHolder.getCurrentId();
+            if (userId == null) return Result.error(401, "未登录");
+            communityService.like(id, userId);
+            return Result.success();
+        } catch (RuntimeException e) { return Result.error(400, e.getMessage()); }
+    }
+
+    /**
+     * API-72 取消点赞（功能11，幂等）
+     */
+    @DeleteMapping("/items/{id}/like")
+    public Result<Void> unlike(@PathVariable Integer id) {
+        try {
+            Integer userId = CurrentHolder.getCurrentId();
+            if (userId == null) return Result.error(401, "未登录");
+            communityService.unlike(id, userId);
+            return Result.success();
+        } catch (RuntimeException e) { return Result.error(400, e.getMessage()); }
+    }
+
+    /**
+     * API-73 热门榜单（功能11，公开可读；content_type 必填，period=day/week/month 默认 week）
+     */
+    @GetMapping("/rankings")
+    public Result<List<RankItemVO>> rankings(
+            @RequestParam String content_type,
+            @RequestParam(defaultValue = "week") String period,
+            @RequestParam(defaultValue = "10") int limit) {
+        try {
+            return Result.success(communityService.listRankings(content_type, period, limit, CurrentHolder.getCurrentId()));
         } catch (RuntimeException e) { return Result.error(400, e.getMessage()); }
     }
 
@@ -71,26 +112,6 @@ public class CommunityController {
             Integer userId = CurrentHolder.getCurrentId();
             if (userId == null) return Result.error(401, "未登录");
             communityService.unfavorite(id, userId);
-            return Result.success();
-        } catch (RuntimeException e) { return Result.error(400, e.getMessage()); }
-    }
-
-    @PutMapping("/items/{id}/like")
-    public Result<Void> like(@PathVariable Integer id) {
-        try {
-            Integer userId = CurrentHolder.getCurrentId();
-            if (userId == null) return Result.error(401, "未登录");
-            communityService.like(id, userId);
-            return Result.success();
-        } catch (RuntimeException e) { return Result.error(400, e.getMessage()); }
-    }
-
-    @DeleteMapping("/items/{id}/like")
-    public Result<Void> unlike(@PathVariable Integer id) {
-        try {
-            Integer userId = CurrentHolder.getCurrentId();
-            if (userId == null) return Result.error(401, "未登录");
-            communityService.unlike(id, userId);
             return Result.success();
         } catch (RuntimeException e) { return Result.error(400, e.getMessage()); }
     }

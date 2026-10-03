@@ -2,12 +2,14 @@
 import { computed, ref } from 'vue'
 import { Aim, ArrowDown, ArrowLeft, Check, ChatDotRound, CircleCheck, DataAnalysis, DataBoard, Download, EditPen, FolderOpened, Grid, Headset, Histogram, MagicStick, Picture, SetUp, Share, VideoCamera, View } from '@element-plus/icons-vue'
 import WorkspaceToolButton from './WorkspaceToolButton.vue'
+import { subjectToolMenuOptions } from '../utils/subjectTool'
 
 const props = defineProps({
   title: { type: String, default: '未命名课件' },
   autosaveState: { type: String, default: '已保存' },
   projectId: { type: [String, Number], default: '' },
   workspaceMode: { type: String, default: 'ppt' },
+  mobileView: { type: String, default: 'chat' },
   isLocalDraft: { type: Boolean, default: false },
   modelValue: { type: String, default: '' },
   onlinePreviewLoading: { type: Boolean, default: false },
@@ -45,7 +47,7 @@ const tools = [
   { id: 'video', label: '视频', icon: VideoCamera },
   { id: 'table', label: '表格', icon: DataAnalysis },
   { id: 'h5', label: 'H5 组件', icon: MagicStick },
-  { id: 'subject', label: '学科', icon: Aim || SetUp },
+  { id: 'subject', label: '学科组件', icon: Aim || SetUp },
 ]
 const shapeOptions = [
   { shapeKind: 'rectangle', label: '矩形' },
@@ -56,18 +58,35 @@ const shapeOptions = [
 ]
 const selectedShapeKind = ref('rectangle')
 const shapeMenuOpen = ref(false)
+const selectedSubjectType = ref('geometry')
+const subjectMenuOpen = ref(false)
 const compactToolsOpen = ref(false)
 const selectedShape = computed(() => shapeOptions.find((item) => item.shapeKind === selectedShapeKind.value) || shapeOptions[0])
+const subjectMarks = {
+  math_formula: 'ƒx',
+  chinese_tianzige: '田',
+  english_four_line: 'Aa',
+  chemical_formula: 'CH',
+  mermaid_diagram: '→',
+  geometry: '△',
+}
+const subjects = subjectToolMenuOptions.map((item) => ({ ...item, mark: subjectMarks[item.value] || '·' }))
 const workspaceModes = [
   { value: 'ppt', label: 'PPT 课件' },
   { value: 'document', label: '教学案' },
 ]
 const workspaceModeLabel = computed(() => workspaceModes.find((item) => item.value === props.workspaceMode)?.label || 'PPT 课件')
 const projectLabel = computed(() => props.projectId || '本地草稿')
+const compactAutosaveState = computed(() => props.autosaveState.split(' · ')[0])
 const selectTool = (tool) => {
   if (tool.id === 'h5') {
     emit('update:modelValue', '')
     emit('generate-h5')
+    return
+  }
+  if (tool.id === 'chart' || tool.id === 'table') {
+    emit('update:modelValue', tool.id)
+    emit('tool-select', { ...tools.find((item) => item.id === 'subject'), label: tool.label, subjectType: tool.id })
     return
   }
   emit('update:modelValue', tool.id)
@@ -79,6 +98,12 @@ const selectShape = (shapeKind) => {
     selectedShapeKind.value = shapeKind
     selectTool({ ...tools.find((item) => item.id === 'shape'), ...shape })
   }
+}
+const selectSubject = (subjectType) => {
+  const subject = subjects.find((item) => item.value === subjectType)
+  if (!subject) return
+  selectedSubjectType.value = subjectType
+  selectTool({ ...tools.find((item) => item.id === 'subject'), ...subject, subjectType })
 }
 
 const goBack = () => emit('back')
@@ -100,10 +125,10 @@ const toggleCompactTools = () => { compactToolsOpen.value = !compactToolsOpen.va
         <el-icon><ArrowLeft /></el-icon>
       </el-button>
       <div>
-        <strong>{{ title }} · {{ workspaceModeLabel }}</strong>
+        <strong>{{ title }}<small class="toolbar-mode-suffix"> · {{ workspaceModeLabel }}</small></strong>
         <span>
           <el-icon v-if="!autosaveState.includes('失败') && !autosaveState.includes('待保存') && !saving"><CircleCheck /></el-icon>
-          {{ autosaveState }} · {{ isLocalDraft ? '未保存为项目' : `项目 ${projectLabel}` }}
+          <b class="toolbar-status-full">{{ autosaveState }}</b><b class="toolbar-status-short">{{ compactAutosaveState }}</b><small class="toolbar-project-suffix"> · {{ isLocalDraft ? '未保存为项目' : `项目 ${projectLabel}` }}</small>
         </span>
       </div>
     </div>
@@ -141,13 +166,40 @@ const toggleCompactTools = () => { compactToolsOpen.value = !compactToolsOpen.va
               </el-dropdown-menu>
             </template>
           </el-dropdown>
+          <el-dropdown v-else-if="tool.id === 'subject'" trigger="click" @command="selectSubject" @visible-change="subjectMenuOpen = $event">
+            <WorkspaceToolButton
+              :icon="tool.icon"
+              :label="tool.label"
+              :active="modelValue === tool.id"
+              :trailing-icon="ArrowDown"
+              aria-haspopup="menu"
+              :aria-expanded="subjectMenuOpen"
+            />
+            <template #dropdown>
+              <el-dropdown-menu class="subject-picker-menu">
+                <el-dropdown-item
+                  v-for="subject in subjects"
+                  :key="subject.value"
+                  :command="subject.value"
+                  :class="{ 'is-subject-selected': selectedSubjectType === subject.value }"
+                  :aria-current="selectedSubjectType === subject.value ? 'true' : undefined"
+                >
+                  <span class="subject-picker-option">
+                    <i aria-hidden="true">{{ subject.mark }}</i>
+                    <span>{{ subject.label }}</span>
+                  </span>
+                </el-dropdown-item>
+              </el-dropdown-menu>
+            </template>
+          </el-dropdown>
           <WorkspaceToolButton v-else :icon="tool.icon" :label="tool.label" :active="modelValue === tool.id" @click="selectTool(tool)" />
         </template>
     </nav>
     </div>
 
     <div class="toolbar-actions">
-      <el-button v-if="!isLocalDraft && autosaveState.includes('失败')" class="toolbar-priority" :loading="saving" type="danger" plain @click="emit('save')">重试保存</el-button>
+      <el-button v-if="!isLocalDraft && autosaveState.includes('失败')" class="toolbar-priority mobile-save-retry" :loading="saving" type="danger" plain @click="emit('save')">重试</el-button>
+      <el-button class="mobile-preview-action" type="primary" plain :icon="View" :loading="onlinePreviewLoading" :aria-label="mobileView === 'plan' ? '预览教案' : '预览课件'" @click="openOnlinePreview">预览</el-button>
       <el-button v-if="isLocalDraft" class="toolbar-priority" type="primary" plain @click="saveAsProject">保存为项目</el-button>
       <el-button class="toolbar-priority" :icon="FolderOpened" @click="manageProject">项目</el-button>
       <el-button class="toolbar-priority" :icon="Share" @click="publishCommunity">发布社区</el-button>
@@ -158,7 +210,7 @@ const toggleCompactTools = () => { compactToolsOpen.value = !compactToolsOpen.va
         <el-button type="primary" :icon="Download" :loading="Boolean(quickExportLoading)">导出<el-icon v-if="!quickExportLoading" class="toolbar-dropdown-arrow"><ArrowDown /></el-icon></el-button>
         <template #dropdown>
           <el-dropdown-menu>
-            <el-dropdown-item command="quick-pptx">快速下载 PPTX</el-dropdown-item>
+                  <el-dropdown-item command="quick-pptx">快速下载 PPTX（学科组件为静态）</el-dropdown-item>
             <el-dropdown-item command="quick-word">快速下载 DOCX</el-dropdown-item>
             <el-dropdown-item command="precheck">导出预检</el-dropdown-item>
             <el-dropdown-item divided command="advanced">前往导出中心高级导出</el-dropdown-item>
@@ -178,7 +230,7 @@ const toggleCompactTools = () => { compactToolsOpen.value = !compactToolsOpen.va
 
           <el-dropdown-item class="workspace-mobile-action" @click="workspaceMode === 'document' ? returnToPpt() : openLessonPlan()">{{ workspaceMode === 'document' ? '返回 PPT' : '打开教案' }}</el-dropdown-item>
           <el-dropdown-item class="workspace-mobile-action" @click="openOnlinePreview">在线预览</el-dropdown-item>
-          <el-dropdown-item class="workspace-mobile-action" :disabled="Boolean(quickExportLoading)" @click="handleExportCommand('quick-pptx')">下载 PPTX</el-dropdown-item>
+            <el-dropdown-item class="workspace-mobile-action" :disabled="Boolean(quickExportLoading)" @click="handleExportCommand('quick-pptx')">下载 PPTX（学科组件为静态）</el-dropdown-item>
           <el-dropdown-item class="workspace-mobile-action" :disabled="Boolean(quickExportLoading)" @click="handleExportCommand('quick-word')">下载 DOCX</el-dropdown-item>
           <el-dropdown-item class="workspace-mobile-action" @click="exportProject">导出中心</el-dropdown-item>
           <el-dropdown-item class="workspace-mobile-action" divided @click="publishCommunity">发布社区</el-dropdown-item>
@@ -237,10 +289,12 @@ const toggleCompactTools = () => { compactToolsOpen.value = !compactToolsOpen.va
   white-space: nowrap;
 }
 
-.project-title span .el-icon {
+.project-title > div > span .el-icon {
   flex: none;
   color: var(--zh-green);
 }
+.project-title > div > span b { font-weight: 400; }
+.toolbar-status-short { display: none; }
 
 .editing-tools {
   display: flex;
@@ -287,6 +341,7 @@ const toggleCompactTools = () => { compactToolsOpen.value = !compactToolsOpen.va
 
 .workspace-content-mode-button { flex: 0 0 5rem; inline-size: 5rem; justify-content: center; }
 .mobile-panel-trigger { display: none; }
+.mobile-preview-action { display: none; }
 
 :global(.shape-picker-option) {
   display: inline-flex;
@@ -298,6 +353,32 @@ const toggleCompactTools = () => { compactToolsOpen.value = !compactToolsOpen.va
 :global(.shape-picker-option > span) { flex: 1; }
 :global(.shape-picker-check) { width: 14px; color: var(--zh-text-theme); }
 :global(.el-dropdown-menu__item.is-shape-selected) {
+  color: var(--zh-text-theme);
+  background: var(--zh-background-weaken);
+  font-weight: 600;
+}
+
+:global(.subject-picker-option) {
+  display: inline-flex;
+  align-items: center;
+  gap: 9px;
+  min-width: 150px;
+}
+
+:global(.subject-picker-option > i) {
+  display: inline-grid;
+  place-items: center;
+  width: 22px;
+  height: 20px;
+  border-radius: 5px;
+  color: var(--zh-text-theme);
+  background: var(--zh-background-weaken);
+  font: 700 11px/1 ui-monospace, Consolas, monospace;
+  font-style: normal;
+}
+
+:global(.subject-picker-option > span) { flex: 1; }
+:global(.el-dropdown-menu__item.is-subject-selected) {
   color: var(--zh-text-theme);
   background: var(--zh-background-weaken);
   font-weight: 600;
@@ -363,7 +444,7 @@ const toggleCompactTools = () => { compactToolsOpen.value = !compactToolsOpen.va
   }
 
   .toolbar-actions { gap: 4px; }
-  .toolbar-actions > :not(.mobile-panel-trigger):not(.workspace-more) { display: none; }
+  .toolbar-actions > :not(.mobile-panel-trigger):not(.workspace-more):not(.mobile-preview-action):not(.mobile-save-retry) { display: none; }
   .mobile-panel-trigger { display: inline-flex; }
 
   .project-title strong { max-width: 42vw; }
@@ -383,10 +464,20 @@ const toggleCompactTools = () => { compactToolsOpen.value = !compactToolsOpen.va
 .toolbar-actions > .el-button, .toolbar-actions > .el-dropdown { flex-shrink: 0; }
 .project-title strong { max-width: 40vw; }
 @media (max-width: 767.98px) {
-  .mobile-panel-trigger { padding-inline: 7px; }
-  .mobile-panel-trigger :deep(.el-icon) { margin-right: 0; }
-  .project-title strong { max-width: 35vw; }
-  .project-title span { max-width: 35vw; }
+  .toolbar { grid-template-rows: 56px; padding-inline: 12px; }
+  .project-title { gap: 4px; }
+  .project-title > .el-button { width: 44px; height: 44px; flex: none; margin: 0; font-size: 19px; }
+  .project-title > .el-button :deep(.el-icon) { color: var(--zh-text-primary); }
+  .project-title strong, .project-title > div > span { max-width: none; }
+  .project-title strong { font-size: 15px; }
+  .project-title > div > span { margin-top: 2px; font-size: 11px; }
+  .toolbar-status-full { display: none; }
+  .toolbar-status-short { display: inline; }
+  .toolbar-mode-suffix, .toolbar-project-suffix { display: none; }
+  .toolbar-actions { overflow: visible; gap: 6px; }
+  .toolbar-actions > :not(.mobile-preview-action):not(.mobile-save-retry) { display: none; }
+  .toolbar-actions > .mobile-preview-action { display: inline-flex; min-width: 76px; min-height: 44px; padding-inline: 10px; }
+  .toolbar-actions > .mobile-save-retry { display: inline-flex; min-height: 44px; padding-inline: 10px; }
 }
 
 </style>

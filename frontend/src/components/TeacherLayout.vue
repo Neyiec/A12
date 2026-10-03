@@ -8,7 +8,7 @@ import { computed, onMounted, ref, watch } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { ElMessageBox } from 'element-plus'
 import {
-  ArrowDown, Bell, ChatDotRound, Delete, Download, EditPen, Expand, Fold,
+  Bell, ChatDotRound, Delete, Download, EditPen, Expand, Fold,
   FolderOpened, Grid, Moon, MoreFilled, Plus, Setting, Sunny,
 } from '@element-plus/icons-vue'
 import BottomTabBar from './BottomTabBar.vue'
@@ -76,6 +76,7 @@ const handleMenuSelect = (index) => {
 
 /** 点击"新建对话"：无论当前在哪个页面，都跳回教师端首页的初始（欢迎）视图。 */
 const handleNewChat = () => {
+  mobileHistoryOpen.value = false
   // 不在首页时先导航到首页，TeacherHome 以欢迎视图重新挂载即可
   if (route.path !== '/main') {
     router.push({ path: '/main', query: route.query.preview ? { preview: '1' } : {} })
@@ -85,10 +86,10 @@ const handleNewChat = () => {
   requestNewChat.value = true
 }
 
-/** 移动端没有常驻侧栏，通过顶部菜单访问新建对话和最近会话。 */
+/** 从移动端最近对话列表打开会话。 */
 const handleMobileHistoryCommand = (command) => {
-  if (command === 'new') {
-    handleNewChat()
+  if (command === 'all') {
+    openMobileHistory()
     return
   }
   const item = history.value.find((entry) => String(entry.id) === String(command))
@@ -235,6 +236,17 @@ watch(latestSessionPush, (session) => {
     <a class="skip-link" href="#main-content">跳到主要内容</a>
 
     <header v-if="!isWorkspace" class="teacher-topbar">
+      <el-button
+        v-if="isTeachingAssistant"
+        text
+        circle
+        class="mobile-new-chat-button icon-action"
+        aria-label="新建对话"
+        title="新建对话"
+        @click="handleNewChat"
+      >
+        <el-icon><Plus /></el-icon>
+      </el-button>
       <button type="button" class="brand" aria-label="返回教学助手" @click="handleMenuSelect('home')">
         <span class="app-brand-icon" aria-hidden="true">
           <img src="/branding/logo-intro.png" alt="" />
@@ -242,18 +254,7 @@ watch(latestSessionPush, (session) => {
         <strong class="app-brand-name">智核</strong>
       </button>
 
-      <!-- 手机档顶栏标题：教学助手页可点击呼出会话历史抽屉 -->
-      <button
-        v-if="isTeachingAssistant"
-        type="button"
-        class="mobile-page-title"
-        aria-label="打开会话历史"
-        @click="openMobileHistory"
-      >
-        <span>{{ route.meta.title }}</span>
-        <el-icon><ArrowDown /></el-icon>
-      </button>
-      <strong v-else class="mobile-page-title is-plain">{{ route.meta.title }}</strong>
+      <strong v-if="!isTeachingAssistant" class="mobile-page-title is-plain">{{ route.meta.title }}</strong>
 
       <nav class="top-navigation" aria-label="教师端主导航">
         <button
@@ -281,15 +282,16 @@ watch(latestSessionPush, (session) => {
           <el-button text circle class="icon-action" aria-label="打开最近对话"><el-icon><ChatDotRound /></el-icon></el-button>
           <template #dropdown>
             <el-dropdown-menu>
-              <el-dropdown-item command="new"><el-icon><Plus /></el-icon>新建对话</el-dropdown-item>
+              <el-dropdown-item v-if="!history.length" disabled>暂无历史对话</el-dropdown-item>
               <el-dropdown-item
-                v-for="item in history.slice(0, 10)"
+                v-for="(item, index) in history.slice(0, 10)"
                 :key="item.id"
                 :command="String(item.id)"
-                divided
+                :divided="index > 0"
               >
                 {{ item.title }} · {{ item.time }}
               </el-dropdown-item>
+              <el-dropdown-item v-if="history.length" command="all" divided>查看全部历史</el-dropdown-item>
             </el-dropdown-menu>
           </template>
         </el-dropdown>
@@ -315,7 +317,7 @@ watch(latestSessionPush, (session) => {
         <!-- 手机档头像下拉：账号与安全 / 退出登录 -->
         <el-dropdown class="avatar-dropdown" trigger="click" @command="handleAvatarCommand">
           <button type="button" class="avatar-button" aria-label="账号菜单">
-            <el-avatar :size="34" :src="avatarUrl">{{ avatarText }}</el-avatar>
+            <el-avatar :size="38" :src="avatarUrl">{{ avatarText }}</el-avatar>
           </button>
           <template #dropdown>
             <el-dropdown-menu>
@@ -428,9 +430,6 @@ watch(latestSessionPush, (session) => {
       :with-header="false"
     >
       <div class="mobile-drawer-body">
-        <el-button type="primary" class="new-chat-button" :icon="Plus" @click="handleNewChat">
-          {{ TEACHER_HOME.actions.newChat }}
-        </el-button>
         <section class="history" aria-label="会话历史">
           <div class="section-label-row"><span>{{ TEACHER_HOME.historyTitle }}</span></div>
           <div class="history-scroll">
@@ -542,8 +541,10 @@ watch(latestSessionPush, (session) => {
 /* 手机档专属元素：桌面档默认隐藏 */
 .avatar-dropdown { display: none; }
 .mobile-page-title { display: none; }
+.mobile-new-chat-button { display: none; }
 .teacher-shell .mobile-tabbar { display: none; }
 .mobile-drawer-body { height: 100%; display: flex; flex-direction: column; }
+.mobile-drawer-body .history { margin-top: 0; }
 .icon-action { transition: background-color 200ms cubic-bezier(0.4, 0, 0.2, 1), transform 200ms cubic-bezier(0.4, 0, 0.2, 1); }
 .icon-action:hover, .icon-action:focus-visible { transform: translateY(-1px); }
 .icon-action:active { transform: scale(.96); }
@@ -577,21 +578,49 @@ watch(latestSessionPush, (session) => {
   .top-nav-item span { display: none; }
 }
 @media (max-width: 767.98px) {
-  .teacher-shell, .teacher-shell.assistant-mode { display: grid; grid-template-columns: 1fr; grid-template-rows: auto minmax(0, 1fr); grid-template-areas: "topbar" "main"; }
+  .teacher-shell,
+  .teacher-shell.assistant-mode,
+  .teacher-shell.assistant-mode.sidebar-collapsed {
+    display: grid;
+    grid-template-columns: minmax(0, 1fr);
+    grid-template-rows: auto minmax(0, 1fr);
+    grid-template-areas: "topbar" "main";
+  }
   /* 侧栏整体移除，导航由 BottomTabBar 接管 */
   .teacher-sidebar { display: none; }
-  /* 顶栏精简为单行 48px：页面标题 + 通知 + 头像 */
-  .teacher-topbar { height: calc(48px + var(--zh-safe-top)); grid-template-columns: minmax(0, 1fr) auto; gap: 8px; padding: var(--zh-safe-top) 14px 0; }
+  /* 助手页仅保留新建对话与右侧操作，其他页面仍显示标题 */
+  .teacher-topbar {
+    height: calc(48px + var(--zh-safe-top));
+    grid-template-columns: minmax(0, 1fr) auto;
+    gap: 8px;
+    padding: var(--zh-safe-top) calc(14px + var(--zh-safe-right)) 0 calc(14px + var(--zh-safe-left));
+  }
+  .teacher-shell.assistant-mode .teacher-topbar { grid-template-columns: 40px minmax(0, 1fr); }
   .brand, .top-navigation, .topbar-actions .theme-toggle { display: none; }
+  .mobile-new-chat-button {
+    position: relative;
+    width: 40px;
+    height: 40px;
+    display: inline-flex;
+    justify-self: start;
+    margin: 0;
+    color: var(--zh-text-theme);
+  }
+  .mobile-new-chat-button::after { content: ""; position: absolute; inset: -2px; border-radius: inherit; }
+  .mobile-new-chat-button :deep(.el-icon) { font-size: 24px; }
+  .mobile-new-chat-button:focus-visible { outline: 2px solid var(--zh-line-theme); outline-offset: 2px; }
   .mobile-page-title { display: flex; align-items: center; gap: 4px; min-width: 0; padding: 0; border: 0; color: var(--zh-text-primary); background: transparent; font: inherit; font-size: var(--zh-font-size16); font-weight: 650; cursor: pointer; }
   .mobile-page-title span { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
   .mobile-page-title .el-icon { flex: 0 0 auto; color: var(--zh-text-secondary); font-size: var(--zh-font-size14); }
   .mobile-page-title.is-plain { cursor: default; }
   .topbar-actions { gap: 4px; }
+  .topbar-actions .icon-action, .topbar-actions .avatar-button { width: 40px; height: 40px; flex-basis: 40px; }
+  .topbar-actions :deep(.el-button .el-icon) { font-size: 22px; }
   .topbar-actions > .avatar-button { display: none; }
   .avatar-dropdown { display: inline-flex; }
   /* 主内容为唯一滚动区：底部为 TabBar 预留高度（含安全区） */
-  .teacher-main { min-height: calc(100dvh - 48px - var(--zh-safe-top)); padding-bottom: calc(var(--zh-tabbar-h) + var(--zh-safe-bottom)); }
+  .teacher-main { width: 100%; min-width: 0; min-height: calc(100dvh - 48px - var(--zh-safe-top)); padding-bottom: calc(var(--zh-tabbar-h) + var(--zh-safe-bottom)); }
+  .teacher-shell.workspace-mode .teacher-main { min-height: 0; padding-bottom: 0; }
   .teacher-shell .mobile-tabbar { display: flex; }
 }
 

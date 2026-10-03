@@ -421,7 +421,6 @@ onBeforeUnmount(() => {
 .ppt-slide-picker button > span { display: grid; width: 26px; height: 26px; place-items: center; border-radius: 6px; color: var(--zh-text-theme); background: var(--zh-background-option-on); font: 600 10px/1 var(--zh-font-number, inherit); }
 .ppt-slide-picker button > strong { overflow: hidden; color: inherit; font-size: 11px; text-overflow: ellipsis; white-space: nowrap; }
 .lesson-plan-preview-shell { min-width: 0; }
-.lesson-plan-preview-shell :deep(.lesson-plan-preview) { max-height: min(56vh, 610px); padding-right: 4px; }
 .community-overview { display: grid; gap: 14px; }
 .overview-intro { padding: 18px 20px; border: 1px solid var(--zh-line-theme20); border-radius: var(--zh-radius12); background: var(--zh-background-weaken); }
 .overview-intro h4 { margin: 8px 0 6px; color: var(--zh-text-primary); font-size: 18px; line-height: 1.35; }
@@ -449,11 +448,24 @@ onBeforeUnmount(() => {
 .overview-array-item > span { display: grid; place-items: center; width: 24px; height: 24px; border-radius: 7px; color: var(--zh-text-theme); background: var(--zh-background-option-on); font: 700 10px/1 var(--zh-font-number, inherit); }
 .overview-array-item p { margin: 2px 0 0; color: var(--zh-text-secondary); font-size: 12px; line-height: 1.6; }
 @media (max-width: 767.98px) {
-  .content-preview-toolbar { align-items: flex-start; flex-direction: column; }
+  .content-preview-toolbar { align-items: flex-start; flex-direction: column; gap: 7px; margin-bottom: 12px; }
+  .content-view-switch { display: flex; width: 100%; }
+  .content-view-switch button { flex: 1; min-height: 40px; font-size: 13px; }
+  .content-preview-toolbar > span { padding-left: 2px; font-size: 11px; }
   .overview-metrics { grid-template-columns: repeat(2, minmax(0, 1fr)); }
   .overview-metric:nth-child(2) { border-right: 0; }
   .overview-metric:nth-child(-n + 2) { border-bottom: 1px solid var(--zh-line-parting); }
   .overview-entry-grid { grid-template-columns: 1fr; }
   .ppt-preview-heading { align-items: flex-start; flex-direction: column; gap: 5px; }
+  .ppt-preview-stage { box-shadow: none; }
+  .ppt-slide-picker { gap: 8px; padding: 2px 0 4px; scroll-snap-type: x proximity; -webkit-overflow-scrolling: touch; }
+  .ppt-slide-picker button { flex-basis: min(64%, 220px); min-height: 44px; scroll-snap-align: start; }
+  .overview-intro { padding: 15px; }
+  .overview-intro h4 { font-size: 16px; }
+  .overview-intro p { font-size: 12px; }
+  .overview-metric { padding: 10px 12px; }
+  .overview-metric strong { font-size: 18px; }
+  .overview-entry { padding: 13px 14px; }
+  .overview-facts div { align-items: flex-start; }
 }
 </style>

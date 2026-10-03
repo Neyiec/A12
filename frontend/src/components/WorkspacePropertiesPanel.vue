@@ -1,8 +1,29 @@
 <script setup>
 import { computed, ref, watch } from 'vue'
 import { ChatDotRound, Close, CopyDocument, Delete, Plus, RefreshLeft, Upload } from '@element-plus/icons-vue'
-import { normalizeSubjectToolData, normalizeSubjectToolType, subjectToolDefaultRenderHint, subjectToolOptions } from '../utils/subjectTool'
+import { normalizeSubjectToolData, normalizeSubjectToolType, subjectToolMenuOptions } from '../utils/subjectTool'
+import { prepareChemicalStructure } from '../utils/chemicalStructure'
 import { interactiveModuleTypeInfo, normalizeInteractiveModuleType } from '../utils/interactiveModule'
+import SubjectFormulaEditor from './SubjectFormulaEditor.vue'
+import SubjectChineseTianzigeEditor from './SubjectChineseTianzigeEditor.vue'
+import SubjectEnglishFourLineEditor from './SubjectEnglishFourLineEditor.vue'
+import SubjectChemicalFormulaEditor from './SubjectChemicalFormulaEditor.vue'
+import SubjectDiagramEditor from './SubjectDiagramEditor.vue'
+import SubjectChartEditor from './SubjectChartEditor.vue'
+import SubjectTableEditor from './SubjectTableEditor.vue'
+import SubjectGeometryEditor from './SubjectGeometryEditor.vue'
+import WorkspaceColorField from './WorkspaceColorField.vue'
+
+const waterMolfileExample = `Water
+  RDKit 2D
+
+  3  2  0  0  0  0  0  0  0  0999 V2000
+    0.0000    0.0000    0.0000 O   0  0  0  0  0  0  0  0  0  0  0  0
+   -0.7570    0.5860    0.0000 H   0  0  0  0  0  0  0  0  0  0  0  0
+    0.7570    0.5860    0.0000 H   0  0  0  0  0  0  0  0  0  0  0  0
+  1  2  1  0  0  0  0
+  1  3  1  0  0  0  0
+M  END`
 
 const props = defineProps({
   elements: { type: Array, default: () => [] },
@@ -52,16 +73,24 @@ const elementTypeLabels = {
   formula: '公式元素',
   image: '图片元素',
   shape: '形状元素',
-  chart: '图表元素',
+  chart: '图表',
   audio: '音频元素',
   video: '视频元素',
-  table: '表格元素',
+  table: '表格',
   h5: 'H5组件',
-  subject: '学科工具',
+  subject: '学科组件',
 }
 
 const hasSelectedElement = computed(() => Boolean(props.selectedElement))
-const selectedElementType = computed(() => elementTypeLabels[props.selectedElement?.type] || '页面元素')
+const elementTypeLabel = (element) => {
+  if (element?.type === 'subject') {
+    const toolType = normalizeSubjectToolType(element.subjectType || element.subject_type)
+    if (toolType === 'chart') return '图表'
+    if (toolType === 'table') return '表格'
+  }
+  return elementTypeLabels[element?.type] || '页面元素'
+}
+const selectedElementType = computed(() => elementTypeLabel(props.selectedElement))
 const pageLabel = computed(() => `页面 ${String(props.pageNumber).padStart(2, '0')}`)
 const pageBackground = computed(() => props.page?.background || {})
 const pageBackgroundPreview = computed(() => props.page?.backgroundImage || props.page?.background_image || pageBackground.value.src || '')
@@ -140,29 +169,9 @@ const tableData = computed(() => {
 const tableRowCount = computed(() => Math.max(1, tableData.value.length))
 const tableColumnCount = computed(() => Math.max(1, ...tableData.value.map((row) => row.length)))
 const subjectType = computed(() => normalizeSubjectToolType(props.selectedElement?.subjectType || props.selectedElement?.subject_type || 'geometry'))
+const standaloneDataTool = computed(() => ['chart', 'table'].includes(subjectType.value))
+const subjectContextLabel = computed(() => subjectType.value === 'chart' ? '图表' : subjectType.value === 'table' ? '表格' : '学科组件')
 const subjectData = computed(() => normalizeSubjectToolData(props.selectedElement?.data, props.selectedElement?.subjectType || props.selectedElement?.subject_type || subjectType.value))
-const subjectRenderConfig = computed(() => {
-  const explicit = props.selectedElement?.render
-  if (explicit && typeof explicit === 'object' && !Array.isArray(explicit) && Object.keys(explicit).length) return explicit
-  const legacy = props.selectedElement?.subjectRender || props.selectedElement?.subject_render
-  if (legacy && typeof legacy === 'object' && !Array.isArray(legacy) && Object.keys(legacy).length) return legacy
-  return subjectToolDefaultRenderHint(subjectType.value)
-})
-const subjectStyleConfig = computed(() => {
-  const explicit = props.selectedElement?.subjectStyle || props.selectedElement?.subject_style
-  if (explicit && typeof explicit === 'object' && !Array.isArray(explicit) && Object.keys(explicit).length) return explicit
-  const fallback = props.selectedElement?.style
-  return fallback && typeof fallback === 'object' && !Array.isArray(fallback) ? fallback : {}
-})
-const subjectRender = computed(() => {
-  const hint = props.selectedElement?.subjectRenderHint
-    || props.selectedElement?.subject_render_hint
-    || props.selectedElement?.subjectValidation?.render_hint
-    || props.selectedElement?.subjectValidation?.renderHint
-  return hint && typeof hint === 'object' && !Array.isArray(hint) && Object.keys(hint).length
-    ? hint
-    : subjectRenderConfig.value || subjectToolDefaultRenderHint(subjectType.value)
-})
 const subjectValidation = computed(() => {
   const result = props.selectedElement?.subjectValidation || props.selectedElement?.subject_validation
   return result && typeof result === 'object' && !Array.isArray(result) ? result : null
@@ -173,15 +182,13 @@ const mediaSourceDraft = ref('')
 const mediaSourceError = ref('')
 const imageFileInput = ref(null)
 const mediaFileInput = ref(null)
+const molfileFileInput = ref(null)
+const molfileImportError = ref('')
+const molfileImportMessage = ref('')
+const molfileImportPending = ref(false)
 const elementEditorSection = ref('style')
 const chartImportDraft = ref('')
 const chartImportError = ref('')
-const subjectChartOptionDraft = ref('')
-const subjectConfigError = ref('')
-const subjectRenderDraft = ref('')
-const subjectRenderError = ref('')
-const subjectStyleDraft = ref('')
-const subjectStyleError = ref('')
 const elementEditorSections = [
   { id: 'content', label: '内容' },
   { id: 'style', label: '样式' },
@@ -213,6 +220,8 @@ watch(() => props.selectedElement?.id, () => {
   chartImportDraft.value = ''
   chartImportError.value = ''
   mediaSourceError.value = ''
+  molfileImportError.value = ''
+  molfileImportMessage.value = ''
 }, { immediate: true })
 
 const applyImageSource = () => {
@@ -345,76 +354,70 @@ const removeTableColumn = () => {
   updateTableDimensions(tableRowCount.value, tableColumnCount.value - 1)
 }
 const updateSubjectType = (value) => {
-  subjectConfigError.value = ''
   updateField('subjectType', normalizeSubjectToolType(value))
 }
-const updateSubjectField = (key, value) => updateData({ ...subjectData.value, [key]: value })
-const updateSubjectCommands = (value) => updateSubjectField('commands', String(value || '')
-  .split(/\r?\n|[，,;；]/)
-  .map((item) => item.trim())
-  .filter(Boolean))
-const subjectColumnsText = computed(() => Array.isArray(subjectData.value.columns) ? subjectData.value.columns.join('，') : '')
-const subjectRowsText = computed(() => Array.isArray(subjectData.value.rows)
-  ? subjectData.value.rows.map((row) => Array.isArray(row) ? row.join('，') : String(row ?? '')).join('\n')
-  : '')
-const updateSubjectColumns = (value) => updateSubjectField('columns', String(value || '')
-  .split(/[，,]/)
-  .map((item) => item.trim())
-  .filter(Boolean)
-  .slice(0, 8))
-const updateSubjectRows = (value) => updateSubjectField('rows', String(value || '')
-  .split(/\r?\n/)
-  .map((line) => line.split(/[，,\t]/).map((item) => item.trim()).slice(0, 8))
-  .filter((row) => row.some(Boolean))
-  .slice(0, 12))
-const applySubjectChartOption = () => {
+const updateSubjectField = (key, value) => {
+  if (key === 'molfile') {
+    molfileImportError.value = ''
+    molfileImportMessage.value = ''
+  }
+  updateData({ ...subjectData.value, [key]: value })
+}
+const openMolfileFilePicker = () => molfileFileInput.value?.click()
+const applyMolfileText = async (rawText, successMessage) => {
+  const molfile = String(rawText || '').replace(/^\uFEFF/, '').replace(/\r\n?/g, '\n').trim()
+  molfileImportError.value = ''
+  molfileImportMessage.value = ''
+  if (!molfile) {
+    molfileImportError.value = 'Molfile 内容为空'
+    return false
+  }
+  if (molfile.length > 24000) {
+    molfileImportError.value = 'Molfile 超过 24,000 字符，请精简结构数据'
+    return false
+  }
+
+  molfileImportPending.value = true
   try {
-    const option = JSON.parse(subjectChartOptionDraft.value || '{}')
-    if (!option || typeof option !== 'object' || Array.isArray(option)) throw new Error('图表配置必须是 JSON 对象')
-    subjectConfigError.value = ''
-    updateSubjectField('option', option)
+    const parsed = await prepareChemicalStructure({ molfile })
+    if (!parsed?.svg) throw new Error(parsed?.error || 'Molfile 解析失败，请检查文件内容')
+    updateData({ ...subjectData.value, molfile })
+    molfileImportMessage.value = successMessage
+    return true
   } catch (error) {
-    subjectConfigError.value = error?.message || '图表配置不是合法的 JSON 对象'
+    molfileImportError.value = error?.message || 'Molfile 解析失败，请检查文件内容'
+    return false
+  } finally {
+    molfileImportPending.value = false
   }
 }
-const formatSubjectJson = (value) => {
-  try { return JSON.stringify(value ?? {}, null, 2) } catch { return '{}' }
+const fillMolfileExample = () => {
+  void applyMolfileText(waterMolfileExample, '水分子示例已解析，画布中可预览结构')
 }
-const applySubjectRender = () => {
+const handleMolfileFile = async (event) => {
+  const input = event.target
+  const file = input?.files?.[0]
+  if (!file) return
+  const extension = file.name.split('.').pop()?.toLowerCase()
+  if (!['mol', 'molfile'].includes(extension)) {
+    molfileImportError.value = '请选择 .mol 或 .molfile 文件；SDF 请先导出为单个 Molfile'
+    input.value = ''
+    return
+  }
+  if (file.size > 128 * 1024) {
+    molfileImportError.value = 'Molfile 文件过大，最多支持 24,000 个字符'
+    input.value = ''
+    return
+  }
   try {
-    const parsed = JSON.parse(subjectRenderDraft.value || '{}')
-    if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) throw new Error('render 必须是 JSON 对象')
-    subjectRenderError.value = ''
-    emit('update-element-render', parsed)
-  } catch (error) {
-    subjectRenderError.value = error?.message || 'render 配置不是合法的 JSON 对象'
+    const text = await file.text()
+    await applyMolfileText(text, `${file.name} 已解析，画布中可预览结构`)
+  } catch {
+    molfileImportError.value = '读取 Molfile 失败，请重新选择文件'
+  } finally {
+    input.value = ''
   }
 }
-const applySubjectStyle = () => {
-  try {
-    const parsed = JSON.parse(subjectStyleDraft.value || '{}')
-    if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) throw new Error('style 必须是 JSON 对象')
-    subjectStyleError.value = ''
-    emit('update-element-style-map', parsed)
-  } catch (error) {
-    subjectStyleError.value = error?.message || 'style 配置不是合法的 JSON 对象'
-  }
-}
-watch([
-  () => props.selectedElement?.id,
-  subjectType,
-  () => JSON.stringify(subjectData.value.option ?? {}),
-  () => JSON.stringify(subjectRenderConfig.value),
-  () => JSON.stringify(subjectStyleConfig.value),
-], () => {
-  const option = subjectData.value.option
-  subjectChartOptionDraft.value = typeof option === 'string' ? option : JSON.stringify(option || {}, null, 2)
-  subjectRenderDraft.value = formatSubjectJson(subjectRenderConfig.value)
-  subjectStyleDraft.value = formatSubjectJson(subjectStyleConfig.value)
-  subjectConfigError.value = ''
-  subjectRenderError.value = ''
-  subjectStyleError.value = ''
-}, { immediate: true })
 const importChartData = () => {
   const rows = chartImportDraft.value
     .split(/\r?\n/)
@@ -446,6 +449,7 @@ const resetSelectedStyle = () => {
     },
     image: { tintColor: '#2563eb', borderColor: '#bfdbfe', borderWidth: 1, borderRadius: 14, objectFit: 'cover', showCaption: true, opacity: 100 },
     chart: { color: '#2563eb', backgroundColor: '#eff6ff', borderColor: '#bfdbfe', borderWidth: 1, borderRadius: 14, opacity: 100 },
+    subject: { color: '#2563eb', backgroundColor: '#eff6ff', borderColor: '#bfdbfe', borderWidth: 1, fontSize: 24, borderRadius: 12, opacity: 100 },
   }
   const fallback = { color: '#2563eb', backgroundColor: '#eff6ff', borderRadius: 12, opacity: 100 }
   Object.entries(defaults[props.selectedElement.type] || fallback).forEach(([key, value]) => updateStyle(key, value))
@@ -493,7 +497,7 @@ const typeInitials = {
           v-for="element in elementList"
           :key="element.id"
           :value="element.id"
-          :label="`${element.name} · ${elementTypeLabels[element.type] || '页面元素'}`"
+              :label="`${element.name} · ${elementTypeLabel(element)}`"
         />
       </el-select>
       <div v-else-if="elementList.length" class="element-list">
@@ -508,7 +512,7 @@ const typeInitials = {
           <span class="element-type-icon">{{ typeInitials[element.type] || '?' }}</span>
           <span class="element-list-copy">
             <strong>{{ element.name }}</strong>
-            <small>{{ elementTypeLabels[element.type] || '页面元素' }}</small>
+              <small>{{ elementTypeLabel(element) }}</small>
           </span>
           <span class="element-list-index">z{{ element.position?.zIndex ?? 1 }}</span>
         </button>
@@ -688,84 +692,77 @@ const typeInitials = {
         </template>
 
         <template v-else-if="selectedElement.type === 'subject'">
-          <div class="subject-tool-heading"><label>学科工具</label><span>后端组件协议</span></div>
-          <div class="subject-protocol-meta">
-            <span><strong>component_id</strong><code>{{ selectedElement.id }}</code></span>
-            <span><strong>data</strong><code>Object</code></span>
-          </div>
-          <label>学科工具名称</label>
+          <label>名称</label>
           <el-input :model-value="contentValue" maxlength="80" show-word-limit @update:model-value="updateContent" />
-          <label>组件类型</label>
-          <el-select :model-value="subjectType" @update:model-value="updateSubjectType"><el-option v-for="option in subjectToolOptions" :key="option.value" :label="option.label" :value="option.value" /></el-select>
+          <label v-if="!standaloneDataTool">工具类型</label>
+          <el-select v-if="!standaloneDataTool" :model-value="subjectType" @update:model-value="updateSubjectType"><el-option v-for="option in subjectToolMenuOptions" :key="option.value" :label="option.label" :value="option.value" /></el-select>
 
           <template v-if="subjectType === 'math_formula'">
-            <label>LaTeX 公式</label>
-            <el-input :model-value="subjectData.latex || ''" type="textarea" :rows="3" maxlength="2000" show-word-limit placeholder="例如：E=mc^2 或 \\frac{a}{b}" @update:model-value="updateSubjectField('latex', $event)" />
+            <label>数学公式</label>
+            <SubjectFormulaEditor :key="selectedElement.id" :model-value="subjectData.latex || ''" :display-mode="subjectData.display_mode !== false" @update:model-value="updateSubjectField('latex', $event)" />
             <label class="switch-field"><span>块级显示</span><el-switch :model-value="subjectData.display_mode !== false" @update:model-value="updateSubjectField('display_mode', $event)" /></label>
           </template>
 
+          <template v-else-if="subjectType === 'chinese_tianzige'">
+            <label>语文田字格与拼音</label>
+            <SubjectChineseTianzigeEditor :key="selectedElement.id" :model-value="subjectData" @update:model-value="updateData($event)" />
+          </template>
+
+          <template v-else-if="subjectType === 'english_four_line'">
+            <label>英语四线格</label>
+            <SubjectEnglishFourLineEditor :key="selectedElement.id" :model-value="subjectData.text || ''" @update:model-value="updateSubjectField('text', $event)" />
+          </template>
+
           <template v-else-if="subjectType === 'chemical_formula'">
-            <label>分子式</label>
-            <el-input :model-value="subjectData.formula || ''" maxlength="300" placeholder="例如：H2O、CO2" @update:model-value="updateSubjectField('formula', $event)" />
-            <label>SMILES（可选）</label>
-            <el-input :model-value="subjectData.smiles || ''" maxlength="4000" placeholder="例如：O" @update:model-value="updateSubjectField('smiles', $event)" />
-            <label>Molfile（可选）</label>
-            <el-input :model-value="subjectData.molfile || ''" type="textarea" :rows="3" maxlength="24000" placeholder="粘贴 Molfile 结构数据" @update:model-value="updateSubjectField('molfile', $event)" />
+            <SubjectChemicalFormulaEditor :key="selectedElement.id" :model-value="subjectData.formula || ''" @update:model-value="updateSubjectField('formula', $event)" />
+            <details class="subject-advanced-fields" :open="subjectData.smiles || subjectData.molfile ? true : undefined">
+              <summary>高级：分子结构（选填）</summary>
+              <div class="subject-advanced-body">
+                <p class="content-help">填写结构后，画布优先显示分子结构；Molfile 优先于 SMILES。</p>
+                <label>SMILES 结构编码</label>
+                <el-input :model-value="subjectData.smiles || ''" maxlength="4000" placeholder="例如：O" @update:model-value="updateSubjectField('smiles', $event)" />
+                <label>Molfile 分子结构文件</label>
+                <div class="subject-molfile-actions">
+                  <el-button size="small" :icon="Upload" :loading="molfileImportPending" @click="openMolfileFilePicker">导入 .mol 文件</el-button>
+                  <el-button size="small" text :loading="molfileImportPending" @click="fillMolfileExample">填入水分子示例</el-button>
+                </div>
+                <input ref="molfileFileInput" hidden type="file" accept=".mol,.molfile" @change="handleMolfileFile" />
+                <el-input :model-value="subjectData.molfile || ''" type="textarea" :rows="5" maxlength="24000" show-word-limit placeholder="粘贴 Molfile 分子结构数据，或导入 .mol 文件" @update:model-value="updateSubjectField('molfile', $event)" />
+                <p v-if="molfileImportError" class="content-error" role="alert">{{ molfileImportError }}</p>
+                <p v-else-if="molfileImportMessage" class="content-help" role="status">{{ molfileImportMessage }}</p>
+                <p class="content-help">导入会读取本地文本并即时解析；SDF 请先导出为单个 Molfile。</p>
+              </div>
+            </details>
           </template>
 
           <template v-else-if="subjectType === 'mermaid_diagram'">
-            <label>Mermaid 描述</label>
-            <el-input :model-value="subjectData.mermaid || ''" type="textarea" :rows="6" maxlength="8000" show-word-limit placeholder="flowchart LR&#10;A[提出问题] --> B[观察与探究]" @update:model-value="updateSubjectField('mermaid', $event)" />
+            <label>流程图</label>
+            <SubjectDiagramEditor :key="selectedElement.id" :model-value="subjectData.mermaid || ''" @update:model-value="updateSubjectField('mermaid', $event)" />
           </template>
 
           <template v-else-if="subjectType === 'chart'">
-            <div class="subject-tool-field-heading"><label>图表 option（JSON）</label><span>兼容 ECharts</span></div>
-            <el-input v-model="subjectChartOptionDraft" type="textarea" :rows="7" maxlength="12000" show-word-limit placeholder='{"xAxis":{"data":["A","B"]},"series":[{"type":"bar","data":[60,80]}]}' />
-            <div class="subject-chart-actions"><el-button @click="applySubjectChartOption">应用图表配置</el-button><el-switch :model-value="subjectData.responsive !== false" active-text="响应式" @update:model-value="updateSubjectField('responsive', $event)" /></div>
-            <p v-if="subjectConfigError" class="content-error" role="alert">{{ subjectConfigError }}</p>
+            <label>数据图表</label>
+            <SubjectChartEditor :key="selectedElement.id" :model-value="subjectData.option" @update:model-value="updateSubjectField('option', $event)" />
           </template>
 
           <template v-else-if="subjectType === 'table'">
-            <label>列标题</label>
-            <el-input :model-value="subjectColumnsText" placeholder="用逗号分隔，例如：项目，观察结果" @update:model-value="updateSubjectColumns" />
-            <label>数据行</label>
-            <el-input :model-value="subjectRowsText" type="textarea" :rows="5" placeholder="每行一条记录，单元格用逗号分隔&#10;实验组，叶片变蓝&#10;对照组，叶片不变蓝" @update:model-value="updateSubjectRows" />
+            <label>探究数据表</label>
+            <SubjectTableEditor :key="selectedElement.id" :model-value="{ columns: subjectData.columns, rows: subjectData.rows }" @update:model-value="updateData({ ...subjectData, ...$event })" />
           </template>
 
           <template v-else>
-            <label>几何构造</label>
-            <el-input :model-value="subjectData.construction || ''" maxlength="400" placeholder="例如：right_triangle" @update:model-value="updateSubjectField('construction', $event)" />
-            <label>构造命令</label>
-            <el-input :model-value="Array.isArray(subjectData.commands) ? subjectData.commands.join('\n') : ''" type="textarea" :rows="4" placeholder="每行一个命令，例如：draw_right_triangle" @update:model-value="updateSubjectCommands" />
+            <label>几何图形</label>
+            <SubjectGeometryEditor :key="selectedElement.id" :model-value="subjectData" @update:model-value="updateData($event)" />
           </template>
 
           <label>教学说明（可选）</label>
           <el-input :model-value="subjectData.description || subjectData.instruction || ''" type="textarea" :rows="3" maxlength="240" show-word-limit placeholder="说明学生将观察、操作或得出什么结论" @update:model-value="updateSubjectField('description', $event)" />
-          <details class="subject-api-details">
-            <summary><span>渲染配置（render）</span><small>{{ subjectRenderConfig.engine || '自定义' }}</small></summary>
-            <el-input v-model="subjectRenderDraft" type="textarea" :rows="5" maxlength="4000" show-word-limit aria-label="学科工具 render 配置" />
-            <el-button type="primary" plain @click="applySubjectRender">应用 render 配置</el-button>
-            <p v-if="subjectRenderError" class="content-error" role="alert">{{ subjectRenderError }}</p>
-            <p class="content-help">对应 API 请求体的 render 字段，可配置前端渲染引擎、输入格式和输出格式。</p>
-          </details>
-          <details class="subject-api-details">
-            <summary><span>样式配置（style）</span><small>{{ Object.keys(subjectStyleConfig).length }} 项</small></summary>
-            <el-input v-model="subjectStyleDraft" type="textarea" :rows="5" maxlength="4000" show-word-limit aria-label="学科工具 style 配置" />
-            <el-button plain @click="applySubjectStyle">应用 style 配置</el-button>
-            <p v-if="subjectStyleError" class="content-error" role="alert">{{ subjectStyleError }}</p>
-            <p class="content-help">也可以在“样式”页用颜色、圆角和透明度控件修改同一份 style 数据。</p>
-          </details>
           <section class="subject-validation-card" :class="{ valid: subjectValidation?.valid === true, invalid: subjectValidation?.valid === false }">
-            <div class="subject-validation-heading"><strong>{{ subjectValidation?.valid === true ? '已通过后端校验' : subjectValidation?.valid === false ? '需要修正配置' : '尚未校验' }}</strong><span v-if="subjectRender.engine">{{ subjectRender.engine }}</span></div>
+            <div class="subject-validation-heading"><strong>{{ subjectValidation?.valid === true ? '格式检查通过' : subjectValidation?.valid === false ? '需要修正内容' : '尚未检查' }}</strong></div>
             <p v-for="(error, index) in (subjectValidation?.errors || [])" :key="`subject-error-${index}`" class="subject-validation-error">{{ error }}</p>
             <p v-for="(warning, index) in (subjectValidation?.warnings || [])" :key="`subject-warning-${index}`" class="subject-validation-warning">{{ warning }}</p>
-            <p v-if="!subjectValidation" class="content-help">将调用项目后端校验接口，并把返回的规范化数据与渲染提示应用到画布。</p>
-            <details v-if="subjectValidation?.normalized || subjectValidation?.render_hint" class="subject-validation-details">
-              <summary>查看 API 返回结果</summary>
-              <div v-if="subjectValidation?.render_hint" class="subject-result-block"><span>render_hint</span><pre>{{ formatSubjectJson(subjectValidation.render_hint) }}</pre></div>
-              <div v-if="subjectValidation?.normalized" class="subject-result-block"><span>normalized</span><pre>{{ formatSubjectJson(subjectValidation.normalized) }}</pre></div>
-            </details>
-            <el-button type="primary" :loading="subjectValidationPending" @click="emit('validate-subject-tool')">验证并应用</el-button>
+            <p class="content-help">检查字段格式与必填项；公式结论、化学意义及教学内容仍需人工核对。</p>
+            <el-button type="primary" :loading="subjectValidationPending" @click="emit('validate-subject-tool')">检查格式</el-button>
           </section>
         </template>
 
@@ -831,10 +828,7 @@ const typeInitials = {
 
         <template v-if="['text', 'formula'].includes(selectedElement.type)">
           <label>{{ selectedElement.type === 'formula' ? '公式颜色' : '文字颜色' }}</label>
-          <div class="color-field">
-            <el-color-picker :model-value="styleValue('color', '#102d54')" @update:model-value="updateStyle('color', $event)" />
-            <span>{{ styleValue('color', '#102d54') }}</span>
-          </div>
+          <WorkspaceColorField aria-label="文字或公式颜色" :model-value="styleValue('color', '#102d54')" @update:model-value="updateStyle('color', $event)" />
           <label>字号</label>
           <el-input-number :model-value="Number(styleValue('fontSize', 16))" :min="10" :max="96" controls-position="right" @update:model-value="updateStyle('fontSize', $event)" />
           <label>字重</label>
@@ -855,9 +849,9 @@ const typeInitials = {
 
         <template v-else-if="selectedElement.type === 'shape'">
           <label>填充颜色</label>
-          <div class="color-field"><el-color-picker :model-value="styleValue('fillColor', '#2563eb')" @update:model-value="updateStyle('fillColor', $event)" /><span>{{ styleValue('fillColor', '#2563eb') }}</span></div>
+          <WorkspaceColorField aria-label="形状填充颜色" :model-value="styleValue('fillColor', '#2563eb')" @update:model-value="updateStyle('fillColor', $event)" />
           <label>边框颜色</label>
-          <div class="color-field"><el-color-picker :model-value="styleValue('borderColor', '#2563eb')" @update:model-value="updateStyle('borderColor', $event)" /><span>{{ styleValue('borderColor', '#2563eb') }}</span></div>
+          <WorkspaceColorField aria-label="形状边框颜色" :model-value="styleValue('borderColor', '#2563eb')" @update:model-value="updateStyle('borderColor', $event)" />
           <label>边框宽度</label>
           <el-input-number :model-value="Number(styleValue('borderWidth', 2))" :min="0" :max="12" controls-position="right" @update:model-value="updateStyle('borderWidth', $event)" />
           <template v-if="selectedElement.shapeKind === 'rounded'">
@@ -868,9 +862,9 @@ const typeInitials = {
 
         <template v-else-if="selectedElement.type === 'image'">
           <label>图片色调</label>
-          <div class="color-field"><el-color-picker :model-value="styleValue('tintColor', '#2563eb')" @update:model-value="updateStyle('tintColor', $event)" /><span>{{ styleValue('tintColor', '#2563eb') }}</span></div>
+          <WorkspaceColorField aria-label="图片色调" :model-value="styleValue('tintColor', '#2563eb')" @update:model-value="updateStyle('tintColor', $event)" />
           <label>边框颜色</label>
-          <div class="color-field"><el-color-picker aria-label="图片边框颜色" :model-value="styleValue('borderColor', '#bfdbfe')" @update:model-value="updateStyle('borderColor', $event)" /><span>{{ styleValue('borderColor', '#bfdbfe') }}</span></div>
+          <WorkspaceColorField aria-label="图片边框颜色" :model-value="styleValue('borderColor', '#bfdbfe')" @update:model-value="updateStyle('borderColor', $event)" />
           <label>图片适配</label>
           <el-select :model-value="styleValue('objectFit', 'cover')" @update:model-value="updateStyle('objectFit', $event)"><el-option label="裁切填充" value="cover" /><el-option label="完整显示" value="contain" /></el-select>
           <label class="switch-field"><span>显示图片标题</span><el-switch :model-value="styleValue('showCaption', true)" @update:model-value="updateStyle('showCaption', $event)" /></label>
@@ -882,22 +876,37 @@ const typeInitials = {
 
         <template v-else-if="selectedElement.type === 'chart'">
           <label>图表主色</label>
-          <div class="color-field"><el-color-picker :model-value="styleValue('color', '#2563eb')" @update:model-value="updateStyle('color', $event)" /><span>{{ styleValue('color', '#2563eb') }}</span></div>
+          <WorkspaceColorField aria-label="图表主色" :model-value="styleValue('color', '#2563eb')" @update:model-value="updateStyle('color', $event)" />
           <label>图表底色</label>
-          <div class="color-field"><el-color-picker :model-value="styleValue('backgroundColor', '#eff6ff')" @update:model-value="updateStyle('backgroundColor', $event)" /><span>{{ styleValue('backgroundColor', '#eff6ff') }}</span></div>
+          <WorkspaceColorField aria-label="图表底色" :model-value="styleValue('backgroundColor', '#eff6ff')" @update:model-value="updateStyle('backgroundColor', $event)" />
           <label>边框颜色</label>
-          <div class="color-field"><el-color-picker aria-label="图表边框颜色" :model-value="styleValue('borderColor', '#bfdbfe')" @update:model-value="updateStyle('borderColor', $event)" /><span>{{ styleValue('borderColor', '#bfdbfe') }}</span></div>
+          <WorkspaceColorField aria-label="图表边框颜色" :model-value="styleValue('borderColor', '#bfdbfe')" @update:model-value="updateStyle('borderColor', $event)" />
           <label>边框宽度</label>
           <el-input-number aria-label="图表边框宽度" :model-value="Number(styleValue('borderWidth', 1))" :min="0" :max="8" controls-position="right" @update:model-value="updateStyle('borderWidth', $event)" />
           <label>圆角</label>
           <el-input-number :model-value="Number(styleValue('borderRadius', 12))" :min="0" :max="40" controls-position="right" @update:model-value="updateStyle('borderRadius', $event)" />
         </template>
 
+        <template v-else-if="selectedElement.type === 'subject'">
+          <label>主色</label>
+          <WorkspaceColorField :aria-label="`${subjectContextLabel}主色`" :model-value="styleValue('color', '#2563eb')" @update:model-value="updateStyle('color', $event)" />
+          <label>{{ subjectContextLabel }}背景色</label>
+          <WorkspaceColorField :aria-label="`${subjectContextLabel}背景色`" :model-value="styleValue('backgroundColor', '#eff6ff')" @update:model-value="updateStyle('backgroundColor', $event)" />
+          <label>边框颜色</label>
+          <WorkspaceColorField :aria-label="`${subjectContextLabel}边框颜色`" :model-value="styleValue('borderColor', '#bfdbfe')" @update:model-value="updateStyle('borderColor', $event)" />
+          <label>边框宽度</label>
+          <el-input-number :aria-label="`${subjectContextLabel}边框宽度`" :model-value="Number(styleValue('borderWidth', 1))" :min="0" :max="8" controls-position="right" @update:model-value="updateStyle('borderWidth', $event)" />
+          <label>主要内容字号</label>
+          <el-input-number :aria-label="`${subjectContextLabel}主要内容字号`" :model-value="Number(styleValue('fontSize', 24))" :min="10" :max="64" controls-position="right" @update:model-value="updateStyle('fontSize', $event)" />
+          <label>圆角</label>
+          <el-input-number :aria-label="`${subjectContextLabel}圆角`" :model-value="Number(styleValue('borderRadius', 12))" :min="0" :max="40" controls-position="right" @update:model-value="updateStyle('borderRadius', $event)" />
+        </template>
+
         <template v-else>
           <label>组件主色</label>
-          <div class="color-field"><el-color-picker :model-value="styleValue('color', '#2563eb')" @update:model-value="updateStyle('color', $event)" /><span>{{ styleValue('color', '#2563eb') }}</span></div>
+          <WorkspaceColorField aria-label="组件主色" :model-value="styleValue('color', '#2563eb')" @update:model-value="updateStyle('color', $event)" />
           <label>组件底色</label>
-          <div class="color-field"><el-color-picker :model-value="styleValue('backgroundColor', '#eff6ff')" @update:model-value="updateStyle('backgroundColor', $event)" /><span>{{ styleValue('backgroundColor', '#eff6ff') }}</span></div>
+          <WorkspaceColorField aria-label="组件底色" :model-value="styleValue('backgroundColor', '#eff6ff')" @update:model-value="updateStyle('backgroundColor', $event)" />
           <label>圆角</label>
           <el-input-number :model-value="Number(styleValue('borderRadius', 12))" :min="0" :max="40" controls-position="right" @update:model-value="updateStyle('borderRadius', $event)" />
         </template>
@@ -963,7 +972,7 @@ const typeInitials = {
             :aria-selected="(page?.theme || 'blue') === theme.id"
             @click="updatePageTheme(theme.id)"
           >
-            <span class="theme-picker-dot" :style="{ backgroundColor: theme.color }" />
+            <span class="theme-picker-dot" :class="{ 'is-transparent': theme.color === 'transparent' }" :style="{ backgroundColor: theme.color }" />
             <span>{{ theme.name }}</span>
           </button>
         </div>
@@ -972,10 +981,7 @@ const typeInitials = {
           <el-option v-for="layout in layouts" :key="layout" :label="layout" :value="layout" />
         </el-select>
         <label>背景色</label>
-        <div class="color-field page-background-color-field">
-          <el-color-picker :model-value="page?.backgroundColor || page?.background_color || '#f9fbff'" @update:model-value="updatePageField('backgroundColor', $event)" />
-          <span>{{ page?.backgroundColor || page?.background_color || '#f9fbff' }}</span>
-        </div>
+        <WorkspaceColorField aria-label="页面背景色" :model-value="page?.backgroundColor || page?.background_color || '#f9fbff'" @update:model-value="updatePageField('backgroundColor', $event)" />
         <label>背景图</label>
         <div v-if="pageBackgroundPreview" class="page-background-card">
           <img :src="pageBackgroundPreview" alt="当前页面背景图" />
@@ -1117,24 +1123,15 @@ const typeInitials = {
 .table-editor-actions { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 10px; }
 .table-editor-actions :deep(.el-button), .initialize-table { margin: 0; }
 .initialize-table { width: 100%; margin-top: 8px; border-style: dashed; }
-.subject-tool-heading, .subject-tool-field-heading, .subject-validation-heading { display: flex; align-items: baseline; justify-content: space-between; gap: 8px; }
-.subject-tool-heading { margin-bottom: 2px; }
-.subject-tool-heading label, .subject-tool-field-heading label { margin: 0; }
-.subject-tool-heading span, .subject-tool-field-heading span { color: var(--zh-text-caption); font-size: 9px; }
-.subject-protocol-meta { display: flex; flex-wrap: wrap; gap: 5px; margin: 8px 0 12px; }
-.subject-protocol-meta span { display: inline-flex; align-items: center; gap: 5px; padding: 4px 7px; border: 1px solid var(--zh-line-border); border-radius: 5px; color: var(--zh-text-caption); background: var(--zh-background-light); font-size: 9px; }
-.subject-protocol-meta strong { color: var(--zh-text-secondary); font: 700 9px var(--zh-font-number); }
-.subject-protocol-meta code { max-width: 170px; overflow: hidden; color: var(--zh-text-theme); font: 9px var(--zh-font-number); text-overflow: ellipsis; white-space: nowrap; }
-.subject-api-details { display: grid; gap: 8px; margin-top: 14px; padding: 9px 10px; border: 1px solid var(--zh-line-border); border-radius: var(--zh-radius8); background: var(--zh-background-light); }
-.subject-api-details summary, .subject-validation-details summary { display: flex; align-items: center; justify-content: space-between; gap: 8px; color: var(--zh-text-secondary); font-size: 10px; font-weight: 700; cursor: pointer; }
-.subject-api-details summary::marker, .subject-validation-details summary::marker { color: var(--zh-text-theme); }
-.subject-api-details summary small { color: var(--zh-text-theme); font: 9px var(--zh-font-number); }
-.subject-api-details :deep(.el-button) { width: 100%; margin: 0; }
-.subject-api-details .content-help { margin: 0; }
-.subject-validation-details { display: grid; gap: 7px; margin-top: 4px; }
-.subject-result-block { display: grid; gap: 4px; }
-.subject-result-block > span { color: var(--zh-text-caption); font: 9px var(--zh-font-number); }
-.subject-result-block pre { max-height: 150px; margin: 0; padding: 7px; overflow: auto; border: 1px solid var(--zh-line-border); border-radius: 5px; color: var(--zh-text-secondary); background: var(--zh-background-primary); font: 9px/1.45 var(--zh-font-number); white-space: pre-wrap; word-break: break-word; }
+.subject-tool-field-heading, .subject-validation-heading { display: flex; align-items: baseline; justify-content: space-between; gap: 8px; }
+.subject-tool-field-heading label { margin: 0; }
+.subject-tool-field-heading span { color: var(--zh-text-caption); font-size: 9px; }
+.subject-molfile-actions { display: flex; flex-wrap: wrap; gap: 6px; margin: -2px 0 6px; }
+.subject-molfile-actions :deep(.el-button) { margin: 0; }
+.subject-advanced-fields { padding: 9px 10px; border: 1px solid var(--zh-line-border); border-radius: 8px; background: var(--zh-background-light); }
+.subject-advanced-fields summary { color: var(--zh-text-secondary); font-size: 11px; font-weight: 600; cursor: pointer; }
+.subject-advanced-body { display: grid; gap: 8px; padding-top: 10px; }
+.subject-advanced-body .content-help { margin: 0; }
 .subject-chart-actions { display: flex; align-items: center; justify-content: space-between; gap: 8px; margin-top: 8px; }
 .subject-chart-actions :deep(.el-button) { margin: 0; }
 .subject-chart-actions :deep(.el-switch__label) { font-size: 10px; }
@@ -1142,7 +1139,6 @@ const typeInitials = {
 .subject-validation-card.valid { border-color: rgb(22 163 74 / 28%); background: rgb(240 253 244 / 72%); }
 .subject-validation-card.invalid { border-color: rgb(220 38 38 / 28%); background: rgb(254 242 242 / 72%); }
 .subject-validation-heading strong { color: var(--zh-text-primary); font-size: 11px; }
-.subject-validation-heading span { color: var(--zh-text-caption); font: 700 9px var(--zh-font-number); }
 .subject-validation-card p { margin: 0; font-size: 10px; line-height: 1.5; }
 .subject-validation-error { color: var(--el-color-danger); }
 .subject-validation-warning { color: var(--el-color-warning); }
@@ -1152,8 +1148,6 @@ const typeInitials = {
 .properties :deep(.el-input), .properties :deep(.el-input-number), .properties :deep(.el-select) { width: 100%; }
 .field-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 12px 8px; }
 .field-grid label { margin: 0 0 6px; font-size: 10px; }
-.color-field { display: flex; align-items: center; gap: 9px; }
-.color-field span { color: var(--zh-text-caption); font: 11px var(--zh-font-number); text-transform: uppercase; }
 .properties :deep(.el-radio-group) { display: flex; align-items: stretch; width: 100%; }
 .properties :deep(.el-radio-button) { display: flex; flex: 1 1 0; min-width: 0; margin: 0; }
 .properties :deep(.el-radio-button:not(:first-child)) { margin-top: 0; }
@@ -1173,6 +1167,7 @@ const typeInitials = {
 .theme-picker-item { display: flex; align-items: center; gap: 7px; min-width: 0; padding: 8px; border: 1px solid var(--zh-line-border); border-radius: var(--zh-radius8); color: var(--zh-text-secondary); background: var(--zh-background-light); font-size: 10px; cursor: pointer; }
 .theme-picker-item:hover, .theme-picker-item.active { border-color: var(--zh-line-theme); color: var(--zh-text-theme); background: var(--zh-background-weaken); }
 .theme-picker-dot { flex: none; width: 14px; height: 14px; border-radius: 50%; box-shadow: inset 0 0 0 2px rgb(255 255 255 / 70%); }
+.theme-picker-dot.is-transparent { border: 1px solid var(--zh-line-border); background-image: conic-gradient(#cbd5e1 25%, #fff 0 50%, #cbd5e1 0 75%, #fff 0); background-size: 6px 6px; box-shadow: none; }
 .page-background-card { display: grid; grid-template-columns: 54px minmax(0, 1fr) auto; align-items: center; gap: 8px; margin-bottom: 8px; padding: 6px; border: 1px solid var(--zh-line-border); border-radius: var(--zh-radius8); background: var(--zh-background-light); }
 .page-background-card img { display: block; width: 54px; height: 38px; border-radius: 5px; object-fit: cover; }
 .page-background-copy { display: grid; min-width: 0; gap: 3px; }

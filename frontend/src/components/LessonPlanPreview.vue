@@ -207,4 +207,10 @@ const previewWrapperProps = computed(() => props.embedded
 .lesson-plan-preview-activities article { display: grid; gap: 7px; padding: 12px; border-radius: 8px; background: var(--zh-background-light); }
 .lesson-plan-preview-activities p { font-size: 12px; }
 @media (max-width: 767.98px) { .lesson-plan-preview { max-height: 72vh; } .lesson-plan-preview-header, .lesson-plan-preview-section { padding: 16px; } .lesson-plan-preview-grid { grid-template-columns: 1fr; } .lesson-plan-preview-wide { grid-column: auto; } .lesson-plan-preview-step-content dl { grid-template-columns: 1fr; gap: 3px; } .lesson-plan-preview-step-content dd { margin-bottom: 6px; } }
+@media (max-width: 767.98px) {
+  :global(.lesson-plan-preview-dialog) { display: flex; max-height: calc(100dvh - 28px - var(--zh-safe-top) - var(--zh-safe-bottom)); flex-direction: column; }
+  :global(.lesson-plan-preview-dialog .el-dialog__body) { min-height: 0; overflow-y: auto; padding: 0 16px 16px; }
+  :global(.lesson-plan-preview-dialog .el-dialog__headerbtn) { width: 44px; height: 44px; }
+  .lesson-plan-preview { max-height: none; overflow: visible; }
+}
 </style>

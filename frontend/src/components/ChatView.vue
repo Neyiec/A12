@@ -88,6 +88,9 @@ const uploadChatResources = async (event) => {
 const removeChatResource = (id) => {
   attachedResources.value = attachedResources.value.filter((item) => String(item.id) !== String(id))
 }
+/** 功能 2：临时上传资料（欢迎页带下来，res_xxx 走 temp 索引），只读展示不提供移除。 */
+const tempContextResources = computed(() => (activeWorkspaceContext.value?.uploadedResources || [])
+  .filter((item) => item && item.temp && item.resource_id))
 const generalSessionId = ref(props.mode === 'general' && props.resume ? props.sessionId : null)
 const selectedRoutePreference = ref(props.routePreference)
 const selectedModelProfile = ref(normalizeModelProfile(localStorage.getItem('a12:model-profile')))
@@ -1989,7 +1992,8 @@ async function restoreSession() {
         <input ref="resourceFileInput" class="composer-resource-input" type="file" multiple accept=".pdf,.doc,.docx,.ppt,.pptx,.xls,.xlsx,.csv,.tsv,.txt,.md,.jpg,.jpeg,.png,.gif,.webp,.mp3,.wav,.m4a,.ogg,.mp4,.avi,.mov,.mkv,.webm" @change="uploadChatResources" />
         <el-button text size="small" :icon="Paperclip" :loading="resourceUploading" :disabled="resourceUploading" @click="resourceFileInput?.click()">添加资料</el-button>
         <span v-if="activeResourceIds.length" class="composer-resource-count">已绑定 {{ activeResourceIds.length }} 份资料 · 解析完成后用于生成</span>
-        <el-tag v-for="resource in attachedResources" :key="resource.id" size="small" closable @close="removeChatResource(resource.id)">{{ resource.file_name }}</el-tag>
+        <el-tag v-for="resource in attachedResources" :key="resource.id" size="small" closable class="composer-resource-tag" @close="removeChatResource(resource.id)">{{ resource.file_name }}</el-tag>
+        <el-tag v-for="resource in tempContextResources" :key="`temp-${resource.resource_id}`" size="small" type="warning" effect="plain" class="composer-resource-tag" title="临时上传资料：仅本次生成引用，会话结束自动清理">{{ resource.file_name }}</el-tag>
       </div>
       <div v-if="isGeneralChat" class="route-preference-row">
         <span>任务方式</span>
@@ -2437,6 +2441,9 @@ async function restoreSession() {
 .composer-resource-row { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; padding-bottom: 7px; }
 .composer-resource-input { display: none; }
 .composer-resource-count { color: var(--zh-text-caption); font-size: var(--zh-font-size11); }
+/* 资料/临时上传标签：长文件名截断，避免撑破 composer-resource-row */
+.composer-resource-tag { max-width: 180px; }
+.composer-resource-tag :deep(.el-tag__content) { display: inline-block; max-width: 100%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; vertical-align: bottom; }
 .composer-input-row {
   display: flex;
   align-items: flex-end;

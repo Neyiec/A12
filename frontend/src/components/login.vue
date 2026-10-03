@@ -607,7 +607,15 @@ onBeforeUnmount(() => {
               @keyup.enter="currentStep < 2 ? handleNext() : handleRegister()"
             >
               <!-- 步骤指示器 — 已完成步骤可点击回退 -->
-              <el-steps :active="currentStep" align-center :simple="isMobileViewport" class="mb-8">
+              <ol v-if="isMobileViewport" class="register-progress" aria-label="注册步骤">
+                <li v-for="(title, i) in LOGIN_TEXT.steps.titles" :key="i" :class="{ 'is-current': i === currentStep, 'is-complete': i < currentStep }">
+                  <button type="button" :disabled="i >= currentStep" :aria-current="i === currentStep ? 'step' : undefined" @click="goToStep(i)">
+                    <span class="register-progress-number">{{ i + 1 }}</span>
+                    <span>{{ title }}</span>
+                  </button>
+                </li>
+              </ol>
+              <el-steps v-else :active="currentStep" align-center class="mb-8">
                 <el-step
                   v-for="(title, i) in LOGIN_TEXT.steps.titles"
                   :key="i"
@@ -779,7 +787,7 @@ onBeforeUnmount(() => {
       </div>
     </main>
 
-    <el-dialog v-model="resetVisible" title="重置密码" width="min(420px, 92vw)" align-center :close-on-click-modal="false">
+    <el-dialog v-model="resetVisible" class="auth-dialog" title="重置密码" width="min(420px, 92vw)" align-center :close-on-click-modal="false">
       <p class="reset-tip">验证码将发送至该账号绑定的邮箱。</p>
       <el-form label-position="top" @submit.prevent="submitReset">
         <el-form-item label="登录账号"><el-input v-model="resetForm.username" :prefix-icon="User" size="large" autocomplete="username" /></el-form-item>
@@ -790,7 +798,7 @@ onBeforeUnmount(() => {
       <template #footer><el-button @click="resetVisible = false">取消</el-button><el-button type="primary" :loading="resetLoading" @click="submitReset">确认重置</el-button></template>
     </el-dialog>
   </div>
-    <el-dialog v-model="initialPasswordVisible" title="首次登录，请修改初始密码" width="min(420px, 92vw)" align-center :close-on-click-modal="false" :close-on-press-escape="false" :show-close="false"><el-form label-position="top"><el-form-item label="登录账号"><el-input v-model="initialPasswordForm.username" size="large" disabled /></el-form-item><el-form-item label="初始密码"><el-input v-model="initialPasswordForm.initial_password" size="large" type="password" show-password /></el-form-item><el-form-item label="新密码"><el-input v-model="initialPasswordForm.new_password" size="large" type="password" show-password /></el-form-item><el-form-item label="确认新密码"><el-input v-model="initialPasswordForm.confirmPassword" size="large" type="password" show-password @keyup.enter="submitInitialPasswordChange" /></el-form-item></el-form><template #footer><el-button type="primary" :loading="initialPasswordLoading" @click="submitInitialPasswordChange">确认修改</el-button></template></el-dialog>
+    <el-dialog v-model="initialPasswordVisible" class="auth-dialog" title="首次登录，请修改初始密码" width="min(420px, 92vw)" align-center :close-on-click-modal="false" :close-on-press-escape="false" :show-close="false"><el-form label-position="top"><el-form-item label="登录账号"><el-input v-model="initialPasswordForm.username" size="large" disabled /></el-form-item><el-form-item label="初始密码"><el-input v-model="initialPasswordForm.initial_password" size="large" type="password" show-password /></el-form-item><el-form-item label="新密码"><el-input v-model="initialPasswordForm.new_password" size="large" type="password" show-password /></el-form-item><el-form-item label="确认新密码"><el-input v-model="initialPasswordForm.confirmPassword" size="large" type="password" show-password @keyup.enter="submitInitialPasswordChange" /></el-form-item></el-form><template #footer><el-button type="primary" :loading="initialPasswordLoading" @click="submitInitialPasswordChange">确认修改</el-button></template></el-dialog>
 </template>
 
 <style scoped>
@@ -809,6 +817,57 @@ onBeforeUnmount(() => {
 @media (max-width: 1023.98px) {
   .login-brand-logo-wrap { margin: -16px 0 -12px; }
   .login-brand-logo { width: 170px; }
+}
+
+.register-progress {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 6px;
+  margin: 0 0 24px;
+  padding: 0;
+  list-style: none;
+}
+
+.register-progress button {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 5px;
+  width: 100%;
+  min-height: 42px;
+  padding: 0 4px;
+  border: 1px solid #e7ebf2;
+  border-radius: 10px;
+  background: #f8fafc;
+  color: var(--zh-text-caption);
+  font-size: 12px;
+  white-space: nowrap;
+}
+
+.register-progress .is-current button {
+  border-color: #bfdbfe;
+  background: #eff6ff;
+  color: #1d4ed8;
+  font-weight: 700;
+}
+
+.register-progress .is-complete button {
+  border-color: #dbeafe;
+  background: #f8fbff;
+  color: #2563eb;
+  cursor: pointer;
+}
+
+.register-progress-number {
+  display: grid;
+  flex: 0 0 19px;
+  place-items: center;
+  width: 19px;
+  height: 19px;
+  border: 1px solid currentColor;
+  border-radius: 50%;
+  font-size: 11px;
+  line-height: 1;
 }
 
 /* ===== 表单切换动画 ===== */
@@ -904,4 +963,15 @@ onBeforeUnmount(() => {
 }
 .reset-tip { margin: -8px 0 18px; color: var(--zh-text-caption); font-size: var(--zh-font-size13); }
 .code-row { display: flex; width: 100%; gap: 8px; }.code-row .el-button { flex: 0 0 auto; }
+
+@media (max-width: 767.98px) {
+  :global(.auth-dialog.el-dialog) {
+    display: flex;
+    flex-direction: column;
+    max-height: calc(100dvh - max(12px, var(--zh-safe-top)) - max(12px, var(--zh-safe-bottom)));
+    margin: max(12px, var(--zh-safe-top)) auto !important;
+  }
+  :global(.auth-dialog .el-dialog__body) { min-height: 0; overflow-y: auto; }
+  :global(.auth-dialog .el-dialog__footer) { flex: none; padding-bottom: calc(16px + var(--zh-safe-bottom)); }
+}
 </style>

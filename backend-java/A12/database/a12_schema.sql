@@ -159,6 +159,7 @@ CREATE TABLE ws_project (
   KEY idx_task_id (task_id),
   KEY idx_status (status),
   KEY idx_user_status_updated (user_id, status, updated_at),
+  KEY idx_user_deleted_updated (user_id, deleted_at, updated_at),
   KEY idx_deleted_at (deleted_at)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci COMMENT='创作项目表';
 
@@ -336,6 +337,8 @@ CREATE TABLE com_content (
   is_top TINYINT NOT NULL DEFAULT 0 COMMENT '是否置顶',
   view_count INT NOT NULL DEFAULT 0 COMMENT '浏览次数',
   use_count INT NOT NULL DEFAULT 0 COMMENT '使用次数',
+  like_count INT NOT NULL DEFAULT 0 COMMENT '点赞数',
+  favorite_count INT NOT NULL DEFAULT 0 COMMENT '收藏数',
   created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP COMMENT '创建时间',
   updated_at DATETIME DEFAULT NULL ON UPDATE CURRENT_TIMESTAMP COMMENT '更新时间',
   PRIMARY KEY (id),
@@ -365,8 +368,22 @@ CREATE TABLE com_interaction (
   KEY idx_target_id (target_id),
   KEY idx_user_action_created (user_id, action_type, created_at),
   KEY idx_user_action_target (user_id, action_type, target_type, target_id),
-  KEY idx_com_interaction_ranking (action_type, target_id, created_at)
+  KEY idx_com_interaction_ranking (action_type, target_id, created_at),
+  KEY idx_action_created (action_type, created_at)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci COMMENT='社区互动表';
+
+DROP TABLE IF EXISTS com_like;
+CREATE TABLE com_like (
+  id BIGINT NOT NULL AUTO_INCREMENT COMMENT '点赞ID',
+  user_id INT NOT NULL COMMENT '点赞用户ID',
+  target_type VARCHAR(20) NOT NULL COMMENT '目标类型: skill/lesson_case',
+  target_id INT NOT NULL COMMENT '目标内容ID',
+  created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP COMMENT '点赞时间',
+  PRIMARY KEY (id),
+  UNIQUE KEY uk_user_target (user_id, target_type, target_id),
+  KEY idx_target (target_type, target_id),
+  KEY idx_created (created_at)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci COMMENT='社区点赞表';
 
 DROP TABLE IF EXISTS adm_audit;
 CREATE TABLE adm_audit (

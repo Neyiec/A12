@@ -1,7 +1,8 @@
 import json
 import re
 import uuid
-from datetime import datetime, timezone
+from datetime import date, datetime, timezone
+from decimal import Decimal
 from typing import Any
 
 from ..config import get_settings
@@ -19,6 +20,15 @@ STYLE_SIGNALS = {
 def extract_style_signals(text: str) -> list[str]:
     normalized = re.sub(r"\s+", "", text).lower()
     return [name for name, phrases in STYLE_SIGNALS.items() if any(phrase.lower() in normalized for phrase in phrases)]
+
+
+def _json_default(value: Any) -> Any:
+    """psycopg 原生类型(Decimal/datetime)在 json.dumps 时的兜底转换"""
+    if isinstance(value, Decimal):
+        return float(value)
+    if isinstance(value, (datetime, date)):
+        return value.isoformat()
+    return str(value)
 
 
 class PostgresOutlineMemoryStore:
@@ -62,9 +72,9 @@ class PostgresOutlineMemoryStore:
                 user_id,
                 session_id,
                 (state.get("intent") or {}).get("title"),
-                json.dumps(state.get("intent") or {}, ensure_ascii=False),
+                json.dumps(state.get("intent") or {}, ensure_ascii=False, default=_json_default),
                 state.get("final_prompt") or "",
-                json.dumps(state.get("outline") or {}, ensure_ascii=False),
+                json.dumps(state.get("outline") or {}, ensure_ascii=False, default=_json_default),
                 status,
             ),
         )
@@ -75,7 +85,7 @@ class PostgresOutlineMemoryStore:
             INSERT INTO a12_outline_chat_message (user_id, session_id, role, content, metadata)
             VALUES (%s, %s, %s, %s, %s::jsonb)
             """,
-            (user_id, session_id, role, content, json.dumps(metadata or {}, ensure_ascii=False)),
+            (user_id, session_id, role, content, json.dumps(metadata or {}, ensure_ascii=False, default=_json_default)),
         )
 
     def save_generation(self, user_id: str, session_id: str, response: dict[str, Any], final_prompt: str) -> None:
@@ -91,7 +101,7 @@ class PostgresOutlineMemoryStore:
                 response.get("outline_id"),
                 response.get("title"),
                 final_prompt,
-                json.dumps(response.get("outline") or {}, ensure_ascii=False),
+                json.dumps(response.get("outline") or {}, ensure_ascii=False, default=_json_default),
                 response.get("slide_count") or 0,
             ),
         )
@@ -111,7 +121,7 @@ class PostgresOutlineMemoryStore:
               (user_id, session_id, source_message, extracted_style, necessity_score, reason)
             VALUES (%s, %s, %s, %s::jsonb, %s, %s)
             """,
-            (user_id, session_id, source_message, json.dumps(extracted_style, ensure_ascii=False), score, reason),
+            (user_id, session_id, source_message, json.dumps(extracted_style, ensure_ascii=False, default=_json_default), score, reason),
         )
         profile_saved = self._execute(
             """
@@ -132,7 +142,7 @@ class PostgresOutlineMemoryStore:
             (
                 user_id,
                 str(extracted_style.get("summary") or reason),
-                json.dumps(extracted_style, ensure_ascii=False),
+                json.dumps(extracted_style, ensure_ascii=False, default=_json_default),
                 score,
             ),
         )
@@ -232,6 +242,14 @@ class PostgresOutlineMemoryStore:
                     # Confidence decays slowly when a profile has not received evidence for a long time.
                     age_days = (datetime.now(timezone.utc) - result["updated_at"]).days if result.get("updated_at") else 0
                     result["effective_confidence"] = round(float(result.get("confidence") or 0) * 0.995 ** min(365, max(0, age_days)), 4)
+                    # 输出为 JSON 安全类型：该画像会嵌入 intent 并被 jsonb 持久化
+                    result["confidence"] = float(result.get("confidence") or 0)
+                    for item in [result, *(result.get("recent_feedback") or [])]:
+                        for key, value in item.items():
+                            if isinstance(value, Decimal):
+                                item[key] = float(value)
+                            elif isinstance(value, (datetime, date)):
+                                item[key] = value.isoformat()
                     return result
         except Exception:
             self.available = False
@@ -253,8 +271,8 @@ class PostgresOutlineMemoryStore:
               VALUES (%s,%s,%s,%s,%s,%s,%s,%s::jsonb,%s::jsonb,%s::jsonb)""",
             (user_id, payload.get("session_id"), payload.get("project_id"), action,
              payload.get("target_type") or "presentation", payload.get("instruction"),
-             payload.get("change_summary"), json.dumps(payload.get("before_data") or {}, ensure_ascii=False),
-             json.dumps(payload.get("after_data") or {}, ensure_ascii=False), json.dumps(metadata, ensure_ascii=False)),
+             payload.get("change_summary"), json.dumps(payload.get("before_data") or {}, ensure_ascii=False, default=_json_default),
+             json.dumps(payload.get("after_data") or {}, ensure_ascii=False, default=_json_default), json.dumps(metadata, ensure_ascii=False, default=_json_default)),
         )
         # A single edit can be task-specific. Only repeat signals promote to
         # long-term preference; rejection stays negative evidence.
@@ -287,7 +305,7 @@ class PostgresOutlineMemoryStore:
                    style_summary=EXCLUDED.style_summary,evidence_count=a12_teacher_style_profile.evidence_count+1,
                    confidence=LEAST(0.98, a12_teacher_style_profile.confidence + 0.03),updated_at=NOW()""",
                 (user_id, preference["last_change_summary"] or preference["last_instruction"],
-                 json.dumps(preference, ensure_ascii=False)),
+                 json.dumps(preference, ensure_ascii=False, default=_json_default)),
             )
         return {"stored": bool(saved), "action": action, "profile_updated": bool(profile_saved),
                 "style_signals": signals}
@@ -321,7 +339,7 @@ class PostgresOutlineMemoryStore:
             payload.get("user_id"), payload.get("project_id"), payload.get("session_id"),
             payload.get("student_key"), payload.get("event_type"), payload.get("question_id"),
             payload.get("answer"), payload.get("correct"), payload.get("response_ms"),
-            json.dumps(payload.get("metadata") or {}, ensure_ascii=False),
+            json.dumps(payload.get("metadata") or {}, ensure_ascii=False, default=_json_default),
         ))
 
     def classroom_insights(self, user_id: str, project_id: str) -> dict[str, Any]:

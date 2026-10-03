@@ -1,4 +1,5 @@
 import asyncio
+import hashlib
 import json
 import hashlib
 import logging
@@ -117,6 +118,12 @@ class ResourceIndexStore:
                     cur.execute(
                         "CREATE INDEX IF NOT EXISTS idx_a12_retrieval_log_created ON a12_retrieval_log(created_at DESC)"
                     )
+                    # temp 分区（临时上传）为后加分区：老库按旧 CHECK 建表时需放行 'temp'。
+                    cur.execute("ALTER TABLE a12_resource_index DROP CONSTRAINT IF EXISTS ck_a12_resource_index_source")
+                    cur.execute(
+                        "ALTER TABLE a12_resource_index ADD CONSTRAINT ck_a12_resource_index_source "
+                        "CHECK (source_type IN ('public', 'personal', 'community', 'temp'))"
+                    )
             self.available = True
             self._ensure_community_constraint()
             self._ensure_vector_index()
@@ -136,7 +143,7 @@ class ResourceIndexStore:
                     if constraint and "community" not in constraint[0]:
                         cur.execute("ALTER TABLE a12_resource_index DROP CONSTRAINT ck_a12_resource_index_source")
                         cur.execute("""ALTER TABLE a12_resource_index ADD CONSTRAINT ck_a12_resource_index_source
-                                       CHECK (source_type IN ('public', 'personal', 'community'))""")
+                                       CHECK (source_type IN ('public', 'personal', 'community', 'temp'))""")
         except Exception:
             logger.error("无法扩展社区索引来源约束；公共/个人检索继续可用，请由 DBA 执行迁移", exc_info=True)
 
@@ -294,6 +301,62 @@ class ResourceIndexStore:
             "skipped": sum(1 for item in results if item.get("status") == "skipped"),
             "failed": sum(1 for item in results if item.get("status") == "failed"),
             "results": results,
+        }
+
+    async def index_local_text(
+        self,
+        *,
+        source_type: str,
+        resource_id: str,
+        title: str,
+        text: str,
+        owner_user_id: str | None = None,
+        file_url: str = "",
+        file_type: str | None = None,
+        file_size: int | None = None,
+        metadata: dict[str, Any] | None = None,
+    ) -> dict[str, Any]:
+        """已在本机落盘的资料（临时上传）直接分块向量化，跳过下载/解析阶段。
+
+        与 sync_resource 一致：向量化失败显式返回 failed，绝不写「有分块无向量」的假索引。
+        """
+        if not text.strip():
+            return {"resource_key": resource_key(source_type, resource_id), "status": "failed", "error_message": "资料未解析出有效文本"}
+        request = ResourceIndexSyncRequest(
+            source_type=source_type,
+            resource_id=resource_id,
+            title=title,
+            file_url=file_url or f"local:{resource_id}",
+            file_type=file_type,
+            file_size=file_size,
+            owner_user_id=owner_user_id,
+            uploaded_by=owner_user_id,
+            metadata=dict(metadata or {}),
+        )
+        built_metadata = self._build_metadata(request)
+        try:
+            chunk_items = chunk_records(text, metadata=built_metadata)
+            chunks = [item["content"] for item in chunk_items]
+            chunk_metadata = [self._compact_chunk_metadata(built_metadata, item.get("metadata") or {}) for item in chunk_items]
+            embeddings = await self.embedding_client.embed_documents(chunks)
+        except Exception as exc:
+            logger.error("临时资料向量化失败 resource_key=%s: %s", resource_key(source_type, resource_id), exc)
+            return {
+                "resource_key": resource_key(source_type, resource_id),
+                "status": "failed",
+                "error_message": f"向量化失败: {exc}",
+            }
+        fingerprint = hashlib.sha256(text.encode("utf-8")).hexdigest()
+        self._replace_index(request, built_metadata, fingerprint, text, chunks, embeddings, chunk_metadata)
+        logger.info(
+            "index_local_text 完成 resource_key=%s text_length=%d chunks=%d",
+            resource_key(source_type, resource_id), len(text), len(chunks),
+        )
+        return {
+            "resource_key": resource_key(source_type, resource_id),
+            "status": "indexed",
+            "text_length": len(text),
+            "chunk_count": len(chunks),
         }
 
     def update_metadata(self, request: ResourceIndexMetadataRequest) -> dict[str, Any]:
@@ -908,7 +971,7 @@ class ResourceIndexStore:
             "source_type": request.source_type,
             "resource_id": request.resource_id,
             "resource_key": resource_key(request.source_type, request.resource_id),
-            "mysql_table": {"public": "adm_resource", "personal": "res_material", "community": "com_content"}[request.source_type],
+            "mysql_table": {"public": "adm_resource", "personal": "res_material", "community": "com_content", "temp": "local_upload"}[request.source_type],
             "uploaded_by": request.uploaded_by,
             "owner_user_id": request.owner_user_id,
             "available": request.available,

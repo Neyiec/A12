@@ -1,45 +1,57 @@
-import axios from 'axios'
-import { apiRequest, del, get, post, put } from '../utils/api'
+import { apiRequest, del, get, post, put, uploadFile } from '../utils/api'
 import { useUserStore } from '../storage/user.js'
 
 export const listResources = (params) => get('/api/v1/resources', params)
 export const uploadResource = async (file, onProgress) => {
-  const uploadTokenResult = await post('/api/v1/resources/upload-tokens', {
-    file_name: file.name,
-    file_type: file.type || undefined,
-  })
-  if (uploadTokenResult?.code && uploadTokenResult.code !== 200 && uploadTokenResult.code !== 0) {
-    throw new Error(uploadTokenResult.message || '获取上传凭证失败')
+  const formData = new FormData()
+  formData.append('file', file)
+  const result = await uploadFile('/api/v1/resources/local-uploads', formData, onProgress)
+  if (result?.code && result.code !== 200 && result.code !== 0) {
+    throw new Error(result.message || '本地上传失败')
   }
-
-  const uploadToken = uploadTokenResult?.data || uploadTokenResult
-  if (!uploadToken?.upload_url || !uploadToken?.object_key) {
-    throw new Error('上传凭证无效，请稍后重试')
-  }
-
-  await axios.put(uploadToken.upload_url, file, {
-    headers: { 'Content-Type': file.type || 'application/octet-stream' },
-    onUploadProgress: (event) => {
-      if (event.total && onProgress) onProgress(Math.round((event.loaded / event.total) * 100))
-    },
-  })
-
-  const confirmResult = await post('/api/v1/resources/uploaded-files', {
-    object_key: uploadToken.object_key,
-    file_name: file.name,
-    file_size: file.size,
-    // API-37 accepts the type as an optional business category.  The MIME
-    // value is only needed when signing the OSS PUT request above; sending it
-    // here would persist values such as `image/png` instead of the documented
-    // `image`/`ppt`/`word` categories.  Leaving it out lets Java detect the
-    // category from the filename.
-  })
-  if (confirmResult?.code && confirmResult.code !== 200 && confirmResult.code !== 0) {
-    throw new Error(confirmResult.message || '素材入库失败')
-  }
-  return confirmResult?.data || confirmResult
+  return result?.data || result
 }
 export const deleteResource = (id) => del(`/api/v1/resources/${id}`)
+/**
+ * 功能 2（临时上传）：直连 Python 上传临时资料——解析落盘并向量化入 temp 分区索引，
+ * 不进个人素材库，仅本次大纲/页面生成可检索；会话结束由 deleteAiSession 统一清理。
+ * timeout 放宽：大文件（PPT/视频）解析+向量化耗时远超默认 10s，超时会产生服务端已建索引但前端未登记的孤儿。
+ */
+export const uploadTempResource = (file) => apiRequest({ url: '/api/v1/python/resources/upload', method: 'post', data: file, timeout: 120000 })
+/** 清理临时上传：删除 temp 向量索引与 Python 磁盘目录（resource_ids 为 res_xxx 数组）。 */
+export const cleanupTempResources = (resourceIds) => apiRequest({
+  url: `/api/v1/python/resources/temp?resource_ids=${encodeURIComponent((resourceIds || []).join(','))}`,
+  method: 'delete',
+})
+
+// ---------- 临时上传登记表（sessionStorage，标签页内生效） ----------
+const TEMP_RESOURCE_KEY = (userId) => `a12:temp-resources:${userId || 'anon'}`
+const readTempRegistry = () => {
+  try {
+    const userId = useUserStore().userInfo?.user_id
+    const raw = sessionStorage.getItem(TEMP_RESOURCE_KEY(userId))
+    const parsed = raw ? JSON.parse(raw) : []
+    return Array.isArray(parsed) ? parsed.map(String) : []
+  } catch { return [] }
+}
+const writeTempRegistry = (ids) => {
+  try {
+    const userId = useUserStore().userInfo?.user_id
+    sessionStorage.setItem(TEMP_RESOURCE_KEY(userId), JSON.stringify([...new Set(ids.map(String))]))
+  } catch { /* 存储不可用时静默：清理退化为依赖芯片列表本身 */ }
+}
+/** 临时资料上传成功后登记，供 deleteAiSession 会话结束时统一清理。 */
+export const rememberTempResource = (resourceId) => {
+  if (!resourceId) return
+  writeTempRegistry([...readTempRegistry(), String(resourceId)])
+}
+/** 转存/手动移除后撤销登记。 */
+export const forgetTempResource = (resourceId) => {
+  if (!resourceId) return
+  const target = String(resourceId)
+  writeTempRegistry(readTempRegistry().filter((id) => id !== target))
+}
+export const listTempResourceIds = () => readTempRegistry()
 export const downloadResource = (id) => post(`/api/v1/resources/${id}/download-url`)
 export const updateResource = (id, data) => apiRequest({ url: `/api/v1/resources/${id}`, method: 'patch', data })
 export const batchResourceAction = (data) => post('/api/v1/resources/batch-actions', data)
@@ -74,8 +86,10 @@ export const deleteResourceIndex = (sourceType, resourceId) => del(`/api/v1/pyth
 export const listCommunityItems = (params) => get('/api/v1/community/items', params)
 export const favoriteCommunityItem = (id) => put(`/api/v1/community/items/${id}/favorite`)
 export const unfavoriteCommunityItem = (id) => del(`/api/v1/community/items/${id}/favorite`)
+// 功能11：点赞/取消点赞与热门榜单
 export const likeCommunityItem = (id) => put(`/api/v1/community/items/${id}/like`)
 export const unlikeCommunityItem = (id) => del(`/api/v1/community/items/${id}/like`)
+export const listCommunityRankings = (params) => get('/api/v1/community/rankings', params)
 export const reuseCommunityItem = (id, data) => post(`/api/v1/community/items/${id}/reuse`, data)
 export const getCommunityItem = (id) => get(`/api/v1/community/items/${id}`)
 export const recordCommunityView = (id) => post(`/api/v1/community/items/${id}/view-events`)
@@ -218,6 +232,12 @@ export const updateAiSession = async (id, data) => {
   return result
 }
 export const deleteAiSession = async (id) => {
+  // 功能 2：会话结束联动清理临时上传（temp 索引 + 磁盘文件）；失败保留登记，留待下次重试。
+  const tempIds = readTempRegistry()
+  if (tempIds.length) {
+    const cleaned = await cleanupTempResources(tempIds).then(() => true).catch(() => false)
+    if (cleaned) writeTempRegistry([])
+  }
   const existing = await getAiSession(id)
   const pythonId = existing?.data?.python_session_id
   const userId = useUserStore().userInfo?.user_id

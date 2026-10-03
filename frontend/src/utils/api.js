@@ -86,6 +86,8 @@ export async function downloadFile(url, filename) {
  */
 export function uploadFile(url, formData, onProgress) {
   return request.post(url, formData, {
+    // Local uploads can take longer than the shared 10-second API timeout.
+    timeout: 30 * 60 * 1000,
     headers: {
       'Content-Type': 'multipart/form-data'
     },

@@ -43,6 +43,7 @@ public class AdminModerationController {
         } catch (RuntimeException e) { return Result.error(400, e.getMessage()); }
     }
 
+    /** 读取待审核内容详情，供审核抽屉只读预览。 */
     @GetMapping("/moderation/content/{id}")
     public Result<ContentVO> getModerationContent(@PathVariable Integer id) {
         try { return Result.success(adminModerationService.getModerationContent(id)); }

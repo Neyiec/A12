@@ -7,9 +7,9 @@
 import { computed, onBeforeUnmount, onMounted, ref, watch } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { ElMessage } from 'element-plus'
-import { CollectionTag, Search, Star, User } from '@element-plus/icons-vue'
+import { CollectionTag, Search, Star, Trophy, User } from '@element-plus/icons-vue'
 import { COMMUNITY_PAGE } from '../config/teacherPages.config.js'
-import { createCommunityReport, createCommunitySubmission, favoriteCommunityItem, getCommunityItem, getCommunityReport, getCommunitySubmission, likeCommunityItem, listCommunityFavorites, listCommunityItems, listCommunityRecentViews, listCommunityReports, listCommunitySubmissions, listResources, patchProject, recordCommunityView, removeCommunityRecentView, reuseCommunityItem, saveCommunitySubmissionVersion, submitCommunitySubmission, unfavoriteCommunityItem, unlikeCommunityItem, updateCommunitySubmission } from '../apis/teacher'
+import { createCommunityReport, createCommunitySubmission, favoriteCommunityItem, getCommunityItem, getCommunityReport, getCommunitySubmission, likeCommunityItem, listCommunityFavorites, listCommunityItems, listCommunityRankings, listCommunityRecentViews, listCommunityReports, listCommunitySubmissions, listResources, patchProject, recordCommunityView, removeCommunityRecentView, reuseCommunityItem, saveCommunitySubmissionVersion, submitCommunitySubmission, unlikeCommunityItem, unfavoriteCommunityItem, updateCommunitySubmission } from '../apis/teacher'
 import { useUserStore } from '../storage/user.js'
 import CommunityContentPreview from './CommunityContentPreview.vue'
 
@@ -24,6 +24,7 @@ const selectedSubject = ref('全部学科')
 const tabs = ['精选', 'PPT 课件', '热门 PPT', '最新', 'Skill', '教学案例']
 const selectedSort = ref('recommended')
 const hotPeriod = ref('week')
+const showMobileFilters = ref(false)
 const communityCards = ref([])
 const communityTotal = ref(0)
 const communityPage = ref(1)
@@ -31,6 +32,31 @@ const communityPageSize = ref(12)
 const communityError = ref('')
 const usingDemoCards = ref(false)
 const favoriteIds = ref(new Set())
+// 功能11：列表排序维度（sort_by × period）与点赞态
+const sortBy = ref('')
+const sortPeriod = ref('all')
+const sortOptions = [
+  { value: 'like', label: '点赞最多' },
+  { value: 'favorite', label: '收藏最多' },
+  { value: 'use', label: '复用最多' },
+]
+const likedIds = ref(new Set())
+// 功能11：热门榜单（类型 × 时间段，Top10）
+const rankType = ref('skill')
+const rankPeriod = ref('week')
+const rankItems = ref([])
+const rankLoading = ref(false)
+const rankError = ref('')
+const rankTypeTabs = [
+  { value: 'skill', label: 'Skill' },
+  { value: 'lesson_case', label: '教学案例' },
+]
+const rankPeriodTabs = [
+  { value: 'day', label: '日' },
+  { value: 'week', label: '周' },
+  { value: 'month', label: '月' },
+]
+const rankTitle = computed(() => ({ day: '今日热门', week: '本周热门', month: '本月热门' }[rankPeriod.value] || '热门榜单'))
 const loading = ref(false)
 const detailVisible = ref(false), submissionVisible = ref(false), collectionVisible = ref(false), reportVisible = ref(false)
 const detail = ref(null), favorites = ref([]), recentViews = ref([]), submissions = ref([]), reports = ref([])
@@ -486,7 +512,8 @@ const loadCommunity = async () => {
       grade: selectedStage.value === '全部学段' ? undefined : selectedStage.value,
       keyword: searchQuery.value || undefined,
       sort,
-      period: sort === 'hot' ? hotPeriod.value : undefined,
+      sort_by: sortBy.value || undefined,
+      period: sortBy.value ? sortPeriod.value : sort === 'hot' ? hotPeriod.value : undefined,
       page: communityPage.value,
       size: communityPageSize.value,
     }))
@@ -494,6 +521,7 @@ const loadCommunity = async () => {
     const nextRecords = extractRecords(result)
     communityCards.value = nextRecords.map(normalizeCard)
     communityTotal.value = extractTotal(result, nextRecords.length)
+    syncLikeState(nextRecords)
     usingDemoCards.value = false
   } catch (error) {
     if (requestSeq !== communityRequestSeq) return
@@ -532,7 +560,7 @@ const matchesFilters = (item) => {
   return matchesSearch && matchesStage && matchesSubject
 }
 
-/** 根据当前页签和筛选条件生成社区卡片。 */
+/** 根据当前页签和筛选条件生成社区卡片；选择了排序维度时交由后端排序，「最新」仅在前端按更新时间排序。 */
 const filteredCards = computed(() => {
   if (!usingDemoCards.value) return communityCards.value
   const filtered = communityCards.value.filter((card) => {
@@ -543,7 +571,7 @@ const filteredCards = computed(() => {
       || activeTab.value === '最新'
     return matchesTab && matchesFilters(card)
   })
-  return activeTab.value === '最新' ? [...filtered].sort((a, b) => b.updatedAt.localeCompare(a.updatedAt)) : filtered
+  return activeTab.value === '最新' && !sortBy.value ? [...filtered].sort((a, b) => b.updatedAt.localeCompare(a.updatedAt)) : filtered
 })
 
 /** 判断精选案例是否仍应展示。 */
@@ -684,17 +712,6 @@ const updateVisibleMetric = (id, field, delta, liked) => {
     detail.value = { ...detail.value, [key]: Math.max(0, Number(detail.value[key] || 0) + delta), ...(liked === undefined ? {} : { liked }) }
   }
 }
-const toggleLike = async (item) => {
-  const id = item?.id ?? item?.item_id
-  if (!id) return ElMessage.info('该内容暂不支持点赞')
-  const next = !Boolean(item.liked)
-  try {
-    if (next) await assertApiSuccess(await likeCommunityItem(id))
-    else await assertApiSuccess(await unlikeCommunityItem(id))
-    updateVisibleMetric(id, 'likes', next ? 1 : -1, next)
-    if (['hot', 'likes'].includes(activeTab.value === '热门 PPT' ? 'hot' : selectedSort.value)) loadCommunity()
-  } catch (error) { ElMessage.error(error?.message || '点赞状态未能更新') }
-}
 const toggleFavorite = async (item) => {
   const rawId = item?.id ?? item?.item_id ?? item?.testCaseId
   if (rawId === null || rawId === undefined || rawId === '') return ElMessage.info('该内容暂不支持收藏')
@@ -724,6 +741,105 @@ const toggleFavorite = async (item) => {
     favoriteIds.value = previousIds
     favorites.value = previousFavorites
     ElMessage.error(error?.message || '收藏状态未能更新')
+  }
+}
+
+// ------------------ 功能11：点赞与热门榜单 ------------------
+/** 点赞图标路径（Element Plus 图标库无 thumbs-up，Material thumb_up 单处维护） */
+const LIKE_ICON_PATH = 'M1 21h4V9H1v12zm22-11c0-1.1-.9-2-2-2h-6.31l.95-4.57.03-.32c0-.41-.17-.79-.44-1.06L14.17 1 7.59 7.59C7.22 7.95 7 8.45 7 9v10c0 1.1.9 2 2 2h9c.83 0 1.54-.5 1.84-1.22l3.02-7.05c.09-.23.14-.47.14-.73v-2z'
+/** 进行中的点赞请求集合：防连点产生交错请求 */
+const likePendingIds = ref(new Set())
+
+/** 将后端返回的 liked 字段同步进点赞态集合（分页/刷新后保持一致）。 */
+const syncLikeState = (records) => {
+  const next = new Set(likedIds.value)
+  records.forEach((item) => {
+    if (item?.id === null || item?.id === undefined) return
+    const key = String(item.id)
+    item.liked ? next.add(key) : next.delete(key)
+  })
+  likedIds.value = next
+}
+
+/** 本地点赞计数即时反馈：列表卡片、详情弹窗与榜单行同步增减，接口失败时由调用方回滚。 */
+const adjustLocalLikeCount = (rawId, liked) => {
+  communityCards.value = communityCards.value.map((card) => (
+    String(card.id) === String(rawId) ? { ...card, likes: Math.max(0, card.likes + (liked ? 1 : -1)), liked } : card
+  ))
+  rankItems.value = rankItems.value.map((row) => (
+    String(row.id) === String(rawId) ? { ...row, likes: Math.max(0, row.likes + (liked ? 1 : -1)) } : row
+  ))
+  if (detail.value && String(detail.value.id) === String(rawId)) {
+    detail.value = {
+      ...detail.value,
+      liked,
+      like_count: Math.max(0, Number(detail.value.like_count ?? 0) + (liked ? 1 : -1)),
+    }
+  }
+}
+
+/** 点赞/取消点赞（乐观更新；后端唯一索引幂等；同内容请求进行中时忽略重复点击）。 */
+const toggleLike = async (item) => {
+  const rawId = item?.id ?? item?.item_id
+  if (rawId === null || rawId === undefined || rawId === '') return ElMessage.info('该内容暂不支持点赞')
+  if (item.testCaseId && !item.id) return ElMessage.info('演示内容暂不支持点赞')
+  const key = String(rawId)
+  if (likePendingIds.value.has(key)) return
+  const next = !likedIds.value.has(key)
+  const previousIds = likedIds.value
+  const pending = new Set(likePendingIds.value)
+  pending.add(key)
+  likePendingIds.value = pending
+  likedIds.value = next ? new Set([...previousIds, key]) : new Set([...previousIds].filter((id) => id !== key))
+  adjustLocalLikeCount(rawId, next)
+  try {
+    if (next) await assertApiSuccess(await likeCommunityItem(rawId)); else await assertApiSuccess(await unlikeCommunityItem(rawId))
+    ElMessage.success(next ? '已点赞' : '已取消点赞')
+  } catch (error) {
+    likedIds.value = previousIds
+    adjustLocalLikeCount(rawId, !next)
+    ElMessage.error(error?.message || '点赞状态未能更新')
+  } finally {
+    const rest = new Set(likePendingIds.value)
+    rest.delete(key)
+    likePendingIds.value = rest
+  }
+}
+
+let rankRequestSeq = 0
+/** 榜单行归一：RankItemVO{rank, hot_score, content} → 展示字段。 */
+const normalizeRankRow = (row = {}) => {
+  const content = row.content || row.item || {}
+  return {
+    rank: Number(row.rank ?? 0),
+    score: Number(row.hot_score ?? row.hotScore ?? 0),
+    id: content.id ?? content.item_id,
+    title: content.title || '未命名内容',
+    author: content.author_name || content.author || (content.author_id ? `用户 #${content.author_id}` : '社区教师'),
+    likes: Number(content.like_count ?? content.likeCount ?? 0),
+    uses: Number(content.use_count ?? content.useCount ?? 0),
+  }
+}
+
+/** 加载热门榜单：内容类型 × 时间段，Top10；ZSET 缺失时后端自动降级 DB 聚合。 */
+const loadRankings = async () => {
+  const requestSeq = ++rankRequestSeq
+  rankLoading.value = true
+  rankError.value = ''
+  try {
+    const result = assertApiSuccess(await listCommunityRankings({
+      content_type: rankType.value,
+      period: rankPeriod.value,
+      limit: 10,
+    }))
+    if (requestSeq !== rankRequestSeq) return
+    rankItems.value = extractRecords(result).map(normalizeRankRow)
+  } catch (error) {
+    if (requestSeq !== rankRequestSeq) return
+    rankItems.value = []
+    rankError.value = error?.message || '热门榜单加载失败'
+  } finally {
+    if (requestSeq === rankRequestSeq) rankLoading.value = false
   }
 }
 
@@ -875,9 +991,16 @@ watch([activeTab, selectedStage, selectedSubject, selectedSort, hotPeriod], () =
   communityPage.value = 1
   loadCommunity()
 })
+// 功能11：排序维度/时间段变化即时重查；榜单类型/时间段变化即时重查
+watch([sortBy, sortPeriod], () => {
+  communityPage.value = 1
+  loadCommunity()
+})
+watch([rankType, rankPeriod], loadRankings)
 onMounted(() => {
   loadCommunity()
   loadFavoriteState()
+  loadRankings()
 })
 </script>
 
@@ -898,13 +1021,24 @@ onMounted(() => {
     <div class="community-toolbar">
       <div class="tab-list"><button v-for="tab in tabs" :key="tab" :class="{ active: activeTab === tab }" @click="activeTab = tab">{{ tab }}</button></div>
       <div class="toolbar-controls">
+        <button type="button" class="mobile-filter-toggle" :aria-expanded="showMobileFilters" aria-controls="community-filters" @click="showMobileFilters = !showMobileFilters">筛选与排序 <span aria-hidden="true">{{ showMobileFilters ? '−' : '＋' }}</span></button>
         <el-button text @click="openCollections">收藏与浏览</el-button>
         <el-button text @click="openReports">举报进度</el-button>
-        <div class="filters">
+        <div id="community-filters" class="filters" :class="{ 'mobile-open': showMobileFilters }">
           <el-select v-model="selectedStage" aria-label="筛选学段"><el-option label="全部学段" value="全部学段" /><el-option label="初中" value="初中" /><el-option label="高中" value="高中" /></el-select>
           <el-select v-model="selectedSubject" aria-label="筛选学科"><el-option label="全部学科" value="全部学科" /><el-option label="数学" value="数学" /><el-option label="物理" value="物理" /><el-option label="语文" value="语文" /><el-option label="生物" value="生物" /></el-select>
           <el-select v-if="activeTab === '热门 PPT'" v-model="hotPeriod" aria-label="热门统计周期"><el-option label="近 7 天" value="week" /><el-option label="近 30 天" value="month" /></el-select>
           <el-select v-else-if="activeTab !== '最新'" v-model="selectedSort" aria-label="内容排序"><el-option label="综合推荐" value="recommended" /><el-option label="点赞最多" value="likes" /><el-option label="收藏最多" value="favorites" /><el-option label="复用最多" value="uses" /><el-option label="最新发布" value="newest" /></el-select>
+          <el-select v-model="sortBy" aria-label="排序方式" placeholder="默认排序">
+            <el-option label="默认排序" value="" />
+            <el-option v-for="option in sortOptions" :key="option.value" :label="option.label" :value="option.value" />
+          </el-select>
+          <el-select v-model="sortPeriod" aria-label="时间范围" :disabled="!sortBy">
+            <el-option label="全部时间" value="all" />
+            <el-option label="近 1 天" value="day" />
+            <el-option label="近 7 天" value="week" />
+            <el-option label="近 30 天" value="month" />
+          </el-select>
         </div>
       </div>
     </div>
@@ -919,6 +1053,28 @@ onMounted(() => {
       <span>{{ communityError }}</span>
       <el-button text type="primary" @click="loadCommunity">重试</el-button>
     </div>
+
+    <section class="rank-section" aria-label="热门榜单">
+      <header class="rank-header">
+        <div class="rank-title"><el-icon><Trophy /></el-icon><h2>{{ rankTitle }}</h2></div>
+        <div class="rank-controls">
+          <el-segmented v-model="rankPeriod" :options="rankPeriodTabs" size="small" aria-label="榜单时间段" />
+          <el-segmented v-model="rankType" :options="rankTypeTabs" size="small" aria-label="榜单内容类型" />
+        </div>
+      </header>
+      <div v-loading="rankLoading" class="rank-list">
+        <article v-for="row in rankItems" :key="row.id" class="rank-row" role="button" tabindex="0" :aria-label="`第 ${row.rank} 名 ${row.title}`" @click="openDetail({ id: row.id })" @keydown.enter.prevent="openDetail({ id: row.id })" @keydown.space.prevent="openDetail({ id: row.id })">
+          <span class="rank-badge" :class="{ top: row.rank <= 3 }">{{ row.rank }}</span>
+          <div class="rank-info"><strong>{{ row.title }}</strong><span>{{ row.author }} · {{ row.likes }} 赞 · {{ row.uses }} 次使用</span></div>
+          <span class="rank-score" :title="`热度 ${row.score.toFixed(1)}`">{{ row.score.toFixed(1) }}</span>
+        </article>
+        <el-empty v-if="!rankLoading && !rankError && rankItems.length === 0" class="rank-empty" description="近期互动还未达标，暂无上榜内容" />
+        <div v-if="rankError" class="rank-error" role="alert">
+          <span>{{ rankError }}</span>
+          <el-button text type="primary" @click="loadRankings">重试</el-button>
+        </div>
+      </div>
+    </section>
 
     <section v-if="showFeatured" class="featured-case">
       <div class="feature-visual">
@@ -936,12 +1092,12 @@ onMounted(() => {
 
     <section v-loading="loading" class="community-grid" aria-label="社区内容">
       <article v-for="card in filteredCards" :key="card.id || card.testCaseId || card.title" class="community-card" data-hover-lift role="button" tabindex="0" @click="openDetail(card)" @keydown.enter.prevent="openDetail(card)" @keydown.space.prevent="openDetail(card)">
-        <div class="card-top"><span>{{ card.type }}</span><el-button text circle :type="favoriteIds.has(String(card.id ?? card.testCaseId)) ? 'warning' : undefined" aria-label="收藏" @click.stop="toggleFavorite(card)"><el-icon><Star /></el-icon></el-button></div>
+        <div class="card-top"><span>{{ card.type }}</span><div class="card-top-actions"><button class="card-like" :class="{ active: likedIds.has(String(card.id)) }" :aria-pressed="likedIds.has(String(card.id))" aria-label="点赞" @click.stop="toggleLike(card)"><svg viewBox="0 0 24 24" aria-hidden="true"><path :d="LIKE_ICON_PATH" /></svg><span>{{ card.likes }}</span></button><el-button text circle :type="favoriteIds.has(String(card.id ?? card.testCaseId)) ? 'warning' : undefined" aria-label="收藏" @click.stop="toggleFavorite(card)"><el-icon><Star /></el-icon></el-button></div></div>
         <div class="card-icon"><el-icon><CollectionTag /></el-icon></div>
         <h3>{{ card.title }}</h3>
         <p>{{ card.subject }} · {{ card.tag }}</p>
         <p v-if="card.description" class="card-description">{{ card.description }}</p>
-        <div class="card-metrics"><button :aria-pressed="card.liked" @click.stop="toggleLike(card)">{{ card.liked ? '♥ 已赞' : '♡ 点赞' }} {{ card.likes }}</button><span>收藏 {{ card.favorites }}</span><span>复用 {{ card.uses }}</span></div>
+        <div class="card-metrics"><span>收藏 {{ card.favorites }}</span><span>复用 {{ card.uses }}</span></div>
         <footer><span><el-icon><User /></el-icon>{{ card.author }}</span><div class="card-actions"><button class="card-detail" @click.stop="openDetail(card)">查看详情</button><button @click.stop="reuse(card)">{{ card.testCaseId ? '进入工作台 →' : `${card.uses} 次使用 →` }}</button></div></footer>
       </article>
       <el-empty v-if="filteredCards.length === 0" class="community-empty" description="没有符合当前筛选条件的课件或教学内容" />
@@ -1018,7 +1174,7 @@ onMounted(() => {
       </div>
       <template #footer><el-button :disabled="submissionSaving || submissionLoading" @click="submissionVisible = false">{{ submissionReadOnly ? '关闭' : '稍后继续' }}</el-button><el-button v-if="!submissionReadOnly" :loading="submissionSaving" :disabled="submissionLoading" @click="saveSubmission(false)">保存草稿</el-button><el-button v-if="!submissionReadOnly" type="primary" :loading="submissionSaving" :disabled="submissionLoading" @click="saveSubmission(true)">提交审核</el-button></template>
     </el-dialog>
-    <el-dialog v-model="collectionVisible" title="我的收藏与最近浏览" width="min(680px, 92vw)">
+    <el-dialog v-model="collectionVisible" class="community-collection-dialog" title="我的收藏与最近浏览" width="min(680px, 92vw)">
       <div v-loading="collectionsLoading">
         <el-alert v-if="collectionError" :title="collectionError" type="error" show-icon :closable="false"><template #default><el-button text type="primary" @click="loadCollections">重试</el-button></template></el-alert>
         <section class="collection-section">
@@ -1039,7 +1195,7 @@ onMounted(() => {
         </section>
       </div>
     </el-dialog>
-    <el-dialog v-model="reportVisible" title="举报与处理进度" width="min(640px, 92vw)">
+    <el-dialog v-model="reportVisible" class="community-report-dialog" title="举报与处理进度" width="min(640px, 92vw)">
       <div v-loading="reportsLoading" class="report-dialog">
         <el-form label-position="top" class="report-form-grid">
           <el-form-item label="内容类型" required><el-select v-model="reportForm.target_type"><el-option label="教学案例" value="lesson_case" /><el-option label="Skill" value="skill" /><el-option label="PPT 课件" value="ppt" /></el-select></el-form-item>
@@ -1051,7 +1207,7 @@ onMounted(() => {
         <div class="report-list"><h3>我的举报记录</h3><div v-for="report in reports" :key="report.id" class="report-row"><span>#{{ report.id }} · {{ statusLabel(report.status) }} · {{ report.reason || report.comment || '未填写原因' }}</span><el-button text size="small" @click="openReportDetail(report)">查看详情</el-button></div><el-empty v-if="!reports.length" description="暂无举报记录" /></div>
       </div>
     </el-dialog>
-    <el-dialog v-model="reportDetailVisible" title="举报详情" width="min(560px, 92vw)">
+    <el-dialog v-model="reportDetailVisible" class="community-report-detail-dialog" title="举报详情" width="min(560px, 92vw)">
       <div v-loading="reportDetailLoading" class="report-detail">
         <el-alert v-if="reportDetail?.detail_error" :title="reportDetail.detail_error" type="error" show-icon :closable="false" />
         <dl v-if="reportDetail">
@@ -1084,8 +1240,8 @@ onMounted(() => {
                 </div>
               </div>
               <div class="detail-header-actions">
-                <button class="detail-favorite-button detail-like-button" :class="{ active: detail.liked }" :aria-pressed="Boolean(detail.liked)" @click="toggleLike(detail)"><span>{{ detail.liked ? '♥ 已赞' : '♡ 点赞' }} {{ detail.like_count || 0 }}</span></button>
                 <button class="detail-favorite-button" :class="{ active: favoriteIds.has(String(detail.id)) }" :aria-pressed="favoriteIds.has(String(detail.id))" @click="toggleFavorite(detail)"><el-icon><Star /></el-icon><span>{{ favoriteIds.has(String(detail.id)) ? '已收藏' : '收藏内容' }}</span></button>
+                <button class="detail-favorite-button detail-like-button" :class="{ active: Boolean(detail.liked) }" :aria-pressed="Boolean(detail.liked)" @click="toggleLike(detail)"><svg class="like-icon" viewBox="0 0 24 24" aria-hidden="true"><path :d="LIKE_ICON_PATH" /></svg><span>{{ detail.liked ? '已点赞' : '点赞案例' }}</span></button>
                 <button class="detail-close-button" aria-label="关闭详情" @click="detailVisible = false"><span aria-hidden="true">×</span></button>
               </div>
             </header>
@@ -1135,11 +1291,15 @@ onMounted(() => {
                 <div class="detail-aside-actions"><button class="detail-primary-action" :disabled="detailLoading || !detail" @click="reuse(detail)">配置复用 <span aria-hidden="true">↗</span></button><button class="detail-report-action" :disabled="detailLoading || !detail" @click="openReportForDetail">举报内容</button><span>复用会创建你的独立草稿，不会改动社区原件</span></div>
               </aside>
             </div>
+            <div class="detail-mobile-footer">
+              <button class="detail-primary-action" :disabled="detailLoading || !detail" @click="reuse(detail)">配置复用 <span aria-hidden="true">↗</span></button>
+              <button class="detail-report-action" :disabled="detailLoading || !detail" @click="openReportForDetail">举报内容</button>
+            </div>
           </div>
         </template>
       </div>
     </el-dialog>
-    <el-dialog v-model="reuseVisible" :title="`配置复用 · ${reuseDetail?.title || reuseTarget?.title || '社区内容'}`" width="min(760px, 94vw)" :close-on-click-modal="false">
+    <el-dialog v-model="reuseVisible" class="community-reuse-dialog" :title="`配置复用 · ${reuseDetail?.title || reuseTarget?.title || '社区内容'}`" width="min(760px, 94vw)" :close-on-click-modal="false">
       <div v-loading="reuseLoading" class="reuse-dialog">
         <p class="reuse-intro">复用会创建个人派生项目，不会修改社区原件。请先确认来源版本、授权条件，并选择要绑定给 AI 的个人资料。</p>
         <el-form label-position="top">
@@ -1172,12 +1332,17 @@ onMounted(() => {
 .feature-copy { display: flex; flex-direction: column; padding: 32px; }.feature-copy h2 { margin: 18px 0 10px; font-size: 26px; }.feature-copy > p { margin: 0; color: var(--zh-text-secondary); line-height: 1.75; }
 .feature-copy dl { margin: 24px 0; }.feature-copy dl div { display: grid; grid-template-columns: 76px 1fr; padding: 8px 0; border-bottom: 1px solid var(--zh-line-parting); }.feature-copy dt { color: var(--zh-text-caption); font-size: 12px; }.feature-copy dd { margin: 0; font-size: 13px; }
 .feature-copy footer { display: flex; align-items: center; justify-content: space-between; margin-top: auto; color: var(--zh-text-caption); font-size: 12px; }
-.community-status-row { display: flex; align-items: center; gap: 9px; margin-top: 16px; color: var(--zh-text-caption); font-size: 12px; }.status-muted { color: var(--zh-text-caption); font-size: 11px; }.community-error { display: flex; align-items: center; justify-content: space-between; gap: 12px; margin-top: 10px; padding: 9px 12px; border: 1px solid var(--zh-line-danger20, #f3c5c5); border-radius: var(--zh-radius8); color: var(--zh-text-danger, #b42318); background: var(--zh-background-danger-weaken, #fff5f5); font-size: 12px; }.community-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(230px, 1fr)); gap: 12px; margin-top: 18px; }.community-card { padding: 18px; border: 1px solid var(--zh-line-border); border-radius: var(--zh-radius12); background: var(--zh-background-capsule); cursor: pointer; transition: transform 200ms ease, border-color 200ms ease, box-shadow 200ms ease; }.community-card:hover, .community-card:focus-visible { transform: translateY(-3px); border-color: var(--zh-line-theme20); box-shadow: var(--zh-shadow2); outline: none; }
+.community-status-row { display: flex; align-items: center; gap: 9px; margin-top: 16px; color: var(--zh-text-caption); font-size: 12px; }.status-muted { color: var(--zh-text-caption); font-size: 11px; }.community-error { display: flex; align-items: center; justify-content: space-between; gap: 12px; margin-top: 10px; padding: 9px 12px; border: 1px solid color-mix(in srgb, var(--zh-red) 30%, var(--zh-line-border)); border-radius: var(--zh-radius8); color: var(--zh-red); background: var(--zh-danger-background); font-size: 12px; }.community-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(230px, 1fr)); gap: 12px; margin-top: 18px; }.community-card { padding: 18px; border: 1px solid var(--zh-line-border); border-radius: var(--zh-radius12); background: var(--zh-background-capsule); cursor: pointer; transition: transform 200ms ease, border-color 200ms ease, box-shadow 200ms ease; }.community-card:hover, .community-card:focus-visible { transform: translateY(-3px); border-color: var(--zh-line-theme20); box-shadow: var(--zh-shadow2); outline: none; }
 .community-empty { grid-column: 1 / -1; padding: 40px 0; border: 1px dashed var(--zh-line-heavier); border-radius: var(--zh-radius12); }
 .card-top, .community-card footer { display: flex; align-items: center; justify-content: space-between; }.card-top > span { color: var(--zh-text-caption); font-size: 11px; }.card-icon { width: 38px; height: 38px; display: grid; place-items: center; margin-top: 18px; border-radius: var(--zh-radius8); color: var(--zh-text-theme); background: var(--zh-background-weaken); }
+/* 功能11：卡片点赞按钮（图标 + 计数，激活态主题色） */
+.card-top-actions { display: flex; align-items: center; gap: 2px; }.card-like { display: inline-flex; align-items: center; justify-content: center; gap: 4px; min-width: 44px; height: 34px; padding: 0 9px; border: 0; border-radius: 9999px; color: var(--zh-text-caption); background: transparent; cursor: pointer; font-size: 11px; transition: color 200ms ease, background 200ms ease, transform 200ms ease; }.card-like svg { width: 13px; height: 13px; fill: currentColor; }.card-like:hover { color: var(--zh-text-theme); background: var(--zh-background-weaken); }.card-like:active { transform: scale(.94); }.card-like.active { color: var(--zh-text-theme); }
 .community-card h3 { min-height: 44px; margin: 18px 0 8px; font-size: 15px; line-height: 1.5; }.community-card > p { margin: 0 0 28px; color: var(--zh-text-caption); font-size: 12px; }.community-card > p.card-description { display: -webkit-box; min-height: 36px; margin: -16px 0 20px; overflow: hidden; color: var(--zh-text-secondary); line-height: 1.5; -webkit-box-orient: vertical; -webkit-line-clamp: 2; }.community-card footer { gap: 8px; border-top: 1px solid var(--zh-line-parting); padding-top: 12px; font-size: 11px; }.community-card footer span { min-width: 0; display: flex; align-items: center; gap: 4px; overflow: hidden; color: var(--zh-text-caption); text-overflow: ellipsis; white-space: nowrap; }.community-card footer button { flex: none; border: 0; color: var(--zh-text-link); background: transparent; cursor: pointer; font-size: 11px; }.card-actions { display: flex; align-items: center; gap: 8px; }.card-detail { color: var(--zh-text-caption) !important; }.community-pagination { justify-content: center; margin: 24px 0 0; }
 .card-metrics { display: flex; align-items: center; flex-wrap: wrap; gap: 12px; margin: -9px 0 15px; color: var(--zh-text-caption); font-size: 11px; }.card-metrics button { padding: 0; border: 0; color: inherit; background: transparent; cursor: pointer; font: inherit; }.card-metrics button:hover,.card-metrics button[aria-pressed="true"] { color: var(--zh-text-theme); }
 .source-note { margin: 20px 0 0; color: var(--zh-text-caption); font-size: 11px; text-align: center; }
+/* 功能11：热门榜单区（白卡 + el-segmented 类型/时间段切换 + Top10 双列列表） */
+.rank-section { margin-top: 20px; padding: 18px 20px 20px; border: 1px solid var(--zh-line-border); border-radius: var(--zh-radius12); background: var(--zh-background-pop); box-shadow: var(--zh-shadow1); }.rank-header { display: flex; align-items: center; justify-content: space-between; gap: 12px; flex-wrap: wrap; }.rank-title { display: flex; align-items: center; gap: 8px; color: var(--zh-text-theme); }.rank-title .el-icon { font-size: 18px; }.rank-title h2 { margin: 0; color: var(--zh-text-primary); font-size: 16px; font-weight: 600; letter-spacing: var(--zh-tracking-tight); }.rank-controls { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
+.rank-list { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 10px; min-height: 56px; margin-top: 14px; }.rank-row { display: flex; align-items: center; gap: 10px; min-width: 0; padding: 9px 10px; border: 1px solid var(--zh-line-parting); border-radius: var(--zh-radius8); background: var(--zh-background-capsule); cursor: pointer; transition: border-color .15s ease, transform .15s ease, box-shadow .15s ease; }.rank-row:hover, .rank-row:focus-visible { border-color: var(--zh-line-theme20); transform: translateY(-1px); box-shadow: var(--zh-shadow1); }.rank-badge { display: grid; width: 24px; height: 24px; flex: none; place-items: center; border-radius: var(--zh-radius8); color: var(--zh-text-theme); background: var(--zh-background-weaken); font: 600 11px/1 var(--zh-font-number); }.rank-badge.top { color: var(--zh-text-white); background: var(--zh-gradient-blue); }.rank-info { min-width: 0; display: grid; gap: 2px; }.rank-info strong { overflow: hidden; color: var(--zh-text-primary); font-size: 12px; text-overflow: ellipsis; white-space: nowrap; }.rank-info span { overflow: hidden; color: var(--zh-text-caption); font-size: 10px; text-overflow: ellipsis; white-space: nowrap; }.rank-score { flex: none; margin-left: auto; color: var(--zh-text-theme); font: 600 13px/1 var(--zh-font-number); }.rank-empty { grid-column: 1 / -1; padding: 14px 0; border: 1px dashed var(--zh-line-heavier); border-radius: var(--zh-radius8); }.rank-error { grid-column: 1 / -1; display: flex; align-items: center; justify-content: space-between; gap: 12px; padding: 9px 12px; border: 1px solid color-mix(in srgb, var(--zh-red) 30%, var(--zh-line-border)); border-radius: var(--zh-radius8); color: var(--zh-red); background: var(--zh-danger-background); font-size: 12px; }
 @media (max-width: 980px) { .community-grid { grid-template-columns: repeat(2, 1fr); }.featured-case { grid-template-columns: 1fr; }.feature-visual { min-height: 240px; } }
 @media (max-width: 600px) { .community-search-row { align-items: stretch; flex-direction: column; }.community-search-row :deep(.el-input) { width: 100%; flex-basis: auto; }.community-search-row>.submission-button { width: 100%; margin-left: 0; }.community-toolbar { align-items: stretch; flex-direction: column; }.filters { padding-bottom: 12px; }.community-grid { grid-template-columns: 1fr; } }
 .community-actions{display:flex;justify-content:center;gap:8px;margin-top:24px}.submission-dialog{display:grid;gap:12px}.submission-state{display:flex;align-items:center;gap:14px;padding:9px 11px;border-radius:var(--zh-radius8);color:var(--zh-text-caption);background:var(--zh-background-light);font-size:12px}.submission-grid{display:grid;grid-template-columns:2fr 1fr 1fr 1fr;gap:10px}.submission-grid-secondary{grid-template-columns:1fr 1fr 2fr}.submission-grid :deep(.el-form-item){margin-bottom:0}.json-editor-hint{display:flex;align-items:flex-start;justify-content:space-between;gap:8px;margin-top:5px;color:var(--zh-text-caption);font-size:11px;line-height:1.45}.json-editor-hint .el-button{flex:none;padding:0;font-size:11px}.draft-list{display:flex;align-items:center;gap:4px;overflow:auto;padding:10px;border-radius:var(--zh-radius8);background:var(--zh-background-light);font-size:12px}.draft-list span{flex:none;color:var(--zh-text-caption)}.collection-section{margin-bottom:20px}.collection-section h3,.report-list h3{margin:0 0 8px;font-size:14px}.collection-row,.report-row{display:flex;align-items:center;justify-content:space-between;gap:8px;padding:8px 0;border-bottom:1px solid var(--zh-line-parting);color:var(--zh-text-secondary);font-size:13px}.collection-item-link{min-width:0;overflow:hidden;padding:0;border:0;color:var(--zh-text-link);background:transparent;cursor:pointer;font:inherit;text-align:left;text-overflow:ellipsis;white-space:nowrap}.collection-item-link:hover,.collection-item-link:focus-visible{color:var(--zh-text-theme);text-decoration:underline;outline:none}.report-dialog{display:grid;gap:10px}.report-form-grid{display:grid;grid-template-columns:1fr 1fr;gap:0 12px}.report-form-grid :deep(.el-form-item:nth-child(3)),.report-form-grid :deep(.el-form-item:nth-child(4)){grid-column:1 / -1}.report-list{margin-top:16px;padding-top:12px;border-top:1px solid var(--zh-line-border)}.report-row span{min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}.report-detail dl{display:grid;gap:0;margin:0}.report-detail dl div{display:grid;grid-template-columns:90px minmax(0,1fr);gap:12px;padding:10px 0;border-bottom:1px solid var(--zh-line-parting)}.report-detail dt{color:var(--zh-text-caption);font-size:12px}.report-detail dd{margin:0;color:var(--zh-text-secondary);font-size:13px;word-break:break-word}.detail-meta{color:var(--zh-text-caption);font-size:12px}.detail-section-title{margin:18px 0 8px;font-size:14px}.detail-content{max-height:360px;overflow:auto;padding:14px;border-radius:var(--zh-radius8);background:var(--zh-background-light);font:12px/1.65 var(--zh-font-code);white-space:pre-wrap}@media(max-width:600px){.submission-grid,.submission-grid-secondary,.report-form-grid{grid-template-columns:1fr}.report-form-grid :deep(.el-form-item:nth-child(3)),.report-form-grid :deep(.el-form-item:nth-child(4)){grid-column:auto}.community-actions{flex-wrap:wrap}}
@@ -1238,7 +1403,8 @@ onMounted(() => {
 .detail-author { display: flex; align-items: center; gap: 11px; }
 .detail-author-avatar { flex: none; color: var(--zh-text-white); background: var(--zh-theme-primary); font-size: 15px; font-weight: 500; }
 .detail-author strong,.detail-author span { display: block; }.detail-author strong { color: var(--zh-text-primary); font-size: 13px; }.detail-author span { margin-top: 4px; color: var(--zh-text-caption); font-size: 11px; }
-.detail-stat-list { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; }.detail-stat-list div { min-width: 0; padding-right: 10px; border-right: 1px solid var(--zh-line-parting); }.detail-stat-list div:last-child { padding-right: 0; border-right: 0; }.detail-stat-list span,.detail-stat-list strong { display: block; }.detail-stat-list span { color: var(--zh-text-caption); font-size: 11px; }.detail-stat-list strong { margin-top: 5px; color: var(--zh-text-primary); font: 600 24px/1.1 var(--zh-font-number); }
+.detail-stat-list { display: grid; grid-template-columns: 1fr 1fr; gap: 10px 0; }.detail-stat-list div { min-width: 0; padding-right: 10px; border-right: 1px solid var(--zh-line-parting); }.detail-stat-list div:nth-child(2n), .detail-stat-list div:last-child { padding-right: 0; border-right: 0; }.detail-stat-list span,.detail-stat-list strong { display: block; }.detail-stat-list span { color: var(--zh-text-caption); font-size: 11px; }.detail-stat-list strong { margin-top: 5px; color: var(--zh-text-primary); font: 600 24px/1.1 var(--zh-font-number); }
+.detail-like-button .like-icon { width: 13px; height: 13px; fill: currentColor; }.detail-like-button:focus-visible { outline: 2px solid var(--zh-border-focus); outline-offset: 2px; }
 .detail-attribute-card dl { display: grid; gap: 0; margin: 0; }.detail-attribute-card dl div { display: flex; align-items: baseline; justify-content: space-between; gap: 12px; padding: 9px 0; border-bottom: 1px solid var(--zh-line-parting); }.detail-attribute-card dl div:first-child { padding-top: 0; }.detail-attribute-card dl div:last-child { padding-bottom: 0; border-bottom: 0; }.detail-attribute-card dt { color: var(--zh-text-caption); font-size: 11px; }.detail-attribute-card dd { max-width: 170px; margin: 0; color: var(--zh-text-secondary); font-size: 12px; text-align: right; word-break: break-word; }
 .detail-variable-card p { margin: -5px 0 12px; color: var(--zh-text-caption); font-size: 11px; line-height: 1.5; }.detail-variable-list { display: flex; flex-wrap: wrap; gap: 6px; }.detail-variable-list span { padding: 5px 8px; border-radius: var(--zh-radius8); color: var(--zh-text-theme); background: var(--zh-background-weaken); font-size: 11px; }
 .detail-aside-actions { display: grid; gap: 8px; padding-top: 4px; }.detail-primary-action,.detail-report-action { display: flex; align-items: center; justify-content: space-between; width: 100%; min-height: 42px; padding: 0 15px; border-radius: var(--zh-radius8); cursor: pointer; font: inherit; font-size: 13px; transition: background 180ms ease, border-color 180ms ease, color 180ms ease, transform 180ms ease; }.detail-primary-action { border: 1px solid var(--zh-theme-primary); color: var(--zh-text-white); background: var(--zh-background-button); font-weight: 600; }.detail-primary-action:hover,.detail-primary-action:focus-visible { border-color: var(--zh-background-button-hover); background: var(--zh-background-button-hover); outline: none; }.detail-primary-action:active { transform: translateY(1px); }.detail-report-action { justify-content: center; border: 1px solid transparent; color: var(--zh-text-caption); background: transparent; }.detail-report-action:hover,.detail-report-action:focus-visible { border-color: var(--zh-line-border); color: var(--zh-text-danger, var(--zh-red)); background: var(--zh-background-pop); outline: none; }.detail-primary-action:disabled,.detail-report-action:disabled { cursor: not-allowed; opacity: .55; }.detail-aside-actions > span { color: var(--zh-text-caption); font-size: 10px; line-height: 1.45; text-align: center; }
@@ -1264,5 +1430,116 @@ onMounted(() => {
 .submission-content-heading{margin-bottom:14px}.submission-content-heading>div>span{margin:0;color:var(--zh-text-theme);font-size:17px;font-weight:630;letter-spacing:-.01em}
 
 @media (max-width: 1023.98px) { .community-grid { grid-template-columns: repeat(2, 1fr); }.featured-case { grid-template-columns: 1fr; }.feature-visual { min-height: 240px; }.community-toolbar { flex-wrap: wrap; row-gap: 4px; }.toolbar-controls { flex-wrap: wrap; row-gap: 4px; } }
-@media (max-width: 767.98px) { .community-search-row { align-items: stretch; flex-direction: column; }.community-search-row :deep(.el-input) { width: 100%; flex-basis: auto; }.community-search-row>.submission-button { width: 100%; margin-left: 0; }.community-toolbar { align-items: stretch; flex-direction: column; }.tab-list { overflow-x: auto; -webkit-overflow-scrolling: touch; }.filters { padding-bottom: 12px; flex-wrap: wrap; }.community-grid { grid-template-columns: 1fr; }.community-card footer button { min-height: 44px; } }
+@media (max-width: 767.98px) { .community-search-row { align-items: stretch; flex-direction: column; }.community-search-row :deep(.el-input) { width: 100%; flex-basis: auto; }.community-search-row>.submission-button { width: 100%; margin-left: 0; }.community-toolbar { align-items: stretch; flex-direction: column; }.tab-list { overflow-x: auto; -webkit-overflow-scrolling: touch; }.filters { padding-bottom: 12px; flex-wrap: wrap; }.community-grid { grid-template-columns: 1fr; }.community-card footer button { min-height: 44px; }.card-like { min-height: 40px; }.rank-list { grid-template-columns: 1fr; }.rank-section { padding: 16px; } }
+.mobile-filter-toggle,.detail-mobile-footer{display:none}
+@media (max-width: 767.98px) {
+  .community-page{display:flex;flex-direction:column;width:calc(100% - 32px);padding:12px 0 24px;}
+  .community-hero{order:1;padding:8px 0 12px;}
+  .community-hero>p{margin-bottom:7px;font-size:11px;}
+  .community-hero h1{max-width:24rem;font-size:clamp(24px,6.3vw,29px);line-height:1.24;letter-spacing:-.035em;}
+  .community-hero>span{margin-top:8px;font-size:12px;line-height:1.55;}
+  .community-search-row{display:grid;grid-template-columns:minmax(0,1fr) 88px;align-items:stretch;gap:8px;margin-top:15px;}
+  .community-search-row :deep(.el-input){width:100%;min-width:0;flex-basis:auto;}
+  .community-search-row>.submission-button{width:88px;min-width:0;min-height:42px;margin:0;padding:0 6px;font-size:13px;}
+  .community-hero :deep(.el-input__wrapper){min-width:0;padding-left:10px;}
+  .community-hero :deep(.el-input__inner){font-size:13px;}
+  .community-hero :deep(.community-search-button){width:52px;min-width:52px;height:42px;}
+  .community-toolbar{order:2;gap:0;margin-top:0;}
+  .tab-list{width:100%;gap:16px;scrollbar-width:none;}
+  .tab-list::-webkit-scrollbar{display:none;}
+  .tab-list button{flex:none;min-height:42px;padding:10px 2px;font-size:13px;white-space:nowrap;}
+  .toolbar-controls{width:100%;justify-content:space-between;gap:4px;padding:3px 0 8px;}
+  .toolbar-controls :deep(.el-button){min-height:34px;margin:0;padding:0 5px;font-size:12px;}
+  .mobile-filter-toggle{display:inline-flex;align-items:center;gap:5px;min-height:34px;padding:0 5px;border:0;border-radius:var(--zh-radius8);color:var(--zh-text-theme);background:transparent;cursor:pointer;font:600 12px var(--zh-font-family);white-space:nowrap;}
+  .mobile-filter-toggle span{font-size:17px;font-weight:400;line-height:1;}
+  .mobile-filter-toggle:focus-visible{outline:2px solid var(--zh-border-focus);outline-offset:2px;}
+  .filters{display:none;flex-basis:100%;width:100%;margin:4px 0 0;padding:12px;border:1px solid var(--zh-line-border);border-radius:var(--zh-radius10);background:var(--zh-background-light);}
+  .filters.mobile-open{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:8px;}
+  .filters :deep(.el-select){width:100%;min-width:0;}
+  .community-status-row{order:3;margin-top:10px;}
+  .community-error{order:4;}
+  .community-grid{order:5;grid-template-columns:1fr;gap:10px;margin-top:12px;}
+  .community-pagination{order:6;}
+  .rank-section{order:7;margin-top:24px;padding:15px;box-shadow:none;}
+  .featured-case{order:8;margin-top:20px;}
+  .source-note{order:9;text-align:left;line-height:1.5;}
+  .community-card{display:grid;grid-template-columns:38px minmax(0,1fr);column-gap:12px;padding:14px 15px;box-shadow:none;}
+  .card-top{grid-column:1/-1;}
+  .card-icon{grid-column:1;grid-row:2 / span 2;margin-top:12px;}
+  .community-card h3{grid-column:2;min-height:0;margin:11px 0 3px;font-size:15px;line-height:1.35;}
+  .community-card>p{grid-column:2;margin:0 0 11px;}
+  .community-card>p.card-description{grid-column:1/-1;min-height:0;margin:0 0 12px;}
+  .community-card footer{grid-column:1/-1;flex-wrap:wrap;min-width:0;padding-top:8px;}
+  .community-card footer button{min-height:36px;}
+  .card-actions{margin-left:auto;}
+  .rank-header{align-items:flex-start;}
+  .rank-controls{width:100%;justify-content:space-between;gap:6px;}
+  .rank-controls :deep(.el-segmented){max-width:100%;}
+  .rank-row{min-height:46px;}
+  .feature-visual{min-height:130px;}
+  .feature-copy{padding:18px;}
+  .feature-copy h2{margin:12px 0 7px;font-size:20px;}
+  .feature-copy dl{margin:14px 0;}
+}
+@media (max-width: 600px) {
+  :global(.community-collection-dialog.el-dialog),:global(.community-report-dialog.el-dialog),:global(.community-report-detail-dialog.el-dialog),:global(.community-reuse-dialog.el-dialog){box-sizing:border-box;display:flex;flex-direction:column;width:100vw!important;height:100dvh;max-height:100dvh;margin:0!important;overflow:hidden;padding:env(safe-area-inset-top, 0px) 0 0;border-radius:0;}
+  :global(.community-collection-dialog .el-dialog__header),:global(.community-report-dialog .el-dialog__header),:global(.community-report-detail-dialog .el-dialog__header),:global(.community-reuse-dialog .el-dialog__header){flex:none;margin:0;padding:17px 18px 13px;border-bottom:1px solid var(--zh-line-parting);}
+  :global(.community-collection-dialog .el-dialog__headerbtn),:global(.community-report-dialog .el-dialog__headerbtn),:global(.community-report-detail-dialog .el-dialog__headerbtn),:global(.community-reuse-dialog .el-dialog__headerbtn){top:calc(env(safe-area-inset-top, 0px) + 2px);right:6px;width:44px;height:44px;}
+  :global(.community-collection-dialog .el-dialog__title),:global(.community-report-dialog .el-dialog__title),:global(.community-report-detail-dialog .el-dialog__title),:global(.community-reuse-dialog .el-dialog__title){display:block;max-width:calc(100% - 36px);overflow:hidden;font-size:17px;font-weight:650;text-overflow:ellipsis;white-space:nowrap;}
+  :global(.community-collection-dialog .el-dialog__body),:global(.community-report-dialog .el-dialog__body),:global(.community-report-detail-dialog .el-dialog__body),:global(.community-reuse-dialog .el-dialog__body){flex:1;min-height:0;overflow-y:auto;padding:18px;-webkit-overflow-scrolling:touch;overscroll-behavior:contain;}
+  :global(.community-collection-dialog .el-dialog__body),:global(.community-report-dialog .el-dialog__body),:global(.community-report-detail-dialog .el-dialog__body){padding-bottom:calc(18px + env(safe-area-inset-bottom, 0px));}
+  :global(.community-reuse-dialog .el-dialog__footer){display:grid;grid-template-columns:auto minmax(0,1fr);gap:8px;flex:none;padding:10px 18px calc(10px + env(safe-area-inset-bottom));border-top:1px solid var(--zh-line-parting);}
+  :global(.community-reuse-dialog .el-dialog__footer .el-button){margin:0;min-height:44px;}
+  .collection-row,.report-row{align-items:flex-start;min-height:52px;}
+  .collection-item-link{padding:8px 0;white-space:normal;overflow-wrap:anywhere;}
+  .collection-row>.el-button,.collection-row>div,.report-row>.el-button{flex:none;}
+  .report-row span{padding:8px 0;white-space:normal;overflow-wrap:anywhere;}
+  .report-form-grid{grid-template-columns:1fr;}
+  .report-form-grid :deep(.el-form-item:nth-child(3)),.report-form-grid :deep(.el-form-item:nth-child(4)){grid-column:auto;}
+  .report-dialog>.el-button{width:100%;min-height:44px;}
+  .report-detail dl div{grid-template-columns:78px minmax(0,1fr);gap:10px;}
+  .reuse-section>header{align-items:flex-start;flex-direction:column;gap:4px;}
+  .reuse-resource-picker :deep(.el-checkbox__label){align-items:flex-start;flex-wrap:wrap;white-space:normal;overflow-wrap:anywhere;}
+  .reuse-meta-card strong{white-space:normal;overflow-wrap:anywhere;}
+}
+@media (max-width: 560px) {
+  :global(.community-detail-dialog.el-dialog){box-sizing:border-box;display:flex;flex-direction:column;width:100vw!important;height:100dvh;max-height:100dvh;margin:0!important;padding:env(safe-area-inset-top, 0px) 0 0;border:0;border-radius:0;}
+  :global(.community-detail-dialog.el-dialog .el-dialog__body){flex:1;min-height:0;overflow:hidden;}
+  .detail-dialog{height:100%;min-height:0;overflow:hidden;}
+  .detail-shell{display:flex;flex-direction:column;height:100%;min-height:0;}
+  .detail-header{position:relative;display:block;flex:none;padding:17px 18px 13px;}
+  .detail-heading{padding-right:30px;}
+  .detail-heading h2{display:-webkit-box;max-height:3.75em;margin:8px 0 6px;overflow:hidden;font-size:23px;line-height:1.25;-webkit-box-orient:vertical;-webkit-line-clamp:3;}
+  .detail-heading>p{display:-webkit-box;overflow:hidden;font-size:12px;line-height:1.5;-webkit-box-orient:vertical;-webkit-line-clamp:2;}
+  .detail-tags{gap:5px;margin-top:9px;font-size:11px;}
+  .detail-header-actions{gap:8px;margin-top:12px;}
+  .detail-favorite-button{width:auto;min-height:36px;padding:0 11px;}
+  .detail-favorite-button span{display:inline;}
+  .detail-close-button{position:absolute;top:13px;right:13px;width:38px;height:38px;}
+  .detail-layout{display:block;flex:1;min-height:0;overflow-y:auto;padding:14px 16px 22px;-webkit-overflow-scrolling:touch;overscroll-behavior:contain;}
+  .detail-main{gap:12px;}
+  .detail-content-section{padding:15px;}
+  .detail-section-heading{margin-bottom:12px;}
+  .detail-section-heading h3{font-size:17px;}
+  .detail-section-note{display:none;}
+  .detail-highlight{padding:15px;}
+  .detail-aside{gap:9px;margin-top:12px;}
+  .detail-aside-card{padding:15px;}
+  .detail-aside-actions{display:none;}
+  .detail-mobile-footer{display:grid;grid-template-columns:minmax(0,1fr) auto;align-items:center;gap:8px;flex:none;padding:10px 16px calc(10px + env(safe-area-inset-bottom));border-top:1px solid var(--zh-line-parting);background:var(--zh-background-pop);box-shadow:0 -8px 20px rgb(24 49 85 / 6%);}
+  .detail-mobile-footer .detail-primary-action,.detail-mobile-footer .detail-report-action{min-height:44px;}
+  .detail-mobile-footer .detail-report-action{width:auto;padding:0 8px;}
+}
+@media (max-width: 700px) {
+  :global(.community-submission-dialog.el-dialog){box-sizing:border-box;display:flex;flex-direction:column;height:100dvh;max-height:100dvh;padding:env(safe-area-inset-top, 0px) 0 0;}
+  :global(.community-submission-dialog .el-dialog__body){flex:1;min-height:0;overflow:hidden;}
+  :global(.community-submission-dialog .el-dialog__footer){flex:none;padding-bottom:calc(12px + env(safe-area-inset-bottom));}
+  .submission-dialog{display:flex;flex-direction:column;height:100%;min-height:0;}
+  .submission-header{flex:none;padding:16px 18px 13px;}
+  .submission-heading h2{font-size:22px;}
+  .submission-heading p{font-size:12px;line-height:1.45;}
+  .submission-layout{flex:1;min-height:0;max-height:none;overflow-y:auto;padding:14px 16px 22px;-webkit-overflow-scrolling:touch;overscroll-behavior:contain;}
+  .submission-section{padding:15px;}
+  .submission-aside-card{padding:14px;}
+}
 </style>

@@ -121,7 +121,7 @@ INSERT INTO adm_resource
 -- ⑭ 互动组件 · 无文件 · 索引完成
 (9415, 'component', '数学公式推导分步展示组件',
  '数学', '高中', NULL,
- '{"component":"formula-steps","version":1,"props":{"title":"公式推导分步展示","steps":[{"label":"原式","formula":"a^2+b^2=c^2"},{"label":"移项","formula":"a^2=c^2-b^2"},{"label":"结论","formula":"a=\\sqrt{c^2-b^2}"}],"autoPlay":false},"style":{"theme":"board","fontSize":20}}',
+ '{"component":"formula-steps","version":1,"props":{"title":"公式推导分步展示","steps":[{"label":"原式","formula":"a^2+b^2=c^2"},{"label":"移项","formula":"a^2=c^2-b^2"},{"label":"结论","formula":"a=\\\\sqrt{c^2-b^2}"}],"autoPlay":false},"style":{"theme":"board","fontSize":20}}',
  NULL, '分步展示数学公式推导过程的课堂组件：逐步点击呈现，支持自动播放与回看。',
  NULL, 1, 90001, 'completed', '2026-09-09 10:15:00', NULL, '2026-09-06 14:22:00', '2026-09-09 10:15:00');
 

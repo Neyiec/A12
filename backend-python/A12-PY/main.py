@@ -58,7 +58,7 @@ from a12_ppt.models import (
     CourseGraphUpsertRequest,
 )
 from a12_ppt.course_graph import course_graph_store
-from a12_ppt.resources import resource_index_store, save_upload
+from a12_ppt.resources import delete_temp_upload_resources, resource_index_store, save_upload
 from a12_ppt.resources.index_worker import start_resource_index_worker
 from a12_ppt.community_review_worker import start_community_review_worker
 from a12_ppt.outline_chat import OutlineChatWorkflow
@@ -73,6 +73,7 @@ settings = get_settings()
 # 统一日志约定：[%(levelname)s] %(filename)s: %(message)s
 # 服务内模块（index_store 等）的 logger 依赖 root 处理器输出，uvicorn 不配置 root，必须在此 basicConfig
 logging.basicConfig(level=logging.INFO, format="[%(levelname)s] %(filename)s: %(message)s")
+logger = logging.getLogger("a12_ppt.main")
 
 app = FastAPI(title=settings.app_name, version=settings.app_version)
 generator = PPTGenerator()
@@ -190,13 +191,44 @@ async def transcribe_audio_input(
 
 @app.post("/api/v1/python/resources/upload")
 async def upload_resource(file: UploadFile = File(...)) -> Result:
+    # 简单限额：临时上传落盘前拦截超大文件（50MB），防止匿名/误操作写爆磁盘
+    file.file.seek(0, 2)
+    upload_size = file.file.tell()
+    file.file.seek(0)
+    if upload_size > 50 * 1024 * 1024:
+        raise HTTPException(status_code=413, detail="临时资料不能超过 50MB，请转存到个人素材库后引用")
     record = await save_upload(file)
+    # 功能 2（临时上传）：解析落盘后立即向量化入 temp 分区索引（temp:{res_id}，与 personal/public 隔离）。
+    # 向量化失败不阻断上传——降级为 context_only，RAG 侧仍有 content.txt 全文兜底。
+    index_status = "context_only"
+    index_error = ""
+    try:
+        index_result = await resource_index_store.index_local_text(
+            source_type="temp",
+            resource_id=record.resource_id,
+            title=record.filename,
+            text=record.text,
+            owner_user_id=direct_user_id.get(),
+            file_type=record.content_type,
+            file_size=record.file_path.stat().st_size,
+            metadata={"filename": record.filename, "original_filename": file.filename, "temp": True},
+        )
+        if index_result.get("status") == "indexed":
+            index_status = "indexed"
+        else:
+            index_error = str(index_result.get("error_message") or "")
+    except Exception as exc:  # 索引通道整体异常时保持上传成功
+        logger.warning("临时资料索引失败 resource_id=%s: %s", record.resource_id, exc)
+        index_error = str(exc)
     return Result(data={
         "resource_id": record.resource_id,
         "filename": record.filename,
         "content_type": record.content_type,
         "text_length": len(record.text),
         "text_preview": record.text[:500],
+        "temp": True,
+        "index_status": index_status,
+        "index_error": index_error,
     })
 
 
@@ -315,6 +347,35 @@ async def delete_resource_index(source_type: str, resource_id: str) -> Result:
             if not resource_index_store.get_resource(source_type, resource_id, 0):
                 raise HTTPException(status_code=403, detail="无权删除该资源索引")
     return Result(data=resource_index_store.delete_resource(source_type, resource_id))
+
+
+@app.delete("/api/v1/python/resources/temp")
+async def cleanup_temp_resources(resource_ids: str = Query(..., min_length=1)) -> Result:
+    """会话结束/转存/手动移除时清理临时上传：temp 索引 + data/resources/{rid} 磁盘目录。
+
+    索引删除与磁盘删除都做 owner 校验，避免横向越权删除他人临时资料。
+    """
+    ids = [item.strip() for item in resource_ids.split(",") if item.strip()]
+    if not ids:
+        raise HTTPException(status_code=422, detail="resource_ids 不能为空")
+    user_id = direct_user_id.get()
+    removed_index: list[str] = []
+    denied_index: list[str] = []
+    for resource_id in ids:
+        if user_id:
+            record = resource_index_store.get_resource("temp", resource_id, 0)
+            if record:
+                owner = str(((record.get("metadata") or {}).get("owner_user_id")) or "")
+                if owner != user_id:
+                    denied_index.append(resource_id)
+                    continue
+        try:
+            resource_index_store.delete_resource("temp", resource_id)
+            removed_index.append(resource_id)
+        except Exception as exc:
+            logger.warning("清理 temp 索引失败 resource_id=%s: %s", resource_id, exc)
+    cleanup = delete_temp_upload_resources(ids, owner_user_id=user_id)
+    return Result(data={**cleanup, "index_removed": removed_index, "index_denied": denied_index})
 
 
 @app.get("/api/v1/python/templates")
