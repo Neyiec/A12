@@ -18,7 +18,6 @@ import edu.zstu.service.BusinessLogService;
 import edu.zstu.service.CommunityService;
 import edu.zstu.service.CommunityReviewEventPublisher;
 import edu.zstu.service.ProjectService;
-import edu.zstu.utils.CurrentHolder;
 import edu.zstu.utils.PageResult;
 import edu.zstu.utils.RedisCacheUtil;
 import edu.zstu.utils.RedisRateLimiter;
@@ -689,21 +688,8 @@ public class CommunityServiceImpl implements CommunityService {
      * 语义：无 sort_by=默认排序；sort_by+all=按冗余总量列；sort_by+day/week/month=窗口聚合排序。
      */
     private SortSpec resolveSortSpec(ContentQueryDTO dto) {
-        String legacySort = isBlank(dto.getSort()) ? "" : dto.getSort().trim().toLowerCase();
-        if (!legacySort.isEmpty() && !Set.of("recommended", "newest", "likes", "favorites", "uses", "hot").contains(legacySort)) {
-            throw new RuntimeException("Unsupported sort: " + dto.getSort());
-        }
         String sortBy = isBlank(dto.getSort_by()) ? "" : dto.getSort_by().trim().toLowerCase();
         String period = isBlank(dto.getPeriod()) ? "all" : dto.getPeriod().trim().toLowerCase();
-        if (sortBy.isEmpty()) {
-            sortBy = switch (legacySort) {
-                case "likes" -> "like";
-                case "favorites" -> "favorite";
-                case "uses" -> "use";
-                default -> "";
-            };
-        }
-        if ("hot".equals(legacySort) && "all".equals(period)) period = "week";
         if (!sortBy.isEmpty() && !SORT_BY_WHITELIST.contains(sortBy)) {
             throw new RuntimeException("Unsupported sort_by: " + dto.getSort_by());
         }
@@ -712,9 +698,6 @@ public class CommunityServiceImpl implements CommunityService {
         }
         //未选择排序维度：保持原有默认排序（回归保障）
         if (sortBy.isEmpty()) {
-            if ("newest".equals(legacySort)) return new SortSpec("c.created_at DESC, c.id DESC", false, null);
-            if ("hot".equals(legacySort)) return new SortSpec("(COALESCE(stat.use_cnt, 0) * 4 + COALESCE(stat.fav_cnt, 0) * 3 + COALESCE(lik.like_cnt, 0) * 2) DESC, c.id DESC", true, windowStart(period));
-            if ("recommended".equals(legacySort)) return new SortSpec("c.is_top DESC, (LOG(1 + c.use_count) * 4 + LOG(1 + c.favorite_count) * 3 + LOG(1 + c.like_count) * 2) DESC, c.updated_at DESC, c.id DESC", false, null);
             return new SortSpec("is_top DESC, updated_at DESC", false, null);
         }
         String totalColumn = switch (sortBy) {
@@ -981,13 +964,12 @@ public class CommunityServiceImpl implements CommunityService {
 
     private String publicListKey(ContentQueryDTO dto) {
         return "community:public:" +
-                "u" + (dto.getViewer_id() == null ? "guest" : dto.getViewer_id()) + ":" +
                 blankToAll(dto.getContent_type()) + ":" +
                 blankToAll(dto.getSubject()) + ":" +
                 blankToAll(dto.getGrade()) + ":" +
                 blankToAll(dto.getStatus()) + ":" +
                 blankToAll(dto.getKeyword()) + ":" +
-                blankToAll(dto.getSort()) + ":" + blankToAll(dto.getSort_by()) + ":" +
+                blankToAll(dto.getSort_by()) + ":" +
                 blankToAll(dto.getPeriod()) + ":p" +
                 dto.getPage() + ":s" + dto.getSize();
     }

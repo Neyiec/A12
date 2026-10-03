@@ -13,14 +13,12 @@ async def rag_search(resource_ids: list[str], query: str, limit: int = 12000) ->
     # inside the temp partition (temp:{res_id}, written at /resources/upload). The global
     # knowledge base search scope stays unchanged.
     local_ids = [resource_id for resource_id in resource_ids if ":" not in resource_id]
-    indexed_ids = [resource_id for resource_id in resource_ids
-                   if resource_id.startswith(("public:", "personal:", "community:"))]
     temp_keys = [f"temp:{resource_id}" for resource_id in local_ids]
     local_context = build_rag_context(local_ids, limit=limit)
     enriched_query = _build_enriched_query(query, local_context)
 
     # 全局知识库与 temp 分区两次检索相互独立，并行以抵消双倍 embedding/检索延迟
-    global_task = resource_index_store.search_context(indexed_ids, enriched_query, limit=limit)
+    global_task = resource_index_store.search_context([], enriched_query, limit=limit)
     temp_task = (
         resource_index_store.search_context(temp_keys, enriched_query, limit=limit)
         if temp_keys else None
@@ -55,7 +53,7 @@ async def rag_search(resource_ids: list[str], query: str, limit: int = 12000) ->
         "query": query,
         "enriched_query": enriched_query,
         "resource_ids": resource_ids,
-        "search_scope": "selected_knowledge_sources+temp_uploads" if indexed_ids and temp_keys else ("selected_knowledge_sources" if indexed_ids else ("global_knowledge_base+temp_uploads" if temp_keys else "global_knowledge_base")),
+        "search_scope": "global_knowledge_base+temp_uploads" if temp_keys else "global_knowledge_base",
         "reference_context": local_context[:4000],
         "temp_context": temp_context,
         "knowledge_context": indexed_context,

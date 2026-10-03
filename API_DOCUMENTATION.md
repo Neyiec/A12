@@ -1593,13 +1593,12 @@ Java 任务模式支持的导出配置键：`slides`、`lesson_plan`、`outline`
 | `subject` | String | 否 | 学科 |
 | `grade` | String | 否 | 年级 |
 | `keyword` | String | 否 | 标题、简介、关键词和课型搜索 |
-| `sort` | String | 否 | `recommended`（默认）、`newest`、`likes`、`favorites`、`uses`、`hot` |
-| `sort_by` | String | 否 | 排序维度：`like` / `favorite` / `use`；优先于旧版 `sort` |
-| `period` | String | 否 | 排序时间窗口：`day` / `week` / `month` / `all`（默认）；热门榜默认近 7 天 |
+| `sort_by` | String | 否 | 排序维度：`like` / `favorite` / `use`；缺省为置顶和更新时间排序，非法值返回 400 |
+| `period` | String | 否 | 时间窗口：`day` / `week` / `month` / `all`（默认）；`all` 按总量排序，日/周/月按窗口内互动量排序，仅 `sort_by` 非空时生效 |
 | `page` | int | 否 | 默认1 |
 | `size` | int | 否 | 默认10 |
 
-**后端 DTO**: `ContentQueryDTO extends PageQuery { content_type, subject, grade, status, keyword, sort, sort_by, period }`；当前用户 ID 由服务端读取
+**后端 DTO**: `ContentQueryDTO extends PageQuery { content_type, subject, grade, status, keyword, sort_by, period }`；当前用户 ID 由服务端读取
 **响应 VO**: `Result<PageResult<ContentVO>>`
 
 ---

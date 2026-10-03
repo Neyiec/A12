@@ -21,9 +21,7 @@ const searchQuery = ref('')
 const activeTab = ref('精选')
 const selectedStage = ref('全部学段')
 const selectedSubject = ref('全部学科')
-const tabs = ['精选', 'PPT 课件', '热门 PPT', '最新', 'Skill', '教学案例']
-const selectedSort = ref('recommended')
-const hotPeriod = ref('week')
+const tabs = ['精选', 'PPT 课件', '最新', 'Skill', '教学案例']
 const showMobileFilters = ref(false)
 const communityCards = ref([])
 const communityTotal = ref(0)
@@ -503,17 +501,15 @@ const loadCommunity = async () => {
   const requestSeq = ++communityRequestSeq
   loading.value = true
   communityError.value = ''
-  const contentType = activeTab.value === 'Skill' ? 'skill' : activeTab.value === '教学案例' ? 'lesson_case' : ['PPT 课件', '热门 PPT'].includes(activeTab.value) ? 'ppt' : undefined
-  const sort = activeTab.value === '最新' ? 'newest' : activeTab.value === '热门 PPT' ? 'hot' : selectedSort.value
+  const contentType = activeTab.value === 'Skill' ? 'skill' : activeTab.value === '教学案例' ? 'lesson_case' : activeTab.value === 'PPT 课件' ? 'ppt' : undefined
   try {
     const result = assertApiSuccess(await listCommunityItems({
       content_type: contentType,
       subject: selectedSubject.value === '全部学科' ? undefined : selectedSubject.value,
       grade: selectedStage.value === '全部学段' ? undefined : selectedStage.value,
       keyword: searchQuery.value || undefined,
-      sort,
       sort_by: sortBy.value || undefined,
-      period: sortBy.value ? sortPeriod.value : sort === 'hot' ? hotPeriod.value : undefined,
+      period: sortBy.value ? sortPeriod.value : undefined,
       page: communityPage.value,
       size: communityPageSize.value,
     }))
@@ -567,7 +563,7 @@ const filteredCards = computed(() => {
     const matchesTab = activeTab.value === '精选'
       || activeTab.value === 'Skill' && card.type === 'Skill'
       || activeTab.value === '教学案例' && card.type === '案例'
-      || ['PPT 课件', '热门 PPT'].includes(activeTab.value) && card.type === 'PPT'
+      || activeTab.value === 'PPT 课件' && card.type === 'PPT'
       || activeTab.value === '最新'
     return matchesTab && matchesFilters(card)
   })
@@ -735,7 +731,7 @@ const toggleFavorite = async (item) => {
       favorites.value = favorites.value.filter((row) => String(favoriteItemId(row)) !== favoriteKey)
     }
     updateVisibleMetric(rawId, 'favorites', next ? 1 : -1)
-    if (activeTab.value === '热门 PPT' || selectedSort.value === 'favorites') loadCommunity()
+    if (sortBy.value === 'favorite') loadCommunity()
     ElMessage.success(next ? '已收藏' : '已取消收藏')
   } catch (error) {
     favoriteIds.value = previousIds
@@ -987,7 +983,7 @@ const reportItem = async () => {
   } catch (error) { ElMessage.error(error?.message || '举报提交失败') }
 }
 
-watch([activeTab, selectedStage, selectedSubject, selectedSort, hotPeriod], () => {
+watch([activeTab, selectedStage, selectedSubject], () => {
   communityPage.value = 1
   loadCommunity()
 })
@@ -1027,8 +1023,6 @@ onMounted(() => {
         <div id="community-filters" class="filters" :class="{ 'mobile-open': showMobileFilters }">
           <el-select v-model="selectedStage" aria-label="筛选学段"><el-option label="全部学段" value="全部学段" /><el-option label="初中" value="初中" /><el-option label="高中" value="高中" /></el-select>
           <el-select v-model="selectedSubject" aria-label="筛选学科"><el-option label="全部学科" value="全部学科" /><el-option label="数学" value="数学" /><el-option label="物理" value="物理" /><el-option label="语文" value="语文" /><el-option label="生物" value="生物" /></el-select>
-          <el-select v-if="activeTab === '热门 PPT'" v-model="hotPeriod" aria-label="热门统计周期"><el-option label="近 7 天" value="week" /><el-option label="近 30 天" value="month" /></el-select>
-          <el-select v-else-if="activeTab !== '最新'" v-model="selectedSort" aria-label="内容排序"><el-option label="综合推荐" value="recommended" /><el-option label="点赞最多" value="likes" /><el-option label="收藏最多" value="favorites" /><el-option label="复用最多" value="uses" /><el-option label="最新发布" value="newest" /></el-select>
           <el-select v-model="sortBy" aria-label="排序方式" placeholder="默认排序">
             <el-option label="默认排序" value="" />
             <el-option v-for="option in sortOptions" :key="option.value" :label="option.label" :value="option.value" />

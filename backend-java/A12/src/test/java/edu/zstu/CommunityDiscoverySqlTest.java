@@ -31,25 +31,23 @@ class CommunityDiscoverySqlTest {
         ContentQueryDTO query = new ContentQueryDTO();
         query.setContent_type("ppt");
         query.setKeyword("分数");
-        query.setSort("recommended");
-        String sql = searchSql(query, "c.is_top DESC, c.updated_at DESC, c.id DESC", false).getSql();
+        String sql = searchSql(query, "is_top DESC, updated_at DESC", false).getSql();
         assertTrue(sql.contains("c.content_type = ?"));
         assertTrue(sql.contains("c.keywords LIKE"));
         assertFalse(sql.contains("mine.user_id")); // 点赞态在列表缓存外按当前用户注入
         assertTrue(sql.indexOf("WHERE c.status = 'public'") < sql.indexOf("ORDER BY"));
-        assertTrue(sql.contains("c.is_top DESC"));
+        assertTrue(sql.contains("is_top DESC"));
     }
 
     @Test
-    void hotRankingUsesSelectedWindowAndStableTieBreak() throws Exception {
+    void monthlyUseRankingUsesWindowAggregation() throws Exception {
         ContentQueryDTO query = new ContentQueryDTO();
-        query.setSort("hot");
+        query.setSort_by("use");
         query.setPeriod("month");
         String sql = searchSql(query,
-                "(COALESCE(stat.use_cnt, 0) * 4 + COALESCE(stat.fav_cnt, 0) * 3 + COALESCE(lik.like_cnt, 0) * 2) DESC, c.id DESC",
+                "is_top DESC, COALESCE(stat.use_cnt, 0) DESC, updated_at DESC",
                 true).getSql();
         assertTrue(sql.contains("created_at >= ?"));
-        assertTrue(sql.contains("COALESCE(stat.use_cnt, 0) * 4"));
-        assertTrue(sql.contains("c.id DESC"));
+        assertTrue(sql.contains("COALESCE(stat.use_cnt, 0) DESC"));
     }
 }

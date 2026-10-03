@@ -20,11 +20,6 @@ public class ContentQueryDTO extends PageQuery {
     private String grade;
     private String status;
     private String keyword;
-    /** recommended/newest/likes/favorites/uses/hot */
-    private String sort;
-    /** day/week/month/all，排序时间窗口。 */
-    private String period;
-    /** 由服务端填充，不信任客户端传入的用户 ID。 */
-    private Integer viewer_id;
     private String sort_by;   //排序维度：like/favorite/use，空为默认（置顶+更新时间）
+    private String period;    //时间窗口：day/week/month/all（仅 sort_by 非空时生效）
 }
