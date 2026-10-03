@@ -7,6 +7,7 @@
 import { computed, onBeforeUnmount, onMounted, ref, watch } from 'vue'
 import { ElMessage } from 'element-plus'
 import { Delete, Edit, Folder, Loading, Lock, MoreFilled, Plus, Refresh, Search, Setting, Upload } from '@element-plus/icons-vue'
+import { downloadFile } from '../utils/api'
 import {
   batchResourceAction,
   bootstrapResourceIndex,
@@ -426,7 +427,8 @@ const handleAction = async (row, command) => {
     if (command === 'download') {
       const result = await downloadResource(row.id)
       const url = result?.data?.download_url || result?.download_url
-      if (url) window.open(url, '_blank', 'noopener')
+      if (url?.startsWith('/api/v1/resources/')) await downloadFile(url, row.file_name)
+      else if (url) window.open(url, '_blank', 'noopener')
     }
     if (command === 'delete') { await deleteResource(row.id); resources.value = resources.value.filter((item) => item.id !== row.id); selectedRows.value = selectedRows.value.filter((item) => item.id !== row.id) }
   } catch { ElMessage.error('操作未成功，请稍后重试') }
