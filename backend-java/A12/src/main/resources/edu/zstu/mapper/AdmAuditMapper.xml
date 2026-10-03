@@ -7,10 +7,14 @@
         <result column="reporter_id" property="reporter_id"/><result column="reason" property="reason"/>
         <result column="handler_id" property="handler_id"/><result column="action" property="action"/>
         <result column="comment" property="comment"/><result column="status" property="status"/>
+        <result column="ai_domain" property="ai_domain"/><result column="ai_verdict" property="ai_verdict"/>
+        <result column="ai_score" property="ai_score"/><result column="ai_report" property="ai_report"/>
+        <result column="ai_model" property="ai_model"/><result column="ai_reviewed_at" property="ai_reviewed_at"/>
         <result column="created_at" property="created_at"/><result column="processed_at" property="processed_at"/>
     </resultMap>
-    <sql id="Base_Columns">id, audit_type, target_type, target_id, reporter_id, reason, handler_id, action, comment, status, created_at, processed_at</sql>
+    <sql id="Base_Columns">id, audit_type, target_type, target_id, reporter_id, reason, handler_id, action, comment, status, ai_domain, ai_verdict, ai_score, ai_report, ai_model, ai_reviewed_at, created_at, processed_at</sql>
     <select id="findById" resultMap="BaseResultMap">SELECT <include refid="Base_Columns"/> FROM adm_audit WHERE id = #{id}</select>
+    <select id="findByIdForUpdate" resultMap="BaseResultMap">SELECT <include refid="Base_Columns"/> FROM adm_audit WHERE id = #{id} FOR UPDATE</select>
     <select id="findByType" resultMap="BaseResultMap">SELECT <include refid="Base_Columns"/> FROM adm_audit WHERE audit_type = #{auditType} ORDER BY created_at DESC</select>
     <select id="findByStatus" resultMap="BaseResultMap">SELECT <include refid="Base_Columns"/> FROM adm_audit WHERE status = #{status} ORDER BY created_at DESC</select>
     <select id="findByTarget" resultMap="BaseResultMap">SELECT <include refid="Base_Columns"/> FROM adm_audit WHERE target_type = #{targetType} AND target_id = #{targetId}</select>
@@ -21,6 +25,12 @@
     </insert>
     <update id="process">
         UPDATE adm_audit SET handler_id = #{handler_id}, action = #{action}, comment = #{comment}, status = #{status}, processed_at = NOW() WHERE id = #{id}
+    </update>
+    <update id="saveAiReview">
+        UPDATE adm_audit SET ai_domain = #{ai_domain}, ai_verdict = #{ai_verdict}, ai_score = #{ai_score},
+        ai_report = #{ai_report}, ai_model = #{ai_model}, ai_reviewed_at = NOW(),
+        action = #{action}, status = #{status}, processed_at = #{processed_at}
+        WHERE id = #{id} AND audit_type = 'audit' AND status = 'pending'
     </update>
     <select id="findByReporter" resultMap="BaseResultMap">
         SELECT <include refid="Base_Columns"/> FROM adm_audit
@@ -56,6 +66,12 @@
             </if>
             <if test="handlerId != null">
                 AND handler_id = #{handlerId}
+            </if>
+            <if test="aiVerdict != null and aiVerdict != ''">
+                AND ai_verdict = #{aiVerdict}
+            </if>
+            <if test="aiDomain != null and aiDomain != ''">
+                AND ai_domain = #{aiDomain}
             </if>
         </where>
         ORDER BY created_at DESC

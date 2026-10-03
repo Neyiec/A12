@@ -27,10 +27,12 @@ public class AdminModerationController {
             @RequestParam(required = false) String status,
             @RequestParam(required = false) String target_type,
             @RequestParam(required = false) Integer handler_id,
+            @RequestParam(required = false) String ai_verdict,
+            @RequestParam(required = false) String ai_domain,
             @RequestParam(defaultValue = "1") int page,
             @RequestParam(defaultValue = "10") int size) {
         try {
-            return Result.success(adminModerationService.listModerationTasks(status, target_type, handler_id, page, size));
+            return Result.success(adminModerationService.listModerationTasks(status, target_type, handler_id, ai_verdict, ai_domain, page, size));
         } catch (RuntimeException e) { return Result.error(400, e.getMessage()); }
     }
 
@@ -39,6 +41,23 @@ public class AdminModerationController {
         try {
             return Result.success(adminModerationService.getModerationTask(id));
         } catch (RuntimeException e) { return Result.error(400, e.getMessage()); }
+    }
+
+    @GetMapping("/moderation/content/{id}")
+    public Result<ContentVO> getModerationContent(@PathVariable Integer id) {
+        try { return Result.success(adminModerationService.getModerationContent(id)); }
+        catch (RuntimeException e) { return Result.error(404, e.getMessage()); }
+    }
+
+    @PostMapping("/community-items/reindex")
+    public Result<Map<String, Object>> rebuildCommunityIndex(@RequestParam(defaultValue = "0") Integer after_id,
+                                                               @RequestParam(defaultValue = "100") Integer limit) {
+        return Result.success(adminModerationService.rebuildCommunityIndex(after_id, limit));
+    }
+
+    @PostMapping("/community-items/{id}/reindex")
+    public Result<Map<String, Object>> rebuildCommunityItemIndex(@PathVariable Integer id) {
+        return Result.success(adminModerationService.rebuildCommunityItemIndex(id));
     }
 
     @PostMapping("/moderation/tasks/{id}/decisions")

@@ -21,6 +21,10 @@ export default defineConfig(({ mode }) => {
         allow: [fileURLToPath(new URL('..', import.meta.url))],
       },
       proxy: {
+        '/api/v1/python': {
+          target: env.VITE_PYTHON_API_PROXY_TARGET || 'http://127.0.0.1:8000',
+          changeOrigin: true
+        },
         '/api': {
           target: env.VITE_API_PROXY_TARGET,
           changeOrigin: true

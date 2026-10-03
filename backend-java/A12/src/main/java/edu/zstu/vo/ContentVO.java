@@ -21,6 +21,7 @@ public class ContentVO {
     private String subject;
     private String grade;
     private String lesson_type;
+    private String keywords;
     private String content_data;
     private String input_variables;
     private String example_effect;
@@ -31,6 +32,9 @@ public class ContentVO {
     private int is_top;
     private int view_count;
     private int use_count;
+    private int like_count;
+    private int favorite_count;
+    private boolean liked;
     private LocalDateTime created_at;
     private LocalDateTime updated_at;
 }

@@ -75,6 +75,26 @@ public class CommunityController {
         } catch (RuntimeException e) { return Result.error(400, e.getMessage()); }
     }
 
+    @PutMapping("/items/{id}/like")
+    public Result<Void> like(@PathVariable Integer id) {
+        try {
+            Integer userId = CurrentHolder.getCurrentId();
+            if (userId == null) return Result.error(401, "未登录");
+            communityService.like(id, userId);
+            return Result.success();
+        } catch (RuntimeException e) { return Result.error(400, e.getMessage()); }
+    }
+
+    @DeleteMapping("/items/{id}/like")
+    public Result<Void> unlike(@PathVariable Integer id) {
+        try {
+            Integer userId = CurrentHolder.getCurrentId();
+            if (userId == null) return Result.error(401, "未登录");
+            communityService.unlike(id, userId);
+            return Result.success();
+        } catch (RuntimeException e) { return Result.error(400, e.getMessage()); }
+    }
+
     /**
      * API-57 记录浏览事件
      */

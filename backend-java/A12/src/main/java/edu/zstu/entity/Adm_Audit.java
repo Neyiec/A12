@@ -20,6 +20,12 @@ public class Adm_Audit {
     private String action; //处理动作(approve/reject/offline/ignore)
     private String comment; //处理意见
     private String status; //状态(pending/processed/ignored)
+    private String ai_domain; // arts/science/engineering
+    private String ai_verdict; // pass/review/fail/error
+    private Integer ai_score;
+    private String ai_report; // JSON 审核依据
+    private String ai_model;
+    private LocalDateTime ai_reviewed_at;
     private LocalDateTime created_at;
     private LocalDateTime processed_at;
 }

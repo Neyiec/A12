@@ -1584,19 +1584,21 @@ Java 任务模式支持的导出配置键：`slides`、`lesson_plan`、`outline`
 # 七、社区模块
 
 ## API-57 GET /api/v1/community/items
-**功能**: 检索公开可用的 Skill 和教学案例
+**功能**: 检索公开可用的 PPT 课件、Skill 和教学案例；筛选和排序均在数据库分页前完成
 
 **查询参数**:
 | 字段 | 类型 | 必填 | 说明 |
 |---|---|---|---|
-| `content_type` | String | 否 | 内容类型: `skill` / `lesson_case` |
+| `content_type` | String | 否 | 内容类型: `ppt` / `skill` / `lesson_case` |
 | `subject` | String | 否 | 学科 |
 | `grade` | String | 否 | 年级 |
-| `keyword` | String | 否 | 关键字搜索 |
+| `keyword` | String | 否 | 标题、简介、关键词和课型搜索 |
+| `sort` | String | 否 | `recommended`（默认）、`newest`、`likes`、`favorites`、`uses`、`hot` |
+| `period` | String | 否 | 热门榜统计周期：`week`（默认）或 `month` |
 | `page` | int | 否 | 默认1 |
 | `size` | int | 否 | 默认10 |
 
-**后端 DTO**: `ContentQueryDTO extends PageQuery { content_type, subject, grade, status, keyword }`
+**后端 DTO**: `ContentQueryDTO extends PageQuery { content_type, subject, grade, status, keyword, sort, period }`；当前用户 ID 由服务端填充
 **响应 VO**: `Result<PageResult<ContentVO>>`
 
 ---
@@ -1616,6 +1618,7 @@ Java 任务模式支持的导出配置键：`slides`、`lesson_plan`、`outline`
 | `subject` | String | 学科 |
 | `grade` | String | 年级 |
 | `lesson_type` | String | 课型 |
+| `keywords` | String | 主题和知识点关键词 |
 | `content_data` | String(JSON) | 内容数据 |
 | `input_variables` | String(JSON) | 输入变量 |
 | `example_effect` | String | 示例效果 |
@@ -1626,6 +1629,9 @@ Java 任务模式支持的导出配置键：`slides`、`lesson_plan`、`outline`
 | `is_top` | int | 是否置顶 |
 | `view_count` | int | 浏览数 |
 | `use_count` | int | 使用数 |
+| `like_count` | int | 点赞数 |
+| `favorite_count` | int | 收藏数 |
+| `liked` | boolean | 当前登录用户是否点赞 |
 | `created_at` | LocalDateTime | 创建时间 |
 | `updated_at` | LocalDateTime | 更新时间 |
 
@@ -1640,6 +1646,45 @@ Java 任务模式支持的导出配置键：`slides`、`lesson_plan`、`outline`
 
 ## API-60 DELETE /api/v1/community/items/{id}/favorite
 **功能**: 取消收藏
+**路径参数**: `id` — 内容ID
+**响应 VO**: `Result<Void>`
+
+---
+
+### PPT 投稿的 AI 初审与人工复核
+
+PPT 投稿提交审核后，Java 将审核任务 ID 和课件版本写入 Redis Stream `a12:community-review:events`；Python 消费者通过仅允许共享内部密钥的 Java 接口读取当前稿件，按学科路由到文科、理科或工科 Agent。学科不明确、跨学科、图片和多媒体未核验、模型不可用等情况一律保留人工审核。AI 结果包含四个检查维度、证据、风险点、评分、模型和课件版本，存入 `adm_audit`。
+
+仅当 AI 结论为通过、评分至少 90、四项检查全部通过且没有风险点时，Java 才可自动公开；符合条件的投稿仍有约 10% 进入人工抽查池。AI 未通过或不确定时不会自动驳回，审核员可查看报告后通过、驳回或退回。已自动通过的记录仍可在后台抽查并由人工撤回。失败事件最多重试三次后进入 `a12:community-review:dead-letter`，投稿维持人工待审。
+
+| 接口 | 用途 |
+|---|---|
+| `GET /api/v1/internal/community-review/{auditId}` | Python 以内部密钥读取待审 PPT 内容和版本 |
+| `POST /api/v1/internal/community-review/{auditId}/result` | Python 回写结构化 AI 初审结果；Java 校验状态和版本并执行放行规则 |
+| `GET /api/v1/admin/moderation/tasks?ai_verdict=pass` | 审核员筛选 AI 通过记录进行抽查；也支持 `review/fail/error` |
+| `GET /api/v1/admin/moderation/content/{id}` | 审核员读取投稿只读预览，需 `audit:view` 权限 |
+
+既有数据库需执行 `backend-java/A12/database/20260929_community_ai_review_migration.sql`。Python 后台审核消费者需要与 Java 内部接口共用 `A12_PYTHON_INTERNAL_KEY`，并连接相同 Redis。
+
+公开且选择 `CC BY` 系列授权的 PPT 在 AI 或人工审核通过后会通过资源索引事件进入 Python 的 `community:{内容ID}` 检索域；下架、驳回或取消公开后删除索引。其他授权不会用于 AI 检索。管理员可调用 `POST /api/v1/admin/community-items/reindex?after_id=0&limit=100` 分批核对现有 PPT（返回 `processed/next_cursor/has_more`，需 `resources:edit`），管理端“核对社区索引”按钮会逐批调用。社区索引来源还可通过 Python `GET /api/v1/python/resources/index/resources?source_type=community` 查看；仅业务审核事件可写入或删除此来源。
+
+单篇课件可调用 `POST /api/v1/admin/community-items/{id}/reindex` 补发同步或删除事件；管理端知识库任务行的“重新解析”也会在社区来源时调用它。社区课件不下载文件，而是从已审核的 HTML 页面抽取文字并向量化，检索结果保留 `community:{内容ID}` 来源和版本。
+
+社区复用时，`target_version` 由 Java 校验，所选版本快照随派生项目持久化，前端再绑定教师选定的个人素材。新保存的历史快照用 `snapshot_semantics=prior` 标记为保存前的版本；读取旧数据时兼容之前把旧内容标成下一版本号的记录。
+
+知识库每日凌晨 3:30 会补发状态异常的公共资源索引事件，并核对全部社区 PPT 的公开与授权状态（可通过 `a12.knowledge-index.reconcile-cron` 调整）。检索只返回已授权、可用的资源；事件投递或模型调用失败后，可在后台分批核对社区索引或重新解析公共资源。管理端的知识索引概览、任务列表和检索直接请求 Python `/api/v1/python/resources/index/*`，不再请求已移除的 Java 查询转发接口；开发环境需将管理端 `/api/v1/python` 代理到 FastAPI，生产环境配置 `VITE_PYTHON_API_BASE_URL`。
+
+PostgreSQL 旧版 `a12_resource_index` 若带仅允许 `public/personal` 的检查约束，Python 启动时会尝试扩展为包含 `community`；新库的 `postgresql_schema.sql` 已同步更新。若运行账号无修改约束权限，请由 DBA 执行 `backend-python/A12-PY/community_index_migration.sql`；失败不会停用原有公共/个人资源检索。
+
+---
+
+## PUT /api/v1/community/items/{id}/like
+**功能**: 为公开社区内容点赞；同一用户重复点赞不会重复计数
+**路径参数**: `id` — 内容ID
+**响应 VO**: `Result<Void>`
+
+## DELETE /api/v1/community/items/{id}/like
+**功能**: 取消点赞
 **路径参数**: `id` — 内容ID
 **响应 VO**: `Result<Void>`
 
@@ -1691,20 +1736,21 @@ Java 任务模式支持的导出配置键：`slides`、`lesson_plan`、`outline`
 **请求体 (JSON)**
 | 字段 | 类型 | 必填 | 说明 |
 |---|---|---|---|
-| `content_type` | String | **是** | `skill` / `lesson_case` |
+| `content_type` | String | **是** | `ppt` / `skill` / `lesson_case` |
 | `title` | String | **是** | 标题 |
 | `description` | String | 否 | 描述 |
 | `subject` | String | 否 | 学科 |
 | `grade` | String | 否 | 年级 |
 | `lesson_type` | String | 否 | 课型 |
+| `keywords` | String | 否 | 主题和知识点关键词，便于社区检索 |
 | `content_data` | String(JSON Object) | 否 | 内容数据，必须是合法 JSON 对象 |
 | `input_variables` | String(JSON Object/Array) | 否 | 输入变量，必须是合法 JSON 对象或数组 |
 | `example_effect` | String | 否 | 示例效果 |
 | `license` | String | **是** | 授权协议 |
-**后端 DTO**: `ContentDTO { content_type, title, description, subject, grade, lesson_type, content_data, input_variables, example_effect, license }`
+**后端 DTO**: `ContentDTO { content_type, title, description, subject, grade, lesson_type, keywords, content_data, input_variables, example_effect, license }`
 **响应 VO**: `Result<ContentVO>`
 
-**校验规则**: `content_type` 支持 `skill`、`lesson_case`，兼容 `case -> lesson_case`；创建时 `content_type/title/license` 必填；新建内容初始状态为 `draft`，`version=1`，`version_history=[]`。
+**校验规则**: `content_type` 支持 `ppt`、`skill`、`lesson_case`，兼容 `case -> lesson_case`；创建时 `content_type/title/license` 必填；新建内容初始状态为 `draft`，`version=1`，`version_history=[]`。PPT 提交审核时 `content_data.slides` 至少有一页，页面端从课件工作台发布。
 
 ---
 
@@ -2030,33 +2076,29 @@ Java 任务模式支持的导出配置键：`slides`、`lesson_plan`、`outline`
 ---
 
 ## API-89-2 GET /api/v1/admin/public-resources/ai-index/overview
-**功能**: 知识索引总览统计（KPI 数据源）。透传 Python `GET /resources/index/overview`，实时聚合 PostgreSQL `a12_resource_index`。
-**权限**: `resources:view`
+**说明**: 此旧 Java 路径已移除。管理端现直连 `GET /api/v1/python/resources/index/overview`，实时聚合 PostgreSQL `a12_resource_index`；浏览器以同一登录令牌访问 Python。
 **响应 VO**: `Result<{postgres_available, embedding_dimensions, resource_count, chunk_count, retrieval_log_count, groups: [{source_type, parse_status, available, allow_ai, resource_count, chunk_count}]}>`
 
 ---
 
 ## API-89-3 GET /api/v1/admin/public-resources/ai-index/tasks
-**功能**: 分页查询知识索引任务列表（public + personal 双域）。透传 Python `GET /resources/index/resources`，随后 Java 对当页 items 按域各一次批量查询 MySQL `ai_index_status`，合成 `effective_status`（indexing 覆盖 PG 终态 parse_status）。
-**权限**: `resources:view`
-**查询参数**: source_type(public/personal，否), parse_status(completed/failed，否), keyword(否，title/resource_id ILIKE), page(默认1), size(默认10，上限200)
-**响应 VO**: `Result<{total, limit, offset, items: [{resource_key, source_type, resource_id, title, available, allow_ai, parse_status, error_message, text_length, chunk_count, metadata, indexed_at, updated_at, effective_status}]}>`
+**说明**: 此旧 Java 路径已移除。管理端现直连 `GET /api/v1/python/resources/index/resources`。
+**查询参数**: source_type(public/personal/community，否), parse_status(completed/failed，否), keyword(否), limit(默认50), offset(默认0)
+**响应 VO**: `Result<{total, limit, offset, items: [{resource_key, source_type, resource_id, title, available, allow_ai, parse_status, error_message, text_length, chunk_count, metadata, indexed_at, updated_at}]}>`
 
 ---
 
 ## API-89-4 GET /api/v1/admin/public-resources/ai-index/resources/{sourceType}/{resourceId}
-**功能**: 单资源索引明细（含真实分块）。透传 Python `GET /resources/index/resources/{source_type}/{resource_id}`；资源无 PG 行时返回 400「该资源尚未建立索引或索引已被移除」。
-**权限**: `resources:view`
-**路径参数**: sourceType(public/personal), resourceId(数字ID)
+**说明**: 此旧 Java 路径已移除。管理端现直连 `GET /api/v1/python/resources/index/resources/{source_type}/{resource_id}`。
+**路径参数**: sourceType(public/personal/community), resourceId(数字ID)
 **查询参数**: chunk_limit(默认50，0-200)
 **响应 VO**: `Result<{resource_key, ..., chunks: [{chunk_id, chunk_index, content(≤1500字符), metadata}]}>`
 
 ---
 
 ## API-89-5 POST /api/v1/admin/public-resources/ai-index/search
-**功能**: 知识条目真实向量检索（pgvector 余弦召回 + 混合重排），与大纲工作流 RAG 共用 `search_context` 链路，命中写入 `a12_retrieval_log`。
-**权限**: `resources:view`
-**请求体 (JSON)**: query(String) **是**；source_type(String，否，public/personal)；top_k(int，否，1-30，默认10)
+**说明**: 此旧 Java 路径已移除。管理端现直连 `POST /api/v1/python/resources/index/search`，与大纲工作流 RAG 共用检索链路。
+**请求体 (JSON)**: query(String) **是**；source_type(String，否，public/personal/community)；top_k(int，否，1-30，默认8)
 **响应 VO**: `Result<{query, matches: [{resource_id("public:3"), chunk_id, chunk_index, content, metadata(含 title), score(0-1), rank, match_type}], search_mode, latency_ms}>`
 
 ---
@@ -2066,6 +2108,8 @@ Java 任务模式支持的导出配置键：`slides`、`lesson_plan`、`outline`
 **权限**: `resources:edit`
 **路径参数**: sourceType(public/personal), resourceId(数字ID)
 **响应 VO**: `Result<{source_type, resource_id, status}>`（status 固定 'indexing'）
+
+社区来源不走此接口；管理端“重新解析”会调用 `POST /api/v1/admin/community-items/{id}/reindex`，由 Java 补发事件后 Python 异步更新或移除索引。
 
 ---
 

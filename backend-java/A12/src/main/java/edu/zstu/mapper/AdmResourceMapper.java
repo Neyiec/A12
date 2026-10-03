@@ -10,6 +10,7 @@ public interface AdmResourceMapper {
     List<Adm_Resource> findByIds(@Param("ids") List<Integer> ids);
     List<Adm_Resource> findActive();
     List<Adm_Resource> findAll();
+    List<Adm_Resource> findIndexRepairCandidates(@Param("afterId") Integer afterId, @Param("limit") Integer limit);
     List<Adm_Resource> findByType(@Param("resourceType") String resourceType);
     int insert(Adm_Resource resource);
     int update(Adm_Resource resource);

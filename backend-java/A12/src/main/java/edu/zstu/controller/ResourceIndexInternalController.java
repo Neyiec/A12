@@ -4,6 +4,8 @@ import edu.zstu.entity.Adm_Resource;
 import edu.zstu.entity.Res_Material;
 import edu.zstu.mapper.AdmResourceMapper;
 import edu.zstu.mapper.ResMaterialMapper;
+import edu.zstu.mapper.ComContentMapper;
+import edu.zstu.entity.Com_Content;
 import edu.zstu.utils.OssUtil;
 import edu.zstu.utils.Result;
 import lombok.RequiredArgsConstructor;
@@ -19,6 +21,7 @@ import java.util.Map;
 public class ResourceIndexInternalController {
     private final AdmResourceMapper publicResources;
     private final ResMaterialMapper personalResources;
+    private final ComContentMapper communityContents;
     private final OssUtil oss;
 
     @GetMapping("/{sourceType}/{resourceId}")
@@ -59,6 +62,24 @@ public class ResourceIndexInternalController {
             data.put("available", r.getStatus() != null && r.getStatus() == 1 && r.getAllow_ai() != null && r.getAllow_ai() == 1);
             data.put("allow_ai", r.getAllow_ai() != null && r.getAllow_ai() == 1);
             data.put("file_url", signedUrl(r.getFile_url()));
+        } else if ("community".equals(sourceType)) {
+            Com_Content c = communityContents.findById(resourceId);
+            if (c == null || !"public".equals(c.getStatus())) return Result.error(404, "社区内容未公开");
+            metadata.put("subject", c.getSubject());
+            metadata.put("grade", c.getGrade());
+            metadata.put("lesson_type", c.getLesson_type());
+            metadata.put("license", c.getLicense());
+            metadata.put("version", c.getVersion());
+            data.put("title", c.getTitle());
+            data.put("description", c.getDescription());
+            data.put("content_data", c.getContent_data());
+            data.put("file_url", "community://" + resourceId + "/" + c.getVersion());
+            data.put("file_type", "html");
+            data.put("file_size", 0);
+            data.put("uploaded_by", String.valueOf(c.getAuthor_id()));
+            data.put("owner_user_id", null);
+            data.put("available", true);
+            data.put("allow_ai", c.getLicense() != null && c.getLicense().startsWith("CC BY"));
         } else {
             return Result.error(400, "无效的资源类型");
         }

@@ -18,6 +18,7 @@ public class Com_Content {
     private String subject; //学科
     private String grade; //适用年级
     private String lesson_type; //课型
+    private String keywords; //逗号分隔的主题和知识点
     private String content_data; //json字符串 内容主体
     private String input_variables; //json字符串 输入变量定义(仅skill)
     private String example_effect;
@@ -28,6 +29,9 @@ public class Com_Content {
     private int is_top; //是否置顶 1是0否
     private int view_count;
     private int use_count;
+    private int like_count; //查询时聚合，不单独写入 com_content
+    private int favorite_count;
+    private boolean liked;
     private LocalDateTime created_at;
     private LocalDateTime updated_at;
 }

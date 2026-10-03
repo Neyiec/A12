@@ -7,9 +7,11 @@ from ..resources.similarity import keyword_score
 async def rag_search(resource_ids: list[str], query: str, limit: int = 12000) -> dict:
     # Uploaded references enrich the retrieval query; they are not the retrieval scope.
     local_ids = [resource_id for resource_id in resource_ids if ":" not in resource_id]
+    indexed_ids = [resource_id for resource_id in resource_ids
+                   if resource_id.startswith(("public:", "personal:", "community:"))]
     local_context = build_rag_context(local_ids, limit=limit)
     enriched_query = _build_enriched_query(query, local_context)
-    indexed_result = await resource_index_store.search_context([], enriched_query, limit=limit)
+    indexed_result = await resource_index_store.search_context(indexed_ids, enriched_query, limit=limit)
     indexed_context = indexed_result.get("context", "")
 
     reference_matches = _rank_local_context(local_context, query)
@@ -25,7 +27,7 @@ async def rag_search(resource_ids: list[str], query: str, limit: int = 12000) ->
         "query": query,
         "enriched_query": enriched_query,
         "resource_ids": resource_ids,
-        "search_scope": "global_knowledge_base",
+        "search_scope": "selected_knowledge_sources" if indexed_ids else "global_knowledge_base",
         "reference_context": local_context[:4000],
         "knowledge_context": indexed_context,
         "context": context,

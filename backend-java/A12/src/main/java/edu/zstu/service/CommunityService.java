@@ -14,6 +14,8 @@ public interface CommunityService {
     ContentVO getItem(Integer id);
     void favorite(Integer itemId, Integer userId);
     void unfavorite(Integer itemId, Integer userId);
+    void like(Integer itemId, Integer userId);
+    void unlike(Integer itemId, Integer userId);
     void recordView(Integer itemId, Integer userId);
     PageResult<ContentVO> listFavorites(int page, int size, Integer userId);
     PageResult<RecentViewVO> listRecentViews(int page, int size, Integer userId);
