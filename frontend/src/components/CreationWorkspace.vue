@@ -310,6 +310,7 @@ const themes = [
   { id: 'navy', name: '沉静蓝', color: '#173d78' },
   { id: 'green', name: '自然绿', color: '#1f993f' },
   { id: 'orange', name: '活力橙', color: '#ff6b3f' },
+  { id: 'transparent', name: '无色透明', color: 'transparent' },
 ]
 const layouts = ['重点陈述', '图文并置', '双栏探究']
 const createMockImageSrc = (label = '课堂观察') => {
@@ -1235,12 +1236,14 @@ const htmlTextTags = new Set(['h1', 'h2', 'h3', 'h4', 'h5', 'h6', 'p', 'li', 'sp
 const htmlTypeAliases = { textbox: 'text', paragraph: 'text', rich_text: 'text', text_box: 'text', picture: 'image', photo: 'image', rectangle: 'shape', rect: 'shape', graph: 'chart' }
 const htmlColorToHex = (value, fallback) => {
   const raw = String(value || '').trim()
-  if (!raw || raw === 'transparent') return fallback
+  if (!raw) return fallback
+  if (raw.toLowerCase() === 'transparent') return 'transparent'
   if (/^#[\da-f]{3,8}$/i.test(raw)) return raw
   const match = raw.match(/^rgba?\(\s*([\d.]+)[,\s]+([\d.]+)[,\s]+([\d.]+)(?:[,\s/]+([\d.]+))?\s*\)$/i)
   if (!match) return fallback
   const alpha = match[4] === undefined ? 1 : Number(match[4])
-  if (Number.isFinite(alpha) && alpha <= 0) return fallback
+  if (Number.isFinite(alpha) && alpha <= 0) return 'transparent'
+  if (Number.isFinite(alpha) && alpha < 1) return raw
   return `#${[match[1], match[2], match[3]].map((item) => Number(item).toString(16).padStart(2, '0')).join('')}`
 }
 const htmlNoopCleanup = () => {}
@@ -1810,6 +1813,17 @@ const attachHtmlDragEditor = (iframe, { structuredMode = false, onCommit = null 
     const computed = frameWindow.getComputedStyle(element)
     const rect = element.getBoundingClientRect()
     const type = elementType(element)
+    const storedSubjectStyle = type === 'subject' ? parseJson(element.getAttribute('data-subject-style'), {}) : null
+    const widgetType = ['audio', 'video', 'table', 'h5', 'subject'].includes(type)
+    const colorProperty = type === 'chart' ? '--chart-color' : widgetType ? '--widget-color' : ['formula', 'shape', 'image'].includes(type) ? '--element-color' : ''
+    const backgroundProperty = type === 'chart' ? '--chart-background' : widgetType ? '--widget-background' : ''
+    const borderProperty = type === 'chart' ? '--chart-border-color' : widgetType ? '--widget-border-color' : ['shape', 'image'].includes(type) ? '--element-border-color' : ''
+    const panelColor = (styleKey, property, computedValue, fallback) => {
+      const authored = storedSubjectStyle?.[styleKey]
+      if (typeof authored === 'string' && authored.trim()) return authored.trim()
+      const customValue = property ? computed.getPropertyValue(property).trim() : ''
+      return htmlColorToHex(customValue || computedValue, fallback)
+    }
     const moduleId = type === 'h5' ? String(element.getAttribute('data-module-id') || '') : ''
     const linkedInteractiveAsset = type === 'h5'
       ? (Array.isArray(current.value?.interactive_assets || current.value?.interactiveAssets)
@@ -1856,7 +1870,7 @@ const attachHtmlDragEditor = (iframe, { structuredMode = false, onCommit = null 
       embedMode: type === 'h5' ? String(element.getAttribute('data-embed-mode') || 'standalone') : undefined,
       subjectType: type === 'subject' ? String(element.getAttribute('data-subject-type') || 'general') : undefined,
       render: type === 'subject' ? parseJson(element.getAttribute('data-subject-render'), {}) : undefined,
-      subjectStyle: type === 'subject' ? parseJson(element.getAttribute('data-subject-style'), {}) : undefined,
+      subjectStyle: type === 'subject' ? storedSubjectStyle : undefined,
       subjectRender: type === 'subject' ? getSubjectRenderHint(element, element.getAttribute('data-subject-type')) : undefined,
       subjectRenderHint: type === 'subject' ? parseJson(element.getAttribute('data-subject-render-hint'), null) : undefined,
       subjectValidation: type === 'subject' ? parseJson(element.getAttribute('data-subject-validation'), null) : undefined,
@@ -1877,14 +1891,15 @@ const attachHtmlDragEditor = (iframe, { structuredMode = false, onCommit = null 
         zIndex: Number.parseInt(computed.zIndex, 10) || 0,
       },
       style: {
-        color: htmlColorToHex(computed.color, '#102d54'),
+        color: panelColor('color', colorProperty, computed.color, '#102d54'),
         fontSize: Math.round(fontSize),
         fontWeight: Number(computed.fontWeight) || 400,
         textAlign: computed.textAlign || 'left',
         lineHeight: Number(lineHeight.toFixed(2)),
-        fillColor: htmlColorToHex(computed.backgroundColor, '#eff6ff'),
-        backgroundColor: htmlColorToHex(computed.backgroundColor, '#eff6ff'),
-        borderColor: htmlColorToHex(computed.borderColor, '#bfdbfe'),
+        fillColor: panelColor('fillColor', type === 'shape' ? '--element-color' : backgroundProperty, computed.backgroundColor, '#eff6ff'),
+        backgroundColor: panelColor('backgroundColor', backgroundProperty, computed.backgroundColor, '#eff6ff'),
+        borderColor: panelColor('borderColor', borderProperty, computed.borderColor, '#bfdbfe'),
+        tintColor: type === 'image' ? panelColor('tintColor', '--element-color', computed.color, '#2563eb') : undefined,
         borderWidth: Number.parseFloat(computed.borderWidth) || 0,
         borderRadius: Number.parseFloat(computed.borderRadius) || 0,
         opacity: Math.round((Number.parseFloat(computed.opacity) || 1) * 100),
@@ -1914,7 +1929,7 @@ const attachHtmlDragEditor = (iframe, { structuredMode = false, onCommit = null 
     const nextElements = candidates.map((element, index) => {
       const type = elementType(element)
       if (type === 'chart' && !element.querySelector('[data-a12-chart-title]')) renderHtmlChart(element)
-      const hasSubjectDisplayContent = element.querySelector('.a12-subject-tool__formula, .a12-subject-tool__chemical, .a12-subject-tool__diagram, .a12-subject-tool__chart, .a12-subject-tool__table-wrap, .a12-subject-tool__geometry')
+      const hasSubjectDisplayContent = element.querySelector('.a12-subject-tool__formula, .a12-subject-tool__tianzige, .a12-subject-tool__fourline, .a12-subject-tool__chemical, .a12-subject-tool__diagram, .a12-subject-tool__chart, .a12-subject-tool__table-wrap, .a12-subject-tool__geometry')
       const hasLegacySubjectHeader = element.querySelector('.a12-subject-tool__header:not([data-a12-subject-v2])')
       if (type === 'subject' && (hasLegacySubjectHeader || !hasSubjectDisplayContent)) renderHtmlSubjectTool(element)
       if (type === 'subject' && normalizeSubjectToolType(element.getAttribute('data-subject-type')) === 'chemical_formula') {
@@ -2403,34 +2418,56 @@ const attachHtmlDragEditor = (iframe, { structuredMode = false, onCommit = null 
   }
   const updateStyle = (key, value) => {
     if (!selected?.isConnected) return false
+    const selectedType = elementType(selected)
+    const widgetType = ['audio', 'video', 'table', 'h5', 'subject'].includes(selectedType)
     const numeric = Number(value)
     if (key === 'fontSize') selected.style.fontSize = `${Math.max(10, Math.min(96, Number.isFinite(numeric) ? numeric : 16))}px`
     else if (key === 'fontWeight') selected.style.fontWeight = String(Number.isFinite(numeric) ? numeric : 400)
     else if (key === 'lineHeight') selected.style.lineHeight = String(Number.isFinite(numeric) ? numeric : 1.5)
     else if (key === 'opacity') selected.style.opacity = String(Math.max(0, Math.min(100, Number.isFinite(numeric) ? numeric : 100)) / 100)
     else if (key === 'color') {
-      selected.style.color = String(value || '#102d54')
-      if (elementType(selected) === 'chart') selected.style.setProperty('--a12-chart-color', String(value || '#2563eb'))
+      const color = String(value || '#102d54')
+      selected.style.color = color
+      if (selectedType === 'formula') selected.style.setProperty('--element-color', color)
+      if (selectedType === 'chart') {
+        selected.style.setProperty('--chart-color', color)
+        selected.style.setProperty('--a12-chart-color', color)
+      }
+      if (widgetType) selected.style.setProperty('--widget-color', color)
     }
     else if (key === 'textAlign') selected.style.textAlign = String(value || 'left')
     else if (key === 'fillColor') {
-      if (!setSvgStyle(selected, 'fill', String(value || '#eff6ff'))) selected.style.backgroundColor = String(value || '#eff6ff')
-    } else if (key === 'backgroundColor') selected.style.backgroundColor = String(value || '#eff6ff')
+      const color = String(value || '#eff6ff')
+      if (!setSvgStyle(selected, 'fill', color)) selected.style.backgroundColor = color
+      if (selectedType === 'shape') selected.style.setProperty('--element-color', color)
+    } else if (key === 'backgroundColor') {
+      const color = String(value || '#eff6ff')
+      selected.style.backgroundColor = color
+      if (selectedType === 'chart') selected.style.setProperty('--chart-background', color)
+      if (widgetType) selected.style.setProperty('--widget-background', color)
+    }
     else if (key === 'borderColor') {
-      selected.style.borderColor = String(value || '#bfdbfe')
-      setSvgStyle(selected, 'stroke', String(value || '#bfdbfe'))
+      const color = String(value || '#bfdbfe')
+      selected.style.borderColor = color
+      setSvgStyle(selected, 'stroke', color)
+      if (['shape', 'image'].includes(selectedType)) selected.style.setProperty('--element-border-color', color)
+      if (selectedType === 'chart') selected.style.setProperty('--chart-border-color', color)
+      if (widgetType) selected.style.setProperty('--widget-border-color', color)
     } else if (key === 'borderWidth') {
       selected.style.borderWidth = `${Math.max(0, Math.min(12, Number.isFinite(numeric) ? numeric : 0))}px`
       setSvgStyle(selected, 'strokeWidth', String(Math.max(0, Number.isFinite(numeric) ? numeric : 0)))
     } else if (key === 'borderRadius') selected.style.borderRadius = `${Math.max(0, Math.min(80, Number.isFinite(numeric) ? numeric : 0))}px`
     else if (key === 'objectFit') selected.style.objectFit = String(value || 'cover')
-    else if (key === 'tintColor') selected.style.setProperty('--a12-tint-color', String(value || '#2563eb'))
+    else if (key === 'tintColor') {
+      const color = String(value || '#2563eb')
+      selected.style.setProperty('--a12-tint-color', color)
+      selected.style.setProperty('--element-color', color)
+    }
     else return false
-    if (elementType(selected) === 'subject') {
+    if (selectedType === 'subject') {
       const style = parseJson(selected.getAttribute('data-subject-style'), {})
       style[key] = value
       selected.setAttribute('data-subject-style', JSON.stringify(style))
-      if (key === 'backgroundColor') selected.style.setProperty('--widget-background', String(value || '#eff6ff'))
       if (key === 'fontSize') selected.style.setProperty('--subject-font-size', selected.style.fontSize || '24px')
       selected.removeAttribute('data-subject-validation')
     }
@@ -2667,14 +2704,15 @@ const attachHtmlDragEditor = (iframe, { structuredMode = false, onCommit = null 
       node.style.borderRadius = '12px'
     } else if (type === 'subject') {
       const subjectType = normalizeSubjectToolType(options.subjectType || 'geometry')
-      node.setAttribute('data-name', '新增学科工具')
+      const subjectName = subjectType === 'chart' ? '新增图表' : subjectType === 'table' ? '新增表格' : '新增学科工具'
+      node.setAttribute('data-name', subjectName)
       node.style.color = '#166534'
       node.style.backgroundColor = '#f0fdf4'
       node.style.border = '1px solid #bbf7d0'
       renderHtmlSubjectTool(node, {
         subjectType,
         data: createSubjectToolData(subjectType),
-        title: '新增学科工具',
+        title: ['chart', 'table'].includes(subjectType) ? subjectToolLabel(subjectType) : subjectName,
         render: subjectToolDefaultRenderHint(subjectType),
         renderHint: subjectToolDefaultRenderHint(subjectType),
         style: { color: '#166534', backgroundColor: '#f0fdf4', borderColor: '#bbf7d0', borderWidth: 1, borderRadius: 12, opacity: 100 },
@@ -3923,7 +3961,10 @@ const updatePageField = ({ key, value } = {}) => {
     current.value.pageType = pageType
     current.value.page_type = pageType
   } else if (key === 'backgroundColor') {
-    current.value.backgroundColor = /^#[0-9a-f]{3,8}$/i.test(nextValue) ? nextValue : '#f9fbff'
+    const color = nextValue.trim()
+    const validColor = /^#[0-9a-f]{3,8}$/i.test(color)
+      || /^rgba?\([\d.%\s,/]+\)$/i.test(color) && color.length <= 80
+    current.value.backgroundColor = color.toLowerCase() === 'transparent' ? 'transparent' : validColor ? color : '#f9fbff'
     current.value.background_color = current.value.backgroundColor
   }
   markSlideComponentDirty(current.value, `page:${key}`)
@@ -4287,12 +4328,12 @@ const validateSubjectTool = async () => {
     const errors = Array.isArray(result.errors) ? result.errors.filter(Boolean) : []
     const warnings = Array.isArray(result.warnings) ? result.warnings.filter(Boolean) : []
     if (result.valid === false) {
-      WorkspaceMessage.warning(`学科工具未通过后端校验${errors.length ? `：${errors.join('；')}` : ''}`)
+      WorkspaceMessage.warning(`组件格式检查未通过${errors.length ? `：${errors.join('；')}` : ''}`)
     } else {
-      WorkspaceMessage.success(warnings.length ? `已通过校验：${warnings.join('；')}` : '学科工具已通过后端校验并应用规范化配置')
+      WorkspaceMessage.success(warnings.length ? `格式检查通过：${warnings.join('；')}` : '组件格式检查通过，已应用规范化配置')
     }
   } catch (error) {
-    WorkspaceMessage.error(error?.message || '学科工具校验失败，请稍后重试')
+    WorkspaceMessage.error(error?.message || '组件格式检查失败，请稍后重试')
   } finally {
     subjectValidationPending.value = false
   }
@@ -4346,8 +4387,8 @@ const createElement = (type, options = {}, positionOverride = {}) => {
   }
   if (type === 'subject') {
     const subjectType = normalizeSubjectToolType(options.subjectType || 'geometry')
-    element.name = `${elementTypeLabels[type]}·${subjectToolLabel(subjectType)} ${count}`
-    element.content = `${subjectToolLabel(subjectType)}工具`
+    element.name = subjectType === 'chart' ? `图表 ${count}` : subjectType === 'table' ? `表格 ${count}` : `${elementTypeLabels[type]}·${subjectToolLabel(subjectType)} ${count}`
+    element.content = ['chart', 'table'].includes(subjectType) ? subjectToolLabel(subjectType) : `${subjectToolLabel(subjectType)}工具`
     element.subjectType = subjectType
     element.subject_type = subjectType
     element.data = createSubjectToolData(subjectType)
@@ -4385,7 +4426,7 @@ const insertElement = (type, options = {}, positionOverride = {}, preparedElemen
 }
 const handleToolSelect = async (tool) => {
   if (!current.value) {
-    if (tool?.id === 'subject') WorkspaceMessage.warning('请先选择一页画布，再添加学科工具')
+    if (tool?.id === 'subject') WorkspaceMessage.warning('请先选择一页画布，再添加组件')
     return
   }
   if (tool?.id === 'subject') {
@@ -4400,12 +4441,12 @@ const handleToolSelect = async (tool) => {
     if (slide !== current.value) return
     if (!controller) {
       activeTool.value = ''
-      WorkspaceMessage.error('画布尚未就绪，学科工具没有插入，请稍后重试')
+      WorkspaceMessage.error('画布尚未就绪，组件没有插入，请稍后重试')
       return
     }
     const inserted = controller.insertElement('subject', tool)
     activeTool.value = ''
-    if (!inserted) WorkspaceMessage.error('学科工具插入失败，请重新选择工具')
+    if (!inserted) WorkspaceMessage.error('组件插入失败，请重新选择工具')
     return
   }
   if (!workspaceUsesHtmlEditor.value) {
@@ -7743,7 +7784,7 @@ const quickExportPptx = async () => {
     const filename = `${safeExportFilename(title, 'A12 HTML PPT')}.pptx`
     const response = await exportPresentationPptx({ title, filename, slides: payload, fidelity: 'dom_editable' })
     downloadExportBlob(response, filename)
-    WorkspaceMessage.success('可编辑 PPTX 已开始下载')
+    WorkspaceMessage.success('PPTX 已开始下载；学科组件在文件中为静态内容，互动操作请使用在线预览')
   } catch (error) { WorkspaceMessage.error(error?.message || 'PPTX 导出失败') }
   finally { quickExportLoading.value = '' }
 }

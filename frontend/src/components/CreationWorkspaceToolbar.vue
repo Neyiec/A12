@@ -2,7 +2,7 @@
 import { computed, ref } from 'vue'
 import { Aim, ArrowDown, ArrowLeft, Check, ChatDotRound, CircleCheck, DataAnalysis, DataBoard, Download, EditPen, FolderOpened, Grid, Headset, Histogram, MagicStick, Picture, SetUp, Share, VideoCamera, View } from '@element-plus/icons-vue'
 import WorkspaceToolButton from './WorkspaceToolButton.vue'
-import { subjectToolOptions } from '../utils/subjectTool'
+import { subjectToolMenuOptions } from '../utils/subjectTool'
 
 const props = defineProps({
   title: { type: String, default: '未命名课件' },
@@ -47,7 +47,7 @@ const tools = [
   { id: 'video', label: '视频', icon: VideoCamera },
   { id: 'table', label: '表格', icon: DataAnalysis },
   { id: 'h5', label: 'H5 组件', icon: MagicStick },
-  { id: 'subject', label: '学科', icon: Aim || SetUp },
+  { id: 'subject', label: '学科组件', icon: Aim || SetUp },
 ]
 const shapeOptions = [
   { shapeKind: 'rectangle', label: '矩形' },
@@ -64,14 +64,13 @@ const compactToolsOpen = ref(false)
 const selectedShape = computed(() => shapeOptions.find((item) => item.shapeKind === selectedShapeKind.value) || shapeOptions[0])
 const subjectMarks = {
   math_formula: 'ƒx',
+  chinese_tianzige: '田',
+  english_four_line: 'Aa',
   chemical_formula: 'CH',
   mermaid_diagram: '→',
-  chart: '▥',
-  table: '▦',
   geometry: '△',
 }
-const subjects = subjectToolOptions.map((item) => ({ ...item, mark: subjectMarks[item.value] || '·' }))
-const selectedSubject = computed(() => subjects.find((item) => item.value === selectedSubjectType.value) || subjects[0])
+const subjects = subjectToolMenuOptions.map((item) => ({ ...item, mark: subjectMarks[item.value] || '·' }))
 const workspaceModes = [
   { value: 'ppt', label: 'PPT 课件' },
   { value: 'document', label: '教学案' },
@@ -83,6 +82,11 @@ const selectTool = (tool) => {
   if (tool.id === 'h5') {
     emit('update:modelValue', '')
     emit('generate-h5')
+    return
+  }
+  if (tool.id === 'chart' || tool.id === 'table') {
+    emit('update:modelValue', tool.id)
+    emit('tool-select', { ...tools.find((item) => item.id === 'subject'), label: tool.label, subjectType: tool.id })
     return
   }
   emit('update:modelValue', tool.id)
@@ -165,7 +169,7 @@ const toggleCompactTools = () => { compactToolsOpen.value = !compactToolsOpen.va
           <el-dropdown v-else-if="tool.id === 'subject'" trigger="click" @command="selectSubject" @visible-change="subjectMenuOpen = $event">
             <WorkspaceToolButton
               :icon="tool.icon"
-              :label="selectedSubject.label"
+              :label="tool.label"
               :active="modelValue === tool.id"
               :trailing-icon="ArrowDown"
               aria-haspopup="menu"
@@ -206,7 +210,7 @@ const toggleCompactTools = () => { compactToolsOpen.value = !compactToolsOpen.va
         <el-button type="primary" :icon="Download" :loading="Boolean(quickExportLoading)">导出<el-icon v-if="!quickExportLoading" class="toolbar-dropdown-arrow"><ArrowDown /></el-icon></el-button>
         <template #dropdown>
           <el-dropdown-menu>
-            <el-dropdown-item command="quick-pptx">快速下载 PPTX</el-dropdown-item>
+                  <el-dropdown-item command="quick-pptx">快速下载 PPTX（学科组件为静态）</el-dropdown-item>
             <el-dropdown-item command="quick-word">快速下载 DOCX</el-dropdown-item>
             <el-dropdown-item command="precheck">导出预检</el-dropdown-item>
             <el-dropdown-item divided command="advanced">前往导出中心高级导出</el-dropdown-item>
@@ -226,7 +230,7 @@ const toggleCompactTools = () => { compactToolsOpen.value = !compactToolsOpen.va
 
           <el-dropdown-item class="workspace-mobile-action" @click="workspaceMode === 'document' ? returnToPpt() : openLessonPlan()">{{ workspaceMode === 'document' ? '返回 PPT' : '打开教案' }}</el-dropdown-item>
           <el-dropdown-item class="workspace-mobile-action" @click="openOnlinePreview">在线预览</el-dropdown-item>
-          <el-dropdown-item class="workspace-mobile-action" :disabled="Boolean(quickExportLoading)" @click="handleExportCommand('quick-pptx')">下载 PPTX</el-dropdown-item>
+            <el-dropdown-item class="workspace-mobile-action" :disabled="Boolean(quickExportLoading)" @click="handleExportCommand('quick-pptx')">下载 PPTX（学科组件为静态）</el-dropdown-item>
           <el-dropdown-item class="workspace-mobile-action" :disabled="Boolean(quickExportLoading)" @click="handleExportCommand('quick-word')">下载 DOCX</el-dropdown-item>
           <el-dropdown-item class="workspace-mobile-action" @click="exportProject">导出中心</el-dropdown-item>
           <el-dropdown-item class="workspace-mobile-action" divided @click="publishCommunity">发布社区</el-dropdown-item>

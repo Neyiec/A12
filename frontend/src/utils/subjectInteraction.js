@@ -1,9 +1,35 @@
 import { geometryPoints } from './subjectTool.js'
 
+const constrainPoints = (draft, construction, movedIndex, previous) => {
+  if (!Array.isArray(draft) || movedIndex < 0) return draft
+  const next = draft.map(point => ({ ...point }))
+  if (construction === 'right_triangle' && next.length === 3) {
+    if (movedIndex === 0) next[1].y = next[0].y
+    if (movedIndex === 1) { next[0].y = next[1].y; next[2].x = next[1].x }
+    if (movedIndex === 2) next[1].x = next[2].x
+    return next
+  }
+  if (!['rectangle', 'square'].includes(construction) || next.length !== 4) return next
+  const opposite = next[(movedIndex + 2) % 4]
+  const moved = next[movedIndex]
+  if (construction === 'square') {
+    const xDirection = Math.sign(moved.x - opposite.x) || Math.sign(previous.x - opposite.x) || 1
+    const yDirection = Math.sign(moved.y - opposite.y) || Math.sign(previous.y - opposite.y) || 1
+    const side = Math.max(1, Math.min(Math.abs(moved.x - opposite.x), Math.abs(moved.y - opposite.y)))
+    moved.x = opposite.x + xDirection * side
+    moved.y = opposite.y + yDirection * side
+  }
+  if (movedIndex === 0) { next[1] = { x: opposite.x, y: moved.y }; next[3] = { x: moved.x, y: opposite.y } }
+  if (movedIndex === 1) { next[0] = { x: opposite.x, y: moved.y }; next[2] = { x: moved.x, y: opposite.y } }
+  if (movedIndex === 2) { next[1] = { x: moved.x, y: opposite.y }; next[3] = { x: opposite.x, y: moved.y } }
+  if (movedIndex === 3) { next[0] = { x: moved.x, y: opposite.y }; next[2] = { x: opposite.x, y: moved.y } }
+  return next
+}
+
 // Event delegation works in both the native canvas and same-origin HTML slides.
 export function bindSubjectInteractions(root, onChange) {
   let gesture = null
-  const getOwner = target => target.closest?.('[data-ppt-type="subject"],.a12-subject-tool')
+  const getOwner = target => target.closest?.('[data-ppt-type="subject"],.a12-subject-tool,[data-subject-interaction-owner]')
   const readData = owner => {
     try { return JSON.parse(owner.getAttribute('data-subject-data') || '{}') } catch { return {} }
   }
@@ -40,10 +66,12 @@ export function bindSubjectInteractions(root, onChange) {
     point.x = event.clientX
     point.y = event.clientY
     const position = point.matrixTransform(matrix.inverse())
+    const previous = gesture.points[gesture.index]
     gesture.points[gesture.index] = {
       x: Math.round(Math.max(8, Math.min(172, position.x)) * 10) / 10,
       y: Math.round(Math.max(8, Math.min(92, position.y)) * 10) / 10,
     }
+    gesture.points = constrainPoints(gesture.points, gesture.data.construction, gesture.index, previous)
     paint(gesture.svg, gesture.points)
     event.preventDefault()
     event.stopPropagation()
@@ -65,13 +93,16 @@ export function bindSubjectInteractions(root, onChange) {
     const owner = getOwner(handle)
     const data = readData(owner)
     const points = geometryPoints(data)
-    const point = points[Number(handle.dataset.subjectPoint)]
+    const index = Number(handle.dataset.subjectPoint)
+    const point = points[index]
+    const previous = { ...point }
     const step = event.shiftKey ? 5 : 1
     point.x = Math.max(8, Math.min(172, point.x + delta[0] * step))
     point.y = Math.max(8, Math.min(92, point.y + delta[1] * step))
-    paint(handle.closest('svg'), points)
-    owner.setAttribute('data-subject-data', JSON.stringify({ ...data, points }))
-    onChange?.(owner, { ...data, points })
+    const constrained = constrainPoints(points, data.construction, index, previous)
+    paint(handle.closest('svg'), constrained)
+    owner.setAttribute('data-subject-data', JSON.stringify({ ...data, points: constrained }))
+    onChange?.(owner, { ...data, points: constrained })
     event.preventDefault()
     event.stopPropagation()
   }

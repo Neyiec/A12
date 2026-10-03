@@ -1,43 +1,15 @@
-import axios from 'axios'
-import { apiRequest, del, get, post, put } from '../utils/api'
+import { apiRequest, del, get, post, put, uploadFile } from '../utils/api'
 import { useUserStore } from '../storage/user.js'
 
 export const listResources = (params) => get('/api/v1/resources', params)
 export const uploadResource = async (file, onProgress) => {
-  const uploadTokenResult = await post('/api/v1/resources/upload-tokens', {
-    file_name: file.name,
-    file_type: file.type || undefined,
-  })
-  if (uploadTokenResult?.code && uploadTokenResult.code !== 200 && uploadTokenResult.code !== 0) {
-    throw new Error(uploadTokenResult.message || '获取上传凭证失败')
+  const formData = new FormData()
+  formData.append('file', file)
+  const result = await uploadFile('/api/v1/resources/local-uploads', formData, onProgress)
+  if (result?.code && result.code !== 200 && result.code !== 0) {
+    throw new Error(result.message || '本地上传失败')
   }
-
-  const uploadToken = uploadTokenResult?.data || uploadTokenResult
-  if (!uploadToken?.upload_url || !uploadToken?.object_key) {
-    throw new Error('上传凭证无效，请稍后重试')
-  }
-
-  await axios.put(uploadToken.upload_url, file, {
-    headers: { 'Content-Type': file.type || 'application/octet-stream' },
-    onUploadProgress: (event) => {
-      if (event.total && onProgress) onProgress(Math.round((event.loaded / event.total) * 100))
-    },
-  })
-
-  const confirmResult = await post('/api/v1/resources/uploaded-files', {
-    object_key: uploadToken.object_key,
-    file_name: file.name,
-    file_size: file.size,
-    // API-37 accepts the type as an optional business category.  The MIME
-    // value is only needed when signing the OSS PUT request above; sending it
-    // here would persist values such as `image/png` instead of the documented
-    // `image`/`ppt`/`word` categories.  Leaving it out lets Java detect the
-    // category from the filename.
-  })
-  if (confirmResult?.code && confirmResult.code !== 200 && confirmResult.code !== 0) {
-    throw new Error(confirmResult.message || '素材入库失败')
-  }
-  return confirmResult?.data || confirmResult
+  return result?.data || result
 }
 export const deleteResource = (id) => del(`/api/v1/resources/${id}`)
 /**
