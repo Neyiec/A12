@@ -6,6 +6,7 @@
         <result column="author_id" property="author_id"/><result column="title" property="title"/>
         <result column="description" property="description"/><result column="subject" property="subject"/>
         <result column="grade" property="grade"/><result column="lesson_type" property="lesson_type"/>
+        <result column="keywords" property="keywords"/>
         <result column="content_data" property="content_data"/><result column="input_variables" property="input_variables"/>
         <result column="example_effect" property="example_effect"/><result column="version" property="version"/>
         <result column="version_history" property="version_history"/><result column="license" property="license"/>
@@ -14,17 +15,21 @@
         <result column="like_count" property="like_count"/><result column="favorite_count" property="favorite_count"/>
         <result column="created_at" property="created_at"/><result column="updated_at" property="updated_at"/>
     </resultMap>
-    <sql id="Base_Columns">id, content_type, author_id, title, description, subject, grade, lesson_type, content_data, input_variables, example_effect, version, version_history, license, status, is_top, view_count, use_count, like_count, favorite_count, created_at, updated_at</sql>
+    <sql id="Base_Columns">id, content_type, author_id, title, description, subject, grade, lesson_type, keywords, content_data, input_variables, example_effect, version, version_history, license, status, is_top, view_count, use_count, like_count, favorite_count, created_at, updated_at</sql>
+    <select id="findPptIndexCandidates" resultMap="BaseResultMap">
+        SELECT <include refid="Base_Columns"/> FROM com_content
+        WHERE content_type = 'ppt' AND id &gt; #{afterId} ORDER BY id LIMIT #{limit}
+    </select>
     <select id="findById" resultMap="BaseResultMap">SELECT <include refid="Base_Columns"/> FROM com_content WHERE id = #{id}</select>
     <select id="findByAuthorId" resultMap="BaseResultMap">SELECT <include refid="Base_Columns"/> FROM com_content WHERE author_id = #{authorId} ORDER BY updated_at DESC</select>
     <select id="findPublic" resultMap="BaseResultMap">SELECT <include refid="Base_Columns"/> FROM com_content WHERE status = 'public' ORDER BY is_top DESC, updated_at DESC</select>
     <select id="findByType" resultMap="BaseResultMap">SELECT <include refid="Base_Columns"/> FROM com_content WHERE content_type = #{contentType} AND status = 'public' ORDER BY updated_at DESC</select>
     <select id="findAll" resultMap="BaseResultMap">SELECT <include refid="Base_Columns"/> FROM com_content</select>
     <insert id="insert" useGeneratedKeys="true" keyProperty="id">
-        INSERT INTO com_content(content_type, author_id, title, description, subject, grade, lesson_type, content_data,
+        INSERT INTO com_content(content_type, author_id, title, description, subject, grade, lesson_type, keywords, content_data,
                                 input_variables, example_effect, version, version_history, license,
                                 status, is_top, view_count, use_count, like_count, favorite_count, created_at, updated_at)
-        VALUES(#{content_type}, #{author_id}, #{title}, #{description}, #{subject}, #{grade}, #{lesson_type}, #{content_data},
+        VALUES(#{content_type}, #{author_id}, #{title}, #{description}, #{subject}, #{grade}, #{lesson_type}, #{keywords}, #{content_data},
                #{input_variables}, #{example_effect}, #{version}, #{version_history}, #{license},
                #{status}, #{is_top}, #{view_count}, #{use_count}, #{like_count}, #{favorite_count}, NOW(), NOW())
     </insert>
@@ -35,6 +40,7 @@
         <if test="subject != null">subject = #{subject},</if>
         <if test="grade != null">grade = #{grade},</if>
         <if test="lesson_type != null">lesson_type = #{lesson_type},</if>
+        <if test="keywords != null">keywords = #{keywords},</if>
         <if test="content_data != null">content_data = #{content_data},</if>
         <if test="input_variables != null">input_variables = #{input_variables},</if>
         <if test="example_effect != null">example_effect = #{example_effect},</if>
@@ -53,7 +59,7 @@
     <update id="incrementLikeCountBy">UPDATE com_content SET like_count = GREATEST(like_count + #{delta}, 0) WHERE id = #{id}</update>
     <update id="incrementFavoriteCountBy">UPDATE com_content SET favorite_count = GREATEST(favorite_count + #{delta}, 0) WHERE id = #{id}</update>
     <select id="searchPublic" resultMap="BaseResultMap">
-        SELECT <include refid="Base_Columns"/> FROM com_content
+        SELECT c.* FROM com_content c
         <if test="window">
             LEFT JOIN (
                 SELECT target_id,
@@ -62,19 +68,19 @@
                 FROM com_interaction
                 WHERE action_type IN ('favorite', 'derivation') AND created_at &gt;= #{since}
                 GROUP BY target_id
-            ) stat ON stat.target_id = com_content.id
+            ) stat ON stat.target_id = c.id
             LEFT JOIN (
                 SELECT target_id, COUNT(*) AS like_cnt
                 FROM com_like
                 WHERE created_at &gt;= #{since}
                 GROUP BY target_id
-            ) lik ON lik.target_id = com_content.id
+            ) lik ON lik.target_id = c.id
         </if>
-        WHERE status = 'public'
-        <if test="dto.content_type != null and dto.content_type != ''">AND content_type = #{dto.content_type}</if>
-        <if test="dto.subject != null and dto.subject != ''">AND subject = #{dto.subject}</if>
-        <if test="dto.grade != null and dto.grade != ''">AND grade = #{dto.grade}</if>
-        <if test="dto.keyword != null and dto.keyword != ''">AND (title LIKE CONCAT('%',#{dto.keyword},'%') OR description LIKE CONCAT('%',#{dto.keyword},'%'))</if>
+        WHERE c.status = 'public'
+        <if test="dto.content_type != null and dto.content_type != ''">AND c.content_type = #{dto.content_type}</if>
+        <if test="dto.subject != null and dto.subject != ''">AND c.subject = #{dto.subject}</if>
+        <if test="dto.grade != null and dto.grade != ''">AND c.grade = #{dto.grade}</if>
+        <if test="dto.keyword != null and dto.keyword != ''">AND (c.title LIKE CONCAT('%',#{dto.keyword},'%') OR c.description LIKE CONCAT('%',#{dto.keyword},'%') OR c.keywords LIKE CONCAT('%',#{dto.keyword},'%') OR c.lesson_type LIKE CONCAT('%',#{dto.keyword},'%'))</if>
         <!-- orderClause 由 ServiceImpl 白名单拼装（is_top/like_count/favorite_count/use_count/聚合别名），无注入面 -->
         ORDER BY ${orderClause}
     </select>

@@ -17,6 +17,7 @@ public class ContentDTO {
     private String subject;
     private String grade;
     private String lesson_type;
+    private String keywords;
     private String content_data;
     private String input_variables;
     private String example_effect;

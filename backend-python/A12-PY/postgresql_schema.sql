@@ -159,7 +159,7 @@ CREATE TABLE IF NOT EXISTS a12_resource_index (
   created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
   updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
   indexed_at TIMESTAMPTZ DEFAULT NULL,
-  CONSTRAINT ck_a12_resource_index_source CHECK (source_type IN ('public', 'personal', 'temp')),
+  CONSTRAINT ck_a12_resource_index_source CHECK (source_type IN ('public', 'personal', 'community', 'temp')),
   CONSTRAINT ck_a12_resource_index_status CHECK (parse_status IN ('pending', 'completed', 'failed'))
 );
 

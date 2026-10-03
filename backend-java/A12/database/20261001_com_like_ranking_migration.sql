@@ -62,6 +62,12 @@ PREPARE stmt FROM @ddl; EXECUTE stmt; DEALLOCATE PREPARE stmt;
 -- （先归一再回填, 保证 favorite 窗口聚合与冗余列口径一致）
 UPDATE com_interaction SET target_type = 'lesson_case' WHERE target_type = 'case';
 
+-- 合并旧版社区功能时，点赞原本记录在 com_interaction；迁移到唯一索引表，保留用户状态与原始时间。
+INSERT IGNORE INTO com_like (user_id, target_type, target_id, created_at)
+SELECT user_id, target_type, target_id, MIN(created_at)
+FROM com_interaction WHERE action_type = 'like'
+GROUP BY user_id, target_type, target_id;
+
 -- ---------- 6. 存量回填: like_count / favorite_count ----------
 UPDATE com_content c SET
   like_count = (SELECT COUNT(*) FROM com_like l

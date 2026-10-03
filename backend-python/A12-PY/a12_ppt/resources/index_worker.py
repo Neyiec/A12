@@ -7,6 +7,7 @@ import os
 import socket
 import threading
 import time
+from bs4 import BeautifulSoup
 
 import httpx
 
@@ -25,7 +26,7 @@ async def process_event(event: dict[str, str]) -> None:
     source = event["source_type"]
     resource_id = event["resource_id"]
     action = event["action"]
-    if source not in ("public", "personal") or not resource_id.isdecimal():
+    if source not in ("public", "personal", "community") or not resource_id.isdecimal():
         raise ValueError("无效的资源索引事件")
     if action == "delete":
         resource_index_store.delete_resource(source, resource_id)
@@ -43,6 +44,32 @@ async def process_event(event: dict[str, str]) -> None:
         if envelope.get("code") not in (0, 200) or not isinstance(envelope.get("data"), dict):
             raise ValueError(f"Java 资源查询失败: {envelope.get('message')}")
         payload = envelope["data"]
+        if source == "community":
+            if not payload.get("allow_ai"):
+                resource_index_store.delete_resource(source, resource_id)
+                return
+            if action != "sync":
+                raise ValueError(f"未知社区索引事件: {action}")
+            content = payload.get("content_data") or {}
+            if isinstance(content, str):
+                content = json.loads(content)
+            slides = content.get("slides") if isinstance(content, dict) else None
+            if not isinstance(slides, list) or not slides:
+                raise ValueError("社区课件缺少可索引页面")
+            parts = [str(payload.get("title") or ""), str(payload.get("description") or "")]
+            for number, slide in enumerate(slides[:200], 1):
+                if not isinstance(slide, dict):
+                    continue
+                soup = BeautifulSoup(str(slide.get("html") or ""), "html.parser")
+                for tag in soup(["script", "style"]):
+                    tag.decompose()
+                elements = " ".join(str(item.get("content") or item.get("text") or "")
+                                    for item in slide.get("elements", []) if isinstance(item, dict))
+                parts.append(f"第 {number} 页：{slide.get('title') or ''} "
+                             f"{soup.get_text(' ', strip=True)} {elements} {slide.get('notes') or ''}"[:2500])
+            text = "\n".join(parts)[:200_000]
+            await resource_index_store.sync_community_text(payload, text)
+            return
         if action == "sync":
             if not payload.get("file_url"):
                 raise ValueError("资源缺少下载地址")

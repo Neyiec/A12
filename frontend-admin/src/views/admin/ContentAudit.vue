@@ -45,15 +45,19 @@ const PAGE_TABS = [
 /** 内容类型筛选项 */
 const CONTENT_TYPE_OPTIONS = [
   { label: '全部类型', value: '' },
+  { label: 'PPT 课件', value: 'ppt' },
   { label: 'Skill', value: 'skill' },
-  { label: '案例', value: 'case' },
+  { label: '案例', value: 'lesson_case' },
 ]
 
 /** 内容类型 → 显示标签映射（后端实际值域 skill/lesson_case，兼容历史 case 值） */
-const CONTENT_TYPE_LABEL_MAP = { skill: 'Skill', lesson_case: '教学案例', case: '教学案例' }
+const CONTENT_TYPE_LABEL_MAP = { ppt: 'PPT 课件', skill: 'Skill', lesson_case: '教学案例', case: '教学案例' }
 
 /** 内容类型 → Tag 类型映射 */
-const CONTENT_TYPE_TAG_TYPE_MAP = { skill: 'info', case: '' }
+const CONTENT_TYPE_TAG_TYPE_MAP = { ppt: 'primary', skill: 'info', case: '' }
+const AI_VERDICT_LABEL_MAP = { pass: 'AI 通过', review: '待人工复核', fail: 'AI 未通过', error: 'AI 异常' }
+const AI_DOMAIN_LABEL_MAP = { arts: '文科 Agent', science: '理科 Agent', engineering: '工科 Agent', unknown: '人工分流' }
+const AI_CHECK_LABEL_MAP = { pass: '通过', review: '需核验', fail: '未通过' }
 
 /** 内容审核状态筛选项（对应 AuditVO.status：pending 待审核 / processed 已处理） */
 const AUDIT_STATUS_OPTIONS = [
@@ -83,6 +87,7 @@ const AUDIT_STATUS_DOT_COLOR_MAP = {
 /** 审核动作 → 显示标签映射（对应 AuditVO.action） */
 const AUDIT_ACTION_LABEL_MAP = {
   approve: '通过',
+  ai_approve: 'AI 自动通过',
   reject: '驳回',
   rework: '退回修改',
 }
@@ -147,7 +152,13 @@ const reportList = ref([])
 const filters = reactive({
   type: '',
   status: '',
+  aiVerdict: '',
+  aiDomain: '',
 })
+const parsedAiReport = (row) => {
+  try { return typeof row?.ai_report === 'string' ? JSON.parse(row.ai_report) : (row?.ai_report || {}) } catch { return {} }
+}
+const canHumanReview = (row) => row?.status === 'pending' || (row?.status === 'processed' && row?.action === 'ai_approve')
 
 /** 分页参数 */
 const pagination = reactive({
@@ -197,6 +208,8 @@ const fetchAuditTasks = async () => {
     const res = await getModerationTasks({
       status: filters.status || undefined,
       target_type: filters.type || undefined,
+      ai_verdict: filters.aiVerdict || undefined,
+      ai_domain: filters.aiDomain || undefined,
       page: pagination.currentPage,
       size: pagination.pageSize,
     })
@@ -263,6 +276,8 @@ const loadData = async () => {
 const handleTabChange = (tab) => {
   filters.type = ''
   filters.status = ''
+  filters.aiVerdict = ''
+  filters.aiDomain = ''
   pagination.currentPage = 1
   activeTab.value = tab
   fetchData()
@@ -615,6 +630,19 @@ onBeforeUnmount(() => {
             :value="opt.value"
           />
         </el-select>
+        <el-select v-if="activeTab === 'audit'" v-model="filters.aiVerdict" placeholder="AI 初审结果" clearable @change="handleFilterChange">
+          <el-option label="全部 AI 结果" value="" />
+          <el-option label="AI 通过（可抽查）" value="pass" />
+          <el-option label="AI 未通过（需复核）" value="fail" />
+          <el-option label="AI 待复核" value="review" />
+          <el-option label="AI 异常" value="error" />
+        </el-select>
+        <el-select v-if="activeTab === 'audit'" v-model="filters.aiDomain" placeholder="学科 Agent" clearable @change="handleFilterChange">
+          <el-option label="全部 Agent" value="" />
+          <el-option label="文科 Agent" value="arts" />
+          <el-option label="理科 Agent" value="science" />
+          <el-option label="工科 Agent" value="engineering" />
+        </el-select>
       </div>
     </section>
 
@@ -724,6 +752,17 @@ onBeforeUnmount(() => {
             </el-table-column>
 
             <!-- 列：审核状态 -->
+            <el-table-column label="AI 初审" min-width="165">
+              <template #default="{ row }">
+                <div v-if="row.ai_verdict" class="ai-review-cell">
+                  <el-tag :type="row.ai_verdict === 'pass' ? 'success' : row.ai_verdict === 'fail' ? 'danger' : 'warning'" size="small" effect="plain">{{ AI_VERDICT_LABEL_MAP[row.ai_verdict] || row.ai_verdict }}</el-tag>
+                  <small>{{ AI_DOMAIN_LABEL_MAP[row.ai_domain] || '人工分流' }} · {{ row.ai_score ?? '—' }} 分</small>
+                </div>
+                <span v-else class="ai-review-pending">{{ row.target_type === 'ppt' && row.status === 'pending' ? 'AI 未完成 · 可人工审核' : '人工审核' }}</span>
+              </template>
+            </el-table-column>
+
+            <!-- 列：审核状态 -->
             <el-table-column prop="status" label="审核状态" width="110" align="center">
               <template #default="{ row }">
                 <el-tag
@@ -773,7 +812,7 @@ onBeforeUnmount(() => {
                   </el-button>
 
                   <!-- 待审核：通过 + 驳回 -->
-                  <template v-if="row.status === 'pending'">
+                  <template v-if="canHumanReview(row)">
                     <el-button
                       type="success"
                       link
@@ -782,7 +821,7 @@ onBeforeUnmount(() => {
                       @click="handleApprove(row)"
                     >
                       <el-icon class="mr-0.5"><Select /></el-icon>
-                      通过
+                      {{ row.action === 'ai_approve' ? '抽查确认' : '通过' }}
                     </el-button>
                     <el-button
                       type="danger"
@@ -792,7 +831,7 @@ onBeforeUnmount(() => {
                       @click="handleReject(row)"
                     >
                       <el-icon class="mr-0.5"><Close /></el-icon>
-                      驳回
+                      {{ row.action === 'ai_approve' ? '撤回' : '驳回' }}
                     </el-button>
                   </template>
                 </div>
@@ -802,13 +841,13 @@ onBeforeUnmount(() => {
             <!-- 空数据占位 -->
             <template #empty>
               <el-empty description="暂无审核任务" :image-size="80">
-                <template v-if="filters.type || filters.status">
+                <template v-if="filters.type || filters.status || filters.aiVerdict || filters.aiDomain">
                   <span style="font-size: var(--zh-font-size13); color: var(--zh-text-caption);">
                     没有符合条件的审核任务，请调整筛选条件
                   </span>
                   <el-button
                     type="primary" link size="small" class="mt-2"
-                    @click="filters.type = ''; filters.status = ''; handleFilterChange();"
+                    @click="filters.type = ''; filters.status = ''; filters.aiVerdict = ''; filters.aiDomain = ''; handleFilterChange();"
                   >
                     清除筛选
                   </el-button>
@@ -1084,7 +1123,21 @@ onBeforeUnmount(() => {
             <p>{{ currentContent.comment }}</p>
           </section>
 
-          <section v-if="currentContent.status === 'pending'" class="task-action-panel">
+          <section v-if="drawerMode === 'audit' && currentContent.ai_verdict" class="task-note ai-review-report">
+            <span>AI 初审 · {{ AI_DOMAIN_LABEL_MAP[currentContent.ai_domain] || '人工分流' }}</span>
+            <p><strong>{{ AI_VERDICT_LABEL_MAP[currentContent.ai_verdict] || currentContent.ai_verdict }}</strong> · {{ currentContent.ai_score ?? '—' }} 分 · {{ currentContent.ai_model || '模型未记录' }}</p>
+            <p>{{ parsedAiReport(currentContent).summary || '未提供审核摘要' }}</p>
+            <p v-if="parsedAiReport(currentContent).spot_check">本稿进入人工抽查池，尚未自动公开。</p>
+            <ul v-if="parsedAiReport(currentContent).checks?.length">
+              <li v-for="(check, index) in parsedAiReport(currentContent).checks" :key="index"><strong>{{ check.name }}：</strong>{{ AI_CHECK_LABEL_MAP[check.status] || '需核验' }} · {{ check.evidence }}</li>
+            </ul>
+            <ul v-if="parsedAiReport(currentContent).findings?.length">
+              <li v-for="(finding, index) in parsedAiReport(currentContent).findings" :key="`finding-${index}`"><strong>风险：</strong>{{ finding.evidence }}{{ finding.suggestion ? `；建议：${finding.suggestion}` : '' }}</li>
+            </ul>
+            <small>AI 结果仅作辅助；审核员可推翻结论。{{ formatDateTime(currentContent.ai_reviewed_at) }}</small>
+          </section>
+
+          <section v-if="drawerMode === 'report' ? currentContent.status === 'pending' : canHumanReview(currentContent)" class="task-action-panel">
             <div>
               <strong>{{ drawerMode === 'audit' ? '做出审核决定' : '处理本条举报' }}</strong>
               <p>{{ drawerMode === 'audit' ? '决定会即时更新投稿的社区状态。' : '确认违规会下架对应的社区内容。' }}</p>
@@ -1871,4 +1924,9 @@ onBeforeUnmount(() => {
     grid-template-columns: repeat(2, minmax(0, 1fr));
   }
 }
+.ai-review-cell { display: grid; justify-items: start; gap: 3px; }
+.ai-review-cell small,.ai-review-pending { color: var(--zh-text-caption); font-size: 11px; }
+.ai-review-report ul { margin: 8px 0; padding-left: 18px; }
+.ai-review-report li { margin: 5px 0; line-height: 1.5; overflow-wrap: anywhere; }
+.ai-review-report small { display: block; margin-top: 10px; color: var(--zh-text-caption); }
 </style>

@@ -14,6 +14,7 @@ public interface ComContentMapper {
     List<Com_Content> findPublic();
     List<Com_Content> findByType(@Param("contentType") String contentType);
     List<Com_Content> findAll();
+    List<Com_Content> findPptIndexCandidates(@Param("afterId") Integer afterId, @Param("limit") Integer limit);
     int insert(Com_Content content);
     int update(Com_Content content);
     int incrementViewCount(@Param("id") Integer id);

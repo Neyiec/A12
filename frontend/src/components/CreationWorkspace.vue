@@ -249,12 +249,13 @@ const projectNameDraft = ref('')
 const communityPublishVisible = ref(false)
 const communityPublishLoading = ref(false)
 const communityPublishForm = reactive({
-  content_type: 'lesson_case',
+  content_type: 'ppt',
   title: '',
   description: '',
   subject: '',
   grade: '',
   lesson_type: '',
+  keywords: '',
   license: 'CC BY-NC 4.0',
   source_declaration: '本人原创或已获得授权',
   notes: '',
@@ -5231,12 +5232,41 @@ const loadProject = async () => {
     loadedPageDetailIds.clear()
     const fallbackPages = pageRecords(project.value?.pages)
     const sourcePages = pages.length ? pages : fallbackPages
-    slides.splice(0, slides.length, ...(sourcePages.length ? sourcePages.map(pageToSlide) : [defaultSlide()]))
+    const communitySnapshot = parseJson(savedWorkspaceContext?.community?.content_data, {})
+    const communitySlides = !sourcePages.length && savedWorkspaceContext?.community?.type === 'PPT' && Array.isArray(communitySnapshot?.slides)
+      ? communitySnapshot.slides.map((slide, index) => ({
+        ...defaultSlide(index + 1),
+        ...slide,
+        title: slide?.title || `第 ${index + 1} 页`,
+        html: stripSlideDecorativeCircle(slide?.html || ''),
+        elements: normalizeElements(slide?.elements),
+        pageType: index === 0 ? 'cover' : 'content',
+        page_type: index === 0 ? 'cover' : 'content',
+        slideNo: index + 1,
+        pageOrder: index + 1,
+        page_order: index + 1,
+        pageId: null,
+        page_id: null,
+        componentId: null,
+      })).filter((slide) => slide.html || slide.elements.length)
+      : []
+    slides.splice(0, slides.length, ...(sourcePages.length ? sourcePages.map(pageToSlide) : communitySlides.length ? communitySlides : [defaultSlide()]))
+    let communityCopySaved = true
+    if (communitySlides.length) {
+      try {
+        await batchCreateProjectPages(projectId.value, slides)
+        if (communitySnapshot.lesson_plan) lessonPlanDraft.value = communitySnapshot.lesson_plan
+        WorkspaceMessage.success(`已复制社区 PPT 的 ${communitySlides.length} 页，可直接编辑`)
+      } catch (error) {
+        communityCopySaved = false
+        WorkspaceMessage.warning(workspaceRequestErrorMessage(error, '社区课件已载入，但页面保存失败，请先手动保存项目'))
+      }
+    }
     selectedSlide.value = 0
     savedChangeVersion = localChangeVersion
     savedStructureVersion = localStructureVersion
     autosaveQueued = false
-    autosaveState.value = '已保存 · 云端项目'
+    autosaveState.value = communityCopySaved ? '已保存 · 云端项目' : '社区课件待保存'
   } catch (error) {
     projectLoadError.value = workspaceRequestErrorMessage(error, '项目内容加载失败')
     WorkspaceMessage.error(projectLoadError.value)
@@ -7317,12 +7347,13 @@ const removePermission = async (id) => {
 }
 const resetCommunityPublishForm = () => {
   Object.assign(communityPublishForm, {
-    content_type: 'lesson_case',
+    content_type: 'ppt',
     title: String(project.value?.project_name || routeQueryValue(route.query.templateTitle) || current.value?.title || '未命名 HTML PPT'),
     description: `由 A12 创作工作台生成的 HTML PPT，共 ${slides.length} 页，可继续复用和编辑。`,
     subject: String(routeQueryValue(route.query.subject) || project.value?.subject || presentationMetadata.value?.subject || ''),
     grade: String(routeQueryValue(route.query.grade) || project.value?.grade || presentationMetadata.value?.grade || ''),
     lesson_type: '多媒体课件',
+    keywords: [String(project.value?.project_name || ''), ...slides.slice(0, 8).map((slide) => String(slide?.title || ''))].filter(Boolean).join('，').slice(0, 500),
     license: 'CC BY-NC 4.0',
     source_declaration: '本人原创或已获得授权',
     notes: '',
@@ -7365,6 +7396,7 @@ const publishCommunity = async (submit = false) => {
       subject: communityPublishForm.subject.trim(),
       grade: communityPublishForm.grade.trim(),
       lesson_type: communityPublishForm.lesson_type.trim(),
+      keywords: communityPublishForm.keywords.trim(),
       content_data: JSON.stringify(buildCommunityContentData()),
       input_variables: JSON.stringify({ project_id: projectId.value ? Number(projectId.value) : null, resource_ids: workspaceContextPayload().resource_ids }),
       example_effect: '可复用的 AI HTML PPT 课件草稿，保留页面结构、互动组件和备注信息。',
@@ -8735,11 +8767,12 @@ const selectSlide = (index) => { selectedSlide.value = index; selectedElementId.
     <el-dialog v-model="communityPublishVisible" align-center title="发布到社区" width="min(680px, 92vw)" :close-on-click-modal="false">
       <el-form :model="communityPublishForm" label-position="top" class="community-publish-form">
         <div class="community-form-grid">
-          <el-form-item label="内容类型"><el-select v-model="communityPublishForm.content_type"><el-option label="课程案例" value="lesson_case" /><el-option label="教学技能" value="skill" /></el-select></el-form-item>
+          <el-form-item label="内容类型"><el-select v-model="communityPublishForm.content_type"><el-option label="PPT 课件" value="ppt" /><el-option label="课程案例" value="lesson_case" /><el-option label="教学技能" value="skill" /></el-select></el-form-item>
           <el-form-item label="授权方式"><el-select v-model="communityPublishForm.license"><el-option label="CC BY-NC 4.0" value="CC BY-NC 4.0" /><el-option label="CC BY 4.0" value="CC BY 4.0" /><el-option label="保留所有权利" value="All Rights Reserved" /></el-select></el-form-item>
         </div>
         <el-form-item label="标题" required><el-input v-model="communityPublishForm.title" maxlength="120" show-word-limit placeholder="给社区内容起一个清晰的标题" /></el-form-item>
         <el-form-item label="简介"><el-input v-model="communityPublishForm.description" type="textarea" :rows="3" maxlength="500" show-word-limit placeholder="说明适用场景、教学目标或使用方法" /></el-form-item>
+        <el-form-item label="主题 / 知识点关键词"><el-input v-model="communityPublishForm.keywords" maxlength="500" placeholder="例如：浮力，阿基米德原理，实验探究" /></el-form-item>
         <div class="community-form-grid">
           <el-form-item label="学科"><el-input v-model="communityPublishForm.subject" placeholder="如：数学" /></el-form-item>
           <el-form-item label="年级"><el-input v-model="communityPublishForm.grade" placeholder="如：八年级" /></el-form-item>

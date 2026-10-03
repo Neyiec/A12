@@ -28,4 +28,7 @@
         SELECT <include refid="Base_Columns"/> FROM com_interaction
         WHERE user_id = #{userId} AND action_type = #{actionType} AND target_type = #{targetType} AND target_id = #{targetId}
     </select>
+    <select id="countByTargetAndAction" resultType="int">
+        SELECT COUNT(*) FROM com_interaction WHERE target_id = #{targetId} AND action_type = #{actionType}
+    </select>
 </mapper>

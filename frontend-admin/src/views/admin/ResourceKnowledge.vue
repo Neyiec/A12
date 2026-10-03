@@ -58,6 +58,7 @@ import {
   getAiIndexResource,
   searchAiIndex,
   reparseAiIndex,
+  rebuildCommunityIndex,
 } from '@/apis/resource'
 import FileDropUpload from '@/components/admin/FileDropUpload.vue'
 import { apiRequest } from '@/utils/api'
@@ -253,18 +254,21 @@ const KNOWLEDGE_SOURCE_OPTIONS = [
   { label: '全部来源', value: '' },
   { label: '公共资源', value: 'public' },
   { label: '个人素材', value: 'personal' },
+  { label: '社区课件', value: 'community' },
 ]
 
 /** 来源域 → 显示标签映射 */
 const KNOWLEDGE_SOURCE_LABEL_MAP = {
   public: '公共资源',
   personal: '个人素材',
+  community: '社区课件',
 }
 
 /** 来源域 → Tag 类型映射 */
 const KNOWLEDGE_SOURCE_TAG_MAP = {
   public: 'primary',
   personal: 'warning',
+  community: 'success',
 }
 
 /** 每页条数选项 */
@@ -282,6 +286,7 @@ const isTableLoading = ref(false)
 
 /** 当前激活的 Tab */
 const activeTab = ref('resources')
+const communityIndexCursor = ref(0)
 
 /** 资源列表数据 */
 const resourceList = ref([])
@@ -1260,6 +1265,36 @@ const handleRebuildAllIndex = () => {
     .catch(() => {})
 }
 
+const handleRebuildCommunityIndex = async () => {
+  try {
+    await ElMessageBox.confirm('将逐批核对社区 PPT 的公开与授权状态，并重建或移除对应索引。继续吗？',
+      '核对社区索引', { confirmButtonText: '开始核对', cancelButtonText: '取消', type: 'warning' })
+    isTableLoading.value = true
+    let cursor = communityIndexCursor.value
+    let processed = 0
+    let hasMore = false
+    for (let batch = 0; batch < 1000; batch += 1) {
+      const result = unwrapResult(await rebuildCommunityIndex(cursor, 100), '社区索引核对失败')
+      processed += Number(result?.processed || 0)
+      cursor = Number(result?.next_cursor || cursor)
+      communityIndexCursor.value = cursor
+      hasMore = Boolean(result?.has_more)
+      if (!result?.has_more) break
+    }
+    if (hasMore) ElMessage.warning(`已核对 ${processed} 条，仍有更多课件；请再次执行以继续核对`)
+    else {
+      communityIndexCursor.value = 0
+      ElMessage.success(`已核对 ${processed} 条社区课件，索引任务正在后台执行`)
+    }
+    await fetchVectorTasks()
+    fetchIndexOverview()
+  } catch (error) {
+    if (error !== 'cancel') ElMessage.error(error?.message || '社区索引核对失败')
+  } finally {
+    isTableLoading.value = false
+  }
+}
+
 // ===================================================================
 // 知识条目检索方法
 // ===================================================================
@@ -1410,6 +1445,7 @@ onBeforeUnmount(() => {
         </el-select>
 
         <div class="flex items-center gap-2 ml-auto">
+          <el-button plain size="default" :icon="Refresh" @click="handleRebuildCommunityIndex">核对社区索引</el-button>
           <el-button type="primary" :icon="Upload" @click="openUploadDialog">
             批量上传
           </el-button>

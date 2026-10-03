@@ -16,6 +16,8 @@
  */
 import { get, post, del, apiRequest } from '../utils/api'
 
+const pythonUrl = (path) => `${(import.meta.env.VITE_PYTHON_API_BASE_URL || '').replace(/\/$/, '')}${path}`
+
 /** 长耗时索引操作超时（与项目 210s 约定一致，见 ai-index/bootstrap） */
 const AI_INDEX_TIMEOUT = 210000
 
@@ -136,7 +138,7 @@ export function bootstrapAiIndex(forceReparse = true) {
  *   available: boolean, allow_ai: boolean, resource_count: number, chunk_count: number}>}>>}
  */
 export function getAiIndexOverview() {
-  return get('/api/v1/admin/public-resources/ai-index/overview')
+  return get(pythonUrl('/api/v1/python/resources/index/overview'))
 }
 
 /**
@@ -146,7 +148,10 @@ export function getAiIndexOverview() {
  * @returns {Promise<Result<{total: number, limit: number, offset: number, items: Array<object>}>>}
  */
 export function getAiIndexTasks(params) {
-  return get('/api/v1/admin/public-resources/ai-index/tasks', params)
+  const { page = 1, size = 10, ...filters } = params || {}
+  return get(pythonUrl('/api/v1/python/resources/index/resources'), {
+    ...filters, limit: size, offset: (page - 1) * size,
+  })
 }
 
 /**
@@ -157,7 +162,7 @@ export function getAiIndexTasks(params) {
  * @returns {Promise<Result<object & {chunks: Array<{chunk_id: string, chunk_index: number, content: string}>}>>}
  */
 export function getAiIndexResource(sourceType, resourceId, chunkLimit = 50) {
-  return get(`/api/v1/admin/public-resources/ai-index/resources/${sourceType}/${resourceId}`, { chunk_limit: chunkLimit })
+  return get(pythonUrl(`/api/v1/python/resources/index/resources/${sourceType}/${resourceId}`), { chunk_limit: chunkLimit })
 }
 
 /**
@@ -168,7 +173,12 @@ export function getAiIndexResource(sourceType, resourceId, chunkLimit = 50) {
  *   search_mode: string, latency_ms: number}>>}
  */
 export function searchAiIndex(data) {
-  return post('/api/v1/admin/public-resources/ai-index/search', data)
+  return post(pythonUrl('/api/v1/python/resources/index/search'), data)
+}
+
+export function rebuildCommunityIndex(afterId = 0, limit = 100) {
+  return apiRequest({ url: '/api/v1/admin/community-items/reindex', method: 'post',
+    params: { after_id: afterId, limit } })
 }
 
 /**
@@ -179,6 +189,9 @@ export function searchAiIndex(data) {
  * @returns {Promise<Result<{source_type: string, resource_id: string, status: string}>>}
  */
 export function reparseAiIndex(sourceType, resourceId) {
+  if (sourceType === 'community') {
+    return apiRequest({ url: `/api/v1/admin/community-items/${resourceId}/reindex`, method: 'post' })
+  }
   return apiRequest({
     url: `/api/v1/admin/public-resources/ai-index/${sourceType}/${resourceId}/reparse`,
     method: 'post',

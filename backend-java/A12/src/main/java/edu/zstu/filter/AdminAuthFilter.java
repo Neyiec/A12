@@ -61,6 +61,8 @@ public class AdminAuthFilter implements Filter {
             new PermRule("POST", "/api/v1/admin/moderation/tasks/{id}/decisions", "audit:audit"),
             new PermRule("PUT", "/api/v1/admin/community-items/{id}/status", "audit:audit"),
             new PermRule("PUT", "/api/v1/admin/community-items/{id}/recommendation", "audit:audit"),
+            new PermRule("POST", "/api/v1/admin/community-items/reindex", "resources:edit"),
+            new PermRule("POST", "/api/v1/admin/community-items/{id}/reindex", "resources:edit"),
             new PermRule("GET", "/api/v1/admin/reports", "audit:view"),
             new PermRule("GET", "/api/v1/admin/reports/{id}", "audit:view"),
             new PermRule("POST", "/api/v1/admin/reports/{id}/resolution", "audit:audit"),

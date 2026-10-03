@@ -171,7 +171,7 @@ class InteractiveModuleGenerateRequest(BaseModel):
 
 
 class ResourceIndexSyncRequest(BaseModel):
-    source_type: Literal["public", "personal", "temp"]
+    source_type: Literal["public", "personal", "community", "temp"]
     resource_id: str = Field(..., min_length=1)
     title: str
     file_url: str
@@ -191,7 +191,7 @@ class ResourceIndexBootstrapRequest(BaseModel):
 
 
 class ResourceIndexMetadataRequest(BaseModel):
-    source_type: Literal["public", "personal", "temp"]
+    source_type: Literal["public", "personal", "community", "temp"]
     resource_id: str = Field(..., min_length=1)
     available: bool | None = None
     allow_ai: bool | None = None
@@ -203,7 +203,7 @@ class ResourceIndexSearchRequest(BaseModel):
     resource_ids: list[str] = Field(default_factory=list)
     limit: int = Field(default=12000, ge=1000, le=30000)
     top_k: int = Field(default=8, ge=1, le=30)
-    source_type: Literal["public", "personal"] | None = None
+    source_type: Literal["public", "personal", "community", "temp"] | None = None
     min_score: float | None = Field(default=None, ge=0, le=1)
 
 

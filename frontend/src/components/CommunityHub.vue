@@ -21,8 +21,8 @@ const searchQuery = ref('')
 const activeTab = ref('精选')
 const selectedStage = ref('全部学段')
 const selectedSubject = ref('全部学科')
+const tabs = ['精选', 'PPT 课件', '最新', 'Skill', '教学案例']
 const showMobileFilters = ref(false)
-const tabs = ['精选', '最新', 'Skill', '教学案例']
 const communityCards = ref([])
 const communityTotal = ref(0)
 const communityPage = ref(1)
@@ -89,7 +89,7 @@ const reportDetail = ref(null)
 const submissionSaving = ref(false)
 const submissionLoading = ref(false)
 const submissionError = ref('')
-const emptySubmission = () => ({ id: null, content_type: 'lesson_case', title: '', description: '', subject: '', grade: '', lesson_type: '', content_data: '', input_variables: '', example_effect: '', license: 'CC BY-NC 4.0' })
+const emptySubmission = () => ({ id: null, content_type: 'lesson_case', title: '', description: '', subject: '', grade: '', lesson_type: '', keywords: '', content_data: '', input_variables: '', example_effect: '', license: 'CC BY-NC 4.0' })
 const submission = ref(emptySubmission())
 const submissionReadOnly = computed(() => Boolean(submission.value.id && submission.value.status && String(submission.value.status).toLowerCase() !== 'draft'))
 const submissionContentEditor = ref({ objective: '', objectiveKey: 'objective', stepKey: 'steps', steps: [] })
@@ -116,13 +116,15 @@ const parseJsonValue = (value, fallback = null) => {
 const normalizeCommunityContentType = (item = {}) => {
   const type = String(item.content_type || item.contentType || '').trim().toLowerCase()
   if (type === 'skill' || String(item.type || '').trim().toLowerCase() === 'skill') return 'skill'
+  if (type === 'ppt' || ['ppt', 'ppt 课件'].includes(String(item.type || '').trim().toLowerCase())) return 'ppt'
   return 'lesson_case'
 }
 const normalizeCommunityType = (item = {}) => {
   const type = String(item.type || '').trim().toLowerCase()
   if (type === 'skill') return 'Skill'
+  if (type === 'ppt' || type === 'ppt 课件') return 'PPT'
   if (['case', 'lesson_case', 'lesson-case', '教学案例', '案例'].includes(type)) return '案例'
-  return item.type || (normalizeCommunityContentType(item) === 'skill' ? 'Skill' : '案例')
+  return item.type || (normalizeCommunityContentType(item) === 'skill' ? 'Skill' : normalizeCommunityContentType(item) === 'ppt' ? 'PPT' : '案例')
 }
 const statusLabel = (status) => ({ draft: '草稿', reviewing: '审核中', pending: '待处理', approved: '已通过', rejected: '已退回', resolved: '已处理' }[String(status || '').toLowerCase()] || status || '草稿')
 const isDevelopmentPreview = computed(() => import.meta.env.DEV && route.query.preview === '1')
@@ -179,6 +181,7 @@ const normalizeSubmissionPayload = () => {
     subject: String(submission.value.subject || '').trim(),
     grade: String(submission.value.grade || '').trim(),
     lesson_type: String(submission.value.lesson_type || '').trim(),
+    keywords: String(submission.value.keywords || '').trim(),
     content_data: parseSubmissionJson(submission.value.content_data, '正文'),
     input_variables: parseSubmissionJson(submission.value.input_variables, '输入变量', true),
     example_effect: String(submission.value.example_effect || '').trim(),
@@ -436,7 +439,10 @@ const normalizedVariableValue = (variable) => variable.default ?? variable.defau
 const reuseVersionOptions = computed(() => {
   const current = Number(reuseDetail.value?.version || 1)
   const history = parseJsonValue(reuseDetail.value?.version_history, [])
-  const versions = [current, ...(Array.isArray(history) ? history.map((item) => Number(item?.version_number || item?.version)).filter(Number.isFinite) : [])]
+  const versions = [current, ...(Array.isArray(history) ? history.map((item) => {
+    const stored = Number(item?.version_number || item?.version)
+    return item?.snapshot_semantics === 'prior' ? stored : stored - 1
+  }).filter((value) => Number.isInteger(value) && value > 0) : [])]
   return [...new Set(versions)].sort((a, b) => b - a)
 })
 const reuseContext = computed(() => {
@@ -480,11 +486,11 @@ const normalizeCard = (item = {}) => {
     stage: item.grade || item.stage || '通用',
     author: item.author_name || item.author || item.creator_name || (item.author_id ? `用户 #${item.author_id}` : '社区教师'),
     uses: Number(item.use_count ?? item.useCount ?? 0),
-    // 功能11：卡片点赞/收藏计数与当前用户点赞态
     likes: Number(item.like_count ?? item.likeCount ?? 0),
     favorites: Number(item.favorite_count ?? item.favoriteCount ?? 0),
     liked: Boolean(item.liked),
-    tag: item.lesson_type || item.lessonType || (contentType === 'skill' ? '智能 Skill' : '教学设计'),
+    keywords: item.keywords || '',
+    tag: item.lesson_type || item.lessonType || (contentType === 'skill' ? '智能 Skill' : contentType === 'ppt' ? '可复用课件' : '教学设计'),
     updatedAt: String(item.updated_at || item.updatedAt || item.created_at || ''),
     raw: item,
   }
@@ -495,7 +501,7 @@ const loadCommunity = async () => {
   const requestSeq = ++communityRequestSeq
   loading.value = true
   communityError.value = ''
-  const contentType = activeTab.value === 'Skill' ? 'skill' : activeTab.value === '教学案例' ? 'lesson_case' : undefined
+  const contentType = activeTab.value === 'Skill' ? 'skill' : activeTab.value === '教学案例' ? 'lesson_case' : activeTab.value === 'PPT 课件' ? 'ppt' : undefined
   try {
     const result = assertApiSuccess(await listCommunityItems({
       content_type: contentType,
@@ -543,7 +549,7 @@ const changeCommunityPage = (page) => {
 
 /** 判断内容是否符合关键词、学段和学科条件。 */
 const matchesFilters = (item) => {
-  const searchableText = [item.title, item.subject, item.tag, item.author, item.type].join(' ').toLowerCase()
+  const searchableText = [item.title, item.subject, item.tag, item.author, item.type, item.keywords].join(' ').toLowerCase()
   const matchesSearch = !searchQuery.value || searchableText.includes(searchQuery.value)
   const matchesStage = selectedStage.value === '全部学段' || item.stage === selectedStage.value || item.stage === '通用'
   const matchesSubject = selectedSubject.value === '全部学科' || item.subject === selectedSubject.value || item.subject === '通用'
@@ -552,10 +558,12 @@ const matchesFilters = (item) => {
 
 /** 根据当前页签和筛选条件生成社区卡片；选择了排序维度时交由后端排序，「最新」仅在前端按更新时间排序。 */
 const filteredCards = computed(() => {
+  if (!usingDemoCards.value) return communityCards.value
   const filtered = communityCards.value.filter((card) => {
     const matchesTab = activeTab.value === '精选'
       || activeTab.value === 'Skill' && card.type === 'Skill'
       || activeTab.value === '教学案例' && card.type === '案例'
+      || activeTab.value === 'PPT 课件' && card.type === 'PPT'
       || activeTab.value === '最新'
     return matchesTab && matchesFilters(card)
   })
@@ -640,11 +648,18 @@ const finishReuse = async () => {
     })
     const project = unwrap(assertApiSuccess(result))
     const projectId = project?.id || project?.project_id
+    const savedContext = parseJsonValue(project?.edit_history, {})?.workspace_context || {}
+    const selectedContext = {
+      ...context,
+      community: savedContext.community
+        ? { ...context, ...savedContext.community, resource_ids: context.resource_ids, resourceIds: context.resource_ids }
+        : context,
+    }
     if (projectId) {
       try {
         await assertApiSuccess(await patchProject(projectId, {
           project_name: reuseProjectName.value.trim() || `${source.title || '未命名内容'}（副本）`,
-          edit_history: JSON.stringify({ workspace_context: context }),
+          edit_history: JSON.stringify({ workspace_context: selectedContext }),
           current_version: Number(project?.current_version || 1),
         }))
       } catch (error) {
@@ -660,7 +675,7 @@ const finishReuse = async () => {
         communityType: context.type,
         communityId: source.id,
         resourceIds: JSON.stringify(context.resource_ids),
-        workspaceContext: JSON.stringify(context),
+        workspaceContext: JSON.stringify(selectedContext),
       },
     })
   } catch (error) {
@@ -684,6 +699,15 @@ const setFavoriteState = (rows) => {
 const loadFavoriteState = async () => {
   try { setFavoriteState(extractRecords(assertApiSuccess(await listCommunityFavorites({ page: 1, size: 100 })))) } catch { /* 未登录时由列表页错误态提示，避免首屏重复弹窗。 */ }
 }
+const updateVisibleMetric = (id, field, delta, liked) => {
+  communityCards.value = communityCards.value.map((card) => String(card.id) === String(id)
+    ? { ...card, [field]: Math.max(0, card[field] + delta), ...(liked === undefined ? {} : { liked }) }
+    : card)
+  if (detail.value && String(detail.value.id) === String(id)) {
+    const key = field === 'likes' ? 'like_count' : 'favorite_count'
+    detail.value = { ...detail.value, [key]: Math.max(0, Number(detail.value[key] || 0) + delta), ...(liked === undefined ? {} : { liked }) }
+  }
+}
 const toggleFavorite = async (item) => {
   const rawId = item?.id ?? item?.item_id ?? item?.testCaseId
   if (rawId === null || rawId === undefined || rawId === '') return ElMessage.info('该内容暂不支持收藏')
@@ -706,6 +730,8 @@ const toggleFavorite = async (item) => {
     } else {
       favorites.value = favorites.value.filter((row) => String(favoriteItemId(row)) !== favoriteKey)
     }
+    updateVisibleMetric(rawId, 'favorites', next ? 1 : -1)
+    if (sortBy.value === 'favorite') loadCommunity()
     ElMessage.success(next ? '已收藏' : '已取消收藏')
   } catch (error) {
     favoriteIds.value = previousIds
@@ -734,7 +760,7 @@ const syncLikeState = (records) => {
 /** 本地点赞计数即时反馈：列表卡片、详情弹窗与榜单行同步增减，接口失败时由调用方回滚。 */
 const adjustLocalLikeCount = (rawId, liked) => {
   communityCards.value = communityCards.value.map((card) => (
-    String(card.id) === String(rawId) ? { ...card, likes: Math.max(0, card.likes + (liked ? 1 : -1)) } : card
+    String(card.id) === String(rawId) ? { ...card, likes: Math.max(0, card.likes + (liked ? 1 : -1)), liked } : card
   ))
   rankItems.value = rankItems.value.map((row) => (
     String(row.id) === String(rawId) ? { ...row, likes: Math.max(0, row.likes + (liked ? 1 : -1)) } : row
@@ -979,9 +1005,9 @@ onMounted(() => {
     <header class="community-hero">
       <p>教师共创社区 / Community</p>
       <h1><span>把好课的经验，</span><span>变成下一堂课的起点</span></h1>
-      <span>检索公开可用的 Skill 与教学案例；复用后生成独立草稿，不会修改社区原件。</span>
+      <span>按主题寻找可复用的 PPT 课件、Skill 与教学案例；复用后生成独立草稿，不会修改社区原件。</span>
       <div class="community-search-row">
-        <el-input v-model="keyword" :prefix-icon="Search" placeholder="搜索知识点、学科、课型或 Skill" clearable size="large" @keyup.enter="submitSearch">
+        <el-input v-model="keyword" :prefix-icon="Search" placeholder="搜索 PPT 主题、知识点、学科或课型" clearable size="large" @keyup.enter="submitSearch">
           <template #append><el-button type="primary" class="community-search-button" @click="submitSearch">搜索</el-button></template>
         </el-input>
         <el-button type="primary" class="submission-button" @click="openSubmission">我要投稿</el-button>
@@ -1065,9 +1091,10 @@ onMounted(() => {
         <h3>{{ card.title }}</h3>
         <p>{{ card.subject }} · {{ card.tag }}</p>
         <p v-if="card.description" class="card-description">{{ card.description }}</p>
+        <div class="card-metrics"><span>收藏 {{ card.favorites }}</span><span>复用 {{ card.uses }}</span></div>
         <footer><span><el-icon><User /></el-icon>{{ card.author }}</span><div class="card-actions"><button class="card-detail" @click.stop="openDetail(card)">查看详情</button><button @click.stop="reuse(card)">{{ card.testCaseId ? '进入工作台 →' : `${card.uses} 次使用 →` }}</button></div></footer>
       </article>
-      <el-empty v-if="filteredCards.length === 0" class="community-empty" description="没有符合当前筛选条件的 Skill 或教学案例" />
+      <el-empty v-if="filteredCards.length === 0" class="community-empty" description="没有符合当前筛选条件的课件或教学内容" />
     </section>
     <el-pagination v-if="communityTotal > communityPageSize" class="community-pagination" :current-page="communityPage" :page-size="communityPageSize" :total="communityTotal" layout="prev, pager, next" background @current-change="changeCommunityPage" />
     <p class="source-note">所有内容均标记来源、版本与授权信息；个人私有素材不会写回社区或进入公共索引。</p>
@@ -1093,10 +1120,11 @@ onMounted(() => {
                 <header class="submission-section-heading"><div><span>基本信息</span><h3>这份内容适合什么课堂</h3></div><small>带 * 的内容为必填项</small></header>
                 <div class="submission-meta-grid">
                   <el-form-item class="submission-title-field" label="标题" required><el-input v-model="submission.title" maxlength="120" show-word-limit placeholder="用一句话说明案例主题" /></el-form-item>
-                  <el-form-item label="内容类型" required><el-select v-model="submission.content_type"><el-option label="教学案例" value="lesson_case" /><el-option label="Skill" value="skill" /></el-select></el-form-item>
+                  <el-form-item label="内容类型" required><el-select v-model="submission.content_type"><el-option label="教学案例" value="lesson_case" /><el-option label="Skill" value="skill" /><el-option label="PPT 课件（请从课件工作台发布）" value="ppt" disabled /></el-select></el-form-item>
                   <el-form-item label="学科"><el-input v-model="submission.subject" placeholder="例如 数学" /></el-form-item>
                   <el-form-item label="学段"><el-input v-model="submission.grade" placeholder="例如 初中" /></el-form-item>
                   <el-form-item label="课型"><el-input v-model="submission.lesson_type" placeholder="例如 探究课" /></el-form-item>
+                  <el-form-item label="检索关键词"><el-input v-model="submission.keywords" placeholder="例如 分数、探究课、三年级" /></el-form-item>
                   <el-form-item label="授权许可" required><el-input v-model="submission.license" placeholder="例如 CC BY-NC 4.0" /></el-form-item>
                   <el-form-item class="submission-effect-field" label="示例效果"><el-input v-model="submission.example_effect" placeholder="简述预期教学效果" /></el-form-item>
                 </div>
@@ -1164,7 +1192,7 @@ onMounted(() => {
     <el-dialog v-model="reportVisible" class="community-report-dialog" title="举报与处理进度" width="min(640px, 92vw)">
       <div v-loading="reportsLoading" class="report-dialog">
         <el-form label-position="top" class="report-form-grid">
-          <el-form-item label="内容类型" required><el-select v-model="reportForm.target_type"><el-option label="教学案例" value="lesson_case" /><el-option label="Skill" value="skill" /></el-select></el-form-item>
+          <el-form-item label="内容类型" required><el-select v-model="reportForm.target_type"><el-option label="教学案例" value="lesson_case" /><el-option label="Skill" value="skill" /><el-option label="PPT 课件" value="ppt" /></el-select></el-form-item>
           <el-form-item label="内容 ID" required><el-input v-model="reportForm.target_id" inputmode="numeric" placeholder="请输入社区内容 ID" /></el-form-item>
           <el-form-item label="举报原因" required><el-input v-model="reportForm.reason" maxlength="120" show-word-limit placeholder="例如：内容疑似侵权" /></el-form-item>
           <el-form-item label="补充说明"><el-input v-model="reportForm.comment" type="textarea" :rows="3" maxlength="500" show-word-limit /></el-form-item>
@@ -1201,12 +1229,12 @@ onMounted(() => {
                 <div class="detail-kicker"><span class="detail-kicker-mark" aria-hidden="true"></span><span>{{ normalizeCommunityType(detail) }}</span><span class="detail-version">v{{ detail.version || 1 }}</span></div>
                 <h2>{{ detail.title || '未命名社区内容' }}</h2>
                 <p>{{ detail.description || '这份内容由社区教师整理，适合直接了解结构，再按自己的课堂进行调整。' }}</p>
-                <div class="detail-tags" aria-label="案例标签">
+                <div class="detail-tags" aria-label="内容标签">
                   <span>{{ detail.subject || '通用学科' }}</span><i aria-hidden="true">·</i><span>{{ detail.grade || detail.stage || '通用学段' }}</span><i aria-hidden="true">·</i><span>{{ detail.lesson_type || '未标注课型' }}</span>
                 </div>
               </div>
               <div class="detail-header-actions">
-                <button class="detail-favorite-button" :class="{ active: favoriteIds.has(String(detail.id)) }" :aria-pressed="favoriteIds.has(String(detail.id))" @click="toggleFavorite(detail)"><el-icon><Star /></el-icon><span>{{ favoriteIds.has(String(detail.id)) ? '已收藏' : '收藏案例' }}</span></button>
+                <button class="detail-favorite-button" :class="{ active: favoriteIds.has(String(detail.id)) }" :aria-pressed="favoriteIds.has(String(detail.id))" @click="toggleFavorite(detail)"><el-icon><Star /></el-icon><span>{{ favoriteIds.has(String(detail.id)) ? '已收藏' : '收藏内容' }}</span></button>
                 <button class="detail-favorite-button detail-like-button" :class="{ active: Boolean(detail.liked) }" :aria-pressed="Boolean(detail.liked)" @click="toggleLike(detail)"><svg class="like-icon" viewBox="0 0 24 24" aria-hidden="true"><path :d="LIKE_ICON_PATH" /></svg><span>{{ detail.liked ? '已点赞' : '点赞案例' }}</span></button>
                 <button class="detail-close-button" aria-label="关闭详情" @click="detailVisible = false"><span aria-hidden="true">×</span></button>
               </div>
@@ -1219,7 +1247,7 @@ onMounted(() => {
                   <p>{{ detail.example_effect }}</p>
                 </section>
                 <section class="detail-content-section">
-                  <div class="detail-section-heading"><div><span class="detail-section-eyebrow">CONTENT</span><h3>案例内容</h3></div><span class="detail-section-note">结构化内容预览</span></div>
+                  <div class="detail-section-heading"><div><span class="detail-section-eyebrow">CONTENT</span><h3>内容预览</h3></div><span class="detail-section-note">结构化内容预览</span></div>
                   <CommunityContentPreview
                     :item="detail"
                     :slides="detailSlides"
@@ -1240,7 +1268,7 @@ onMounted(() => {
 
                 <section class="detail-aside-card">
                   <div class="detail-aside-label">使用数据</div>
-                  <div class="detail-stat-list"><div><span>使用次数</span><strong>{{ detail.use_count ?? detail.useCount ?? 0 }}</strong></div><div><span>浏览次数</span><strong>{{ detail.view_count ?? detail.viewCount ?? 0 }}</strong></div><div><span>点赞数</span><strong>{{ detail.like_count ?? detail.likeCount ?? 0 }}</strong></div></div>
+                  <div class="detail-stat-list"><div><span>使用次数</span><strong>{{ detail.use_count ?? detail.useCount ?? 0 }}</strong></div><div><span>浏览次数</span><strong>{{ detail.view_count ?? detail.viewCount ?? 0 }}</strong></div><div><span>点赞</span><strong>{{ detail.like_count ?? 0 }}</strong></div><div><span>收藏</span><strong>{{ detail.favorite_count ?? 0 }}</strong></div></div>
                 </section>
 
                 <section class="detail-aside-card detail-attribute-card">
@@ -1304,6 +1332,7 @@ onMounted(() => {
 /* 功能11：卡片点赞按钮（图标 + 计数，激活态主题色） */
 .card-top-actions { display: flex; align-items: center; gap: 2px; }.card-like { display: inline-flex; align-items: center; justify-content: center; gap: 4px; min-width: 44px; height: 34px; padding: 0 9px; border: 0; border-radius: 9999px; color: var(--zh-text-caption); background: transparent; cursor: pointer; font-size: 11px; transition: color 200ms ease, background 200ms ease, transform 200ms ease; }.card-like svg { width: 13px; height: 13px; fill: currentColor; }.card-like:hover { color: var(--zh-text-theme); background: var(--zh-background-weaken); }.card-like:active { transform: scale(.94); }.card-like.active { color: var(--zh-text-theme); }
 .community-card h3 { min-height: 44px; margin: 18px 0 8px; font-size: 15px; line-height: 1.5; }.community-card > p { margin: 0 0 28px; color: var(--zh-text-caption); font-size: 12px; }.community-card > p.card-description { display: -webkit-box; min-height: 36px; margin: -16px 0 20px; overflow: hidden; color: var(--zh-text-secondary); line-height: 1.5; -webkit-box-orient: vertical; -webkit-line-clamp: 2; }.community-card footer { gap: 8px; border-top: 1px solid var(--zh-line-parting); padding-top: 12px; font-size: 11px; }.community-card footer span { min-width: 0; display: flex; align-items: center; gap: 4px; overflow: hidden; color: var(--zh-text-caption); text-overflow: ellipsis; white-space: nowrap; }.community-card footer button { flex: none; border: 0; color: var(--zh-text-link); background: transparent; cursor: pointer; font-size: 11px; }.card-actions { display: flex; align-items: center; gap: 8px; }.card-detail { color: var(--zh-text-caption) !important; }.community-pagination { justify-content: center; margin: 24px 0 0; }
+.card-metrics { display: flex; align-items: center; flex-wrap: wrap; gap: 12px; margin: -9px 0 15px; color: var(--zh-text-caption); font-size: 11px; }.card-metrics button { padding: 0; border: 0; color: inherit; background: transparent; cursor: pointer; font: inherit; }.card-metrics button:hover,.card-metrics button[aria-pressed="true"] { color: var(--zh-text-theme); }
 .source-note { margin: 20px 0 0; color: var(--zh-text-caption); font-size: 11px; text-align: center; }
 /* 功能11：热门榜单区（白卡 + el-segmented 类型/时间段切换 + Top10 双列列表） */
 .rank-section { margin-top: 20px; padding: 18px 20px 20px; border: 1px solid var(--zh-line-border); border-radius: var(--zh-radius12); background: var(--zh-background-pop); box-shadow: var(--zh-shadow1); }.rank-header { display: flex; align-items: center; justify-content: space-between; gap: 12px; flex-wrap: wrap; }.rank-title { display: flex; align-items: center; gap: 8px; color: var(--zh-text-theme); }.rank-title .el-icon { font-size: 18px; }.rank-title h2 { margin: 0; color: var(--zh-text-primary); font-size: 16px; font-weight: 600; letter-spacing: var(--zh-tracking-tight); }.rank-controls { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
@@ -1339,6 +1368,7 @@ onMounted(() => {
 .detail-favorite-button:hover,.detail-favorite-button:focus-visible { border-color: var(--zh-line-theme20); color: var(--zh-text-theme); background: var(--zh-background-weaken); outline: none; }
 .detail-favorite-button:active { transform: scale(.98); }
 .detail-favorite-button.active { border-color: var(--zh-line-theme20); color: var(--zh-text-theme); background: var(--zh-background-option-on); }
+@media (max-width: 560px) { .detail-like-button { width: auto !important; padding: 0 8px !important; }.detail-like-button span { display: inline !important; white-space: nowrap; } }
 .detail-close-button { width: 36px; height: 36px; padding: 0; border-color: transparent; border-radius: 50%; font-size: 25px; font-weight: 300; line-height: 1; }
 .detail-close-button:hover,.detail-close-button:focus-visible { border-color: var(--zh-line-border); color: var(--zh-text-primary); background: var(--zh-background-light); outline: none; }
 .detail-layout { display: grid; grid-template-columns: minmax(0, 1fr) 292px; gap: 28px; padding: 28px 36px 34px; background: var(--zh-background-light); overscroll-behavior: contain; }

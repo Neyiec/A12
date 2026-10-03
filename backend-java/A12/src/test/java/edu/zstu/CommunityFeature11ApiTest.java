@@ -81,7 +81,7 @@ class CommunityFeature11ApiTest {
                 redisCacheUtil,
                 new RedisRateLimiter(redisTemplate),
                 redisTemplate,
-                new ObjectMapper());
+                new ObjectMapper(), mock(edu.zstu.service.CommunityReviewEventPublisher.class));
 
         mockMvc = MockMvcBuilders.standaloneSetup(new CommunityController(service)).build();
     }
@@ -214,4 +214,3 @@ class CommunityFeature11ApiTest {
                 .andExpect(jsonPath("$.data[0].content.like_count").value(6));
     }
 }
-

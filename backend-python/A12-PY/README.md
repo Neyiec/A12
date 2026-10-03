@@ -15,7 +15,7 @@ uvicorn main:app --host 0.0.0.0 --port 8001 --reload
 
 复制 `.env.example` 为 `.env`，然后填写模型配置：
 
-双端直连还需配置 `JAVA_AUTH_BASE_URL`（Java 服务地址）、`A12_FRONTEND_ORIGINS`（允许的前端来源）及随机长密钥 `A12_PYTHON_INTERNAL_KEY`。Java 启动进程必须设置**相同**的 `A12_PYTHON_INTERNAL_KEY`，供 Python 索引消费者向 Java 读取资源业务数据和回写状态；不得放在 `VITE_*` 前端变量中。设置 `A12_RESOURCE_REDIS_URL` 指向 Java 使用的同一 Redis 实例（默认 `redis://127.0.0.1:6379/0`）；`A12_AUTH_REDIS_URL` 可单独指定认证 Redis，未设置时沿用资源 Redis。Python 在浏览器请求进入时、调用模型前都核对 Java 的 `token:user:{userId}`：缺失或被新登录替换返回 401，Redis 不可用返回 503，不降级放行。可信的后台索引事件没有浏览器令牌，不受此检查影响。资源变动经 Redis Stream `a12:resource-index:events` 传递，失败重试 3 次后进入 `a12:resource-index:dead-letter`，可人工检查和重放。教师端开发服务器通过 `/api/v1/python` 代理到 FastAPI，其余 `/api` 到 Java；生产环境分别设置 `VITE_PYTHON_API_BASE_URL` 和 `VITE_API_BASE_URL`，并为两个域名启用 HTTPS。未配置内部密钥时 Python 后台索引消费者不会启动。
+双端直连还需配置 `JAVA_AUTH_BASE_URL`（Java 服务地址）、`A12_FRONTEND_ORIGINS`（允许的前端来源）及随机长密钥 `A12_PYTHON_INTERNAL_KEY`。Java 启动进程必须设置**相同**的 `A12_PYTHON_INTERNAL_KEY`，供 Python 后台消费者向 Java 读取业务数据和回写状态；不得放在 `VITE_*` 前端变量中。设置 `A12_RESOURCE_REDIS_URL` 指向 Java 使用的同一 Redis 实例（默认 `redis://127.0.0.1:6379/0`）；`A12_AUTH_REDIS_URL` 可单独指定认证 Redis，未设置时沿用资源 Redis。Python 在浏览器请求进入时、调用模型前都核对 Java 的 `token:user:{userId}`：缺失或被新登录替换返回 401，Redis 不可用返回 503，不降级放行。可信的后台事件没有浏览器令牌，仅以共享内部密钥与 Java 通信。资源变动经 Redis Stream `a12:resource-index:events` 传递，失败重试 3 次后进入 `a12:resource-index:dead-letter`。PPT 社区投稿经 `a12:community-review:events` 触发文科、理科、工科 AI 初审；Python 仅给出结构化意见，Java 决定是否高置信自动放行或留待人工复核。审核事件失败重试 3 次后进入 `a12:community-review:dead-letter`，投稿始终可由人工处理。教师端开发服务器通过 `/api/v1/python` 代理到 FastAPI，其余 `/api` 到 Java；生产环境分别设置 `VITE_PYTHON_API_BASE_URL` 和 `VITE_API_BASE_URL`，并为两个域名启用 HTTPS。未配置内部密钥时 Python 后台消费者不会启动。
 
 ```env
 OPENAI_API_KEY=你的模型服务 Key
@@ -150,6 +150,8 @@ Current package layout:
 - Root compatibility modules such as `a12_ppt/generator.py`, `a12_ppt/resource_store.py`, and `a12_ppt/llm_client.py` only re-export the new package implementations. New code should import from the structured packages.
 
 ## AI 能力与评测
+
+社区审核通过且采用 `CC BY` 系列授权的 PPT 会作为 `community:{内容ID}` 自动进入检索；下架或取消公开时由业务事件移除索引。管理端知识库页面以同一登录令牌直连 Python 查询索引，开发环境还需允许管理端 `http://localhost:8888` 来源。社区索引由审核事件维护，不能从浏览器直接写入；每日业务补偿任务会核对漏发事件。
 
 - `model_profile` 与 `reasoning_effort` 会真实参与模型路由；每次调用的模型、耗时、令牌量、成功与降级状态会写入 `a12_ai_run_log`。
 - RAG 使用向量与关键词混合召回、分数阈值和逐条引用标识；检索文本按不可信证据处理，不能覆盖系统指令。

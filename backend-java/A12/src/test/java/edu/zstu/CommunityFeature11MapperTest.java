@@ -197,4 +197,3 @@ class CommunityFeature11MapperTest {
         assertEquals(List.of(a, 999), liked);
     }
 }
-

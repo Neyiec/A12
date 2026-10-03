@@ -23,6 +23,12 @@ public class AuditVO {
     private String action;
     private String comment;
     private String status;
+    private String ai_domain;
+    private String ai_verdict;
+    private Integer ai_score;
+    private String ai_report;
+    private String ai_model;
+    private LocalDateTime ai_reviewed_at;
     private LocalDateTime created_at;
     private LocalDateTime processed_at;
     // ---- 富化字段（裸 target_id 缺口补齐，见 doc/admin-dashboard-workflow.md 关键设计点 5）----

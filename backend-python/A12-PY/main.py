@@ -60,6 +60,7 @@ from a12_ppt.models import (
 from a12_ppt.course_graph import course_graph_store
 from a12_ppt.resources import delete_temp_upload_resources, resource_index_store, save_upload
 from a12_ppt.resources.index_worker import start_resource_index_worker
+from a12_ppt.community_review_worker import start_community_review_worker
 from a12_ppt.outline_chat import OutlineChatWorkflow
 from a12_ppt.outline_chat.postgres_store import postgres_memory_store
 from a12_ppt.outline_chat.session_store import outline_session_store
@@ -119,7 +120,7 @@ async def authorize_python_api(request: Request, call_next):
 app.add_middleware(
     CORSMiddleware,
     allow_origins=[origin.strip() for origin in os.getenv(
-        "A12_FRONTEND_ORIGINS", "http://localhost:5173,http://127.0.0.1:5173").split(",") if origin.strip()],
+        "A12_FRONTEND_ORIGINS", "http://localhost:5173,http://127.0.0.1:5173,http://localhost:8888,http://127.0.0.1:8888").split(",") if origin.strip()],
     allow_methods=["GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS"],
     allow_headers=["Authorization", "Content-Type"],
 )
@@ -129,6 +130,7 @@ app.add_middleware(
 async def initialize_ai_database() -> None:
     ensure_ai_schema()
     start_resource_index_worker()
+    start_community_review_worker()
 
 
 @app.post("/api/v1/python/workspace/chat/stream")
@@ -232,6 +234,8 @@ async def upload_resource(file: UploadFile = File(...)) -> Result:
 
 @app.post("/api/v1/python/resources/index/sync")
 async def sync_resource_index(request: ResourceIndexSyncRequest) -> Result:
+    if request.source_type == "community":
+        raise HTTPException(status_code=403, detail="社区索引只能由审核业务事件维护")
     if direct_user_id.get():
         if request.source_type == "public":
             if direct_user_role.get() != "admin":
@@ -248,6 +252,8 @@ async def sync_resource_index(request: ResourceIndexSyncRequest) -> Result:
 
 @app.post("/api/v1/python/resources/index/bootstrap")
 async def bootstrap_resource_index(request: ResourceIndexBootstrapRequest) -> Result:
+    if any(resource.source_type == "community" for resource in request.resources):
+        raise HTTPException(status_code=403, detail="社区索引只能由审核业务事件维护")
     if direct_user_id.get():
         for resource in request.resources:
             if resource.source_type == "public":
@@ -265,6 +271,8 @@ async def bootstrap_resource_index(request: ResourceIndexBootstrapRequest) -> Re
 
 @app.patch("/api/v1/python/resources/index/metadata")
 async def update_resource_index_metadata(request: ResourceIndexMetadataRequest) -> Result:
+    if request.source_type == "community":
+        raise HTTPException(status_code=403, detail="社区索引只能由审核业务事件维护")
     if direct_user_id.get():
         if request.source_type == "public":
             if direct_user_role.get() != "admin":
@@ -329,6 +337,8 @@ async def search_resource_index(request: ResourceIndexSearchRequest) -> Result:
 
 @app.delete("/api/v1/python/resources/index/{source_type}/{resource_id}")
 async def delete_resource_index(source_type: str, resource_id: str) -> Result:
+    if source_type == "community":
+        raise HTTPException(status_code=403, detail="社区索引只能由审核业务事件维护")
     if direct_user_id.get():
         if source_type == "public":
             if direct_user_role.get() != "admin":

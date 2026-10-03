@@ -8,6 +8,7 @@ CREATE TABLE com_content (
   subject VARCHAR(50),
   grade VARCHAR(50),
   lesson_type VARCHAR(50),
+  keywords VARCHAR(500),
   content_data TEXT,
   input_variables TEXT,
   example_effect TEXT,

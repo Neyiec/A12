@@ -81,7 +81,8 @@ class CommunityFeature11ServiceTest {
 
         service = new CommunityServiceImpl(contentMapper, interactionMapper, comLikeMapper, auditMapper,
                 projectService, businessLogService, redisCacheUtil,
-                new RedisRateLimiter(redisTemplate), redisTemplate, new ObjectMapper());
+                new RedisRateLimiter(redisTemplate), redisTemplate, new ObjectMapper(),
+                mock(edu.zstu.service.CommunityReviewEventPublisher.class));
     }
 
     private Com_Content content(int id, String contentType, String status) {

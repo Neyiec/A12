@@ -326,6 +326,7 @@ CREATE TABLE com_content (
   subject VARCHAR(50) DEFAULT NULL COMMENT '学科',
   grade VARCHAR(50) DEFAULT NULL COMMENT '适用年级',
   lesson_type VARCHAR(50) DEFAULT NULL COMMENT '课型',
+  keywords VARCHAR(500) DEFAULT NULL COMMENT '主题和知识点关键词',
   content_data JSON DEFAULT NULL COMMENT '内容主体',
   input_variables JSON DEFAULT NULL COMMENT '输入变量定义',
   example_effect TEXT DEFAULT NULL COMMENT '示例效果说明',
@@ -354,8 +355,8 @@ DROP TABLE IF EXISTS com_interaction;
 CREATE TABLE com_interaction (
   id BIGINT NOT NULL AUTO_INCREMENT COMMENT '记录ID',
   user_id INT NOT NULL COMMENT '用户ID',
-  action_type VARCHAR(20) NOT NULL COMMENT '操作类型: favorite/derivation/view',
-  target_type VARCHAR(20) NOT NULL COMMENT '目标类型: skill/case',
+  action_type VARCHAR(20) NOT NULL COMMENT '操作类型: favorite/like/derivation/view',
+  target_type VARCHAR(20) NOT NULL COMMENT '目标类型: skill/lesson_case/ppt',
   target_id INT NOT NULL COMMENT '目标内容ID',
   target_version INT DEFAULT NULL COMMENT '复用时来源版本号',
   target_project_id INT DEFAULT NULL COMMENT '派生项目ID',
@@ -367,6 +368,7 @@ CREATE TABLE com_interaction (
   KEY idx_target_id (target_id),
   KEY idx_user_action_created (user_id, action_type, created_at),
   KEY idx_user_action_target (user_id, action_type, target_type, target_id),
+  KEY idx_com_interaction_ranking (action_type, target_id, created_at),
   KEY idx_action_created (action_type, created_at)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci COMMENT='社区互动表';
 
@@ -387,7 +389,7 @@ DROP TABLE IF EXISTS adm_audit;
 CREATE TABLE adm_audit (
   id INT NOT NULL AUTO_INCREMENT COMMENT '记录ID',
   audit_type VARCHAR(20) NOT NULL COMMENT '类型: audit/report',
-  target_type VARCHAR(20) NOT NULL COMMENT '目标类型: skill/case',
+  target_type VARCHAR(20) NOT NULL COMMENT '目标类型: skill/lesson_case/ppt',
   target_id INT NOT NULL COMMENT '目标内容ID',
   reporter_id INT DEFAULT NULL COMMENT '举报人ID',
   reason VARCHAR(500) DEFAULT NULL COMMENT '举报原因或审核备注',
@@ -395,6 +397,12 @@ CREATE TABLE adm_audit (
   action VARCHAR(20) DEFAULT NULL COMMENT '处理动作: approve/reject/offline/ignore',
   comment TEXT DEFAULT NULL COMMENT '处理意见',
   status VARCHAR(20) NOT NULL DEFAULT 'pending' COMMENT '状态: pending/processed/ignored',
+  ai_domain VARCHAR(20) DEFAULT NULL COMMENT 'AI审核学科代理: arts/science/engineering',
+  ai_verdict VARCHAR(20) DEFAULT NULL COMMENT 'AI结论: pass/review/fail/error',
+  ai_score INT DEFAULT NULL COMMENT 'AI审核评分0-100',
+  ai_report JSON DEFAULT NULL COMMENT '检查维度、证据和风险点',
+  ai_model VARCHAR(100) DEFAULT NULL COMMENT 'AI审核模型',
+  ai_reviewed_at DATETIME DEFAULT NULL COMMENT 'AI审核时间',
   created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP COMMENT '创建时间',
   processed_at DATETIME DEFAULT NULL COMMENT '处理时间',
   updated_at DATETIME DEFAULT NULL ON UPDATE CURRENT_TIMESTAMP COMMENT '更新时间',

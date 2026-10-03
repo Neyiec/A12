@@ -15,7 +15,7 @@ import { get, post } from '../utils/api'
 /**
  * 分页查询内容审核任务（API-90）
  * 返回 audit_type=audit 的审核记录，支持按状态与目标类型筛选
- * @param {{ status?: string, target_type?: string, handler_id?: number,
+ * @param {{ status?: string, target_type?: string, handler_id?: number, ai_verdict?: string, ai_domain?: string,
  *           page?: number, size?: number }} [params] - 筛选与分页参数
  * @returns {Promise<Result<PageResult<AuditVO>>>} 审核任务分页数据
  */

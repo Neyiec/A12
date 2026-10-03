@@ -1,6 +1,7 @@
 import asyncio
 import hashlib
 import json
+import hashlib
 import logging
 import re
 import time
@@ -33,7 +34,7 @@ class ResourceIndexStore:
     @staticmethod
     def _visible(source_type: str, metadata: dict[str, Any]) -> bool:
         user_id = direct_user_id.get()
-        return user_id is None or source_type == "public" or str(metadata.get("owner_user_id") or "") == user_id
+        return user_id is None or source_type in {"public", "community"} or str(metadata.get("owner_user_id") or "") == user_id
 
     def __init__(self) -> None:
         self.settings = get_settings()
@@ -121,14 +122,30 @@ class ResourceIndexStore:
                     cur.execute("ALTER TABLE a12_resource_index DROP CONSTRAINT IF EXISTS ck_a12_resource_index_source")
                     cur.execute(
                         "ALTER TABLE a12_resource_index ADD CONSTRAINT ck_a12_resource_index_source "
-                        "CHECK (source_type IN ('public', 'personal', 'temp'))"
+                        "CHECK (source_type IN ('public', 'personal', 'community', 'temp'))"
                     )
             self.available = True
+            self._ensure_community_constraint()
             self._ensure_vector_index()
         except Exception:
             self.available = False
             # PG 不可用会静默降级为本地 JSON 文件存储，RAG 检索将无法命中——必须把原因打进日志
             logger.error("PostgreSQL 初始化失败，资源索引降级为本地文件存储（RAG 将无法命中）", exc_info=True)
+
+    def _ensure_community_constraint(self) -> None:
+        try:
+            with self._connect() as conn:
+                with conn.cursor() as cur:
+                    cur.execute("""SELECT pg_get_constraintdef(oid) FROM pg_constraint
+                                   WHERE conrelid = 'a12_resource_index'::regclass
+                                     AND conname = 'ck_a12_resource_index_source'""")
+                    constraint = cur.fetchone()
+                    if constraint and "community" not in constraint[0]:
+                        cur.execute("ALTER TABLE a12_resource_index DROP CONSTRAINT ck_a12_resource_index_source")
+                        cur.execute("""ALTER TABLE a12_resource_index ADD CONSTRAINT ck_a12_resource_index_source
+                                       CHECK (source_type IN ('public', 'personal', 'community', 'temp'))""")
+        except Exception:
+            logger.error("无法扩展社区索引来源约束；公共/个人检索继续可用，请由 DBA 执行迁移", exc_info=True)
 
     def _ensure_vector_index(self) -> None:
         try:
@@ -145,6 +162,8 @@ class ResourceIndexStore:
             logger.warning("创建 HNSW 向量索引失败（不影响写入，仅影响检索性能）", exc_info=True)
 
     async def sync_resource(self, request: ResourceIndexSyncRequest) -> dict[str, Any]:
+        if request.source_type == "community":
+            raise ValueError("社区内容必须通过可信审核事件同步")
         started_at = time.perf_counter()
         metadata = self._build_metadata(request)
         key = resource_key(request.source_type, request.resource_id)
@@ -239,6 +258,36 @@ class ResourceIndexStore:
                 "status": "failed",
                 "error_message": str(exc),
             }
+
+    async def sync_community_text(self, payload: dict[str, Any], text: str) -> dict[str, Any]:
+        """仅供内部事件消费者调用；社区正文不走上传文件解析。"""
+        resource_id = str(payload["resource_id"])
+        metadata = {**(payload.get("metadata") or {}), "source": "community",
+                    "source_type": "community", "resource_id": resource_id,
+                    "resource_key": f"community:{resource_id}", "title": payload.get("title") or "社区课件",
+                    "description": payload.get("description") or "", "available": True, "allow_ai": True,
+                    "uploaded_by": payload.get("uploaded_by"), "owner_user_id": None,
+                    "file_type": "html", "content_version": (payload.get("metadata") or {}).get("version")}
+        request = ResourceIndexSyncRequest(source_type="community", resource_id=resource_id,
+                                           title=str(payload.get("title") or "社区课件"),
+                                           file_url=str(payload.get("file_url") or f"community://{resource_id}"),
+                                           available=True, allow_ai=True, metadata=metadata)
+        digest = hashlib.sha256(text.encode("utf-8")).hexdigest()
+        existing = self._load_resource_meta(f"community:{resource_id}")
+        if existing and existing.get("parse_status") == "completed" and existing.get("file_fingerprint") == digest:
+            self.update_metadata(ResourceIndexMetadataRequest(source_type="community", resource_id=resource_id,
+                                                               available=True, allow_ai=True, metadata=metadata))
+            return {"resource_key": f"community:{resource_id}", "status": "skipped"}
+        chunks = chunk_records(text, metadata=metadata)
+        if not chunks:
+            raise ValueError("社区课件没有可检索文本")
+        values = [item["content"] for item in chunks]
+        embeddings = await self.embedding_client.embed_documents(values)
+        if len(embeddings) != len(values):
+            raise ValueError("社区课件向量数量与文本块不一致")
+        self._replace_index(request, metadata, digest, text, values, embeddings,
+                            [self._compact_chunk_metadata(metadata, item.get("metadata") or {}) for item in chunks])
+        return {"resource_key": f"community:{resource_id}", "status": "indexed", "chunk_count": len(values)}
 
     async def bootstrap(self, resources: list[ResourceIndexSyncRequest], force_reparse: bool = False) -> dict[str, Any]:
         results = []
@@ -484,7 +533,7 @@ class ResourceIndexStore:
         key_filter = "AND resource_key = ANY(%s)" if keys else ""
         source_filter = "AND source_type = %s" if source_type else ""
         user_id = direct_user_id.get()
-        owner_filter = "AND (source_type = 'public' OR metadata->>'owner_user_id' = %s)" if user_id else ""
+        owner_filter = "AND (source_type IN ('public', 'community') OR metadata->>'owner_user_id' = %s)" if user_id else ""
         params: list[Any] = [query_vector]
         if keys:
             params.append(keys)
@@ -551,7 +600,7 @@ class ResourceIndexStore:
             params.append(source_type)
         user_id = direct_user_id.get()
         if user_id:
-            filters.append("(source_type = 'public' OR metadata->>'owner_user_id' = %s)")
+            filters.append("(source_type IN ('public', 'community') OR metadata->>'owner_user_id' = %s)")
             params.append(user_id)
         filters.append("(" + " OR ".join("LOWER(content) LIKE %s" for _ in terms) + ")")
         params.extend([f"%{term}%" for term in terms])
@@ -570,7 +619,7 @@ class ResourceIndexStore:
 
     def overview(self) -> dict[str, Any]:
         user_id = direct_user_id.get()
-        scope = "WHERE (source_type = 'public' OR metadata->>'owner_user_id' = %s)" if user_id else ""
+        scope = "WHERE (source_type IN ('public', 'community') OR metadata->>'owner_user_id' = %s)" if user_id else ""
         params = (user_id,) if user_id else ()
         if self.available:
             with self._connect() as conn:
@@ -654,7 +703,7 @@ class ResourceIndexStore:
             params: list[Any] = []
             user_id = direct_user_id.get()
             if user_id:
-                filters.append("(source_type = 'public' OR metadata->>'owner_user_id' = %s)")
+                filters.append("(source_type IN ('public', 'community') OR metadata->>'owner_user_id' = %s)")
                 params.append(user_id)
             if source_type:
                 filters.append("source_type = %s")
@@ -922,7 +971,7 @@ class ResourceIndexStore:
             "source_type": request.source_type,
             "resource_id": request.resource_id,
             "resource_key": resource_key(request.source_type, request.resource_id),
-            "mysql_table": "adm_resource" if request.source_type == "public" else ("res_material" if request.source_type == "personal" else "local_upload"),
+            "mysql_table": {"public": "adm_resource", "personal": "res_material", "community": "com_content", "temp": "local_upload"}[request.source_type],
             "uploaded_by": request.uploaded_by,
             "owner_user_id": request.owner_user_id,
             "available": request.available,
@@ -1123,7 +1172,7 @@ class ResourceIndexStore:
             with self._connect() as conn:
                 with conn.cursor() as cur:
                     key_filter = "AND resource_key = ANY(%s)" if keys else ""
-                    owner_filter = "AND (source_type = 'public' OR metadata->>'owner_user_id' = %s)" if user_id else ""
+                    owner_filter = "AND (source_type IN ('public', 'community') OR metadata->>'owner_user_id' = %s)" if user_id else ""
                     params: tuple[Any, ...] = ((keys,) if keys else ()) + ((user_id,) if user_id else ())
                     cur.execute(
                         f"""
