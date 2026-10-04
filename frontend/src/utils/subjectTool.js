@@ -10,20 +10,36 @@ import {
   cachedChemicalStructure,
   chemicalStructureKey,
 } from './chemicalStructure'
+import {
+  createCoordinateData,
+  normalizeCoordinateData,
+  coordinateMarkup,
+  coordinateRuntimeCss,
+} from './coordinateTool'
+import {
+  createSolidData,
+  normalizeSolidData,
+  solidMarkup,
+} from './subjectSolid'
 
 export const subjectToolOptions = [
-  { value: 'math_formula', label: '数学公式' },
-  { value: 'chinese_tianzige', label: '语文田字格 / 拼音' },
-  { value: 'english_four_line', label: '英语四线格' },
-  { value: 'chemical_formula', label: '化学式 / 分子式' },
-  { value: 'mermaid_diagram', label: '流程图' },
-  { value: 'chart', label: '数据图表' },
-  { value: 'table', label: '探究数据表' },
-  { value: 'geometry', label: '几何图形' },
+  { value: 'math_formula', label: '数学公式', group: '数学' },
+  { value: 'geometry', label: '几何图形', group: '数学' },
+  { value: 'coordinate_system', label: '坐标系', group: '数学' },
+  { value: 'solid_geometry', label: '立体图形', group: '数学' },
+  { value: 'chinese_tianzige', label: '语文田字格 / 拼音', group: '语文' },
+  { value: 'english_four_line', label: '英语四线格', group: '英语' },
+  { value: 'chemical_formula', label: '化学式 / 分子式', group: '化学' },
+  { value: 'mermaid_diagram', label: '流程图', group: '通用' },
+  { value: 'chart', label: '数据图表', group: '通用' },
+  { value: 'table', label: '探究数据表', group: '通用' },
 ]
 
 // 图表和表格使用同一份组件协议，但在工作台中由外层工具栏提供入口。
 export const subjectToolMenuOptions = subjectToolOptions.filter((item) => !['chart', 'table'].includes(item.value))
+export const subjectToolMenuGroups = ['数学', '语文', '英语', '化学', '通用']
+  .map((label) => ({ label, options: subjectToolMenuOptions.filter((item) => item.group === label) }))
+  .filter((group) => group.options.length)
 
 const supportedTypes = new Set(subjectToolOptions.map((item) => item.value))
 const typeAliases = {
@@ -45,6 +61,9 @@ const typeAliases = {
   diagram: 'mermaid_diagram',
   mermaid: 'mermaid_diagram',
   general: 'mermaid_diagram',
+  coordinate: 'coordinate_system',
+  coordinates: 'coordinate_system',
+  solid: 'solid_geometry',
 }
 
 const plainObject = (value) => value && typeof value === 'object' && !Array.isArray(value)
@@ -115,6 +134,8 @@ export const createSubjectToolData = (type, legacyType = '') => {
     columns: ['项目', '观察结果'],
     rows: [['实验组', ''], ['对照组', '']],
   }
+  if (normalizedType === 'coordinate_system') return createCoordinateData()
+  if (normalizedType === 'solid_geometry') return createSolidData()
   return {
     construction: 'right_triangle',
     commands: ['draw_right_triangle'],
@@ -193,6 +214,8 @@ export const normalizeSubjectToolData = (value, type) => {
     ...(has(source, 'columns') ? { columns: Array.isArray(source.columns) ? source.columns.map((item) => text(item, '', 80)) : source.columns } : { columns: defaults.columns }),
     ...(has(source, 'rows') ? { rows: Array.isArray(source.rows) ? clone(source.rows, []) : source.rows } : { rows: defaults.rows }),
   }
+  if (normalizedType === 'coordinate_system') return { ...base, ...normalizeCoordinateData(source) }
+  if (normalizedType === 'solid_geometry') return { ...base, ...normalizeSolidData(source) }
   return {
     ...base,
     construction: has(source, 'construction') ? text(source.construction, '', 400) : defaults.construction,
@@ -211,6 +234,8 @@ export const subjectToolDefaultRenderHint = (type) => {
     chart: { engine: 'echarts', input: 'option', output: ['canvas', 'svg'] },
     table: { engine: 'html_table', input: ['columns', 'rows'], output: ['html'] },
     geometry: { engine: 'jsxgraph', input: ['construction', 'commands'], output: ['svg', 'html'] },
+    coordinate_system: { engine: 'svg', input: ['xRange', 'yRange', 'showGrid', 'connectPoints', 'points', 'segments'], output: ['svg'] },
+    solid_geometry: { engine: 'svg', input: ['solid', 'dimensions', 'show_hidden_edges', 'show_dimensions'], output: ['svg'] },
   }
   return clone(hints[normalizedType], {})
 }
@@ -484,6 +509,7 @@ const geometryPresets = {
   square: [{ x: 55, y: 15 }, { x: 125, y: 15 }, { x: 125, y: 85 }, { x: 55, y: 85 }],
   parallelogram: [{ x: 50, y: 22 }, { x: 150, y: 22 }, { x: 130, y: 78 }, { x: 30, y: 78 }],
   rhombus: [{ x: 90, y: 12 }, { x: 154, y: 50 }, { x: 90, y: 88 }, { x: 26, y: 50 }],
+  custom: [{ x: 42, y: 70 }, { x: 138, y: 70 }],
 }
 
 export const geometryPresetPoints = (construction = 'right_triangle') => clone(
@@ -494,7 +520,10 @@ export const geometryPresetPoints = (construction = 'right_triangle') => clone(
 export const geometryPoints = (data = {}) => {
   const preset = geometryPresetPoints(data.construction)
   const supplied = Array.isArray(data.points) ? data.points : []
-  const pointCount = supplied.length >= 3 && supplied.length <= 8 ? supplied.length : preset.length
+  const custom = data.construction === 'custom'
+  const pointCount = custom && Array.isArray(data.points)
+    ? Math.min(supplied.length, 12)
+    : supplied.length >= 3 && supplied.length <= 8 ? supplied.length : preset.length
   const defaults = Array.from({ length: pointCount }, (_, index) => preset[index] || {
     x: 90 + Math.cos((index / pointCount) * Math.PI * 2) * 42,
     y: 50 + Math.sin((index / pointCount) * Math.PI * 2) * 34,
@@ -508,12 +537,30 @@ export const geometryPoints = (data = {}) => {
   })
 }
 
+export const geometrySegments = (data = {}, pointCount = geometryPoints(data).length) => {
+  if (data.construction !== 'custom' || !Array.isArray(data.segments)) return []
+  const seen = new Set()
+  return data.segments.slice(0, 36).flatMap((segment) => {
+    if (!Array.isArray(segment) || segment.length !== 2) return []
+    const [start, end] = segment
+    if (!Number.isInteger(start) || !Number.isInteger(end) || start === end
+      || start < 0 || end < 0 || start >= pointCount || end >= pointCount) return []
+    const key = `${Math.min(start, end)}-${Math.max(start, end)}`
+    if (seen.has(key)) return []
+    seen.add(key)
+    return [[start, end]]
+  })
+}
+
 const geometryPointLabel = (index) => String.fromCharCode(65 + (index % 26))
 
 export const geometryMarkup = (data = {}) => {
   const points = geometryPoints(data)
-  const path = points.map((point, index) => `${index ? 'L' : 'M'}${point.x} ${point.y}`).join(' ') + ' Z'
-  return `<svg viewBox="0 0 180 100" role="group" aria-label="几何图形，拖动顶点调整形状"><path d="${path}"/>${points.map((point, index) => `<circle data-subject-point="${index}" cx="${point.x}" cy="${point.y}" r="5" tabindex="0" role="slider" aria-label="顶点 ${geometryPointLabel(index)}，方向键移动" aria-valuemin="8" aria-valuemax="172" aria-valuenow="${point.x}" aria-valuetext="${point.x}, ${point.y}"/><text x="${point.x}" y="${point.y - 8}">${geometryPointLabel(index)}</text>`).join('')}</svg>`
+  const custom = data.construction === 'custom'
+  const path = custom
+    ? geometrySegments(data, points.length).map(([start, end]) => `M${points[start].x} ${points[start].y} L${points[end].x} ${points[end].y}`).join(' ')
+    : points.map((point, index) => `${index ? 'L' : 'M'}${point.x} ${point.y}`).join(' ') + ' Z'
+  return `<svg viewBox="0 0 180 100" role="group" aria-label="几何图形，拖动顶点调整形状"><path d="${path}"${custom ? ' style="fill:none"' : ''}/>${points.map((point, index) => `<circle data-subject-point="${index}" cx="${point.x}" cy="${point.y}" r="5" tabindex="0" role="slider" aria-label="顶点 ${geometryPointLabel(index)}，方向键移动" aria-valuemin="8" aria-valuemax="172" aria-valuenow="${point.x}" aria-valuetext="${point.x}, ${point.y}"/><text x="${point.x}" y="${point.y - 8}">${geometryPointLabel(index)}</text>`).join('')}</svg>`
 }
 
 const diagramNodeFromMatch = (match) => {
@@ -742,14 +789,18 @@ export const subjectToolMarkup = ({ subjectType, data, title } = {}) => {
     const table = tableShape(state)
     return withContext(`<div class="a12-subject-tool__table-wrap"><table><thead><tr>${table.columns.map((column) => `<th>${escapeHtml(column)}</th>`).join('')}</tr></thead><tbody>${table.rows.map((row) => `<tr>${row.map((cell) => `<td>${escapeHtml(cell)}</td>`).join('')}</tr>`).join('')}</tbody></table></div>`)
   }
+  if (type === 'coordinate_system') return withContext(`<div class="a12-subject-tool__coordinate">${coordinateMarkup(state)}</div>`)
+  if (type === 'solid_geometry') return withContext(`<div class="a12-subject-tool__solid">${solidMarkup(state)}</div>`)
   return withContext(`<div class="a12-subject-tool__geometry">${geometryMarkup(state)}</div>`)
 }
 
 export const subjectToolRuntimeCss = `${katexStyles}
+  ${coordinateRuntimeCss}
+  .a12-subject-tool__solid{display:grid;place-items:center;min-width:0;min-height:0;overflow:hidden}.a12-subject-tool__solid svg{display:block;width:100%;height:100%;min-height:60px;max-height:100%}
   .a12-subject-tool .a12-subject-tool__geometry svg{height:100%!important;min-height:60px;overflow:visible}
   .a12-subject-tool [data-subject-point]{cursor:crosshair;touch-action:none;pointer-events:all}
   .a12-subject-tool [data-subject-point]:focus{outline:none;stroke:#ea580c;stroke-width:3}
-  .a12-subject-tool{display:grid!important;grid-template-rows:auto minmax(0,1fr) auto;gap:7px!important;width:100%;height:100%;box-sizing:border-box;min-width:0!important;padding:10px 12px!important;overflow:hidden!important;border:var(--widget-border-width,1px) solid var(--widget-border-color,#bfdbfe)!important;border-radius:var(--widget-border-radius,10px)!important;color:var(--widget-color,#27405f)!important;background:var(--widget-background,#f7fbff)!important;font:10px/1.35 "Microsoft YaHei",Arial,sans-serif!important;cursor:move}
+  .a12-subject-tool{display:grid!important;grid-template-rows:auto minmax(0,1fr) auto;gap:7px!important;width:100%;height:100%;box-sizing:border-box;min-width:0!important;padding:10px 12px!important;overflow:hidden!important;border:var(--widget-border-width,0px) solid var(--widget-border-color,transparent)!important;border-radius:var(--widget-border-radius,10px)!important;color:var(--widget-color,#27405f)!important;background:var(--widget-background,transparent)!important;font:10px/1.35 "Microsoft YaHei",Arial,sans-serif!important;cursor:move}
   .a12-subject-tool *{box-sizing:border-box}.a12-subject-tool__header{display:flex;align-items:baseline;gap:8px;min-width:0}.a12-subject-tool__header span{display:none!important}.a12-subject-tool__header strong{overflow:hidden;color:#173d78;font-size:14px;text-overflow:ellipsis;white-space:nowrap}.a12-subject-tool__note{margin:0;max-height:2.9em;overflow:hidden;color:#607491;font-size:11px;line-height:1.45;white-space:normal}.a12-subject-tool__formula{display:flex;align-items:center;justify-content:center;min-height:0;overflow:auto;color:#1d4ed8;font:700 clamp(15px,2.1vw,25px)/1.25 Georgia,"Times New Roman",serif;text-align:center}.a12-subject-tool__formula sup,.a12-subject-tool__formula sub{font-size:.62em}.a12-subject-tool__chemical{display:grid;place-items:center;min-width:0;min-height:0;overflow:hidden;color:#0f766e;font:700 clamp(20px,3vw,34px)/1.15 Arial,"Microsoft YaHei",sans-serif}.a12-subject-tool__chemical span{white-space:nowrap}.a12-subject-tool__chemical sub{font-size:.58em}.a12-subject-tool__chemical--structure{width:100%;height:100%;padding:2px}.a12-subject-tool__molecule{display:grid;place-items:center;width:100%;height:100%;min-width:0;min-height:0;overflow:hidden}.a12-subject-tool__molecule-image{display:block;width:100%;height:100%;min-width:0;min-height:0;object-fit:contain}.a12-subject-tool__molecule-error{max-width:100%;color:#b42318;font-size:.46em;font-weight:500;text-align:center;white-space:normal}.a12-subject-tool__diagram{display:flex;align-items:center;justify-content:center;gap:5px;min-width:0;min-height:0;overflow:hidden}.a12-subject-tool__diagram span{display:inline-flex;align-items:center;gap:5px;min-width:0;padding:5px 7px;border:1px solid #bfdbfe;border-radius:6px;color:#24558d;background:#eff6ff;font-size:9px;white-space:nowrap}.a12-subject-tool__diagram i{margin-right:-12px;color:#6b8bb4;font-size:12px;font-style:normal}.a12-subject-tool__diagram em{color:#8495aa;font-style:normal}.a12-subject-tool__chart-area{display:flex;flex-direction:column;min-width:0;min-height:0}.a12-subject-tool__chart-title{flex:none;overflow:hidden;color:#24558d;font-size:11px;text-overflow:ellipsis;white-space:nowrap}.a12-subject-tool__chart{display:flex;flex:1;align-items:flex-end;justify-content:space-around;gap:6px;min-height:42px;padding:5px 4px 0;border-bottom:1px solid rgb(96 116 145 / 22%)}.a12-subject-tool__bar{display:flex;flex:1 1 0;align-items:center;justify-content:flex-end;gap:3px;min-width:0;height:100%;flex-direction:column}.a12-subject-tool__bar i{display:block;flex:0 0 auto;width:min(20px,70%);min-height:6px;border-radius:4px 4px 1px 1px;background:#3b82f6}.a12-subject-tool__bar small{overflow:hidden;max-width:100%;color:#607491;font-size:8px;text-overflow:ellipsis;white-space:nowrap}.a12-subject-tool__table-wrap{min-height:0;overflow:auto;border:1px solid rgb(37 99 235 / 16%);border-radius:6px}.a12-subject-tool__table-wrap table{width:100%;border-collapse:collapse;font-size:9px}.a12-subject-tool__table-wrap th,.a12-subject-tool__table-wrap td{padding:4px 6px;border:1px solid rgb(37 99 235 / 14%);text-align:left;white-space:nowrap}.a12-subject-tool__table-wrap th{color:#24558d;background:#eff6ff}.a12-subject-tool__geometry{display:grid;place-items:center;min-height:0}.a12-subject-tool__geometry svg{display:block;width:100%;height:58px}.a12-subject-tool__geometry path{fill:none;stroke:#2563eb;stroke-width:2}.a12-subject-tool__geometry circle{fill:#fff;stroke:#2563eb;stroke-width:2}.a12-subject-tool__geometry text{fill:#315f9f;font-size:9px;text-anchor:middle}
   .a12-subject-tool{font-size:var(--subject-font-size,24px)!important}.a12-subject-tool__header strong{font-size:.6em}.a12-subject-tool__note{font-size:.48em}.a12-subject-tool__formula,.a12-subject-tool__chemical{font-size:1em}.a12-subject-tool__chart-title{font-size:.58em}.a12-subject-tool__bar small{font-size:.4em}.a12-subject-tool__table-wrap table{font-size:.45em}.a12-subject-tool__diagram span{font-size:.42em}.a12-subject-tool__geometry text{font-size:.42em}
   .a12-subject-tool__molecule-svg{display:block;width:100%;height:100%;min-width:0;min-height:0}

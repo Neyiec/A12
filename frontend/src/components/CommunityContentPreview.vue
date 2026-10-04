@@ -447,7 +447,7 @@ onBeforeUnmount(() => {
 .overview-array-item { display: grid; grid-template-columns: 28px minmax(0, 1fr); gap: 10px; align-items: start; padding: 11px 12px; border: 1px solid var(--zh-line-border); border-radius: var(--zh-radius8); background: var(--zh-background-light); }
 .overview-array-item > span { display: grid; place-items: center; width: 24px; height: 24px; border-radius: 7px; color: var(--zh-text-theme); background: var(--zh-background-option-on); font: 700 10px/1 var(--zh-font-number, inherit); }
 .overview-array-item p { margin: 2px 0 0; color: var(--zh-text-secondary); font-size: 12px; line-height: 1.6; }
-@media (max-width: 767.98px) {
+@media (max-width: 767.98px) and (hover: none) and (pointer: coarse) {
   .content-preview-toolbar { align-items: flex-start; flex-direction: column; gap: 7px; margin-bottom: 12px; }
   .content-view-switch { display: flex; width: 100%; }
   .content-view-switch button { flex: 1; min-height: 40px; font-size: 13px; }

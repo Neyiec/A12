@@ -2,7 +2,7 @@
 import { computed, ref } from 'vue'
 import { Aim, ArrowDown, ArrowLeft, Check, ChatDotRound, CircleCheck, DataAnalysis, DataBoard, Download, EditPen, FolderOpened, Grid, Headset, Histogram, MagicStick, Picture, SetUp, Share, VideoCamera, View } from '@element-plus/icons-vue'
 import WorkspaceToolButton from './WorkspaceToolButton.vue'
-import { subjectToolMenuOptions } from '../utils/subjectTool'
+import { subjectToolMenuGroups } from '../utils/subjectTool'
 
 const props = defineProps({
   title: { type: String, default: '未命名课件' },
@@ -69,8 +69,14 @@ const subjectMarks = {
   chemical_formula: 'CH',
   mermaid_diagram: '→',
   geometry: '△',
+  coordinate_system: '⊞',
+  solid_geometry: '⬡',
 }
-const subjects = subjectToolMenuOptions.map((item) => ({ ...item, mark: subjectMarks[item.value] || '·' }))
+const subjectGroups = subjectToolMenuGroups.map((group) => ({
+  ...group,
+  options: group.options.map((item) => ({ ...item, mark: subjectMarks[item.value] || '·' })),
+}))
+const subjects = subjectGroups.flatMap((group) => group.options)
 const workspaceModes = [
   { value: 'ppt', label: 'PPT 课件' },
   { value: 'document', label: '教学案' },
@@ -177,18 +183,21 @@ const toggleCompactTools = () => { compactToolsOpen.value = !compactToolsOpen.va
             />
             <template #dropdown>
               <el-dropdown-menu class="subject-picker-menu">
-                <el-dropdown-item
-                  v-for="subject in subjects"
-                  :key="subject.value"
-                  :command="subject.value"
-                  :class="{ 'is-subject-selected': selectedSubjectType === subject.value }"
-                  :aria-current="selectedSubjectType === subject.value ? 'true' : undefined"
-                >
-                  <span class="subject-picker-option">
-                    <i aria-hidden="true">{{ subject.mark }}</i>
-                    <span>{{ subject.label }}</span>
-                  </span>
-                </el-dropdown-item>
+                <template v-for="group in subjectGroups" :key="group.label">
+                  <li class="subject-picker-group-heading" role="presentation">{{ group.label }}</li>
+                  <el-dropdown-item
+                    v-for="subject in group.options"
+                    :key="subject.value"
+                    :command="subject.value"
+                    :class="{ 'is-subject-selected': selectedSubjectType === subject.value }"
+                    :aria-current="selectedSubjectType === subject.value ? 'true' : undefined"
+                  >
+                    <span class="subject-picker-option">
+                      <i aria-hidden="true">{{ subject.mark }}</i>
+                      <span>{{ subject.label }}</span>
+                    </span>
+                  </el-dropdown-item>
+                </template>
               </el-dropdown-menu>
             </template>
           </el-dropdown>
@@ -365,6 +374,20 @@ const toggleCompactTools = () => { compactToolsOpen.value = !compactToolsOpen.va
   min-width: 150px;
 }
 
+:global(.subject-picker-group-heading) {
+  margin: 6px 0 2px;
+  padding: 5px 16px 3px;
+  color: var(--zh-text-caption);
+  font-size: 11px;
+  font-weight: 700;
+  line-height: 1.3;
+}
+
+:global(.subject-picker-group-heading:not(:first-child)) {
+  border-top: 1px solid var(--zh-line-border);
+  padding-top: 9px;
+}
+
 :global(.subject-picker-option > i) {
   display: inline-grid;
   place-items: center;
@@ -410,7 +433,7 @@ const toggleCompactTools = () => { compactToolsOpen.value = !compactToolsOpen.va
 
 :global(.workspace-mobile-action) { display: none; }
 
-@media (max-width: 767.98px) {
+@media (max-width: 767.98px) and (hover: none) and (pointer: coarse) {
   :global(.workspace-mobile-action) { display: flex; }
   .toolbar {
     grid-template-columns: minmax(0, 1fr) auto;
@@ -459,11 +482,11 @@ const toggleCompactTools = () => { compactToolsOpen.value = !compactToolsOpen.va
 }
 .workspace-more { display: none; flex: none; }
 
-@media (max-width: 767.98px) { .workspace-more { display: inline-flex; } }
+@media (max-width: 767.98px) and (hover: none) and (pointer: coarse) { .workspace-more { display: inline-flex; } }
 .toolbar-actions > .el-button + .el-button { margin-left: 0; }
 .toolbar-actions > .el-button, .toolbar-actions > .el-dropdown { flex-shrink: 0; }
 .project-title strong { max-width: 40vw; }
-@media (max-width: 767.98px) {
+@media (max-width: 767.98px) and (hover: none) and (pointer: coarse) {
   .toolbar { grid-template-rows: 56px; padding-inline: 12px; }
   .project-title { gap: 4px; }
   .project-title > .el-button { width: 44px; height: 44px; flex: none; margin: 0; font-size: 19px; }

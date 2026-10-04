@@ -702,7 +702,7 @@ const indexResultTimeRange = (item) => {
 onMounted(() => {
   void loadResources()
   void loadTaxonomy()
-  mobileMediaQuery = window.matchMedia('(max-width: 767.98px)')
+  mobileMediaQuery = window.matchMedia('(max-width: 767.98px) and (hover: none) and (pointer: coarse)')
   isMobile.value = mobileMediaQuery.matches
   mobileMediaQuery.addEventListener('change', handleMobileMediaChange)
 })
@@ -1140,7 +1140,7 @@ onBeforeUnmount(() => {
 @media (min-width: 768px) and (max-width: 1023.98px) { .folder-panel { width: 76px; padding: 12px 6px; }.panel-title { justify-content: center; padding: 0 0 8px; }.panel-title > span { display: none; }.folder-panel > button { flex-direction: column; gap: 4px; padding: 8px 2px; }.folder-panel > button .el-icon { display: none; }.folder-panel > button > span { display: block; max-width: 100%; overflow: hidden; font-size: 11px; text-align: center; text-overflow: ellipsis; white-space: nowrap; }.privacy-note { display: none; } }
 /* 手机档：分类面板隐藏（顶部 el-select 承载入口）、主表格切换为卡片列表 */
 /* 手机资源页：概览压缩为一行，搜索和素材列表进入首屏。 */
-@media (max-width: 767.98px) {
+@media (max-width: 767.98px) and (hover: none) and (pointer: coarse) {
   .folder-panel { display: none; }
   .resource-card-list { display: grid; }
   .resource-card { display: flex; justify-content: space-between; border: 1px solid var(--zh-line-border); border-radius: var(--zh-radius12); }

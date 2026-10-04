@@ -272,6 +272,15 @@ body {
   overflow-x: hidden;
 }
 
+/* 窄窗口中的电脑保留桌面版最小布局宽度；手机样式由窄屏与触控特征共同触发。 */
+@media (max-width: 767.98px) and (hover: hover) and (pointer: fine) {
+  html,
+  body {
+    min-width: 768px;
+    overflow-x: auto;
+  }
+}
+
 /* 触屏设备：依赖 hover 才显示的操作按钮常显（各组件按钮加 data-hover-reveal） */
 @media (hover: none) and (pointer: coarse) {
   [data-hover-reveal] {

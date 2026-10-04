@@ -121,5 +121,5 @@ const apply = () => { if (selectedTemplate.value?.theme) emit('apply', selectedT
 .template-card-preview[data-template-theme*="科技"] i, .template-card-preview[data-template-theme*="赛博"] i, .template-card-preview[data-template-theme*="终端"] i { background: #8ed8ff; }
 .template-card-selected { position: absolute; top: 7px; right: 7px; padding: 3px 6px; border-radius: 999px; color: #fff; background: var(--zh-text-theme); font-size: 9px; }
 @media (max-width: 1023.98px) { .template-picker-layout { grid-template-columns: 1fr; } .template-outline-panel { max-height: 250px; overflow: auto; } .template-card-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); } }
-@media (max-width: 767.98px) { .template-card-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); } .template-card { padding: 10px; } .template-card strong { font-size: 13px; } .template-card small { font-size: 11px; } }
+@media (max-width: 767.98px) and (hover: none) and (pointer: coarse) { .template-card-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); } .template-card { padding: 10px; } .template-card strong { font-size: 13px; } .template-card small { font-size: 11px; } }
 </style>

@@ -462,7 +462,7 @@ const close = () => emit('update:modelValue', false)
   color: var(--zh-text-theme);
 }
 
-@media (max-width: 767.98px) {
+@media (max-width: 767.98px) and (hover: none) and (pointer: coarse) {
   .intent-clarification-dialog :deep(.el-dialog__header),
   .intent-clarification-dialog :deep(.el-dialog__body),
   .intent-clarification-dialog :deep(.el-dialog__footer) {

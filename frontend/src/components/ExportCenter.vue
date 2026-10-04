@@ -49,7 +49,7 @@ const versionOptions = ref([])
 const projectOptionsLoading = ref(false)
 const versionOptionsLoading = ref(false)
 
-const MOBILE_MEDIA_QUERY = '(max-width: 767.98px)'
+const MOBILE_MEDIA_QUERY = '(max-width: 767.98px) and (hover: none) and (pointer: coarse)'
 const isMobile = ref(window.matchMedia(MOBILE_MEDIA_QUERY).matches)
 const updateIsMobile = () => { isMobile.value = window.matchMedia(MOBILE_MEDIA_QUERY).matches }
 
@@ -1051,7 +1051,7 @@ onBeforeUnmount(() => {
   .active-task > .el-button { grid-column: 2; justify-self: start; }
   .task-table { overflow-x: auto; }
 }
-@media (max-width: 767.98px) {
+@media (max-width: 767.98px) and (hover: none) and (pointer: coarse) {
   .export-page { display: flex; flex-direction: column; width: min(100% - 28px, 1220px); padding: 20px 0 calc(100px + env(safe-area-inset-bottom)); }
   .export-heading, .flow-console-header, .history-header, .quality-card-heading { align-items: stretch; flex-direction: column; gap: 14px; }
   .export-heading h1 { font-size: 26px; }

@@ -405,7 +405,7 @@ const flushAutosave = () => {
 }
 
 onMounted(() => {
-  mobileMediaQuery = window.matchMedia('(max-width: 767.98px)')
+  mobileMediaQuery = window.matchMedia('(max-width: 767.98px) and (hover: none) and (pointer: coarse)')
   isMobile.value = mobileMediaQuery.matches
   mobileMediaQuery.addEventListener('change', handleMobileMediaChange)
 })
@@ -583,8 +583,8 @@ defineExpose({
 .lesson-plan-process-card-actions { display: flex; justify-content: flex-end; gap: 8px; padding-top: 8px; border-top: 1px solid var(--zh-line-parting); }
 .lesson-plan-process-card-actions :deep(.el-button) { min-width: 44px; min-height: 44px; margin: 0; }
 @media (max-width: 1023.98px) { .lesson-plan-editor-toolbar { align-items: flex-start; flex-direction: column; } .lesson-plan-editor-actions { justify-content: flex-start; } .lesson-plan-field-grid, .lesson-plan-two-columns, .lesson-plan-process-details { grid-template-columns: 1fr 1fr; } .lesson-plan-process-row { grid-template-columns: 28px 1fr 82px 28px; } .lesson-plan-process-details { grid-column: 2 / -1; } .lesson-plan-process-row > :is(.lesson-plan-index, .el-input, .el-input-number, .el-button) { margin-top: 0; } }
-@media (max-width: 767.98px) { .lesson-plan-editor-toolbar { padding: 14px; } .lesson-plan-editor-actions { width: 100%; } .lesson-plan-page-count { margin-right: auto; } .lesson-plan-field-grid, .lesson-plan-two-columns, .lesson-plan-process-details { grid-template-columns: 1fr; } .lesson-plan-process-details { grid-column: auto; } .lesson-plan-inline-fields { grid-template-columns: minmax(0, 1fr) 92px 44px; } .lesson-plan-inline-fields :deep(.el-button) { width: 44px; min-height: 44px; } }
-@media (max-width: 767.98px) {
+@media (max-width: 767.98px) and (hover: none) and (pointer: coarse) { .lesson-plan-editor-toolbar { padding: 14px; } .lesson-plan-editor-actions { width: 100%; } .lesson-plan-page-count { margin-right: auto; } .lesson-plan-field-grid, .lesson-plan-two-columns, .lesson-plan-process-details { grid-template-columns: 1fr; } .lesson-plan-process-details { grid-column: auto; } .lesson-plan-inline-fields { grid-template-columns: minmax(0, 1fr) 92px 44px; } .lesson-plan-inline-fields :deep(.el-button) { width: 44px; min-height: 44px; } }
+@media (max-width: 767.98px) and (hover: none) and (pointer: coarse) {
   .lesson-plan-editor { gap: 0; padding-bottom: calc(28px + var(--zh-safe-bottom)); background: var(--zh-background-primary); }
   .lesson-plan-request, .lesson-plan-section { border: 0; border-bottom: 1px solid var(--zh-line-parting); border-radius: 0; box-shadow: none; }
   .lesson-plan-two-columns { gap: 0; }

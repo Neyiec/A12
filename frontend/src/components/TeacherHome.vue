@@ -622,7 +622,7 @@ const handleManagedProjectCommand = ({ action, project }) => {
 }
 
 /** 手机档视口判断（<768px）：项目操作收进下拉、上传改「选择文件」等触屏降级。 */
-const mobileViewport = window.matchMedia('(max-width: 767.98px)')
+const mobileViewport = window.matchMedia('(max-width: 767.98px) and (hover: none) and (pointer: coarse)')
 const isMobile = ref(mobileViewport.matches)
 const handleMobileViewportChange = (event) => { isMobile.value = event.matches }
 onMounted(() => mobileViewport.addEventListener('change', handleMobileViewportChange))
@@ -931,7 +931,7 @@ h1 { margin: 0; font-size: clamp(36px, 4vw, 48px); line-height: 1.15; letter-spa
 .temp-resource-actions { display: flex; align-items: center; gap: 2px; opacity: 0; transition: opacity 200ms cubic-bezier(0.4, 0, 0.2, 1); }
 .temp-resource-chip:hover .temp-resource-actions, .temp-resource-chip:focus-within .temp-resource-actions { opacity: 1; }
 /* 无 hover（触屏/平板）常显动作按钮，避免转存/移除不可达 */
-@media (hover: none) and (pointer: coarse), (max-width: 767.98px) {
+@media (hover: none) and (pointer: coarse), (max-width: 767.98px) and (hover: none) and (pointer: coarse) {
   .temp-resource-actions { opacity: 1; }
 }
 .session-fields { display:grid; grid-template-columns: 1.5fr 1fr 1fr; gap:12px; }.session-fields :deep(.el-form-item){margin-bottom:0}.prompt-preview{width:100%;padding:10px 12px;border-radius:var(--zh-radius8);color:var(--zh-text-secondary);background:var(--zh-background-light);line-height:1.65;white-space:pre-wrap}.resource-picker{display:grid;gap:8px;max-height:160px;overflow:auto;padding:10px 12px;border:1px solid var(--zh-line-border);border-radius:var(--zh-radius8);background:var(--zh-background-light)}.empty-resources{color:var(--zh-text-caption);font-size:12px}
@@ -943,7 +943,7 @@ h1 { margin: 0; font-size: clamp(36px, 4vw, 48px); line-height: 1.15; letter-spa
 .voice-wave.is-recording i:nth-child(1){animation-delay:0s}.voice-wave.is-recording i:nth-child(2){animation-delay:.08s}.voice-wave.is-recording i:nth-child(3){animation-delay:.16s}.voice-wave.is-recording i:nth-child(4){animation-delay:.24s}.voice-wave.is-recording i:nth-child(5){animation-delay:.32s}.voice-wave.is-recording i:nth-child(6){animation-delay:.4s}.voice-wave.is-recording i:nth-child(7){animation-delay:.48s}.voice-wave.is-recording i:nth-child(8){animation-delay:.56s}.voice-wave.is-recording i:nth-child(9){animation-delay:.64s}
 @keyframes waveMove{0%,100%{transform:scaleY(.35)}50%{transform:scaleY(1)}}
 
-@media (max-width: 767.98px) {
+@media (max-width: 767.98px) and (hover: none) and (pointer: coarse) {
   .home-welcome:not(.is-chat-mode) {
     /* 手机档顶栏 48px+safe-top，底部 TabBar 56px+safe-bottom */
     width: 100%;

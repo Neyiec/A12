@@ -1,4 +1,4 @@
-import { geometryPoints } from './subjectTool.js'
+import { geometryPoints, geometrySegments } from './subjectTool.js'
 
 const constrainPoints = (draft, construction, movedIndex, previous) => {
   if (!Array.isArray(draft) || movedIndex < 0) return draft
@@ -33,8 +33,11 @@ export function bindSubjectInteractions(root, onChange) {
   const readData = owner => {
     try { return JSON.parse(owner.getAttribute('data-subject-data') || '{}') } catch { return {} }
   }
-  const paint = (svg, points) => {
-    svg.querySelector('path').setAttribute('d', points.map((point, index) => `${index ? 'L' : 'M'}${point.x} ${point.y}`).join(' ') + ' Z')
+  const paint = (svg, points, data) => {
+    const path = data.construction === 'custom'
+      ? geometrySegments(data, points.length).map(([start, end]) => `M${points[start].x} ${points[start].y} L${points[end].x} ${points[end].y}`).join(' ')
+      : points.map((point, index) => `${index ? 'L' : 'M'}${point.x} ${point.y}`).join(' ') + ' Z'
+    svg.querySelector('path').setAttribute('d', path)
     points.forEach((point, index) => {
       const handle = svg.querySelector(`[data-subject-point="${index}"]`)
       handle.setAttribute('cx', point.x)
@@ -72,7 +75,7 @@ export function bindSubjectInteractions(root, onChange) {
       y: Math.round(Math.max(8, Math.min(92, position.y)) * 10) / 10,
     }
     gesture.points = constrainPoints(gesture.points, gesture.data.construction, gesture.index, previous)
-    paint(gesture.svg, gesture.points)
+    paint(gesture.svg, gesture.points, gesture.data)
     event.preventDefault()
     event.stopPropagation()
   }
@@ -100,7 +103,7 @@ export function bindSubjectInteractions(root, onChange) {
     point.x = Math.max(8, Math.min(172, point.x + delta[0] * step))
     point.y = Math.max(8, Math.min(92, point.y + delta[1] * step))
     const constrained = constrainPoints(points, data.construction, index, previous)
-    paint(handle.closest('svg'), constrained)
+    paint(handle.closest('svg'), constrained, data)
     owner.setAttribute('data-subject-data', JSON.stringify({ ...data, points: constrained }))
     onChange?.(owner, { ...data, points: constrained })
     event.preventDefault()

@@ -781,7 +781,7 @@ h1 span {
   .result-types { justify-content: flex-start; }
 }
 
-@media (max-width: 767.98px) {
+@media (max-width: 767.98px) and (hover: none) and (pointer: coarse) {
   .site-header, .hero-section { width: min(100% - 32px, 1180px); }
   .site-header { min-height: calc(70px + var(--zh-safe-top)); }
   .header-action { min-height: 44px; padding: 0 13px; }

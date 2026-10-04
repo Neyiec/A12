@@ -1,7 +1,7 @@
 <script setup>
 import { computed, ref, watch } from 'vue'
 import { ChatDotRound, Close, CopyDocument, Delete, Plus, RefreshLeft, Upload } from '@element-plus/icons-vue'
-import { normalizeSubjectToolData, normalizeSubjectToolType, subjectToolMenuOptions } from '../utils/subjectTool'
+import { normalizeSubjectToolData, normalizeSubjectToolType, subjectToolMenuGroups } from '../utils/subjectTool'
 import { prepareChemicalStructure } from '../utils/chemicalStructure'
 import { interactiveModuleTypeInfo, normalizeInteractiveModuleType } from '../utils/interactiveModule'
 import SubjectFormulaEditor from './SubjectFormulaEditor.vue'
@@ -12,6 +12,8 @@ import SubjectDiagramEditor from './SubjectDiagramEditor.vue'
 import SubjectChartEditor from './SubjectChartEditor.vue'
 import SubjectTableEditor from './SubjectTableEditor.vue'
 import SubjectGeometryEditor from './SubjectGeometryEditor.vue'
+import SubjectCoordinateEditor from './SubjectCoordinateEditor.vue'
+import SubjectSolidEditor from './SubjectSolidEditor.vue'
 import WorkspaceColorField from './WorkspaceColorField.vue'
 
 const waterMolfileExample = `Water
@@ -447,11 +449,11 @@ const resetSelectedStyle = () => {
       fillColor: '#dbeafe', borderColor: '#2563eb', borderWidth: 2,
       borderRadius: props.selectedElement.shapeKind === 'rounded' ? 14 : 0, opacity: 100,
     },
-    image: { tintColor: '#2563eb', borderColor: '#bfdbfe', borderWidth: 1, borderRadius: 14, objectFit: 'cover', showCaption: true, opacity: 100 },
-    chart: { color: '#2563eb', backgroundColor: '#eff6ff', borderColor: '#bfdbfe', borderWidth: 1, borderRadius: 14, opacity: 100 },
-    subject: { color: '#2563eb', backgroundColor: '#eff6ff', borderColor: '#bfdbfe', borderWidth: 1, fontSize: 24, borderRadius: 12, opacity: 100 },
+    image: { tintColor: '#2563eb', borderColor: 'transparent', borderWidth: 0, borderRadius: 14, objectFit: 'cover', showCaption: true, opacity: 100 },
+    chart: { color: '#2563eb', backgroundColor: 'transparent', borderColor: 'transparent', borderWidth: 0, borderRadius: 14, opacity: 100 },
+    subject: { color: '#2563eb', backgroundColor: 'transparent', borderColor: 'transparent', borderWidth: 0, fontSize: 24, borderRadius: 12, opacity: 100 },
   }
-  const fallback = { color: '#2563eb', backgroundColor: '#eff6ff', borderRadius: 12, opacity: 100 }
+  const fallback = { color: '#2563eb', backgroundColor: 'transparent', borderColor: 'transparent', borderWidth: 0, borderRadius: 12, opacity: 100 }
   Object.entries(defaults[props.selectedElement.type] || fallback).forEach(([key, value]) => updateStyle(key, value))
 }
 
@@ -695,7 +697,11 @@ const typeInitials = {
           <label>名称</label>
           <el-input :model-value="contentValue" maxlength="80" show-word-limit @update:model-value="updateContent" />
           <label v-if="!standaloneDataTool">工具类型</label>
-          <el-select v-if="!standaloneDataTool" :model-value="subjectType" @update:model-value="updateSubjectType"><el-option v-for="option in subjectToolMenuOptions" :key="option.value" :label="option.label" :value="option.value" /></el-select>
+          <el-select v-if="!standaloneDataTool" :model-value="subjectType" @update:model-value="updateSubjectType">
+            <el-option-group v-for="group in subjectToolMenuGroups" :key="group.label" :label="group.label">
+              <el-option v-for="option in group.options" :key="option.value" :label="option.label" :value="option.value" />
+            </el-option-group>
+          </el-select>
 
           <template v-if="subjectType === 'math_formula'">
             <label>数学公式</label>
@@ -748,6 +754,16 @@ const typeInitials = {
           <template v-else-if="subjectType === 'table'">
             <label>探究数据表</label>
             <SubjectTableEditor :key="selectedElement.id" :model-value="{ columns: subjectData.columns, rows: subjectData.rows }" @update:model-value="updateData({ ...subjectData, ...$event })" />
+          </template>
+
+          <template v-else-if="subjectType === 'coordinate_system'">
+            <label>坐标系</label>
+            <SubjectCoordinateEditor :key="selectedElement.id" :model-value="subjectData" @update:model-value="updateData($event)" />
+          </template>
+
+          <template v-else-if="subjectType === 'solid_geometry'">
+            <label>立体图形</label>
+            <SubjectSolidEditor :key="selectedElement.id" :model-value="subjectData" @update:model-value="updateData($event)" />
           </template>
 
           <template v-else>
@@ -864,25 +880,25 @@ const typeInitials = {
           <label>图片色调</label>
           <WorkspaceColorField aria-label="图片色调" :model-value="styleValue('tintColor', '#2563eb')" @update:model-value="updateStyle('tintColor', $event)" />
           <label>边框颜色</label>
-          <WorkspaceColorField aria-label="图片边框颜色" :model-value="styleValue('borderColor', '#bfdbfe')" @update:model-value="updateStyle('borderColor', $event)" />
+          <WorkspaceColorField aria-label="图片边框颜色" :model-value="styleValue('borderColor', 'transparent')" @update:model-value="updateStyle('borderColor', $event)" />
           <label>图片适配</label>
           <el-select :model-value="styleValue('objectFit', 'cover')" @update:model-value="updateStyle('objectFit', $event)"><el-option label="裁切填充" value="cover" /><el-option label="完整显示" value="contain" /></el-select>
           <label class="switch-field"><span>显示图片标题</span><el-switch :model-value="styleValue('showCaption', true)" @update:model-value="updateStyle('showCaption', $event)" /></label>
           <label>圆角</label>
           <el-input-number :model-value="Number(styleValue('borderRadius', 12))" :min="0" :max="40" controls-position="right" @update:model-value="updateStyle('borderRadius', $event)" />
           <label>边框宽度</label>
-          <el-input-number :model-value="Number(styleValue('borderWidth', 1))" :min="0" :max="8" controls-position="right" @update:model-value="updateStyle('borderWidth', $event)" />
+          <el-input-number :model-value="Number(styleValue('borderWidth', 0))" :min="0" :max="8" controls-position="right" @update:model-value="updateStyle('borderWidth', $event)" />
         </template>
 
         <template v-else-if="selectedElement.type === 'chart'">
           <label>图表主色</label>
           <WorkspaceColorField aria-label="图表主色" :model-value="styleValue('color', '#2563eb')" @update:model-value="updateStyle('color', $event)" />
           <label>图表底色</label>
-          <WorkspaceColorField aria-label="图表底色" :model-value="styleValue('backgroundColor', '#eff6ff')" @update:model-value="updateStyle('backgroundColor', $event)" />
+          <WorkspaceColorField aria-label="图表底色" :model-value="styleValue('backgroundColor', 'transparent')" @update:model-value="updateStyle('backgroundColor', $event)" />
           <label>边框颜色</label>
-          <WorkspaceColorField aria-label="图表边框颜色" :model-value="styleValue('borderColor', '#bfdbfe')" @update:model-value="updateStyle('borderColor', $event)" />
+          <WorkspaceColorField aria-label="图表边框颜色" :model-value="styleValue('borderColor', 'transparent')" @update:model-value="updateStyle('borderColor', $event)" />
           <label>边框宽度</label>
-          <el-input-number aria-label="图表边框宽度" :model-value="Number(styleValue('borderWidth', 1))" :min="0" :max="8" controls-position="right" @update:model-value="updateStyle('borderWidth', $event)" />
+          <el-input-number aria-label="图表边框宽度" :model-value="Number(styleValue('borderWidth', 0))" :min="0" :max="8" controls-position="right" @update:model-value="updateStyle('borderWidth', $event)" />
           <label>圆角</label>
           <el-input-number :model-value="Number(styleValue('borderRadius', 12))" :min="0" :max="40" controls-position="right" @update:model-value="updateStyle('borderRadius', $event)" />
         </template>
@@ -891,11 +907,11 @@ const typeInitials = {
           <label>主色</label>
           <WorkspaceColorField :aria-label="`${subjectContextLabel}主色`" :model-value="styleValue('color', '#2563eb')" @update:model-value="updateStyle('color', $event)" />
           <label>{{ subjectContextLabel }}背景色</label>
-          <WorkspaceColorField :aria-label="`${subjectContextLabel}背景色`" :model-value="styleValue('backgroundColor', '#eff6ff')" @update:model-value="updateStyle('backgroundColor', $event)" />
+          <WorkspaceColorField :aria-label="`${subjectContextLabel}背景色`" :model-value="styleValue('backgroundColor', 'transparent')" @update:model-value="updateStyle('backgroundColor', $event)" />
           <label>边框颜色</label>
-          <WorkspaceColorField :aria-label="`${subjectContextLabel}边框颜色`" :model-value="styleValue('borderColor', '#bfdbfe')" @update:model-value="updateStyle('borderColor', $event)" />
+          <WorkspaceColorField :aria-label="`${subjectContextLabel}边框颜色`" :model-value="styleValue('borderColor', 'transparent')" @update:model-value="updateStyle('borderColor', $event)" />
           <label>边框宽度</label>
-          <el-input-number :aria-label="`${subjectContextLabel}边框宽度`" :model-value="Number(styleValue('borderWidth', 1))" :min="0" :max="8" controls-position="right" @update:model-value="updateStyle('borderWidth', $event)" />
+          <el-input-number :aria-label="`${subjectContextLabel}边框宽度`" :model-value="Number(styleValue('borderWidth', 0))" :min="0" :max="8" controls-position="right" @update:model-value="updateStyle('borderWidth', $event)" />
           <label>主要内容字号</label>
           <el-input-number :aria-label="`${subjectContextLabel}主要内容字号`" :model-value="Number(styleValue('fontSize', 24))" :min="10" :max="64" controls-position="right" @update:model-value="updateStyle('fontSize', $event)" />
           <label>圆角</label>
@@ -906,7 +922,7 @@ const typeInitials = {
           <label>组件主色</label>
           <WorkspaceColorField aria-label="组件主色" :model-value="styleValue('color', '#2563eb')" @update:model-value="updateStyle('color', $event)" />
           <label>组件底色</label>
-          <WorkspaceColorField aria-label="组件底色" :model-value="styleValue('backgroundColor', '#eff6ff')" @update:model-value="updateStyle('backgroundColor', $event)" />
+          <WorkspaceColorField aria-label="组件底色" :model-value="styleValue('backgroundColor', 'transparent')" @update:model-value="updateStyle('backgroundColor', $event)" />
           <label>圆角</label>
           <el-input-number :model-value="Number(styleValue('borderRadius', 12))" :min="0" :max="40" controls-position="right" @update:model-value="updateStyle('borderRadius', $event)" />
         </template>
@@ -1207,5 +1223,5 @@ const typeInitials = {
 .arrange-button-grid-compact { grid-template-columns: repeat(3, minmax(0, 1fr)); }
 .arrange-button-grid :deep(.el-button) { min-width: 0; margin: 0; padding: 7px 4px; font-size: 10px; }
 .arrange-hint { margin: 0; color: var(--zh-text-caption); font-size: 9px; line-height: 1.5; }
-@media (max-width: 420px) { .h5-feedback-grid { grid-template-columns: 1fr; } }
+@media (max-width: 420px) and (hover: none) and (pointer: coarse) { .h5-feedback-grid { grid-template-columns: 1fr; } }
 </style>

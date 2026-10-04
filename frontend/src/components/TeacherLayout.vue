@@ -577,7 +577,7 @@ watch(latestSessionPush, (session) => {
   .top-nav-item { padding: 0 11px; }
   .top-nav-item span { display: none; }
 }
-@media (max-width: 767.98px) {
+@media (max-width: 767.98px) and (hover: none) and (pointer: coarse) {
   .teacher-shell,
   .teacher-shell.assistant-mode,
   .teacher-shell.assistant-mode.sidebar-collapsed {

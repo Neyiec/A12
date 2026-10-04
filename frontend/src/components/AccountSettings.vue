@@ -578,14 +578,14 @@ onBeforeUnmount(() => clearInterval(contactTimer))
 }
 
 /* 响应式（断点已按 design.md §9.3 收敛：平板 1023.98 / 手机 767.98） */
-@media(max-width:1023.98px){
+@media (max-width:1023.98px){
   .settings-page { padding: 28px 16px; }
   .settings-grid { grid-template-columns: 1fr; }
   .danger-zone :deep(.el-card__body) { align-items: flex-start; flex-direction: column; }
   .pref-option-grid--5{grid-template-columns:repeat(3,minmax(0,1fr))}
   .pref-option-grid--4{grid-template-columns:repeat(2,minmax(0,1fr))}
 }
-@media(max-width:767.98px){
+@media (max-width:767.98px) and (hover: none) and (pointer: coarse){
   .settings-page { max-width: none; padding: 20px 14px calc(100px + env(safe-area-inset-bottom)); }
   .settings-heading { margin-bottom: 20px; }
   .settings-heading h1 { margin: 5px 0 7px; font-size: 26px; letter-spacing: var(--zh-tracking-tight); }

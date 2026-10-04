@@ -109,5 +109,5 @@ function toggleGraph() {
 .learning-graph-canvas { display: block; width: 100%; min-width: 620px; height: auto; }
 .learning-graph-empty { padding: 28px 0; text-align: center; color: #768297; }
 .learning-graph-note { margin: 6px 0 0; color: #8490a0; font-size: 11px; }
-@media (max-width: 600px) { .learning-graph-panel { padding: 14px; } .learning-graph-header { align-items: flex-start; } .learning-graph-switch { font-size: 12px; padding: 7px 10px; } }
+@media (max-width: 600px) and (hover: none) and (pointer: coarse) { .learning-graph-panel { padding: 14px; } .learning-graph-header { align-items: flex-start; } .learning-graph-switch { font-size: 12px; padding: 7px 10px; } }
 </style>

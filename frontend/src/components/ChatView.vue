@@ -100,10 +100,10 @@ watch(selectedReasoningEffort, (value) => localStorage.setItem('a12:reasoning-ef
 
 // ========== 响应式断点（design.md §9.3：手机档 <768px） ==========
 /** 手机档断点：补充信息表单由 display:table 降级为卡片堆叠渲染。 */
-const isMobile = ref(window.matchMedia('(max-width: 767.98px)').matches)
+const isMobile = ref(window.matchMedia('(max-width: 767.98px) and (hover: none) and (pointer: coarse)').matches)
 /** 触屏设备（无 hover + 粗指针）：Enter 不触发发送，避免与移动端键盘回车冲突。 */
 const isTouchDevice = window.matchMedia('(hover: none) and (pointer: coarse)').matches
-const mobileBreakpointQuery = window.matchMedia('(max-width: 767.98px)')
+const mobileBreakpointQuery = window.matchMedia('(max-width: 767.98px) and (hover: none) and (pointer: coarse)')
 const syncMobileBreakpoint = () => { isMobile.value = mobileBreakpointQuery.matches }
 mobileBreakpointQuery.addEventListener('change', syncMobileBreakpoint)
 onUnmounted(() => mobileBreakpointQuery.removeEventListener('change', syncMobileBreakpoint))
@@ -2513,7 +2513,7 @@ async function restoreSession() {
 }
 
 /* ===== 响应式（断点收敛：手机档 max-width 767.98px，design.md §9.3） ===== */
-@media (max-width: 767.98px) {
+@media (max-width: 767.98px) and (hover: none) and (pointer: coarse) {
   .chat-container {
     padding: 0 12px;
     /* 手机档顶栏 48px+safe-top、底部 TabBar 56px+safe-bottom（TeacherLayout） */

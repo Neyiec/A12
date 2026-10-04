@@ -438,7 +438,7 @@ const handleStepsMediaChange = (e) => {
   isMobileViewport.value = e.matches
 }
 if (typeof window !== 'undefined' && typeof window.matchMedia === 'function') {
-  stepsMediaQuery = window.matchMedia('(max-width: 767.98px)')
+  stepsMediaQuery = window.matchMedia('(max-width: 767.98px) and (hover: none) and (pointer: coarse)')
   isMobileViewport.value = stepsMediaQuery.matches
   stepsMediaQuery.addEventListener('change', handleStepsMediaChange)
 }
@@ -964,7 +964,7 @@ onBeforeUnmount(() => {
 .reset-tip { margin: -8px 0 18px; color: var(--zh-text-caption); font-size: var(--zh-font-size13); }
 .code-row { display: flex; width: 100%; gap: 8px; }.code-row .el-button { flex: 0 0 auto; }
 
-@media (max-width: 767.98px) {
+@media (max-width: 767.98px) and (hover: none) and (pointer: coarse) {
   :global(.auth-dialog.el-dialog) {
     display: flex;
     flex-direction: column;
