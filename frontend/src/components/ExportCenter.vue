@@ -11,6 +11,7 @@ import { ElMessage, ElMessageBox } from 'element-plus'
 import { CircleCheck, CircleClose, DocumentChecked, Download, Files, FolderOpened, MoreFilled, Refresh, Search, Timer, View, Warning } from '@element-plus/icons-vue'
 import { EXPORT_PAGE } from '../config/teacherPages.config.js'
 import { useUserStore } from '../storage/user.js'
+import LearningVideoTasks from './LearningVideoTasks.vue'
 import { cancelExportTask, createExportPreviewUrl, createExportTask, downloadExportArtifact, getExportArtifact, getExportQualityReport, getExportTask, getProject, listExportTasks, listProjects, listProjectVersions, precheckProjectExport, retryExportTask, saveProjectVersion } from '../apis/teacher'
 
 const route = useRoute()
@@ -684,6 +685,7 @@ onBeforeUnmount(() => {
 
 <template>
   <main class="export-page">
+    <LearningVideoTasks />
     <header class="export-heading">
       <div>
         <p class="eyebrow">成果管理</p>

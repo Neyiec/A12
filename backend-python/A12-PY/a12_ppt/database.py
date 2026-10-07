@@ -62,6 +62,17 @@ def ensure_ai_schema() -> bool:
           resource_key VARCHAR(180) NOT NULL, content_sha256 VARCHAR(64) NOT NULL,
           node_id VARCHAR(80) NOT NULL, excerpt TEXT NOT NULL, created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
           UNIQUE(user_id, course_id, resource_key, node_id))""",
+        """CREATE TABLE IF NOT EXISTS a12_course_graph_version (
+          user_id VARCHAR(64) NOT NULL, course_id VARCHAR(80) NOT NULL, version INT NOT NULL,
+          title VARCHAR(255) NOT NULL, graph_data JSONB NOT NULL,
+          created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(), PRIMARY KEY(user_id,course_id,version))""",
+        """CREATE TABLE IF NOT EXISTS a12_learning_video_job (
+          job_id VARCHAR(32) PRIMARY KEY, user_id VARCHAR(64) NOT NULL, title VARCHAR(255) NOT NULL,
+          payload JSONB NOT NULL, status VARCHAR(20) NOT NULL DEFAULT 'queued',progress INT NOT NULL DEFAULT 0,
+          attempts INT NOT NULL DEFAULT 0, error TEXT NOT NULL DEFAULT '', metadata JSONB NOT NULL DEFAULT '{}',
+          expires_at TIMESTAMPTZ,created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW())""",
+        "ALTER TABLE a12_learning_video_job ADD COLUMN IF NOT EXISTS lease_id VARCHAR(32)",
+        "CREATE INDEX IF NOT EXISTS idx_a12_video_queue ON a12_learning_video_job(status,created_at)",
         """CREATE TABLE IF NOT EXISTS a12_outline_strategy_run (
           id BIGSERIAL PRIMARY KEY, user_id VARCHAR(64) NOT NULL, session_id VARCHAR(80) NOT NULL,
           course_id VARCHAR(80), strategy VARCHAR(32) NOT NULL, graph_version INT,

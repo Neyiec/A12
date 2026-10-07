@@ -3862,6 +3862,30 @@ Python 使用内部密钥请求 `GET /api/v1/internal/ai-runtime-config`，该�
 
 函数坐标图支持 `{"type":"function_graph","data":{"coefficients":[0,0,1],"x_min":-5,"x_max":5,"label":"y=x²"}}`。系数按常数项、一次项、二次项依次排列，最多六项；定义域在 -100 至 100 内。Python 安全采样为图表 DSL，不执行表达式代码；前端展示完整采样曲线与零点坐标轴。双组件页面保留两项并上下排布。
 
+### 第二阶段：课程双图谱、学习路径与视频
+
+以下接口由前端直接调用 Python，沿用登录令牌和 Redis 有效性校验；课程和视频任务按当前用户隔离。
+
+| 方法 | 路径 | 说明 |
+| --- | --- | --- |
+| GET | `/api/v1/python/courses` | 当前教师的课程图谱列表 |
+| POST | `/api/v1/python/courses/graph/draft` | 根据 `title`、`subject`、`source_text`、`resource_ids` 提取双图谱候选；返回待教师确认结果，不自动入库 |
+| GET | `/api/v1/python/courses/{course_id}/versions` | 图谱历史版本列表 |
+| POST | `/api/v1/python/courses/{course_id}/restore` | 提交 `version`、`expected_version`，将历史快照恢复为新版本；并发冲突返回409 |
+| POST | `/api/v1/python/courses/{course_id}/learning-path` | 按 `target_ids`、可选 `start_id`、`mastered_ids` 规划路径；`ordered_ids` 可提交人工调整后的完整顺序 |
+| POST | `/api/v1/python/courses/{course_id}/prune` | 按 `seed_ids`、`hops`、`max_nodes`、`token_budget` 剪枝，返回保留图及前后指标 |
+| POST | `/api/v1/python/courses/{course_id}/path-outline` | 使用学习路径请求参数生成逐知识节点的大纲，再交给现有课件生成接口 |
+| POST / GET | `/api/v1/python/learning-videos` | 创建或查询当前教师的视频任务 |
+| POST | `/api/v1/python/learning-videos/{job_id}/cancel` | 取消等待或执行中的任务 |
+| POST | `/api/v1/python/learning-videos/{job_id}/retry` | 重试失败任务，最多两次执行，超过限制返回409 |
+| GET | `/api/v1/python/learning-videos/{job_id}/download` | 下载完成的 MP4，尚未完成返回409，过期返回410 |
+
+图谱保存沿用已有课程图谱写入接口，增加 `expected_version`：新建传0，修改传当前版本。节点支持 `subject`、`difficulty`、`exam_frequency`、`bloom`、`mastery_standard`、`resource_ids` 和布局 `position`。先修关系必须无环。选择起点不会隐式丢弃必要先修知识；已经掌握的知识应通过 `mastered_ids` 排除。必需路径超过24节点时拒绝，避免静默截断。
+
+视频创建请求：`{title,course_id?,course_version?,slides:[{html,narration}],voice?}`。最多26页（24个路径节点加封面、总结），每页 HTML 最多20万字符、旁白最多600字符，总 HTML 限制2MB；每用户最多三个活动任务。任务持久化，不依赖网页保持打开；下载仍要求有效登录。任务返回 `job_id`、`status`、`progress`、`attempts`、错误及成品信息。
+
+学习视频是1280×720静态幻灯片加 TTS 旁白，阻断脚本和外部资源访问，请使用内联样式和内嵌图片。配置兼容 OpenAI Speech 的 `TTS_API_KEY`、`TTS_BASE_URL`、`TTS_MODEL`、`TTS_VOICE`；连接配置留空则复用主模型连接。成品本地保留24小时；导出中心可主动转存个人资源库，不自动上传 OSS。剪枝 Token 指标属于估算，不是模型实际计费或教学质量评估结果。
+
 ### 第一阶段：历史材料风格学习与教案结构校验
 
 `POST /api/v1/python/teacher-style/profile/learn-file`：以 `multipart/form-data` 上传 `file`，支持 PPTX、DOCX、TXT、Markdown，最大 10MB；压缩文档展开总量限制 50MB。用户身份来自登录令牌，不能指定其他教师 ID。Python 提取教学结构、语言、密度、视觉与活动维度，PPTX 同时分析前 60 页的文字颜色、字体、密度和文本布局。成功响应包含 `style` 与 `evidence`（文件名、SHA-256、视觉指标）；临时原文件请求结束即清理，不自动加入个人知识库。格式错误或内容不足返回 422，超限返回 413，模型或数据库异常返回 503，不覆盖原画像。
