@@ -239,6 +239,7 @@ class CourseGraphUpsertRequest(BaseModel):
     title: str = Field(..., min_length=1, max_length=255)
     nodes: list[dict[str, Any]] = Field(default_factory=list)
     edges: list[dict[str, Any]] = Field(default_factory=list)
+    expected_version: int | None = Field(default=None, ge=0)
 
 
 class TeacherFeedbackRequest(BaseModel):

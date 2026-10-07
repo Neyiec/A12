@@ -26,6 +26,7 @@ const CommunityHub = getComponentLoader('CommunityHub')
 const ExportCenter = getComponentLoader('ExportCenter')
 const CreationWorkspace = getComponentLoader('CreationWorkspace')
 const AccountSettings = getComponentLoader('AccountSettings')
+const CourseGraphWorkspace = getComponentLoader('CourseGraphWorkspace')
 
 const routes = [
   {
@@ -48,6 +49,7 @@ const routes = [
       { path: 'exports', component: ExportCenter, meta: { menu: 'exports', title: '成果导出中心', staticTeacherPage: true } },
       { path: 'workspace', component: CreationWorkspace, meta: { menu: 'workspace', title: '创作工作台', staticTeacherPage: true } },
       { path: 'settings', component: AccountSettings, meta: { menu: 'settings', title: '账号与安全', staticTeacherPage: true } },
+      { path: 'courses', component: CourseGraphWorkspace, meta: { menu: 'courses', title: '课程双图谱', staticTeacherPage: true } },
     ],
   },
 ]

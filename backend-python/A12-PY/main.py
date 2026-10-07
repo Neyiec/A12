@@ -88,6 +88,11 @@ generator = PPTGenerator()
 interactive_generator = InteractiveModuleGenerator()
 lesson_plan_generator = LessonPlanGenerator()
 outline_chat_workflow = OutlineChatWorkflow(generator)
+from a12_ppt.course_router import create_course_router
+from a12_ppt.video_router import router as video_router
+from a12_ppt.learning_video import start_video_worker, stop_video_worker
+app.include_router(create_course_router(generator))
+app.include_router(video_router)
 
 
 @app.middleware("http")
@@ -144,6 +149,12 @@ async def initialize_ai_database() -> None:
     cleanup_expired_temp_uploads()
     start_resource_index_worker()
     start_community_review_worker()
+    start_video_worker()
+
+
+@app.on_event("shutdown")
+async def shutdown_learning_video_worker() -> None:
+    await stop_video_worker()
 
 
 def cleanup_expired_temp_uploads() -> None:
@@ -612,9 +623,10 @@ async def update_teacher_style_tags(request: TeacherStyleTagsRequest) -> Result:
 @app.put("/api/v1/python/courses/graph")
 async def upsert_course_graph(request: CourseGraphUpsertRequest) -> Result:
     try:
-        return Result(data=course_graph_store.put(request.user_id, request.course_id, request.title, request.model_dump()))
+        return Result(data=course_graph_store.put(request.user_id, request.course_id, request.title, request.model_dump(), request.expected_version))
     except ValueError as exc:
-        raise HTTPException(status_code=422, detail=str(exc)) from exc
+        from a12_ppt.course_graph import GraphVersionConflict
+        raise HTTPException(status_code=409 if isinstance(exc, GraphVersionConflict) else 422, detail=str(exc)) from exc
 
 
 @app.get("/api/v1/python/courses/{course_id}/graph")
@@ -729,10 +741,12 @@ async def generate_lesson_plan(request: LessonPlanGenerateRequest) -> Result:
 @app.post("/api/v1/python/audio/tts")
 async def synthesize_speech(request: TextToSpeechRequest):
     from openai import AsyncOpenAI
-    if not settings.openai_api_key:
+    tts_key = os.getenv("TTS_API_KEY") or settings.openai_api_key
+    tts_url = os.getenv("TTS_BASE_URL") or settings.openai_base_url
+    if not tts_key:
         raise HTTPException(status_code=503, detail="TTS 服务未配置")
     await require_active_browser_token()
-    client = AsyncOpenAI(api_key=settings.openai_api_key, base_url=settings.openai_base_url.rstrip("/"),
+    client = AsyncOpenAI(api_key=tts_key, base_url=tts_url.rstrip("/"),
                          timeout=settings.request_timeout_seconds)
     speech = await client.audio.speech.create(model=settings.tts_model,
                                               voice=request.voice or settings.tts_voice, input=request.text)

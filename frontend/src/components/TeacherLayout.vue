@@ -32,6 +32,7 @@ const routeMap = {
   home: '/main',
   resources: '/main/resources',
   community: '/main/community',
+  courses: '/main/courses',
   exports: '/main/exports',
 }
 const activeMenu = computed(() => route.meta.menu || 'home')

@@ -3,20 +3,26 @@ import { computed, ref, useId, watch } from 'vue'
 
 const props = defineProps({
   graphs: { type: Object, required: true },
+  maxNodes: { type: Number, default: 12 },
+  editable: { type: Boolean, default: false },
 })
+const emit = defineEmits(['node-move'])
+const draggedPositions = ref({})
+let dragging = null
 
 const activeKind = ref('knowledge')
-watch(() => props.graphs, () => { activeKind.value = 'knowledge' })
+watch(() => props.graphs, () => { if (!props.editable) activeKind.value = 'knowledge'; draggedPositions.value = {} })
 const activeGraph = computed(() => props.graphs?.[activeKind.value] || { nodes: [], edges: [] })
-const nodes = computed(() => Array.isArray(activeGraph.value.nodes) ? activeGraph.value.nodes.slice(0, 12) : [])
-const edges = computed(() => Array.isArray(activeGraph.value.edges) ? activeGraph.value.edges.slice(0, 24) : [])
+const nodes = computed(() => Array.isArray(activeGraph.value.nodes) ? activeGraph.value.nodes.slice(0, props.maxNodes) : [])
+const edges = computed(() => Array.isArray(activeGraph.value.edges) ? activeGraph.value.edges.slice(0, props.maxNodes * 3) : [])
 const columns = 3
 const nodeWidth = 194
 const nodeHeight = 74
 const columnGap = 244
 const rowGap = 116
 const canvasWidth = 760
-const canvasHeight = computed(() => Math.max(144, Math.ceil(nodes.value.length / columns) * rowGap + 38))
+const canvasHeight = computed(() => Math.max(144, Math.ceil(nodes.value.length / columns) * rowGap + 38,
+  ...nodes.value.map(node => (draggedPositions.value[node.id]?.y ?? node.position?.y ?? 0) + nodeHeight + 30)))
 const arrowId = `graph-arrow-${useId().replace(/[^a-zA-Z0-9_-]/g, '')}`
 const sourceText = computed(() => {
   if (props.graphs?.status === 'approved_course') return '已审核课程图谱'
@@ -28,7 +34,32 @@ function position(index) {
   return { x: 38 + (index % columns) * columnGap, y: 30 + Math.floor(index / columns) * rowGap }
 }
 
-const positionedNodes = computed(() => nodes.value.map((node, index) => ({ ...node, ...position(index) })))
+const positionedNodes = computed(() => nodes.value.map((node, index) => ({ ...node, ...position(index),
+  ...(node.position || {}), ...(draggedPositions.value[node.id] || {}) })))
+function pointerPosition(event) {
+  const svg = event.currentTarget.ownerSVGElement
+  const point = svg.createSVGPoint(); point.x = event.clientX; point.y = event.clientY
+  return point.matrixTransform(svg.getScreenCTM().inverse())
+}
+function beginMove(event, node) {
+  if (!props.editable) return
+  const point = pointerPosition(event)
+  dragging = { id: node.id, dx: point.x - node.x, dy: point.y - node.y }
+  event.currentTarget.setPointerCapture(event.pointerId)
+}
+function moveNode(event) {
+  if (!dragging) return
+  const point = pointerPosition(event)
+  draggedPositions.value = { ...draggedPositions.value, [dragging.id]: {
+    x: Math.max(0, Math.min(520, point.x - dragging.dx)), y: Math.max(0, Math.min(12000, point.y - dragging.dy)),
+  } }
+}
+function finishMove() {
+  if (!dragging) return
+  const id = dragging.id, position = draggedPositions.value[id]
+  dragging = null
+  if (position) emit('node-move', { id, position })
+}
 const positionedEdges = computed(() => {
   const byId = new Map(positionedNodes.value.map((node) => [node.id, node]))
   return edges.value.flatMap((edge) => {
@@ -66,7 +97,7 @@ function toggleGraph() {
       </button>
     </header>
 
-    <div class="learning-graph-scroll">
+    <div class="learning-graph-scroll" :style="maxNodes > 12 ? { maxHeight: '520px', overflow: 'auto' } : {}">
       <svg v-if="nodes.length" class="learning-graph-canvas" :viewBox="`0 0 ${canvasWidth} ${canvasHeight}`"
            role="img" :aria-label="`${activeKind === 'knowledge' ? '知识' : '技能'}图谱，共 ${nodes.length} 个节点`">
         <defs>
@@ -79,7 +110,8 @@ function toggleGraph() {
                 stroke="#91a7c3" stroke-width="2" :marker-end="`url(#${arrowId})`" />
           <title>{{ edge.relation }}</title>
         </g>
-        <g v-for="node in positionedNodes" :key="node.id">
+        <g v-for="node in positionedNodes" :key="node.id" :style="editable ? 'cursor:grab;touch-action:none' : ''"
+           @pointerdown="beginMove($event,node)" @pointermove="moveNode" @pointerup="finishMove" @pointercancel="finishMove">
           <rect :x="node.x" :y="node.y" :width="nodeWidth" :height="nodeHeight" rx="16"
                 :fill="activeKind === 'knowledge' ? '#f3f7ff' : '#effbf7'"
                 :stroke="activeKind === 'knowledge' ? '#92b4ef' : '#85cab3'" stroke-width="1.5" />
