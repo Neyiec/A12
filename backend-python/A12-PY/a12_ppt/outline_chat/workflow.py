@@ -48,6 +48,7 @@ INTENT_FIELD_WHITELIST = {
     "needs_animation", "needs_game", "interactive_requirements",
     "preferred_interactive_formats", "class_level",
     "classroom_insights",
+    "teaching_model", "teaching_style",
 }
 
 CLARIFICATION_FIELDS = {
@@ -308,8 +309,8 @@ class OutlineChatWorkflow:
         return result
 
     async def _load_profile_node(self, state: OutlineChatState) -> dict[str, Any]:
-        profile = postgres_memory_store.get_teacher_profile(state["user_id"])
-        return {"teacher_profile": profile}
+        profile = postgres_memory_store.refresh_teacher_profile(state["user_id"])
+        return {"teacher_profile": profile if not profile or profile.get("enabled", True) else None}
 
     async def _parse_input_node(self, state: OutlineChatState) -> dict[str, Any]:
         request = state["request"]
@@ -341,6 +342,9 @@ class OutlineChatWorkflow:
         intent["enable_rag"] = request.enable_rag
         intent["resource_ids"] = request.resource_ids
         intent["user_id"] = user_id
+        intent["teaching_model"] = request.teaching_model
+        if request.teaching_style:
+            intent["teaching_style"] = request.teaching_style[:100]
         interactive_policy = self._interactive_policy(intent, request.message)
         if interactive_policy.get("needs_interactive_assets"):
             intent["interactive_policy"] = interactive_policy
@@ -356,11 +360,16 @@ class OutlineChatWorkflow:
     async def _build_prompt_node(self, state: OutlineChatState) -> dict[str, Any]:
         intent = state["intent"]
         tool_context = state.get("tool_context", {})
+        from ..teaching_policy import teaching_model_guidance, teaching_policy, teaching_style_guidance
         prompt = f"""
 生成一份严格贴合教师真实意图、可用于课堂实施的结构化 PPT 大纲。
 
 合并后的当前意图：
 {json.dumps(intent, ensure_ascii=False, indent=2, default=str)}
+
+当前学科教学策略：{json.dumps(teaching_policy(str(intent.get('subject') or '')), ensure_ascii=False)}
+选用教学模型：{teaching_model_guidance(str(intent.get('teaching_model') or 'boppps'))}
+教师明确选择的风格：{teaching_style_guidance(str(intent.get('teaching_style') or ''))}
 
 教师长期风格画像（本轮明确要求优先级更高）：
 {json.dumps(state.get("teacher_profile") or {}, ensure_ascii=False, default=str)}
@@ -389,7 +398,7 @@ class OutlineChatWorkflow:
 6. 包含封面、学习路径、内容、活动或练习、总结；每 2 至 3 个内容页安排一次学生任务或即时检测。
 7. 开场使用真实问题/预测/投票，结尾使用回忆、迁移题和出口条，避免整节课连续被动听讲。
 8. 课件按学生认知过程组织：问题与关联→预测前测→分段新知→分步样例→学生尝试→即时反馈→提取与迁移；不能照搬教材目录。
-9. learning_science_strategy 要明确 ARCS、BOPPPS、ICAP、认知负荷、多媒体信号、样例学习和提取练习如何落地。
+9. learning_science_strategy 要明确所选教学模型、ARCS、ICAP、认知负荷、多媒体信号、样例学习和提取练习如何落地。
 10. 每页只承担一个核心认知任务，正文建议不超过 3 个信息组；至少包含一页 worked_example 和一页撤去支架的新情境练习。
 11. 若图示工具返回 Mermaid，加入顶层 diagram_assets，并在相关页说明用途。
 12. 若 interactive_policy.needs_interactive_assets=true，加入顶层 interactive_assets；每项包含
@@ -553,10 +562,35 @@ class OutlineChatWorkflow:
             regenerate_instruction=regenerate_instruction,
             interactive_policy=dict(intent.get("interactive_policy") or state.get("interactive_policy") or {}),
             classroom_insights=dict(intent.get("classroom_insights") or {}),
+            model_profile=state["request"].model_profile,
+            reasoning_effort=state["request"].reasoning_effort,
+            teaching_model=str(intent.get("teaching_model") or "boppps"),
+            teaching_style=str(intent.get("teaching_style") or "")[:100] or None,
+            teacher_profile=dict(state.get("teacher_profile") or {}),
         )
 
     def _attach_tool_outputs(self, response: dict[str, Any], state: OutlineChatState) -> None:
         tool_context = state.get("tool_context", {})
+        retrieval_matches = []
+        seen_resources = set()
+        for match in (tool_context.get("rag") or {}).get("matches") or []:
+            resource_id = str(match.get("resource_id") or "")
+            if resource_id in seen_resources or not resource_id.startswith(("public:", "personal:", "community:", "temp:")):
+                continue
+            seen_resources.add(resource_id)
+            metadata = match.get("metadata") or {}
+            retrieval_matches.append({
+                "resource_id": resource_id,
+                "title": str(metadata.get("title") or metadata.get("filename") or resource_id)[:100],
+                "snippet": str(match.get("content") or "")[:180],
+                "score": match.get("score"),
+            })
+            if len(retrieval_matches) >= 6:
+                break
+        if retrieval_matches:
+            response["retrieval_matches"] = retrieval_matches
+            if isinstance(response.get("outline"), dict):
+                response["outline"]["retrieval_matches"] = retrieval_matches
         diagram = tool_context.get("diagram")
         if diagram:
             asset = {

@@ -472,9 +472,9 @@ const chartRows = (option) => {
   const series = Array.isArray(source.series) ? source.series[0] : source.series
   const values = Array.isArray(series?.data) ? series.data : []
   const labels = Array.isArray(xAxis?.data) ? xAxis.data : []
-  const count = Math.max(1, Math.min(8, values.length || labels.length || 3))
+  const count = Math.max(1, Math.min(source.a12_function_graph ? 81 : 8, values.length || labels.length || 3))
   return Array.from({ length: count }, (_, index) => ({
-    label: text(labels[index] || (typeof values[index] === 'object' ? values[index]?.name : ''), `数据 ${index + 1}`, 16) || `数据 ${index + 1}`,
+    label: text(labels[index] ?? (typeof values[index] === 'object' ? values[index]?.name : ''), `数据 ${index + 1}`, 16) || `数据 ${index + 1}`,
     value: Number(typeof values[index] === 'object' ? values[index]?.value : values[index]) || 0,
   }))
 }
@@ -716,6 +716,12 @@ const chartSvgMarkup = (option) => {
   const baseline = top + maxValue / valueSpan * plotHeight
   const xAt = (index) => left + plotWidth * (index + 0.5) / rows.length
   const yAt = (value) => top + (maxValue - value) / valueSpan * plotHeight
+  const functionGraph = Boolean(source.a12_function_graph) && chartType === 'line'
+  const numericXs = rows.map((row) => Number(row.label))
+  const zeroIndex = numericXs.findIndex((value) => value >= 0)
+  const zeroX = zeroIndex > 0 && numericXs[zeroIndex] !== numericXs[zeroIndex - 1]
+    ? xAt(zeroIndex - 1) + (xAt(zeroIndex) - xAt(zeroIndex - 1)) * -numericXs[zeroIndex - 1] / (numericXs[zeroIndex] - numericXs[zeroIndex - 1])
+    : left
   let seriesMarkup = ''
   if (chartType === 'line') {
     const points = rows.map((row, index) => `${xAt(index)},${yAt(row.value)}`).join(' ')
@@ -729,9 +735,13 @@ const chartSvgMarkup = (option) => {
       return `<rect x="${xAt(index) - barWidth / 2}" y="${barY}" width="${barWidth}" height="${barHeight}" rx="3" fill="${chartPalette[index % chartPalette.length]}"/>`
     }).join('')
   }
-  const labels = rows.map((row, index) => `<text x="${xAt(index)}" y="132" text-anchor="middle">${escapeHtml(row.label.slice(0, 10))}</text>`).join('')
+  const labels = rows.filter((row, index) => !functionGraph || Number(row.label) === 0 || index % Math.ceil(rows.length / 6) === 0 || index === rows.length - 1)
+    .map((row) => `<text x="${xAt(rows.indexOf(row))}" y="132" text-anchor="middle">${escapeHtml(row.label.slice(0, 10))}</text>`).join('')
   const axisNames = `${yAxisName ? `<text x="${left}" y="14">${escapeHtml(yAxisName)}</text>` : ''}${xAxisName ? `<text x="${width / 2}" y="158" text-anchor="middle">${escapeHtml(xAxisName)}</text>` : ''}`
-  return `<svg class="a12-subject-tool__chart-svg" viewBox="0 0 ${width} ${height}" role="img" aria-label="${chartType === 'line' ? '折线图' : '柱状图'}数据预览"><path d="M${left} ${top}V${top + plotHeight}H${width - right}"/><path class="a12-subject-tool__chart-data" d=""/>${axisNames}${seriesMarkup}${labels}</svg>`
+  const axes = functionGraph
+    ? `<path d="M${left} ${baseline}H${width - right}M${zeroX} ${top}V${top + plotHeight}"/>`
+    : `<path d="M${left} ${top}V${top + plotHeight}H${width - right}"/>`
+  return `<svg class="a12-subject-tool__chart-svg" viewBox="0 0 ${width} ${height}" role="img" aria-label="${functionGraph ? '函数坐标图' : chartType === 'line' ? '折线图' : '柱状图'}数据预览">${axes}<path class="a12-subject-tool__chart-data" d=""/>${axisNames}${seriesMarkup}${labels}</svg>`
 }
 
 export const subjectToolMarkup = ({ subjectType, data, title } = {}) => {

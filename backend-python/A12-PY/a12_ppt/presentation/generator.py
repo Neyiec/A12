@@ -4,12 +4,15 @@ import html
 import json
 import logging
 import re
+import time
 import uuid
 from typing import Any, AsyncIterator
 
 from ..config import get_settings
+from ..ai_runtime import current_runtime
 from .html_utils import auto_close_basic_tags, clean_html_response, validate_html
 from .image_generator import GeneratedImage, ImageGenerationClient
+from .subject_components import embed_subject_component, normalize_subject_components
 from .json_utils import extract_json, split_points
 from .palette import fallback_palette
 from .prompts import (
@@ -22,6 +25,7 @@ from .prompts import (
 from ..llm import LLMClient
 from ..models import InteractiveModuleGenerateRequest, OutlineGenerateRequest, OutlineUpdateRequest, PresentationGenerateRequest, PresentationModifyRequest, SlideModifyRequest
 from ..resources import build_rag_context
+from ..teaching_policy import teaching_model_guidance, teaching_policy, teaching_style_guidance
 from .template_store import DEFAULT_THEME, get_template
 
 logger = logging.getLogger("a12_ppt.presentation.generator")
@@ -89,12 +93,18 @@ class PPTGenerator:
         outline["subject"] = req.subject
         outline["grade"] = req.grade
         outline["requirements"] = req.requirements
+        outline["teaching_model"] = req.teaching_model
+        outline["teaching_style"] = req.teaching_style
+        outline["teacher_style_summary"] = str(req.teacher_profile.get("style_summary") or "")[:1200]
+        outline["subject_policy"] = teaching_policy(req.subject)
         outline["generation_options"] = {
             "resource_ids": req.resource_ids,
             "enable_web": req.enable_web,
             "enable_rag": req.enable_rag,
             "regenerate_instruction": req.regenerate_instruction,
             "interactive_policy": req.interactive_policy,
+            "model_profile": req.model_profile,
+            "reasoning_effort": req.reasoning_effort,
         }
         return self._outline_response(self._ensure_outline_quality(self._ensure_teaching_design_chain(self._ensure_interactive_assets(outline, req, slide_count), req), req, slide_count))
 
@@ -155,6 +165,7 @@ scaffolding, feedback_strategy。
 
     async def stream_presentation(self, req: PresentationGenerateRequest) -> AsyncIterator[dict[str, Any]]:
         """并发生成 HTML 页面，并在每页完成时立即产出可渲染的 slide 事件。"""
+        started_at = time.perf_counter()
         slides = self._normalize_slides_for_deck(self._extract_slides(req.outline) or self._fallback_outline_from_title(req.title, 6))
         interactive_assets = self._normalize_interactive_assets((req.outline or {}).get("interactive_assets") or ((req.outline or {}).get("outline") or {}).get("interactive_assets") or [])
         if interactive_assets:
@@ -166,20 +177,30 @@ scaffolding, feedback_strategy。
         template_html = str(template.get("html_template") or "")
         missing_template = bool(template.get("_missing_template"))
         request_context = self._request_context(req)
-        rag_context = await self._collect_generation_rag_context(req)
+        from ..direct_auth import direct_user_id
+        user_id = direct_user_id.get()
+        if user_id:
+            from ..outline_chat.postgres_store import postgres_memory_store
+            profile = postgres_memory_store.refresh_teacher_profile(user_id)
+            request_context["teacher_style_summary"] = str(profile.get("style_summary") or "")[:1200] if profile and profile.get("enabled", True) else ""
+        rag_context, asset_decision = await asyncio.gather(
+            self._collect_generation_rag_context(req), self._resolve_asset_plan(req, slides)
+        )
         if rag_context:
             # 功能 2：临时上传/引用资料命中内容并入生成上下文（ constitution/逐页 brief 提示词均序列化 request_context）。
             request_context["rag_context"] = rag_context
-        selected_asset_policy, asset_policy_reason, asset_plan = await self._resolve_asset_plan(req, slides)
+        selected_asset_policy, asset_policy_reason, asset_plan = asset_decision
         for index, slide in enumerate(slides, 1):
             slide["asset_plan"] = asset_plan.get(str(index), {"type": "layout", "reason": "使用可编辑排版表达"})
         generated_image_slides = self._select_generated_image_slides(req, slides, selected_asset_policy, asset_plan)
         image_semaphore = asyncio.Semaphore(2)
         quality_assets = await self._build_quality_assets(req.title, requested_theme, template_name, template_html, request_context, slides)
+        setup_ms = round((time.perf_counter() - started_at) * 1000)
 
         semaphore = asyncio.Semaphore(max(1, self.settings.max_slide_concurrency))
         async def build(index: int, slide: dict[str, Any]) -> dict[str, Any]:
             async with semaphore:
+                slide_started_at = time.perf_counter()
                 slide_no = index + 1
                 working_slide = dict(slide)
                 generated_image: GeneratedImage | None = None
@@ -220,6 +241,8 @@ scaffolding, feedback_strategy。
                     all_slides=slides,
                     quality_assets=quality_assets,
                 )
+                slide_markup = embed_subject_component(slide_markup, working_slide, slide_no,
+                                                      fallback=not (self.llm.available and self.settings.enable_quality_pipeline))
                 if generated_image:
                     slide_markup = self._embed_generated_image(slide_markup, generated_image)
                 return {
@@ -250,15 +273,19 @@ scaffolding, feedback_strategy。
                         "generated_image_model": generated_image.model if generated_image else None,
                         "generated_image_prompt": generated_image.prompt if generated_image else None,
                         "asset_plan": working_slide.get("asset_plan"),
+                        "generation_ms": round((time.perf_counter() - slide_started_at) * 1000),
                     },
                 }
 
         tasks = [asyncio.create_task(build(i, slide)) for i, slide in enumerate(slides)]
         slide_results: list[dict[str, Any]] = []
+        first_slide_ms: int | None = None
         try:
             for task in asyncio.as_completed(tasks):
                 item = await task
                 slide_results.append(item)
+                if first_slide_ms is None:
+                    first_slide_ms = round((time.perf_counter() - started_at) * 1000)
                 yield {"type": "slide", "slide": item, "completed": len(slide_results), "total": len(slides)}
         finally:
             pending = [task for task in tasks if not task.done()]
@@ -293,6 +320,11 @@ scaffolding, feedback_strategy。
                 ),
                 "model_profile": getattr(req, "model_profile", "standard"),
                 "reasoning_effort": getattr(req, "reasoning_effort", "medium"),
+                "timing_ms": {
+                    "setup": setup_ms,
+                    "first_slide": first_slide_ms,
+                    "total": round((time.perf_counter() - started_at) * 1000),
+                },
             },
         }
         yield {"type": "final", "response": response}
@@ -744,12 +776,13 @@ JSON 格式:
         quality_assets: dict[str, Any],
     ) -> str:
         if self.llm.available and self.settings.enable_quality_pipeline:
+            fast_mode = current_runtime().model_profile == "fast" and self.settings.quality_preset == "fast"
             prompt = slide_html_prompt(
                 title=title,
                 theme=theme,
                 request_context=request_context,
                 template_name=template_name,
-                template_html=template_html,
+                template_html=template_html[:4000] if fast_mode else template_html,
                 style_genes=quality_assets.get("style_genes", ""),
                 global_constitution=quality_assets.get("global_constitution", ""),
                 page_brief=quality_assets.get("page_briefs", {}).get(str(slide_no), ""),
@@ -767,7 +800,8 @@ JSON 格式:
         current_prompt = prompt
         last_html = ""
         # max_html_retries 表示首次生成后的修复次数，而不是总调用次数。
-        for attempt in range(1 + max(0, self.settings.max_html_retries)):
+        retry_count = 0 if current_runtime().model_profile == "fast" and self.settings.quality_preset == "fast" else max(0, self.settings.max_html_retries)
+        for attempt in range(1 + retry_count):
             try:
                 raw = await self.llm.complete(system_prompt, current_prompt, 0.5 if attempt == 0 else 0.25)
             except Exception:
@@ -792,6 +826,7 @@ JSON 格式:
         return self._fallback_outline(req, slide_count)
 
     def _outline_prompt(self, req: OutlineGenerateRequest, slide_count: int) -> str:
+        policy = teaching_policy(req.subject)
         return f"""
 生成一份可直接用于课堂教学的 PPT 大纲。只返回严格 JSON，不要 Markdown。
 
@@ -805,7 +840,12 @@ slides 约 {slide_count} 页，必须覆盖封面、学习路径、内容讲解�
 engagement_hook、student_task、teacher_prompt、understanding_check、estimated_minutes、
 learning_phase、learning_theories(list)、student_action_mode、learner_question、cognitive_load、
 scaffolding、feedback_strategy、
-interactive_asset_ids(list)、external_resource_notes。
+interactive_asset_ids(list)、external_resource_notes、subject_components(list)。
+subject_components 仅在确有学科表达需求时填写，最多一项；格式为
+{{"type":"math_formula|chemical_formula|mermaid_diagram|chart|table|function_graph","data":{{...}}}}。
+函数图像使用 function_graph，data 的 coefficients 是从常数项开始的多项式系数数组，例如 y=x² 为 [0,0,1]，x_min/x_max 为定义域（-100至100），label 为函数名称；不要输出可执行代码。
+数学公式 data.latex 保留可编辑的 LaTeX 原文；化学式 data.formula；流程图 data.mermaid；
+图表 data.option（ECharts 配置）；表格 data.columns/data.rows。其他页面用空数组，不得填示例占位内容。
 
 课堂编排规则：
 1. 开场前 3 分钟用冲突、真实问题、预测或投票建立注意力，不以大段定义开场。
@@ -815,7 +855,7 @@ interactive_asset_ids(list)、external_resource_notes。
 5. 同时提供基础支架与进阶挑战，优先使用与年级、学情和额外需求匹配的案例。
 6. 末页包含知识回忆、迁移问题和出口条，避免只有结论罗列。
 7. 按“问题→关联→预测→新知→样例→学生尝试→反馈→提取与迁移”组织认知过程，不能照搬教材目录。
-8. 使用 BOPPPS 串联 learning_phase；使用 ARCS 说明动机设计；使用 ICAP 标注学生参与层级。
+8. {teaching_model_guidance(req.teaching_model)} 使用 ARCS 说明动机设计；使用 ICAP 标注学生参与层级。
 9. 每页只承担一个核心认知任务，content_points 建议不超过 3 项；复杂内容分段呈现并使用视觉信号。
 10. 初学内容至少安排一页 worked_example/example，展示步骤及理由；随后安排撤去支架的变式练习。
 11. 学生作答后必须有即时 feedback_strategy；总结页使用不看答案的提取练习，而不是“谢谢观看”。
@@ -826,6 +866,10 @@ preferred_format(html5|gif|mp4)、integration(ppt_video|static_link)、descripti
 
 课程标题：{req.title}
 学科：{req.subject}
+学科教学策略：{json.dumps(policy, ensure_ascii=False)}
+教师显式风格偏好：{teaching_style_guidance(req.teaching_style)}
+教师长期风格画像（仅作为偏好参考，当前要求优先）：{str(req.teacher_profile.get('style_summary') or '')[:1200]}
+教学模型：{req.teaching_model}
 年级：{req.grade}
 课时分钟：{req.duration_minutes or ""}
 期望页数：{slide_count}
@@ -915,6 +959,15 @@ preferred_format(html5|gif|mp4)、integration(ppt_video|static_link)、descripti
         return results, i
 
     async def _with_reference_and_rag_context(self, req: OutlineGenerateRequest) -> OutlineGenerateRequest:
+        from ..direct_auth import direct_user_id
+        user_id = direct_user_id.get()
+        if user_id:
+            from ..outline_chat.postgres_store import postgres_memory_store
+            profile = postgres_memory_store.refresh_teacher_profile(user_id)
+            # 画像由服务端维护，不能信任浏览器提交的同名字段。
+            req = req.model_copy(update={
+                "teacher_profile": profile if profile and profile.get("enabled", True) else {},
+            })
         context_parts = []
         if req.reference_text:
             context_parts.append(req.reference_text)
@@ -970,9 +1023,14 @@ preferred_format(html5|gif|mp4)、integration(ppt_video|static_link)、descripti
         outline = req.outline if isinstance(req.outline, dict) else {}
         return {
             "subject": outline.get("subject"),
+            "subject_policy": teaching_policy(str(outline.get("subject") or "")),
             "grade": outline.get("grade"),
             "requirements": outline.get("requirements"),
             "description": outline.get("summary"),
+            "teaching_model": req.teaching_model or outline.get("teaching_model") or "boppps",
+            "teaching_model_guidance": teaching_model_guidance(req.teaching_model or outline.get("teaching_model")),
+            "teaching_style": teaching_style_guidance(req.teaching_style or outline.get("teaching_style")),
+            "teacher_style_summary": str(outline.get("teacher_style_summary") or "")[:1200],
             "language": req.language,
         }
 
@@ -988,7 +1046,7 @@ preferred_format(html5|gif|mp4)、integration(ppt_video|static_link)、descripti
         if not isinstance(workspace_context, dict):
             workspace_context = {}
         raw_ids = [
-            *(req.resource_ids or []),
+            *(getattr(req, "resource_ids", None) or []),
             *(workspace_context.get("resource_ids") or []),
             *(workspace_context.get("resourceIds") or []),
         ]
@@ -1238,6 +1296,9 @@ preferred_format(html5|gif|mp4)、integration(ppt_video|static_link)、descripti
             enable_rag=bool(options.get("enable_rag")),
             slide_count=max(1, len(slides) or 8),
             interactive_policy=dict(options.get("interactive_policy") or {}),
+            teaching_model=str(outline.get("teaching_model") or "boppps"),
+            teaching_style=outline.get("teaching_style"),
+            teacher_profile={"style_summary": str(outline.get("teacher_style_summary") or "")[:1200]},
         )
         outline = self._ensure_teaching_design_chain(outline, req)
         return self._ensure_outline_quality(outline, req, req.slide_count or 8)
@@ -1300,7 +1361,7 @@ preferred_format(html5|gif|mp4)、integration(ppt_video|static_link)、descripti
             ],
             "learning_science_strategy": {
                 "arcs": ["用真实问题吸引注意", "连接学生经验与真实用途", "从低门槛任务建立信心", "用即时反馈形成满足感"],
-                "boppps": ["导入", "目标", "前测", "参与式学习", "后测", "总结"],
+                "boppps": ["导入", "目标", "前测", "参与式学习", "后测", "总结"] if req.teaching_model == "boppps" else [],
                 "icap": ["减少连续被动接收", "安排主动操作", "要求学生生成解释", "组织同伴讨论与共同建构"],
                 "cognitive_load": ["一页一个核心认知任务", "复杂过程分段呈现", "删除与教学目标无关的装饰信息"],
                 "worked_example": ["先提供带理由的分步样例", "再逐步撤去提示并安排变式练习"],
@@ -1368,6 +1429,9 @@ preferred_format(html5|gif|mp4)、integration(ppt_video|static_link)、descripti
             learning_defaults = self._learning_science_defaults(item["slide_type"], index, min(len(slides), slide_count), req)
             item["learning_phase"] = str(item.get("learning_phase") or learning_defaults["learning_phase"])
             item["learning_theories"] = self._as_list(item.get("learning_theories")) or learning_defaults["learning_theories"]
+            if req.teaching_model == "general":
+                item["learning_theories"] = [theory for theory in item["learning_theories"]
+                                             if not str(theory).startswith("BOPPPS.")]
             action_mode = str(item.get("student_action_mode") or learning_defaults["student_action_mode"]).lower()
             item["student_action_mode"] = action_mode if action_mode in {"passive", "active", "constructive", "interactive"} else learning_defaults["student_action_mode"]
             item["learner_question"] = str(item.get("learner_question") or learning_defaults["learner_question"])
@@ -1393,6 +1457,36 @@ preferred_format(html5|gif|mp4)、integration(ppt_video|static_link)、descripti
                 defaults = self._learning_science_defaults("worked_example", int(item["slide_no"]), len(normalized), req)
                 for key in ["learning_phase", "learning_theories", "student_action_mode", "learner_question", "cognitive_load", "scaffolding", "feedback_strategy"]:
                     item[key] = defaults[key]
+        if req.teaching_model == "boppps" and len(normalized) >= 6:
+            stage_slots = [
+                ("bridge_in", 0), ("objective", 1), ("pre_assessment", 2),
+                ("participatory_learning", len(normalized) // 2),
+                ("post_assessment", len(normalized) - 2), ("summary", len(normalized) - 1),
+            ]
+            for phase, slot in stage_slots:
+                if any(item.get("learning_phase") == phase for item in normalized):
+                    continue
+                item = normalized[slot]
+                defaults = self._learning_science_defaults(
+                    "summary" if phase == "summary" else "activity" if phase == "participatory_learning" else "content",
+                    slot + 1, len(normalized), req,
+                )
+                item["learning_phase"] = phase
+                item["learning_theories"] = list(dict.fromkeys([*item["learning_theories"], *defaults["learning_theories"]]))
+                if phase == "pre_assessment":
+                    item["learner_question"] = "在学习新知前，依据已有经验你会如何判断？"
+                    item["student_task"] = "先独立预测并写下一条理由，限时 2 分钟；提交后再对照新知。"
+                    item["understanding_check"] = "统计预测与理由，辨认已有概念和误区。"
+                if phase == "post_assessment":
+                    item["student_task"] = "不看提示独立完成一道新情境迁移题，限时 3 分钟。"
+                    item["understanding_check"] = "依据迁移题答案决定巩固或补救。"
+        if normalized and not any(
+            item.get("learning_phase") in {"post_assessment", "summary"}
+            and "迁移" in (item.get("student_task", "") + item.get("understanding_check", ""))
+            for item in normalized
+        ):
+            summary = normalized[-1]
+            summary["student_task"] = (summary.get("student_task") or "不看笔记回忆本课关键知识。") + " 再完成一道新情境迁移题。"
         outline["slides"] = normalized
         outline["quality_report"] = self._outline_quality_report(outline, req, slide_count)
         return outline
@@ -1426,7 +1520,7 @@ preferred_format(html5|gif|mp4)、integration(ppt_video|static_link)、descripti
             "all_slides_have_understanding_check": all(bool(slide.get("understanding_check")) for slide in slides if isinstance(slide, dict)),
             "has_opening_engagement_hook": bool(slides and slides[0].get("engagement_hook")),
             "has_activity_or_practice": expected_count < 5 or bool(slide_types & {"activity", "practice", "quiz", "discussion"}),
-            "has_pre_assessment": expected_count < 6 or any(str(slide.get("learning_phase") or "").lower() == "pre_assessment" for slide in slides if isinstance(slide, dict)),
+            "has_pre_assessment": req.teaching_model != "boppps" or expected_count < 6 or any(str(slide.get("learning_phase") or "").lower() == "pre_assessment" for slide in slides if isinstance(slide, dict)),
             "has_worked_example": expected_count < 7 or any(str(slide.get("learning_phase") or "").lower() == "worked_example" or str(slide.get("slide_type") or "").lower() in {"worked_example", "example"} for slide in slides if isinstance(slide, dict)),
             "has_constructive_or_interactive_task": any(str(slide.get("student_action_mode") or "").lower() in {"constructive", "interactive"} for slide in slides if isinstance(slide, dict)),
             "has_retrieval_and_transfer": any(str(slide.get("learning_phase") or "").lower() in {"post_assessment", "summary"} and "迁移" in (str(slide.get("student_task") or "") + str(slide.get("understanding_check") or "")) for slide in slides if isinstance(slide, dict)),
@@ -1656,6 +1750,7 @@ preferred_format(html5|gif|mp4)、integration(ppt_video|static_link)、descripti
                     "external_resource_notes": str(item.get("external_resource_notes") or ""),
                     "citation_ids": list(item.get("citation_ids") or []),
                     "grounding_status": str(item.get("grounding_status") or ""),
+                    "subject_components": normalize_subject_components(item.get("subject_components")),
                 })
         data["title"] = data.get("title") or title
         data["slides"] = slides

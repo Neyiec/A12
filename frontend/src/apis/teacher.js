@@ -1,15 +1,40 @@
-import { apiRequest, del, get, post, put, uploadFile } from '../utils/api'
+import { apiRequest, del, get, post, put } from '../utils/api'
+import axios from 'axios'
 import { useUserStore } from '../storage/user.js'
 
 export const listResources = (params) => get('/api/v1/resources', params)
-export const uploadResource = async (file, onProgress) => {
-  const formData = new FormData()
-  formData.append('file', file)
-  const result = await uploadFile('/api/v1/resources/local-uploads', formData, onProgress)
-  if (result?.code && result.code !== 200 && result.code !== 0) {
-    throw new Error(result.message || '本地上传失败')
+export const uploadResource = async (file, onProgress, { allowAi = false, description = '' } = {}) => {
+  if (!file?.name || !Number.isFinite(file.size)) throw new Error('请选择有效文件')
+  const tokenResult = await post('/api/v1/resources/upload-tokens', {
+    file_name: file.name,
+    file_type: file.type || 'application/octet-stream',
+  })
+  if (tokenResult?.code !== 200 && tokenResult?.code !== 0) throw new Error(tokenResult?.message || '获取上传地址失败')
+  const token = tokenResult?.data || {}
+  if (!token.object_key || !token.upload_url) throw new Error('上传服务未返回对象地址')
+  await axios.put(token.upload_url, file, {
+    timeout: 30 * 60 * 1000,
+    headers: { 'Content-Type': file.type || 'application/octet-stream' },
+    onUploadProgress: (event) => {
+      if (onProgress && event.total) onProgress(Math.min(95, Math.round(event.loaded / event.total * 95)))
+    },
+  })
+  const confirmed = await post('/api/v1/resources/uploaded-files', {
+    object_key: token.object_key,
+    file_name: file.name,
+    file_size: file.size,
+    file_type: file.type || 'application/octet-stream',
+    description: String(description || '').slice(0, 240),
+  })
+  if (confirmed?.code !== 200 && confirmed?.code !== 0) throw new Error(confirmed?.message || '素材入库失败')
+  let resource = confirmed?.data || confirmed
+  if (allowAi && resource?.id) {
+    const enabled = await apiRequest({ url: `/api/v1/resources/${resource.id}`, method: 'patch', data: { allow_ai: 1 } })
+    if (enabled?.code !== 200 && enabled?.code !== 0) throw new Error(enabled?.message || '素材已上传，但 AI 引用权限设置失败')
+    resource = enabled?.data || resource
   }
-  return result?.data || result
+  onProgress?.(100)
+  return resource
 }
 export const deleteResource = (id) => del(`/api/v1/resources/${id}`)
 /**
@@ -232,13 +257,19 @@ export const updateAiSession = async (id, data) => {
   return result
 }
 export const deleteAiSession = async (id) => {
-  // 功能 2：会话结束联动清理临时上传（temp 索引 + 磁盘文件）；失败保留登记，留待下次重试。
-  const tempIds = readTempRegistry()
+  const existing = await getAiSession(id)
+  const session = existing?.data || {}
+  let refs = session.uploaded_refs || session.uploadedRefs || []
+  if (typeof refs === 'string') {
+    try { refs = JSON.parse(refs) } catch { refs = [] }
+  }
+  // 仅清理当前会话引用且尚未转存的临时资料，不能误删其他会话正在使用的资源。
+  const registered = new Set(readTempRegistry())
+  const tempIds = Array.isArray(refs) ? refs.map(String).filter((value) => /^res_[a-f0-9]+$/i.test(value) && registered.has(value)) : []
   if (tempIds.length) {
     const cleaned = await cleanupTempResources(tempIds).then(() => true).catch(() => false)
-    if (cleaned) writeTempRegistry([])
+    if (cleaned) writeTempRegistry(readTempRegistry().filter((value) => !tempIds.includes(value)))
   }
-  const existing = await getAiSession(id)
   const pythonId = existing?.data?.python_session_id
   const userId = useUserStore().userInfo?.user_id
   if (pythonId && userId) {
@@ -517,6 +548,13 @@ export const modifyPresentation = (data) => apiRequest({
   timeout: PYTHON_PPT_REQUEST_TIMEOUT
 })
 
+export const generateSlideImage = (data) => apiRequest({
+  url: '/api/v1/python/presentations/images/generate',
+  method: 'post',
+  data,
+  timeout: PYTHON_PPT_REQUEST_TIMEOUT,
+})
+
 /** 校验模型返回的单页 HTML 是否可安全加载到工作台 iframe。 */
 export const validatePresentationHtml = (data) => apiRequest({
   url: '/api/v1/python/presentations/html/validate',
@@ -531,3 +569,14 @@ export const validatePresentationHtml = (data) => apiRequest({
  * @returns {Promise} 后端返回更新后的偏好配置
  */
 export const saveTeacherPreferences = (data) => put('/api/v1/teachers/me/preferences', data)
+
+/** 长期教学画像由 Python AI 服务维护，账号偏好仍由 Java 保存。 */
+export const getTeacherStyleProfile = (userId) => get('/api/v1/python/teacher-style/profile', { user_id: userId })
+export const updateTeacherStyleProfile = (enabled) => put('/api/v1/python/teacher-style/profile', { enabled })
+export const updateTeacherStyleTags = (tags) => put('/api/v1/python/teacher-style/profile/tags', { tags })
+export const relearnTeacherStyleProfile = () => post('/api/v1/python/teacher-style/profile/relearn', {})
+export const learnTeacherMaterialStyle = (file) => {
+  const data = new FormData()
+  data.append('file', file)
+  return apiRequest({ url: '/api/v1/python/teacher-style/profile/learn-file', method: 'post', data, timeout: 120000 })
+}

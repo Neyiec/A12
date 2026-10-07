@@ -178,6 +178,9 @@ def slide_html_prompt(
 - 当 learning_phase 为 pre_assessment/post_assessment/summary 时，必须先要求学生回忆、预测或作答，再显示提示；不得把答案直接作为页面视觉中心。
 - teacher_prompt、scaffolding 和 feedback_strategy 属于教师实施信息，不要整段放到学生主画面，只在页面角落保留必要提示。
 - 如果当前页数据包含 generated_image，必须使用其中的 source_url 创建 `<img data-ppt-element="image">`；图片应作为有教学意义的视觉区，使用 object-fit:cover，不能作为整页不可编辑截图，也不要在图片上叠加大段文字。
+- 学科素材按 asset_plan.type 选择表达：formula 使用独立公式容器并保留原始 LaTeX/数学文本；chart 使用可拆分的标签、数值与图形元素；diagram 使用独立节点与连线。不要把整页公式或图表做成单张截图。
+- 若当前页包含 subject_components，右侧 64px 起、顶部 270px 起的 440×230 区域要留空；系统随后会把同一份学科 DSL 注入该区域，避免和正文重叠。不要在 HTML 中自行重复渲染该组件。
+- 对无法保证 PowerPoint 原生可编辑的复杂化学结构/公式，须把解释文字与图形分层，保留可修改的标题、标注和数值；不得声称栅格图片本身可编辑。
 
 模板 HTML 参考：
 {compact_template_html(template_html)}

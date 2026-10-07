@@ -146,6 +146,9 @@ class MajorGapTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual([item["type"] for item in events], ["slide", "slide", "final"])
         self.assertEqual(events[0]["completed"], 1)
         self.assertEqual(events[-1]["response"]["slide_count"], 2)
+        timings = events[-1]["response"]["metadata"]["timing_ms"]
+        self.assertLessEqual(timings["setup"], timings["first_slide"])
+        self.assertLessEqual(timings["first_slide"], timings["total"])
 
     def test_model_intent_fields_are_enforced_by_code(self):
         workflow = OutlineChatWorkflow.__new__(OutlineChatWorkflow)

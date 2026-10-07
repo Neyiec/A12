@@ -35,6 +35,10 @@ export function createAiConfig(data) {
   return post('/api/v1/admin/ai-configs', data)
 }
 
+export function publishAiConfig(id) {
+  return post(`/api/v1/admin/ai-configs/${id}/publish`)
+}
+
 /**
  * 分页查询系统日志（API-106）
  * 支持按日志类型(log_type)、模块(module)、关键词(keyword，模糊匹配 action/detail)

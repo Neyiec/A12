@@ -565,7 +565,7 @@ const transferTempToLibrary = async (entry) => {
   if (entry.status !== 'ready' || entry.transferring) return
   entry.transferring = true
   try {
-    const resource = await uploadResource(entry.file)
+    const resource = await uploadResource(entry.file, undefined, { allowAi: true })
     const resourceId = String(resource?.id || resource?.resource_id || '')
     if (!resourceId) throw new Error('转存成功但未返回资源 ID')
     if (!selectedResourceIds.value.includes(resourceId)) selectedResourceIds.value.push(resourceId)
