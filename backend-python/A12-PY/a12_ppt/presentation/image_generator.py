@@ -10,14 +10,18 @@ import asyncio
 import base64
 import hashlib
 import mimetypes
+import os
 from dataclasses import dataclass
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Any
 
 import httpx
+import redis.asyncio as async_redis
 
 from ..config import get_settings
-from ..direct_auth import require_active_browser_token
+from ..direct_auth import direct_user_id, require_active_browser_token
+from ..runtime_config import image_generation_model, image_monthly_quota
 
 
 @dataclass(frozen=True)
@@ -38,7 +42,7 @@ class ImageGenerationClient:
 
     @property
     def available(self) -> bool:
-        return bool(self.settings.image_generation_api_key and self.settings.image_generation_model)
+        return bool(self.settings.image_generation_api_key and image_generation_model(self.settings.image_generation_model))
 
     async def generate(self, prompt: str, aspect_ratio: str = "16:9") -> GeneratedImage | None:
         prompt = (prompt or "").strip()[:1800]
@@ -47,12 +51,49 @@ class ImageGenerationClient:
 
         await require_active_browser_token()
 
-        cache_key = hashlib.sha256(
-            f"{self.settings.image_generation_model}\n{aspect_ratio}\n{prompt}".encode("utf-8")
-        ).hexdigest()
-        cached = self._read_cache(cache_key, prompt)
+        model = image_generation_model(self.settings.image_generation_model)
+        cache_key = hashlib.sha256(f"{model}\n{aspect_ratio}\n{prompt}".encode("utf-8")).hexdigest()
+        cached = self._read_cache(cache_key, prompt, model)
         if cached:
             return cached
+
+        quota_key = await self._reserve_quota()
+        try:
+            return await self._request_image(prompt, aspect_ratio, cache_key, model)
+        except BaseException:
+            if quota_key:
+                await self._refund_quota(quota_key)
+            raise
+
+    async def _reserve_quota(self) -> str | None:
+        user_id = direct_user_id.get()
+        if not user_id:
+            return None  # 可信内部任务没有用户身份，使用独立的后台调度策略。
+        limit = image_monthly_quota()
+        if limit <= 0:
+            raise RuntimeError("本月 AI 配图额度已用尽")
+        now = datetime.now(timezone(timedelta(hours=8)))
+        next_month = (now.replace(day=28) + timedelta(days=4)).replace(day=1, hour=0, minute=0, second=0, microsecond=0)
+        ttl = max(1, int((next_month - now).total_seconds()))
+        key = f"a12:image-quota:{now:%Y%m}:{user_id}"
+        redis_url = os.getenv("A12_AUTH_REDIS_URL") or os.getenv("A12_RESOURCE_REDIS_URL", "redis://127.0.0.1:6379/0")
+        script = "local n=redis.call('INCR',KEYS[1]); if n==1 then redis.call('EXPIRE',KEYS[1],ARGV[1]) end; if n>tonumber(ARGV[2]) then redis.call('DECR',KEYS[1]); return 0 end; return 1"
+        async with async_redis.from_url(redis_url, socket_connect_timeout=3, socket_timeout=3) as client:
+            allowed = await client.eval(script, 1, key, ttl, limit)
+        if not allowed:
+            raise RuntimeError("本月 AI 配图额度已用尽")
+        return key
+
+    async def _refund_quota(self, key: str) -> None:
+        redis_url = os.getenv("A12_AUTH_REDIS_URL") or os.getenv("A12_RESOURCE_REDIS_URL", "redis://127.0.0.1:6379/0")
+        try:
+            async with async_redis.from_url(redis_url, socket_connect_timeout=3, socket_timeout=3) as client:
+                await client.eval("if tonumber(redis.call('GET',KEYS[1]) or '0')>0 then return redis.call('DECR',KEYS[1]) end; return 0", 1, key)
+        except Exception:
+            # 外部调用失败已降级；Redis 暂停时退款需依靠月度 TTL 自清理。
+            pass
+
+    async def _request_image(self, prompt: str, aspect_ratio: str, cache_key: str, model: str) -> GeneratedImage:
 
         headers = {
             "Authorization": f"Bearer {self.settings.image_generation_api_key}",
@@ -61,7 +102,7 @@ class ImageGenerationClient:
         }
         size = "1024*768" if aspect_ratio == "4:3" else "1280*720"
         payload = {
-            "model": self.settings.image_generation_model,
+            "model": model,
             "input": {
                 "prompt": prompt,
                 "negative_prompt": "文字，字幕，水印，标志，二维码，低清晰度，构图混乱，错误肢体",
@@ -111,18 +152,18 @@ class ImageGenerationClient:
             if not content_type.startswith("image/"):
                 content_type = mimetypes.guess_type(source_url)[0] or "image/png"
 
-        return self._write_cache(cache_key, prompt, source_url, content_type, image_bytes)
+        return self._write_cache(cache_key, prompt, source_url, content_type, image_bytes, model)
 
-    def _read_cache(self, cache_key: str, prompt: str) -> GeneratedImage | None:
+    def _read_cache(self, cache_key: str, prompt: str, model: str) -> GeneratedImage | None:
         for suffix, content_type in (("png", "image/png"), ("jpg", "image/jpeg"), ("webp", "image/webp")):
             path = self.cache_dir / f"{cache_key}.{suffix}"
             if path.exists() and path.stat().st_size:
                 encoded = base64.b64encode(path.read_bytes()).decode("ascii")
-                return GeneratedImage("", f"data:{content_type};base64,{encoded}", prompt, self.settings.image_generation_model, cache_key)
+                return GeneratedImage("", f"data:{content_type};base64,{encoded}", prompt, model, cache_key)
         return None
 
     def _write_cache(
-        self, cache_key: str, prompt: str, source_url: str, content_type: str, image_bytes: bytes
+        self, cache_key: str, prompt: str, source_url: str, content_type: str, image_bytes: bytes, model: str
     ) -> GeneratedImage:
         suffix = {"image/jpeg": "jpg", "image/webp": "webp"}.get(content_type, "png")
         self.cache_dir.mkdir(parents=True, exist_ok=True)
@@ -132,6 +173,6 @@ class ImageGenerationClient:
             source_url=source_url,
             data_url=f"data:{content_type};base64,{encoded}",
             prompt=prompt,
-            model=self.settings.image_generation_model,
+            model=model,
             cache_key=cache_key,
         )

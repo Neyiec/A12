@@ -1,6 +1,7 @@
 import json
 import re
 import shutil
+import time
 import uuid
 from dataclasses import dataclass
 from pathlib import Path
@@ -37,13 +38,17 @@ async def save_upload(file: UploadFile) -> ResourceRecord:
     file_path = resource_dir / filename
     content = await file.read()
     file_path.write_bytes(content)
-    parsed = await parse_resource_file(file_path, file.content_type, filename)
+    try:
+        parsed = await parse_resource_file(file_path, file.content_type, filename)
+    except Exception:
+        shutil.rmtree(resource_dir, ignore_errors=True)
+        raise
     text = parsed.text
     text_path = resource_dir / "content.txt"
     text_path.write_text(text, encoding="utf-8")
     metadata_path = resource_dir / "metadata.json"
     metadata_path.write_text(
-        json.dumps({**parsed.metadata, "owner_user_id": direct_user_id.get()}, ensure_ascii=False, indent=2),
+        json.dumps({**parsed.metadata, "owner_user_id": direct_user_id.get(), "created_at_epoch": time.time()}, ensure_ascii=False, indent=2),
         encoding="utf-8",
     )
     return ResourceRecord(
@@ -97,6 +102,7 @@ def delete_temp_upload_resources(resource_ids: list[str], owner_user_id: str | N
     deleted: list[str] = []
     missing: list[str] = []
     denied: list[str] = []
+    failed: list[str] = []
     for raw_id in resource_ids or []:
         resource_id = str(raw_id or "").strip()
         if not re.fullmatch(r"res_[0-9a-f]{16}", resource_id):
@@ -114,9 +120,30 @@ def delete_temp_upload_resources(resource_ids: list[str], owner_user_id: str | N
             if str(metadata.get("owner_user_id") or "") != owner_user_id:
                 denied.append(resource_id)
                 continue
-        shutil.rmtree(resource_dir, ignore_errors=True)
-        deleted.append(resource_id)
-    return {"deleted": deleted, "missing": missing, "denied": denied}
+        try:
+            shutil.rmtree(resource_dir)
+            deleted.append(resource_id)
+        except OSError:
+            failed.append(resource_id)
+    return {"deleted": deleted, "missing": missing, "denied": denied, "failed": failed}
+
+
+def expired_temp_upload_ids(max_age_hours: int = 48) -> list[str]:
+    """只列出本服务创建、超过保留期的临时 res_ 目录；实际删除由调用方先清索引。"""
+    cutoff = time.time() - max(1, max_age_hours) * 3600
+    expired = []
+    for resource_dir in DATA_DIR.iterdir():
+        if not resource_dir.is_dir() or not re.fullmatch(r"res_[0-9a-f]{16}", resource_dir.name):
+            continue
+        metadata_path = resource_dir / "metadata.json"
+        try:
+            metadata = json.loads(metadata_path.read_text(encoding="utf-8"))
+            created_at = float(metadata.get("created_at_epoch") or metadata_path.stat().st_mtime)
+        except (OSError, ValueError, TypeError):
+            continue
+        if created_at < cutoff:
+            expired.append(resource_dir.name)
+    return expired
 
 
 def extract_text(path: Path) -> str:

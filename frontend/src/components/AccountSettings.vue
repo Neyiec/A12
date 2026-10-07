@@ -21,7 +21,7 @@ import {
   ChatDotRound, EditPen, Promotion, Message, Microphone,
 } from '@element-plus/icons-vue'
 import { changeContact, changePassword, getCurrentUser, logout, sendVerificationCode } from '../apis/login.js'
-import { getTeacherPreferences, saveTeacherPreferences } from '../apis/teacher.js'
+import { getTeacherPreferences, getTeacherStyleProfile, relearnTeacherStyleProfile, learnTeacherMaterialStyle, saveTeacherPreferences, updateTeacherStyleProfile, updateTeacherStyleTags } from '../apis/teacher.js'
 import { useUserStore } from '../storage/user.js'
 import { TEACHING_STYLES, TEMPLATES, INTERACTION_FORMS, PREFERENCES_DEFAULTS } from '../config/preferences.config.js'
 
@@ -157,6 +157,88 @@ const savingPrefs = ref(false)
 
 /** 偏好初始加载 loading 态 */
 const loadingPrefs = ref(false)
+const learnedProfile = ref(null)
+const learnedProfileLoading = ref(false)
+const learnedProfileSaving = ref(false)
+const learnedProfileRelearning = ref(false)
+const manualStyleTags = ref('')
+const manualTagsSaving = ref(false)
+const styleMaterialInput = ref(null)
+const learningMaterial = ref(false)
+
+async function learnStyleFromMaterial(event) {
+  const file = event.target.files?.[0]
+  event.target.value = ''
+  if (!file || learningMaterial.value) return
+  if (file.size > 10 * 1024 * 1024) { ElMessage.warning('材料不能超过10MB'); return }
+  learningMaterial.value = true
+  try {
+    await learnTeacherMaterialStyle(file)
+    await loadLearnedProfile()
+    ElMessage.success('已提取教学材料风格，当前任务的明确要求仍然优先')
+  } catch (error) {
+    ElMessage.error(error?.response?.data?.detail || error?.message || '教学材料学习失败')
+  } finally { learningMaterial.value = false }
+}
+
+async function loadLearnedProfile() {
+  const userId = String(userStore.userInfo?.user_id || userStore.userInfo?.id || '')
+  if (!userId) return
+  learnedProfileLoading.value = true
+  try {
+    const result = await getTeacherStyleProfile(userId)
+    learnedProfile.value = result?.data?.profile || null
+    manualStyleTags.value = (learnedProfile.value?.profile?.manual_tags || []).join('、')
+  } catch {
+    learnedProfile.value = null
+  } finally {
+    learnedProfileLoading.value = false
+  }
+}
+
+async function saveManualStyleTags() {
+  const tags = [...new Set(manualStyleTags.value.split(/[、,，]/).map((value) => value.trim()).filter(Boolean))]
+  if (tags.length > 8 || tags.some((value) => value.length > 30)) {
+    ElMessage.warning('最多 8 个风格标签，每个不超过 30 字')
+    return
+  }
+  manualTagsSaving.value = true
+  try {
+    await updateTeacherStyleTags(tags)
+    await loadLearnedProfile()
+    ElMessage.success('教学风格标签已保存')
+  } catch (error) {
+    ElMessage.error(error?.message || '教学风格标签保存失败')
+  } finally {
+    manualTagsSaving.value = false
+  }
+}
+
+async function setLearnedProfileEnabled(enabled) {
+  learnedProfileSaving.value = true
+  try {
+    await updateTeacherStyleProfile(enabled)
+    learnedProfile.value = { ...(learnedProfile.value || {}), enabled }
+    ElMessage.success(enabled ? '已启用长期教学画像' : '已暂停使用长期教学画像')
+  } catch (error) {
+    ElMessage.error(error?.message || '画像设置保存失败')
+  } finally {
+    learnedProfileSaving.value = false
+  }
+}
+
+async function relearnHistoricalFeedback() {
+  learnedProfileRelearning.value = true
+  try {
+    const result = await relearnTeacherStyleProfile()
+    await loadLearnedProfile()
+    ElMessage.success(result?.data?.updated ? '已根据历史反馈更新教学画像' : '历史反馈尚不足以形成稳定偏好')
+  } catch (error) {
+    ElMessage.error(error?.message || '重新学习失败')
+  } finally {
+    learnedProfileRelearning.value = false
+  }
+}
 
 /**
  * 加载教师已保存的偏好设置
@@ -269,9 +351,10 @@ const signOut = async () => {
   userStore.clearUser()
   router.replace('/login')
 }
-onMounted(() => {
-  refreshUser().catch(() => ElMessage.error('个人资料加载失败，请检查后端服务后重试'))
+onMounted(async () => {
+  await refreshUser().catch(() => ElMessage.error('个人资料加载失败，请检查后端服务后重试'))
   loadPreferences()
+  loadLearnedProfile()
 })
 onBeforeUnmount(() => clearInterval(contactTimer))
 </script>
@@ -332,6 +415,27 @@ onBeforeUnmount(() => clearInterval(contactTimer))
               </span>
               <el-icon v-if="preferences.teachingStyle === style.value" class="pref-card-check"><CircleCheck /></el-icon>
             </button>
+          </div>
+        </fieldset>
+
+        <fieldset class="pref-section">
+          <legend class="pref-section-title">AI 学习到的教学画像</legend>
+          <div v-loading="learnedProfileLoading" class="learned-profile-row">
+            <p>{{ learnedProfile?.style_summary || '尚无稳定的历史教学偏好。您可先使用上方的显式风格设置；后续修改与反馈会逐步形成画像。' }}</p>
+            <el-switch
+              :model-value="learnedProfile?.enabled !== false"
+              :loading="learnedProfileSaving"
+              active-text="用于生成"
+              inactive-text="暂停使用"
+              @change="setLearnedProfileEnabled"
+            />
+            <el-button size="small" text :loading="learnedProfileRelearning" @click="relearnHistoricalFeedback">从历史反馈重新学习</el-button>
+            <el-button size="small" text :loading="learningMaterial" @click="styleMaterialInput?.click()">学习历史课件或教案</el-button>
+            <input ref="styleMaterialInput" type="file" accept=".pptx,.docx,.txt,.md" hidden @change="learnStyleFromMaterial" />
+          </div>
+          <div class="flex flex-wrap items-center gap-2 mt-3">
+            <el-input v-model="manualStyleTags" style="max-width: 430px" placeholder="自定义风格标签，如多案例、少文字、重实践（用顿号分隔）" />
+            <el-button :loading="manualTagsSaving" @click="saveManualStyleTags">保存风格标签</el-button>
           </div>
         </fieldset>
 
@@ -443,6 +547,9 @@ onBeforeUnmount(() => clearInterval(contactTimer))
 .verification-code-row .el-button { min-width: 116px; }
 
 /* ===== 个人偏好设置 ===== */
+.learned-profile-row { display: flex; align-items: center; justify-content: space-between; gap: 24px; }
+.learned-profile-row p { margin: 0; color: var(--zh-text-secondary, #64748b); line-height: 1.6; }
+@media (max-width: 767px) { .learned-profile-row { align-items: flex-start; flex-direction: column; gap: 12px; } }
 .preferences-card { margin-top: 18px; }
 .preferences-body { display: grid; gap: 24px; }
 

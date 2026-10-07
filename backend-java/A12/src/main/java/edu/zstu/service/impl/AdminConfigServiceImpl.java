@@ -177,13 +177,9 @@ public class AdminConfigServiceImpl implements AdminConfigService {
         evictConfigCache(config);
         businessLogService.record("operation", "admin_config", "publish_ai_config", "config", id);
 
-        // 模拟多节点发布状态
-        List<Map<String, String>> nodeStatuses = List.of(
-                Map.of("node", "node-01", "status", "loaded"),
-                Map.of("node", "node-02", "status", "loaded"),
-                Map.of("node", "node-03", "status", "loaded")
-        );
-        return Map.of("node_status", nodeStatuses);
+        // Python 为按需拉取配置，不能在此声称各节点已加载。
+        return Map.of("status", "published", "delivery", "python_pull_within_60s",
+                "config_group", config.getConfig_group());
     }
 
     // ==================== API-101 回滚AI配置 ====================

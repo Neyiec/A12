@@ -43,9 +43,9 @@ async def stream_workspace_chat(request: WorkspaceChatRequest):
     elif request.mode == "outline-repair":
         system = "你是教学大纲修订专家。按用户给定的大纲和要求修订，仅输出完整 JSON；保持要求的页数，每页有独立知识内容、学生任务、教师追问和检查理解的方法。"
     else:
-        profile = postgres_memory_store.get_teacher_profile(request.user_id)
-        if profile:
-            system += "\n教师历史风格（本次明确需求优先）：" + json.dumps(profile.get("profile", {}), ensure_ascii=False, default=str)[:5000]
+        profile = postgres_memory_store.refresh_teacher_profile(request.user_id)
+        if profile and profile.get("enabled", True):
+            system += "\n教师历史风格（本次明确需求优先）：" + str(profile.get("style_summary") or "")[:1200]
     transcript = json.dumps([m.model_dump() for m in request.messages[-30:]], ensure_ascii=False)
     try:
         produced = False

@@ -8,6 +8,14 @@ class Result(BaseModel):
     data: Any = None
 
 
+class TeacherStyleConfigRequest(BaseModel):
+    enabled: bool
+
+
+class TeacherStyleTagsRequest(BaseModel):
+    tags: list[str] = Field(default_factory=list, max_length=8)
+
+
 class TemplateMutationRequest(BaseModel):
     """管理后台 PPT 模板创建/替换请求：template_data 为模板 JSON 文件的文本内容"""
     name: str | None = None
@@ -35,6 +43,9 @@ class OutlineGenerateRequest(BaseModel):
     model_profile: Literal["fast", "standard", "deep"] = "standard"
     reasoning_effort: Literal["low", "medium", "high"] = "medium"
     classroom_insights: dict[str, Any] = Field(default_factory=dict)
+    teaching_model: Literal["boppps", "general"] = "boppps"
+    teaching_style: str | None = None
+    teacher_profile: dict[str, Any] = Field(default_factory=dict)
 
 
 class PresentationGenerateRequest(BaseModel):
@@ -50,6 +61,17 @@ class PresentationGenerateRequest(BaseModel):
     asset_policy: Literal["auto", "none", "placeholder", "generate"] = "auto"
     model_profile: Literal["fast", "standard", "deep"] = "standard"
     reasoning_effort: Literal["low", "medium", "high"] = "medium"
+    teaching_model: Literal["boppps", "general"] | None = None
+    teaching_style: str | None = None
+
+
+class SlideImageGenerateRequest(BaseModel):
+    lesson_title: str = Field(min_length=1, max_length=160)
+    slide_title: str = Field(min_length=1, max_length=160)
+    subject: str = Field(default="通用", max_length=80)
+    grade: str = Field(default="", max_length=80)
+    visual_suggestion: str = Field(default="", max_length=600)
+    aspect_ratio: Literal["16:9", "4:3"] = "16:9"
 
 
 class SlideModifyRequest(BaseModel):
@@ -104,6 +126,8 @@ class OutlineChatStreamRequest(BaseModel):
     language: str = "zh-CN"
     model_profile: Literal["fast", "standard", "deep"] = "standard"
     reasoning_effort: Literal["low", "medium", "high"] = "medium"
+    teaching_model: Literal["boppps", "general"] = "boppps"
+    teaching_style: str | None = None
 
 
 class IntentRecognizeRequest(BaseModel):
@@ -149,6 +173,8 @@ class LessonPlanGenerateRequest(BaseModel):
     requirements: str | None = None
     reference_text: str | None = None
     language: str = "zh-CN"
+    teaching_model: Literal["boppps", "general"] | None = None
+    teaching_style: str | None = None
 
 
 class LessonPlanExportRequest(BaseModel):

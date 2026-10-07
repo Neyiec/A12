@@ -577,6 +577,8 @@ Java 任务模式支持的导出配置键：`slides`、`lesson_plan`、`outline`
   "enable_rag": true,
   "enable_web": false,
   "slide_count": 8,
+  "teaching_model": "boppps",
+  "teaching_style": "heuristic",
   "language": "zh-CN"
 }
 ```
@@ -3014,11 +3016,14 @@ Java 的 `/api/v1/ai/engine` 和 `/api/v1/python` 公开转发入口已下线；
 | `knowledge_points` | List<String> | 否 | 知识点数组，例如 `["叶绿体", "光能", "氧气释放"]` |
 | `requirements` | String | 否 | 用户额外要求，例如 `风格活泼，加入课堂互动` |
 | `reference_text` | String | 否 | 教材、资料、上传文件解析后的纯文本；没有资料可不传 |
-| `resource_ids` | List<String> | 否 | 上传参考资料ID列表。临时上传资料使用 API-135 返回的 `res_xxx`；用于提取格式、语气、案例、内容，并参与构造 RAG 检索 query，不作为向量库检索范围 |
+| `resource_ids` | List<String> | 否 | 临时资料 `res_xxx` 会检索 temp 分区；明确选中的 `public:ID`、`personal:ID`、`community:ID` 会优先定向检索，同时保留全局检索。服务端执行所有权与可用性过滤 |
 | `enable_rag` | Boolean | 否 | 是否启用本地知识库 RAG；为 `true` 时，系统会用用户输入、已识别意图和上传参考资料内容构造查询，在全局可用知识库向量库中检索 |
 | `enable_web` | Boolean | 否 | 是否启用联网增强开关；当前会传入模型提示词 |
 | `slide_count` | int | 否 | 期望页数，建议 `6-15`，默认 `8` |
 | `language` | String | 否 | 输出语言，默认 `zh-CN` |
+| `teaching_model` | String | 否 | `boppps`（默认）或 `general`；选择贯穿大纲、PPT 和教案 |
+| `teaching_style` | String | 否 | 当前教师显式选择的风格，优先于长期画像；例如 `heuristic` |
+| `model_profile` / `reasoning_effort` | String | 否 | 分别选择模型档位和推理强度，并随大纲进入 PPT 生成 |
 | `regenerate_instruction` | String | 否 | 重生成大纲时的附加要求 |
 
 **后端 DTO**: `OutlineGenerateDTO { session_id, title, subject, grade, duration_minutes, teaching_goals, knowledge_points, requirements, reference_text, resource_ids, enable_rag, enable_web, slide_count, language, regenerate_instruction }`
@@ -3171,7 +3176,7 @@ Java 的 `/api/v1/ai/engine` 和 `/api/v1/python` 公开转发入口已下线；
 | `slide_count` | int | 否 | 期望页数，默认 `8` |
 | `language` | String | 否 | 输出语言，默认 `zh-CN` |
 
-**RAG 范围说明**: `resource_ids` 不是向量库过滤条件。上传资料会先解析为 `reference_context`，用于提取格式、语气、案例和用户特定内容；系统再把用户输入、已识别意图和 `reference_context` 融合成 `enriched_query`，用这个融合查询到本地知识库向量库中检索最匹配资料。RAG 工具返回的 `tool_result.rag` 中包含 `enriched_query`、`search_scope=global_knowledge_base`、`reference_context`、`knowledge_context` 和 `matches`。
+**RAG 范围说明**: 临时资料与教师主动引用的资料会优先定向检索，结果再与全局知识库命中去重合并。`tool_result.rag` 返回 `search_scope`、`selected_context`、`temp_context`、`knowledge_context` 和 `matches`；最终大纲可返回 `retrieval_matches` 供前端一键加入后续引用。
 
 **SSE 事件**
 | event | data 说明 |
@@ -3333,11 +3338,15 @@ while (true) {
 | `profile` | Object(JSON) | PostgreSQL 中存储的教师画像；没有则为 `null` |
 | `postgres_available` | Boolean | 当前 PostgreSQL 是否可用 |
 
+**画像管理**: `PUT /api/v1/python/teacher-style/profile` 请求 `{"enabled": false}` 可暂停长期画像参与生成，不删除历史证据；`PUT /api/v1/python/teacher-style/profile/tags` 请求 `{"tags":["多案例","重实践"]}` 可保存最多 8 个手动风格标签，每项最多 30 字；`POST /api/v1/python/teacher-style/profile/relearn` 根据历史接受/编辑反馈重新计算稳定偏好。手动标签与历史学习结果分开存储，重新学习不会清除教师自设标签。这些操作只作用于当前登录教师。
+
 ---
 
 ## API-138 POST /api/v1/python/presentations/generate
 
 **功能**: 根据已确认的大纲生成整套 PPT，返回每页 PPT 的 HTML 字符串
+
+大纲中的 `teaching_model`、`teaching_style`、`teacher_style_summary`、`subject_policy` 会进入逐页提示词；请求可显式覆盖前两项。流式结果的 `metadata.timing_ms` 给出准备、首张页面和总耗时，供压测与调优使用。
 
 **最小可用请求**
 ```json
@@ -3838,5 +3847,31 @@ const pptxBlob = await fetch("http://127.0.0.1:8001/api/v1/python/presentations/
 资源索引 `POST /api/v1/python/resources/index/sync` 可在 `metadata.course_id` 传课程 ID。成功解析并向量化后，Python 为已审核节点补充带 `resource_key`、`content_sha256` 和摘录的证据；同一资源重解析时替换旧证据，删除索引时删除对应证据。新增课程关系仍须审核导入。大纲对话传 `known_context.course_id` 可明确指定课程；未指定时按主题和知识点保守匹配，无法唯一匹配则沿用原流程。
 
 LangGraph 在 `parse_input` 后执行 `select_strategy`：查询课程图谱并在直接、RAG、图谱、图谱+RAG 路径中选择。启用 RAG 的显式请求不会被策略关闭；至少两个候选策略各有 5 条大纲反馈后，才按修改率比较。策略和图谱版本写入 `a12_outline_strategy_run`，教师反馈继续写入 `a12_ai_feedback`，便于审计。数据库不可用时回退原流程。
+
+### 学科教学策略与 AI 配图额度（后台发布）
+
+管理员通过 `POST /api/v1/admin/ai-configs` 保存草稿，再通过 `POST /api/v1/admin/ai-configs/{id}/publish` 发布。学科策略使用 `config_group=teaching_subject`、`config_key=subject_policy:文科|理科|工科|语言`，`config_value` 为 JSON，例如 `{"subjects":["数学","物理"],"method":"先提出可检验问题","activity":"学生预测并解释","visual":"优先公式与图表","page_structure":"预测→推导→练习","examples":"函数图像探究"}`。前四个字段必填，页面结构和示例库提示可选；未命中时沿用 Python 内置学科策略。管理端“AI 参数配置”页面提供表单。
+
+配图用量使用 `config_group=image_generation`、`config_key=monthly_quota`，值为 `0` 至 `100000` 的整数字符串；`0` 关闭教师配图调用，未发布时默认读取 Python 的 `IMAGE_GENERATION_MONTHLY_QUOTA`（默认每人每月 100 次）。同组的 `config_key=model` 可发布百炼文生图模型名称，未发布时沿用 Python 的 `IMAGE_GENERATION_MODEL`；模型名称进入缓存键，切换模型不会复用旧图。仅实际调用文生图服务计数，缓存命中不计；服务调用失败尝试退还额度。额度按北京时间自然月和教师 ID 在 Redis 中原子计数，到下月自动过期。额度耗尽或 Redis 不可用时，PPT 生成回退到图片占位，不中断整份课件。
+
+Python 使用内部密钥请求 `GET /api/v1/internal/ai-runtime-config`，该接口只返回已发布的上述两组配置；成功后最长约 60 秒刷新，Java 暂时不可用时保留上次有效配置。内部接口不供浏览器访问。
+
+### 第一阶段：学科组件、单页配图与生成耗时
+
+大纲的 `slides[].subject_components` 可包含至多两个受支持的 DSL 对象：`{"type":"math_formula","data":{"latex":"y=x^2","display_mode":true}}`、`chemical_formula/formula`、`mermaid_diagram/mermaid`、`chart/option`、`table/columns+rows`。Python 校验后把组件作为 `data-subject-*` 写入 HTML；工作台使用同一套学科组件渲染器展示与编辑。PPTX 导出允许复杂公式与图示局部栅格化，不能把其图像区域宣称为 PowerPoint 原生可编辑。
+
+函数坐标图支持 `{"type":"function_graph","data":{"coefficients":[0,0,1],"x_min":-5,"x_max":5,"label":"y=x²"}}`。系数按常数项、一次项、二次项依次排列，最多六项；定义域在 -100 至 100 内。Python 安全采样为图表 DSL，不执行表达式代码；前端展示完整采样曲线与零点坐标轴。双组件页面保留两项并上下排布。
+
+### 第一阶段：历史材料风格学习与教案结构校验
+
+`POST /api/v1/python/teacher-style/profile/learn-file`：以 `multipart/form-data` 上传 `file`，支持 PPTX、DOCX、TXT、Markdown，最大 10MB；压缩文档展开总量限制 50MB。用户身份来自登录令牌，不能指定其他教师 ID。Python 提取教学结构、语言、密度、视觉与活动维度，PPTX 同时分析前 60 页的文字颜色、字体、密度和文本布局。成功响应包含 `style` 与 `evidence`（文件名、SHA-256、视觉指标）；临时原文件请求结束即清理，不自动加入个人知识库。格式错误或内容不足返回 422，超限返回 413，模型或数据库异常返回 503，不覆盖原画像。
+
+账号中心“学习历史课件或教案”可触发材料学习。材料学习是参考画像，不等于模型微调；教师手动标签和本轮明确要求优先。历史反馈在生成前按需每日重算，失败退避五分钟，禁用画像时不触发。教师显式保存课件时记录编辑前后文字密度、案例页和实践页指标，自动保存不会重复累计证据；接受修改或手动编辑出现重复信号后才晋升为长期偏好。
+
+选择 BOPPPS 时，教案输出保证导入、学习目标、前测、参与式学习、后测、总结六阶段，保留匹配阶段的模型活动描述、补全缺失阶段。六阶段课时合计与规范化课时一致（至少六分钟），PPT 引用只填写对应 `learning_phase` 的真实页码，没有匹配页面则留空。选择 `general` 不强制转换为六阶段。
+
+`POST /api/v1/python/presentations/images/generate` 可单独为当前页生成配图，请求包含 `lesson_title`、`slide_title`，可选 `subject`、`grade`、`visual_suggestion`、`aspect_ratio`；响应 `data_url`、`model`、`prompt`。教师工作台提供“生成本页配图”和“保存配图”，前者插入当前 HTML 页，后者转存个人资源库。接口使用 Python 直连鉴权、调用点 Redis 令牌复核和按月配图额度。
+
+PPT 生成流的 `metadata.timing_ms` 返回准备、首张、总耗时；单页 `metadata.generation_ms` 记录每页生成耗时。资料检索和配图规划并行进行；快档精简模板上下文，并取消额外 HTML 修复模型调用，失败时回退本地合法 HTML。耗时取决于模型服务与页数，不承诺固定秒数。
 
 教学入口的 Python 分流 Graph 会在 `route` 外返回 `next_stage=ordinary_chat|outline_graph`。进入大纲 Graph 且信息足够时，工具检索之后会先发送 `learning_graphs` SSE 事件，结构为 `{knowledge:{title,nodes,edges},skill:{title,nodes,edges},status,course_id,course_version}`；随后才输出大纲增量。最终结果的 `outline.learning_graphs` 同步保存到 Java `plan_json`，历史会话可恢复图谱。前端默认展示知识图谱，切换按钮展示技能图谱；无审核课程图谱时返回标明待核对的草案。

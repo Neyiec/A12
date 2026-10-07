@@ -16,7 +16,7 @@ import { useUserStore } from '../storage/user.js'
 import { readOutlineDraft, saveOutlineDraft } from '../utils/presentationDraft.js'
 import { readOpenAiTextStream } from '../utils/openAiSse.js'
 import { normalizeModelProfile, normalizeReasoningEffort } from '../utils/aiOptions.js'
-import { beginGeneralChatTurn, completeGeneralChatTurn, confirmAiPlan, getAiPlan, getAiSession, listPptTemplates, routeTeachingChat, saveDirectOutlineResult, streamGeneralChat, streamOutlineChat, transcribeAudio, uploadResource } from '../apis/teacher.js'
+import { beginGeneralChatTurn, completeGeneralChatTurn, confirmAiPlan, getAiPlan, getAiSession, getTeacherPreferences, listPptTemplates, routeTeachingChat, saveDirectOutlineResult, streamGeneralChat, streamOutlineChat, transcribeAudio, uploadResource } from '../apis/teacher.js'
 import {
   CHAT_COMPOSER, CLASS_LEVEL_OPTIONS, CLARIFICATION_LABELS,
   extractPlanningContext, GRADE_OPTIONS, CHAT_RESUME, DESIGN_ACTION_BAR, GEN_RESOURCE_DEFAULTS, INFO_FORM_DEFAULTS,
@@ -69,7 +69,7 @@ const uploadChatResources = async (event) => {
   let uploaded = 0
   try {
     for (const file of files) {
-      const result = await uploadResource(file)
+      const result = await uploadResource(file, undefined, { allowAi: true })
       const id = result?.id || result?.resource_id || result?.resourceId
       if (!id) throw new Error(`${file.name} 上传成功但未返回资源 ID`)
       attachedResources.value = [
@@ -146,12 +146,21 @@ const messageListRef = ref(null)
 // ========== 教学设计方案数据 ==========
 /** 完整大纲数据（Markdown + 元数据），由真实 Python SSE 或兼容 API-14 填充 */
 const outlineData = ref(null)
+const retrievalMatches = computed(() => outlineData.value?.planJson?.retrieval_matches || [])
+const citeRetrievalMatch = (match) => {
+  const id = String(match?.resource_id || '')
+  if (!id || activeResourceIds.value.includes(id)) return
+  attachedResources.value.push({ id, resource_id: id, file_name: match.title || id, source: 'retrieval' })
+  ElMessage.success('已加入引用，后续生成将优先检索这份资料')
+}
 /** 最新一次用于展示的大纲版本号（提交确认/修改时携带，防并发冲突） */
 const planVersion = ref(1)
 
 // ========== 补充信息表单 ==========
 /** 使用配置模块的默认值初始化补充信息表单 */
 const infoForm = reactive({ ...INFO_FORM_DEFAULTS })
+const selectedTeachingModel = ref('boppps')
+const selectedTeachingStyle = ref('')
 
 // ========== 澄清交互 ==========
 /** 当前待补充的澄清问题文本 */
@@ -437,6 +446,17 @@ function planJsonToMarkdown(planJson) {
     lines.push('', '> 摘要：' + planJson.summary)
   }
   const slides = Array.isArray(planJson.slides) ? planJson.slides : []
+  const phaseLabels = {
+    bridge_in: '导入', objective: '学习目标', pre_assessment: '前测',
+    participatory_learning: '参与式学习', worked_example: '示例与练习',
+    post_assessment: '后测', summary: '总结',
+  }
+  if (planJson.teaching_model === 'boppps') {
+    const present = new Set(slides.map((slide) => String(slide.learning_phase || '')))
+    if (present.has('worked_example')) present.add('participatory_learning')
+    const stages = ['bridge_in', 'objective', 'pre_assessment', 'participatory_learning', 'post_assessment', 'summary']
+    lines.push('', `**BOPPPS 阶段预览**：${stages.map((stage) => `${present.has(stage) ? '✓' : '○'} ${phaseLabels[stage]}`).join(' · ')}`)
+  }
   for (const slide of slides) {
     lines.push('', `## ${slide.slide_no ?? ''} ${slide.title || ''}`.trim(), '')
     const points = Array.isArray(slide.content_points) ? slide.content_points : []
@@ -445,7 +465,7 @@ function planJsonToMarkdown(planJson) {
     if (slide.learner_question) lines.push(`**学生核心问题**：${slide.learner_question}`)
     if (slide.student_task) lines.push(`**学生任务**：${slide.student_task}`)
     const learningMeta = [
-      slide.learning_phase ? `阶段：${slide.learning_phase}` : '',
+      slide.learning_phase ? `阶段：${phaseLabels[slide.learning_phase] || slide.learning_phase}` : '',
       slide.student_action_mode ? `参与：${slide.student_action_mode}` : '',
       slide.cognitive_load ? `认知负荷：${slide.cognitive_load}` : '',
       slide.estimated_minutes ? `用时：${slide.estimated_minutes} 分钟` : '',
@@ -587,7 +607,7 @@ function normalizeRealOutlineResponse(response = {}) {
     slide_count: Number(nestedOutline.slide_count) || Number(response.slide_count) || slides.length,
     slides,
   }
-  ;['teaching_design_chain', 'interactive_assets', 'diagram_assets', 'learning_graphs', 'quality_report', 'generation_options']
+  ;['teaching_design_chain', 'interactive_assets', 'diagram_assets', 'learning_graphs', 'quality_report', 'generation_options', 'retrieval_matches']
     .forEach((key) => {
       if (planJson[key] === undefined && response[key] !== undefined) planJson[key] = response[key]
     })
@@ -653,6 +673,8 @@ async function requestRealOutlineChat(message) {
       textbook: infoForm.textbook,
       class_level: infoForm.classLevel,
       requirements: infoForm.requirements,
+      teaching_model: selectedTeachingModel.value,
+      teaching_style: selectedTeachingStyle.value,
       workspace_context: activeWorkspaceContext.value,
     },
     resource_ids: resourceIds,
@@ -660,6 +682,8 @@ async function requestRealOutlineChat(message) {
     enable_web: false,
     slide_count: Number(genResource.slideCount) || 8,
     language: 'zh-CN',
+    teaching_model: selectedTeachingModel.value,
+    teaching_style: selectedTeachingStyle.value,
   })
 
   let clarification = null
@@ -867,6 +891,8 @@ async function sendMessageToBackend(message, { includeContinuation = false, clar
       title: infoForm.courseName.trim(),
       subject: infoForm.subject,
       grade: infoForm.grade,
+      teaching_model: selectedTeachingModel.value,
+      teaching_style: selectedTeachingStyle.value,
       workspace_context: activeWorkspaceContext.value,
       ...clarificationContext,
     }),
@@ -889,6 +915,8 @@ async function sendMessageToBackend(message, { includeContinuation = false, clar
       known_context: JSON.parse(payload.known_context),
       slide_count: Number(genResource.slideCount) || 8,
       language: 'zh-CN',
+      teaching_model: selectedTeachingModel.value,
+      teaching_style: selectedTeachingStyle.value,
     })
     await consumeSseStream(res, (event, data) => {
       if (event === 'session' && data.session_id) outlinePythonSessionId.value = String(data.session_id)
@@ -1522,6 +1550,9 @@ watch(
 
 // ========== 生命周期 ==========
 onMounted(async () => {
+  void getTeacherPreferences().then((result) => {
+    selectedTeachingStyle.value = String(result?.data?.teaching_style || '')
+  }).catch(() => {})
   // 恢复历史会话：拉取会话详情与大纲重建消息与阶段，不透传首条消息
   if (props.resume) {
     await restoreSession()
@@ -1800,6 +1831,16 @@ async function restoreSession() {
                 </div>
                 <!-- 个性化需求行 -->
                 <div class="info-row">
+                  <span class="info-label">教学模型</span>
+                  <span class="info-desc">控制大纲、课件与教案的教学阶段</span>
+                  <span class="info-value-cell">
+                    <el-select v-model="selectedTeachingModel" size="small" :disabled="phase !== 'info'">
+                      <el-option label="BOPPPS 六环节" value="boppps" />
+                      <el-option label="通用教学设计" value="general" />
+                    </el-select>
+                  </span>
+                </div>
+                <div class="info-row">
                   <span class="info-label">个性化需求</span>
                   <span class="info-desc">教学侧重点与风格偏好</span>
                   <span class="info-value-cell">
@@ -1849,6 +1890,13 @@ async function restoreSession() {
                     <span class="info-stack-desc">教学内容主题</span>
                   </div>
                   <el-input v-model="infoForm.courseName" size="small" placeholder="请输入课程名称" :disabled="phase !== 'info'" />
+                </div>
+                <div class="info-stack-field">
+                  <div class="info-stack-head"><span class="info-stack-label">教学模型</span></div>
+                  <el-select v-model="selectedTeachingModel" size="small" :disabled="phase !== 'info'">
+                    <el-option label="BOPPPS 六环节" value="boppps" />
+                    <el-option label="通用教学设计" value="general" />
+                  </el-select>
                 </div>
                 <div class="info-stack-field">
                   <div class="info-stack-head">
@@ -1923,6 +1971,12 @@ async function restoreSession() {
                 {{ DESIGN_ACTION_BAR.confirm }}
               </el-button>
               <span v-if="phase === 'resource_ready' || phase === 'generating_resource'" class="confirmed-badge">{{ DESIGN_ACTION_BAR.confirmed }}</span>
+              <div v-if="retrievalMatches.length" class="retrieval-suggestions">
+                <span>检索到的相关素材：</span>
+                <el-button v-for="match in retrievalMatches" :key="match.resource_id" size="small" plain :disabled="activeResourceIds.includes(match.resource_id)" :title="match.snippet" @click="citeRetrievalMatch(match)">
+                  {{ activeResourceIds.includes(match.resource_id) ? '已引用' : '引用' }} {{ match.title }}
+                </el-button>
+              </div>
             </div>
 
             <!-- 普通 AI 文本消息（同样使用 MarkdownRender 渲染以支持 MD 格式，占满全宽） -->
@@ -2337,10 +2391,12 @@ async function restoreSession() {
 .outline-actions-bar {
   display: flex;
   align-items: center;
+  flex-wrap: wrap;
   gap: 8px;
   padding: 12px 0;
   margin: 4px 0 20px 0;
 }
+.retrieval-suggestions { flex-basis: 100%; display: flex; align-items: center; flex-wrap: wrap; gap: 6px; color: #64748b; font-size: 12px; }
 
 /* ===== 流式加载指示器 ===== */
 .streaming-indicator {

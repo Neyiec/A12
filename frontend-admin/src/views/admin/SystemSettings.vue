@@ -42,7 +42,7 @@ import {
 } from '@element-plus/icons-vue'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import { getExportTemplates, createExportTemplate, replaceExportTemplate, deleteExportTemplate, downloadExportTemplate } from '@/apis/export'
-import { getAiConfigs, createAiConfig, getSystemLogs } from '@/apis/config'
+import { getAiConfigs, createAiConfig, publishAiConfig, getSystemLogs } from '@/apis/config'
 import FileDropUpload from '@/components/admin/FileDropUpload.vue'
 import { formatFileSize } from '@/utils/file'
 
@@ -215,6 +215,86 @@ const isAiLoading = ref(false)
 
 /** AI 配置保存中 */
 const isAiSaving = ref(false)
+
+const teachingCategories = ['语言', '文科', '理科', '工科']
+const selectedTeachingCategory = ref('文科')
+const teachingPolicies = reactive(Object.fromEntries(teachingCategories.map((category) => [category, {
+  subjects: '', method: '', activity: '', visual: '', page_structure: '', examples: '',
+}])))
+const imageMonthlyQuota = ref(100)
+const imageGenerationModel = ref('wan2.2-t2i-flash')
+const isTeachingSaving = ref(false)
+
+const fetchTeachingConfigs = async () => {
+  try {
+    const [subjectRes, imageRes] = await Promise.all([
+      getAiConfigs({ config_group: 'teaching_subject' }),
+      getAiConfigs({ config_group: 'image_generation' }),
+    ])
+    for (const config of subjectRes?.data || []) {
+      const category = config.config_key?.replace(/^subject_policy:/, '')
+      if (!teachingCategories.includes(category)) continue
+      try {
+        const value = JSON.parse(config.config_value)
+        if (Array.isArray(value.subjects)) {
+          Object.assign(teachingPolicies[category], value, { subjects: value.subjects.join('、') })
+        }
+      } catch { /* 后台历史配置异常时保留表单初值 */ }
+    }
+    const quota = (imageRes?.data || []).find((item) => item.config_key === 'monthly_quota')
+    if (quota && Number.isInteger(Number(quota.config_value))) imageMonthlyQuota.value = Number(quota.config_value)
+    const model = (imageRes?.data || []).find((item) => item.config_key === 'model')
+    if (model?.config_value) imageGenerationModel.value = model.config_value
+  } catch { ElMessage.warning('学科策略配置暂时无法加载') }
+}
+
+const savePublishedConfig = async (data) => {
+  const saved = await createAiConfig(data)
+  if (![0, 200].includes(saved?.code) || !saved?.data?.id) throw new Error(saved?.message || '保存失败')
+  const published = await publishAiConfig(saved.data.id)
+  if (![0, 200].includes(published?.code)) throw new Error(published?.message || '发布失败')
+}
+
+const saveTeachingPolicy = async () => {
+  const category = selectedTeachingCategory.value
+  const value = teachingPolicies[category]
+  const subjects = value.subjects.split(/[、,，]/).map((item) => item.trim()).filter(Boolean)
+  if (!subjects.length || !value.method.trim() || !value.activity.trim() || !value.visual.trim()) {
+    ElMessage.warning('请填写学科关键词、方法、活动和视觉建议')
+    return
+  }
+  isTeachingSaving.value = true
+  try {
+    await savePublishedConfig({ config_group: 'teaching_subject', config_key: `subject_policy:${category}`,
+      config_value: JSON.stringify({ subjects, method: value.method, activity: value.activity, visual: value.visual,
+        page_structure: value.page_structure, examples: value.examples }),
+      description: `${category}学科教学策略` })
+    ElMessage.success('学科策略已发布，Python 服务将在约一分钟内读取')
+  } catch (error) { ElMessage.error(error.message || '发布失败') }
+  finally { isTeachingSaving.value = false }
+}
+
+const saveImageQuota = async () => {
+  isTeachingSaving.value = true
+  try {
+    await savePublishedConfig({ config_group: 'image_generation', config_key: 'monthly_quota',
+      config_value: String(imageMonthlyQuota.value), description: '每位教师每月 AI 配图调用额度，0 表示关闭' })
+    ElMessage.success('配图额度已发布')
+  } catch (error) { ElMessage.error(error.message || '发布失败') }
+  finally { isTeachingSaving.value = false }
+}
+
+const saveImageModel = async () => {
+  const model = imageGenerationModel.value.trim()
+  if (!model || model.length > 100) { ElMessage.warning('请输入有效的文生图模型名称'); return }
+  isTeachingSaving.value = true
+  try {
+    await savePublishedConfig({ config_group: 'image_generation', config_key: 'model',
+      config_value: model, description: '百炼文生图模型名称' })
+    ElMessage.success('配图模型已发布')
+  } catch (error) { ElMessage.error(error.message || '发布失败') }
+  finally { isTeachingSaving.value = false }
+}
 
 // ===================================================================
 // 响应式状态 — Tab 2：导出模板管理
@@ -1083,6 +1163,7 @@ const getLogLevelTagType = (level) => LOG_LEVEL_TAG_TYPE_MAP[level] || 'info'
 
 onMounted(() => {
   loadData()
+  fetchTeachingConfigs()
   window.addEventListener('admin-refresh', handleRefresh)
 })
 
@@ -1350,6 +1431,38 @@ onBeforeUnmount(() => {
             {{ isAiSaving ? '保存中...' : '保存配置' }}
           </el-button>
         </div>
+
+        <el-card shadow="never" class="settings-card mt-5 mb-4">
+          <template #header>学科教学策略（保存并发布后供 Python 生成链路读取）</template>
+          <el-select v-model="selectedTeachingCategory" class="mb-3" style="width: 180px">
+            <el-option v-for="category in teachingCategories" :key="category" :label="category" :value="category" />
+          </el-select>
+          <div class="grid grid-cols-1 md:grid-cols-2 gap-3">
+            <el-input v-model="teachingPolicies[selectedTeachingCategory].subjects" placeholder="适用学科，用顿号分隔，如语文、历史" />
+            <el-input v-model="teachingPolicies[selectedTeachingCategory].method" placeholder="教学方法" />
+            <el-input v-model="teachingPolicies[selectedTeachingCategory].activity" placeholder="学生参与活动" />
+            <el-input v-model="teachingPolicies[selectedTeachingCategory].visual" placeholder="图文与组件建议" />
+            <el-input v-model="teachingPolicies[selectedTeachingCategory].page_structure" placeholder="页面结构，如问题→实验→结论→练习" />
+            <el-input v-model="teachingPolicies[selectedTeachingCategory].examples" placeholder="示例库提示，如史料比较、函数图像探究" />
+          </div>
+          <div class="mt-3 flex justify-end">
+            <el-button type="primary" :loading="isTeachingSaving" @click="saveTeachingPolicy">发布本学科策略</el-button>
+          </div>
+        </el-card>
+        <el-card shadow="never" class="settings-card mb-4">
+          <template #header>AI 配图额度</template>
+          <div class="flex flex-wrap items-center gap-3">
+            <span>每位教师每月调用次数</span>
+            <el-input-number v-model="imageMonthlyQuota" :min="0" :max="100000" />
+            <span class="text-sm">0 表示关闭；缓存命中不计入额度。</span>
+            <el-button type="primary" :loading="isTeachingSaving" @click="saveImageQuota">发布额度</el-button>
+          </div>
+          <div class="flex flex-wrap items-center gap-3 mt-4">
+            <span>百炼文生图模型</span>
+            <el-input v-model="imageGenerationModel" style="width: 260px" placeholder="wan2.2-t2i-flash" />
+            <el-button type="primary" :loading="isTeachingSaving" @click="saveImageModel">发布模型</el-button>
+          </div>
+        </el-card>
       </template>
 
       <!-- ===================================================================

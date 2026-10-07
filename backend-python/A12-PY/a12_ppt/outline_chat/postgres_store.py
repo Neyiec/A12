@@ -1,5 +1,6 @@
 import json
 import re
+import time
 import uuid
 from datetime import date, datetime, timezone
 from decimal import Decimal
@@ -22,6 +23,24 @@ def extract_style_signals(text: str) -> list[str]:
     return [name for name, phrases in STYLE_SIGNALS.items() if any(phrase.lower() in normalized for phrase in phrases)]
 
 
+def infer_style_signals_from_edit(metadata: dict[str, Any]) -> list[str]:
+    before = metadata.get("style_before") or {}
+    after = metadata.get("style_after") or {}
+    if not isinstance(before, dict) or not isinstance(after, dict):
+        return []
+    signals = []
+    try:
+        if float(before.get("avg_text_chars") or 0) >= 80 and float(after.get("avg_text_chars") or 0) <= float(before["avg_text_chars"]) * 0.75:
+            signals.append("less_slide_text")
+        if int(after.get("activity_pages") or 0) > int(before.get("activity_pages") or 0):
+            signals.append("more_practice")
+        if int(after.get("case_pages") or 0) > int(before.get("case_pages") or 0):
+            signals.append("more_cases")
+    except (TypeError, ValueError, KeyError):
+        return []
+    return signals
+
+
 def _json_default(value: Any) -> Any:
     """psycopg 原生类型(Decimal/datetime)在 json.dumps 时的兜底转换"""
     if isinstance(value, Decimal):
@@ -35,6 +54,31 @@ class PostgresOutlineMemoryStore:
     def __init__(self) -> None:
         self.settings = get_settings()
         self.available = True
+        self._profile_refresh_at: dict[str, float] = {}
+
+    def refresh_teacher_profile(self, user_id: str) -> dict[str, Any] | None:
+        """生成前按需刷新历史证据，每个教师最多每日重算一次；失败短暂退避。"""
+        profile = self.get_teacher_profile(user_id)
+        if not profile or not profile.get("enabled", True):
+            return profile
+        now = time.monotonic()
+        if now < self._profile_refresh_at.get(user_id, 0):
+            return profile
+        last = (profile.get("profile") or {}).get("last_relearn_at")
+        try:
+            age = (datetime.now(timezone.utc) - datetime.fromisoformat(last)).total_seconds() if last else 86400
+        except (ValueError, TypeError):
+            age = 86400
+        if len(self._profile_refresh_at) >= 4096:
+            self._profile_refresh_at.clear()
+        self._profile_refresh_at[user_id] = now + 300
+        if age < 86400:
+            self._profile_refresh_at[user_id] = now + max(300, 86400 - age)
+            return profile
+        result = self.relearn_teacher_profile(user_id)
+        if not result.get("error"):
+            self._profile_refresh_at[user_id] = now + 86400
+        return self.get_teacher_profile(user_id) if result.get("updated") else profile
 
     def load_or_create_session(self, user_id: str, session_id: str | None) -> tuple[str, dict[str, Any]]:
         session_id = session_id or f"outline_chat_{uuid.uuid4().hex[:12]}"
@@ -235,6 +279,14 @@ class PostgresOutlineMemoryStore:
                     if not row:
                         return None
                     result = dict(row)
+                    result["enabled"] = (result.get("profile") or {}).get("enabled", True)
+                    manual_tags = (result.get("profile") or {}).get("manual_tags") or []
+                    if manual_tags:
+                        result["style_summary"] = "教师明确设置：" + "、".join(manual_tags) + "。历史学习：" + str(result.get("style_summary") or "暂无")
+                    material_style = (result.get("profile") or {}).get("material_style") or {}
+                    if isinstance(material_style, dict) and material_style:
+                        result["style_summary"] = str(result.get("style_summary") or "") + "。历史材料风格参考：" + "；".join(
+                            str(value)[:150] for value in material_style.values() if isinstance(value, str))
                     cur.execute("""SELECT action,target_type,instruction,change_summary,metadata,created_at
                                    FROM a12_ai_feedback WHERE user_id=%s
                                    ORDER BY created_at DESC LIMIT 20""", (user_id,))
@@ -255,14 +307,118 @@ class PostgresOutlineMemoryStore:
             self.available = False
             return None
 
+    def save_teacher_material_style(self, user_id: str, style: dict, evidence: dict) -> bool:
+        payload = {"material_style": style, "material_evidence": evidence}
+        return self._execute("""INSERT INTO a12_teacher_style_profile
+            (user_id,style_summary,profile,evidence_count,confidence)
+            VALUES (%s,'',%s::jsonb,1,0.5)
+            ON CONFLICT(user_id) DO UPDATE SET
+            profile=COALESCE(a12_teacher_style_profile.profile,'{}'::jsonb) || EXCLUDED.profile,
+            updated_at=NOW()""", (user_id, json.dumps(payload, ensure_ascii=False)))
+
+    def set_teacher_profile_enabled(self, user_id: str, enabled: bool) -> bool:
+        """只切换长期画像是否参与生成，不清除教师已有的偏好证据。"""
+        try:
+            import psycopg
+            with psycopg.connect(self.settings.postgres_dsn) as conn:
+                with conn.cursor() as cur:
+                    cur.execute(
+                        """INSERT INTO a12_teacher_style_profile
+                           (user_id, style_summary, profile, evidence_count, confidence)
+                           VALUES (%s, '', jsonb_build_object('enabled', %s), 0, 0)
+                           ON CONFLICT (user_id) DO UPDATE SET
+                           profile = jsonb_set(COALESCE(a12_teacher_style_profile.profile, '{}'::jsonb),
+                                               '{enabled}', to_jsonb(%s::boolean)), updated_at = NOW()""",
+                        (user_id, enabled, enabled),
+                    )
+                conn.commit()
+            return True
+        except Exception:
+            self.available = False
+            return False
+
+    def set_teacher_profile_tags(self, user_id: str, tags: list[str]) -> bool:
+        """手动标签存入画像 JSON，不覆盖历史反馈产生的风格证据。"""
+        try:
+            import psycopg
+            with psycopg.connect(self.settings.postgres_dsn) as conn:
+                with conn.cursor() as cur:
+                    cur.execute(
+                        """INSERT INTO a12_teacher_style_profile
+                           (user_id, style_summary, profile, evidence_count, confidence)
+                           VALUES (%s, '', jsonb_build_object('manual_tags', %s::jsonb), 0, 0)
+                           ON CONFLICT (user_id) DO UPDATE SET
+                           profile = jsonb_set(COALESCE(a12_teacher_style_profile.profile, '{}'::jsonb),
+                                               '{manual_tags}', %s::jsonb), updated_at = NOW()""",
+                        (user_id, json.dumps(tags, ensure_ascii=False), json.dumps(tags, ensure_ascii=False)),
+                    )
+                conn.commit()
+            return True
+        except Exception:
+            self.available = False
+            return False
+
+    def relearn_teacher_profile(self, user_id: str) -> dict[str, Any]:
+        """根据已记录的历史接受/编辑反馈重算稳定偏好；单次指令不晋升为长期记忆。"""
+        try:
+            import psycopg
+            from psycopg.rows import dict_row
+            counts = {name: 0 for name in STYLE_SIGNALS}
+            with psycopg.connect(self.settings.postgres_dsn, row_factory=dict_row) as conn:
+                with conn.cursor() as cur:
+                    cur.execute(
+                        """SELECT instruction,change_summary,metadata FROM a12_ai_feedback
+                           WHERE user_id=%s AND action IN ('accept','manual_edit')
+                           ORDER BY created_at DESC LIMIT 100""", (user_id,),
+                    )
+                    rows = cur.fetchall()
+                    for row in rows:
+                        metadata = row.get("metadata") or {}
+                        signals = set(metadata.get("style_signals") or [])
+                        signals.update(infer_style_signals_from_edit(metadata))
+                        signals.update(extract_style_signals(" ".join([
+                            str(row.get("instruction") or ""), str(row.get("change_summary") or ""),
+                        ])))
+                        for signal in signals & counts.keys():
+                            counts[signal] += 1
+                    stable = [name for name, count in counts.items() if count >= 2]
+                    if not stable:
+                        cur.execute("""UPDATE a12_teacher_style_profile SET profile =
+                            COALESCE(profile, '{}'::jsonb) || %s::jsonb WHERE user_id=%s""",
+                            (json.dumps({"last_relearn_at": datetime.now(timezone.utc).isoformat()}), user_id))
+                        conn.commit()
+                        return {"updated": False, "evidence_count": len(rows), "stable_preferences": []}
+                    summary = "；".join(STYLE_SIGNALS[name][0] for name in stable)
+                    cur.execute(
+                        """INSERT INTO a12_teacher_style_profile
+                           (user_id,style_summary,profile,evidence_count,confidence)
+                           VALUES (%s,%s,%s::jsonb,%s,%s)
+                           ON CONFLICT (user_id) DO UPDATE SET
+                             style_summary=EXCLUDED.style_summary,
+                             profile=a12_teacher_style_profile.profile || EXCLUDED.profile,
+                             evidence_count=EXCLUDED.evidence_count,
+                             confidence=EXCLUDED.confidence,updated_at=NOW()""",
+                        (user_id, summary, json.dumps({"style_preferences": stable,
+                          "last_relearn_at": datetime.now(timezone.utc).isoformat()}, ensure_ascii=False),
+                         len(rows), min(0.9, 0.5 + len(rows) * 0.01)),
+                    )
+                conn.commit()
+            return {"updated": True, "evidence_count": len(rows), "stable_preferences": stable}
+        except Exception:
+            self.available = False
+            return {"updated": False, "error": "教师反馈数据库暂时不可用"}
+
     def record_feedback(self, payload: dict[str, Any]) -> dict[str, Any]:
         """Store explicit/implicit teacher feedback and update a bounded preference summary."""
         user_id = str(payload.get("user_id") or "").strip()
         action = str(payload.get("action") or "").strip()
         metadata = dict(payload.get("metadata") or {})
         metadata.pop("style_signals", None)
-        signals = extract_style_signals(" ".join([str(payload.get("instruction") or ""),
-                                                   str(payload.get("change_summary") or "")]))
+        signals = list(dict.fromkeys([
+            *extract_style_signals(" ".join([str(payload.get("instruction") or ""),
+                                            str(payload.get("change_summary") or "")])),
+            *infer_style_signals_from_edit(metadata),
+        ]))
         if signals and action in {"accept", "manual_edit"}:
             metadata["style_signals"] = signals
         saved = self._execute(
@@ -304,7 +460,7 @@ class PostgresOutlineMemoryStore:
                    ON CONFLICT(user_id) DO UPDATE SET profile=a12_teacher_style_profile.profile || EXCLUDED.profile,
                    style_summary=EXCLUDED.style_summary,evidence_count=a12_teacher_style_profile.evidence_count+1,
                    confidence=LEAST(0.98, a12_teacher_style_profile.confidence + 0.03),updated_at=NOW()""",
-                (user_id, preference["last_change_summary"] or preference["last_instruction"],
+                (user_id, "；".join(STYLE_SIGNALS[name][0] for name in repeated),
                  json.dumps(preference, ensure_ascii=False, default=_json_default)),
             )
         return {"stored": bool(saved), "action": action, "profile_updated": bool(profile_saved),

@@ -3,6 +3,9 @@ import json
 import logging
 import os
 import tempfile
+import asyncio
+import hashlib
+import zipfile
 from pathlib import Path
 from urllib.parse import quote
 
@@ -51,14 +54,18 @@ from a12_ppt.models import (
     ResourceIndexSyncRequest,
     Result,
     SlideModifyRequest,
+    SlideImageGenerateRequest,
     TemplateMutationRequest,
     TeacherFeedbackRequest,
+    TeacherStyleConfigRequest,
+    TeacherStyleTagsRequest,
     TextToSpeechRequest,
     ClassroomEventRequest,
     CourseGraphUpsertRequest,
 )
 from a12_ppt.course_graph import course_graph_store
 from a12_ppt.resources import delete_temp_upload_resources, resource_index_store, save_upload
+from a12_ppt.resources.upload_store import expired_temp_upload_ids
 from a12_ppt.resources.index_worker import start_resource_index_worker
 from a12_ppt.community_review_worker import start_community_review_worker
 from a12_ppt.outline_chat import OutlineChatWorkflow
@@ -66,6 +73,7 @@ from a12_ppt.outline_chat.postgres_store import postgres_memory_store
 from a12_ppt.outline_chat.session_store import outline_session_store
 from a12_ppt.database import ensure_ai_schema
 from a12_ppt.ai_runtime import probe_model, use_runtime_options
+from a12_ppt.runtime_config import refresh_runtime_config
 
 
 settings = get_settings()
@@ -87,6 +95,8 @@ async def authorize_python_api(request: Request, call_next):
     if not request.url.path.startswith("/api/v1/python/") or request.method == "OPTIONS":
         return await call_next(request)
     if internal_request_allowed(request.headers.get("X-A12-Internal-Key")):
+        if request.method == "POST" and request.url.path.startswith(("/api/v1/python/outlines/", "/api/v1/python/presentations/generate", "/api/v1/python/presentations/images/generate", "/api/v1/python/lesson-plans/generate", "/api/v1/python/workspace/chat")):
+            await refresh_runtime_config()
         return await call_next(request)
     try:
         identity = await authenticate_browser(request.headers.get("Authorization"))
@@ -110,6 +120,8 @@ async def authorize_python_api(request: Request, call_next):
     token_scope = direct_bearer.set(token)
     role_scope = direct_user_role.set(role)
     try:
+        if request.method == "POST" and request.url.path.startswith(("/api/v1/python/outlines/", "/api/v1/python/presentations/generate", "/api/v1/python/presentations/images/generate", "/api/v1/python/lesson-plans/generate", "/api/v1/python/workspace/chat")):
+            await refresh_runtime_config()
         return await call_next(request)
     finally:
         direct_user_id.reset(user_scope)
@@ -129,8 +141,21 @@ app.add_middleware(
 @app.on_event("startup")
 async def initialize_ai_database() -> None:
     ensure_ai_schema()
+    cleanup_expired_temp_uploads()
     start_resource_index_worker()
     start_community_review_worker()
+
+
+def cleanup_expired_temp_uploads() -> None:
+    """异常关页留下的临时资料最多保留 48 小时；先清索引再清文件。"""
+    for resource_id in expired_temp_upload_ids():
+        try:
+            resource_index_store.delete_resource("temp", resource_id)
+            result = delete_temp_upload_resources([resource_id])
+            if result.get("failed"):
+                logger.warning("过期临时资料文件清理失败 resource_id=%s", resource_id)
+        except Exception:
+            logger.warning("过期临时资料清理失败 resource_id=%s", resource_id, exc_info=True)
 
 
 @app.post("/api/v1/python/workspace/chat/stream")
@@ -191,6 +216,7 @@ async def transcribe_audio_input(
 
 @app.post("/api/v1/python/resources/upload")
 async def upload_resource(file: UploadFile = File(...)) -> Result:
+    cleanup_expired_temp_uploads()
     # 简单限额：临时上传落盘前拦截超大文件（50MB），防止匿名/误操作写爆磁盘
     file.file.seek(0, 2)
     upload_size = file.file.tell()
@@ -508,6 +534,81 @@ async def get_teacher_style_profile(user_id: str = Query(..., min_length=1)) -> 
     })
 
 
+@app.put("/api/v1/python/teacher-style/profile")
+async def update_teacher_style_profile(request: TeacherStyleConfigRequest) -> Result:
+    user_id = direct_user_id.get()
+    if not user_id:
+        raise HTTPException(status_code=401, detail="请先登录")
+    if not postgres_memory_store.set_teacher_profile_enabled(user_id, request.enabled):
+        raise HTTPException(status_code=503, detail="教师画像暂时无法保存")
+    return Result(data={"user_id": user_id, "enabled": request.enabled})
+
+
+@app.post("/api/v1/python/teacher-style/profile/relearn")
+async def relearn_teacher_style_profile() -> Result:
+    user_id = direct_user_id.get()
+    if not user_id:
+        raise HTTPException(status_code=401, detail="请先登录")
+    result = postgres_memory_store.relearn_teacher_profile(user_id)
+    if result.get("error"):
+        raise HTTPException(status_code=503, detail=result["error"])
+    return Result(data=result)
+
+
+@app.post("/api/v1/python/teacher-style/profile/learn-file")
+async def learn_teacher_material(file: UploadFile = File(...)) -> Result:
+    user_id = direct_user_id.get()
+    if not user_id:
+        raise HTTPException(status_code=401, detail="请先登录")
+    suffix = Path(file.filename or "").suffix.lower()
+    if suffix not in {".pptx", ".docx", ".txt", ".md"}:
+        raise HTTPException(status_code=400, detail="风格学习支持 PPTX、DOCX、TXT 和 Markdown")
+    content = await file.read(10 * 1024 * 1024 + 1)
+    if len(content) > 10 * 1024 * 1024:
+        raise HTTPException(status_code=413, detail="教学风格材料不能超过10MB")
+    from a12_ppt.resources.parsers import parse_resource_file
+    from a12_ppt.teacher_style import analyze_material_style, presentation_style_metrics, presentation_style_text
+    try:
+        with tempfile.TemporaryDirectory(prefix="a12-style-") as directory:
+            path = Path(directory) / ("material" + suffix)
+            path.write_bytes(content)
+            if suffix in {".pptx", ".docx"}:
+                with zipfile.ZipFile(path) as archive:
+                    if len(archive.infolist()) > 2000 or sum(item.file_size for item in archive.infolist()) > 50 * 1024 * 1024:
+                        raise HTTPException(status_code=413, detail="材料解压体积过大")
+            text = await asyncio.to_thread(presentation_style_text, path) if suffix == ".pptx" else (await parse_resource_file(path)).text
+            if not text.strip():
+                raise HTTPException(status_code=422, detail="未提取到有效教学内容，请检查文件")
+            metrics = await asyncio.to_thread(presentation_style_metrics, path)
+            style = await analyze_material_style(text, metrics)
+        await require_active_browser_token()
+        evidence = {"filename": Path(file.filename or "material").name[:200],
+                    "sha256": hashlib.sha256(content).hexdigest(), "metrics": metrics}
+        if not postgres_memory_store.save_teacher_material_style(user_id, style, evidence):
+            raise HTTPException(status_code=503, detail="教学风格数据库暂时不可用")
+        return Result(data={"style": style, "evidence": evidence})
+    except HTTPException:
+        raise
+    except (zipfile.BadZipFile, ValueError) as exc:
+        raise HTTPException(status_code=422, detail="文件或风格分析结果无效，请更换材料后重试") from exc
+    except Exception as exc:
+        logger.warning("历史教学风格学习失败: %s", type(exc).__name__)
+        raise HTTPException(status_code=503, detail="教学风格分析暂时不可用，请检查模型配置后重试") from exc
+
+
+@app.put("/api/v1/python/teacher-style/profile/tags")
+async def update_teacher_style_tags(request: TeacherStyleTagsRequest) -> Result:
+    user_id = direct_user_id.get()
+    if not user_id:
+        raise HTTPException(status_code=401, detail="请先登录")
+    tags = list(dict.fromkeys(tag.strip() for tag in request.tags if tag.strip()))
+    if len(tags) > 8 or any(len(tag) > 30 for tag in tags):
+        raise HTTPException(status_code=422, detail="最多 8 个风格标签，每个不超过 30 字")
+    if not postgres_memory_store.set_teacher_profile_tags(user_id, tags):
+        raise HTTPException(status_code=503, detail="教学风格标签暂时无法保存")
+    return Result(data={"user_id": user_id, "tags": tags})
+
+
 @app.put("/api/v1/python/courses/graph")
 async def upsert_course_graph(request: CourseGraphUpsertRequest) -> Result:
     try:
@@ -553,6 +654,23 @@ async def update_outline(request: OutlineUpdateRequest) -> Result:
 async def generate_presentation(request: PresentationGenerateRequest) -> Result:
     with use_runtime_options(direct_user_id.get(), "presentation_generate", request.model_profile, request.reasoning_effort):
         return Result(data=await generator.generate_presentation(request))
+
+
+@app.post("/api/v1/python/presentations/images/generate")
+async def generate_slide_image(request: SlideImageGenerateRequest) -> Result:
+    prompt = (
+        f"为课堂教学PPT创作一张具有教学价值的配图。课程：{request.lesson_title}；"
+        f"学科：{request.subject}；年级：{request.grade}；页面：{request.slide_title}；"
+        f"视觉要求：{request.visual_suggestion or '准确、简洁、主体突出'}。"
+        "横向构图，不生成文字、数字、字幕、水印、标志；标题和标注交给独立可编辑元素。"
+    )
+    try:
+        image = await generator.image_generator.generate(prompt, request.aspect_ratio)
+    except RuntimeError as exc:
+        raise HTTPException(status_code=503, detail=str(exc)) from exc
+    if image is None:
+        raise HTTPException(status_code=503, detail="文生图模型尚未配置")
+    return Result(data={"data_url": image.data_url, "model": image.model, "prompt": image.prompt})
 
 
 @app.post("/api/v1/python/presentations/generate/stream")

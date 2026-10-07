@@ -14,48 +14,62 @@ async def rag_search(resource_ids: list[str], query: str, limit: int = 12000) ->
     # knowledge base search scope stays unchanged.
     local_ids = [resource_id for resource_id in resource_ids if ":" not in resource_id]
     temp_keys = [f"temp:{resource_id}" for resource_id in local_ids]
+    scoped_keys = [resource_id for resource_id in resource_ids if resource_id.startswith(("public:", "personal:", "community:", "temp:"))]
     local_context = build_rag_context(local_ids, limit=limit)
     enriched_query = _build_enriched_query(query, local_context)
 
     # 全局知识库与 temp 分区两次检索相互独立，并行以抵消双倍 embedding/检索延迟
-    global_task = resource_index_store.search_context([], enriched_query, limit=limit)
-    temp_task = (
-        resource_index_store.search_context(temp_keys, enriched_query, limit=limit)
-        if temp_keys else None
-    )
-    if temp_task is not None:
-        indexed_result, temp_result = await asyncio.gather(global_task, temp_task, return_exceptions=True)
-    else:
-        indexed_result = await global_task
-        temp_result = None
-    if isinstance(indexed_result, Exception):
-        logger.warning("全局知识库检索失败 query=%s: %s", query[:100], indexed_result)
-        indexed_result = {"context": "", "matches": []}
-    if isinstance(temp_result, Exception):
-        logger.warning("temp 分区检索失败 temp_keys=%s: %s", temp_keys, temp_result)
-        temp_result = {"context": "", "matches": []}
-    temp_result = temp_result or {"context": "", "matches": []}
+    tasks = {"global": resource_index_store.search_context([], enriched_query, limit=limit)}
+    if temp_keys:
+        tasks["temp"] = resource_index_store.search_context(temp_keys, enriched_query, limit=limit)
+    if scoped_keys:
+        tasks["selected"] = resource_index_store.search_context(scoped_keys, enriched_query, limit=limit)
+    results = await asyncio.gather(*tasks.values(), return_exceptions=True)
+    found = {}
+    for name, result in zip(tasks, results):
+        if isinstance(result, Exception):
+            logger.warning("资料检索失败 scope=%s query=%s: %s", name, query[:100], result)
+            result = {"context": "", "matches": []}
+        found[name] = result
+    indexed_result = found["global"]
+    temp_result = found.get("temp", {"context": "", "matches": []})
+    selected_result = found.get("selected", {"context": "", "matches": []})
     indexed_context = indexed_result.get("context", "")
     temp_context = temp_result.get("context", "")
+    selected_context = selected_result.get("context", "")
 
     reference_matches = _rank_local_context(local_context, query)
-    structured_matches = list(temp_result.get("matches", [])) + list(indexed_result.get("matches", []))
+    structured_matches = []
+    seen = set()
+    for item in [*(selected_result.get("matches", [])), *(temp_result.get("matches", [])), *(indexed_result.get("matches", []))]:
+        key = (item.get("resource_id"), item.get("chunk_id"))
+        if key not in seen:
+            seen.add(key)
+            structured_matches.append(item)
 
     context_parts = []
     if local_context:
         context_parts.append("[Uploaded reference material]\n" + local_context[:4000])
+    if selected_context:
+        context_parts.append("[Teacher-selected material hits]\n" + selected_context)
     if temp_context:
         context_parts.append("[Temporary upload material hits]\n" + temp_context)
     if indexed_context:
         context_parts.append("[RAG knowledge base matches]\n" + indexed_context)
     context = "\n\n".join(part for part in context_parts if part)[:limit]
+    search_scopes = ["global_knowledge_base"]
+    if temp_keys:
+        search_scopes.append("temp_uploads")
+    if scoped_keys:
+        search_scopes.append("selected_materials")
     return {
         "query": query,
         "enriched_query": enriched_query,
         "resource_ids": resource_ids,
-        "search_scope": "global_knowledge_base+temp_uploads" if temp_keys else "global_knowledge_base",
+        "search_scope": "+".join(search_scopes),
         "reference_context": local_context[:4000],
         "temp_context": temp_context,
+        "selected_context": selected_context,
         "knowledge_context": indexed_context,
         "context": context,
         "matches": structured_matches,

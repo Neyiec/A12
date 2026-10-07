@@ -4,7 +4,7 @@ import { onBeforeRouteLeave, onBeforeRouteUpdate, useRoute, useRouter } from 'vu
 import { ElMessage, ElMessageBox } from 'element-plus'
 import { Aim, ArrowDown, ArrowUp, Plus, Promotion } from '@element-plus/icons-vue'
 import MarkdownRender from 'markstream-vue'
-import { addProjectPermission, archiveProject, batchSaveProjectPages, copyProject, createCommunitySubmission, createProject, createProjectPage, deleteProject, deleteProjectPage, downloadResource, exportLessonPlanDocx, exportPresentationPptx, findUserByEmail, findUserByUsername, generateInteractiveModule, generateLessonPlan, generatePresentationStream, getAiPlan, getProject, getProjectPage, getProjectVersionDiff, listProjectPages, listProjectVersions, listProjects, listResources, modifyPresentation, modifyPresentationSlide, patchProject, recognizeIntent, recordAiFeedback, restoreProject, restoreProjectVersion, reviseProjectWithAi, saveCommunitySubmissionVersion, saveProjectPage, saveProjectVersion, sendDirectOutlineSessionMessage, streamGeneralChat, submitCommunitySubmission, transcribeAudio, uploadResource, validatePresentationHtml, validateProjectComponent } from '../apis/teacher'
+import { addProjectPermission, archiveProject, batchSaveProjectPages, copyProject, createCommunitySubmission, createProject, createProjectPage, deleteProject, deleteProjectPage, downloadResource, exportLessonPlanDocx, exportPresentationPptx, findUserByEmail, findUserByUsername, generateInteractiveModule, generateLessonPlan, generatePresentationStream, generateSlideImage, getAiPlan, getProject, getProjectPage, getProjectVersionDiff, listProjectPages, listProjectVersions, listProjects, listResources, modifyPresentation, modifyPresentationSlide, patchProject, recognizeIntent, recordAiFeedback, restoreProject, restoreProjectVersion, reviseProjectWithAi, saveCommunitySubmissionVersion, saveProjectPage, saveProjectVersion, sendDirectOutlineSessionMessage, streamGeneralChat, submitCommunitySubmission, transcribeAudio, uploadResource, validatePresentationHtml, validateProjectComponent } from '../apis/teacher'
 import { secureHtmlForSandbox } from '../utils/htmlSecurity'
 import { bindSubjectInteractions } from '../utils/subjectInteraction'
 import { cachedChemicalStructure, chemicalStructureKey, prepareChemicalStructure, renderChemicalStructure } from '../utils/chemicalStructure'
@@ -365,6 +365,8 @@ slides.forEach((slide, index) => {
   slide.page_type = slide.pageType
 })
 const current = computed(() => slides[selectedSlide.value])
+const savingGeneratedImage = ref(false)
+const generatingSlideImage = ref(false)
 const syncHtmlCanvasSource = (slide = current.value, { forceReload = false } = {}) => {
   htmlCanvasSourceSlide.value = slide || null
   htmlCanvasSource.value = slide?.html ? String(slide.html) : ''
@@ -3450,6 +3452,12 @@ const chemicalStructuresInSavedHtml = (html) => {
   const elements = parsed.querySelectorAll('.a12-subject-tool[data-subject-type], [data-ppt-type="subject"][data-subject-type]')
   elements.forEach((element) => {
     if (element.matches('[data-subject-type]:not(.a12-subject-tool)') && element.querySelector('.a12-subject-tool')) return
+    if (element.getAttribute('data-a12-generated-subject') === '1') {
+      const subjectType = normalizeSubjectToolType(element.getAttribute('data-subject-type'))
+      const data = normalizeSubjectToolData(parseJson(element.getAttribute('data-subject-data'), {}), subjectType)
+      element.innerHTML = subjectToolMarkup({ subjectType, data, title: subjectToolLabel(subjectType) })
+      changed = true
+    }
     const data = chemicalDataForElement({
       subjectType: element.getAttribute('data-subject-type'),
       data: (() => { try { return JSON.parse(element.getAttribute('data-subject-data') || '{}') } catch { return {} } })(),
@@ -6221,6 +6229,10 @@ const startRun = async () => {
       title: String(outline.title || planData.title || 'A12 教学课件'),
       outline,
       resource_ids: generationResourceIds,
+      teaching_model: outline.teaching_model || 'boppps',
+      teaching_style: outline.teaching_style || null,
+      model_profile: outline.generation_options?.model_profile || 'standard',
+      reasoning_effort: outline.generation_options?.reasoning_effort || 'medium',
       ...(selectedTheme ? { theme: selectedTheme } : {}),
       aspect_ratio: '16:9',
       language: 'zh-CN',
@@ -6517,6 +6529,34 @@ const applyDeckRevision = async (instruction, conversationTranscript) => {
   return pendingDeckRevision.value
 }
 
+const deckStyleMetrics = (pages) => {
+  const items = Array.isArray(pages) ? pages : []
+  const textCount = items.reduce((sum, page) => sum + String(page?.html || page?.content ||
+    [page?.title, page?.description, page?.footer, ...(page?.elements || []).map((element) => element?.content || '')].filter(Boolean).join(' '))
+    .replace(/<(style|script)\b[^>]*>[\s\S]*?<\/\1>/gi, '').replace(/<[^>]+>/g, '').length, 0)
+  return {
+    avg_text_chars: items.length ? Math.round(textCount / items.length) : 0,
+    activity_pages: items.filter((page) => /活动|练习|实践|测验/.test(String(page?.title || ''))).length,
+    case_pages: items.filter((page) => /案例|情境|实例/.test(String(page?.title || ''))).length,
+  }
+}
+let manualStyleBaseline = null
+watch(hydratingProject, (loading, wasLoading) => {
+  if (!loading && wasLoading) manualStyleBaseline = deckStyleMetrics(slides)
+})
+const recordManualStyleSave = async () => {
+  const after = deckStyleMetrics(slides)
+  const before = manualStyleBaseline
+  if (!before) { manualStyleBaseline = after; return }
+  if (JSON.stringify(before) === JSON.stringify(after)) return
+  // 只记录成功的显式保存，不把每次自动保存当作独立偏好证据。
+  try {
+    await recordAiFeedback({ project_id: String(projectId.value), action: 'manual_edit',
+      target_type: 'presentation', change_summary: '教师手动编辑并保存课件',
+      metadata: { style_before: before, style_after: after } })
+    manualStyleBaseline = after
+  } catch { /* 画像服务异常不影响课件保存；保留基线供下次重试。 */ }
+}
 const sendRevisionFeedback = (action, preview, extra = {}) => recordAiFeedback({
   session_id: sessionId.value ? String(sessionId.value) : null,
   project_id: projectId.value ? String(projectId.value) : null,
@@ -6526,7 +6566,8 @@ const sendRevisionFeedback = (action, preview, extra = {}) => recordAiFeedback({
   change_summary: preview?.summary || '',
   before_data: { slide_count: preview?.before?.length || 0 },
   after_data: { slide_count: preview?.after?.length || 0 },
-  metadata: { ...extra, theme: current.value?.theme || '' },
+  metadata: { ...extra, theme: current.value?.theme || '',
+    style_before: deckStyleMetrics(preview?.before), style_after: deckStyleMetrics(preview?.after) },
 }).catch(() => null)
 
 const rejectDeckRevision = () => {
@@ -7595,6 +7636,7 @@ const saveWorkspaceNow = async () => {
     if (!projectId.value) { await saveWorkspaceAsProject(); return }
     clearTimeout(autosaveTimer)
     await persistSlideOrder({ throwOnError: true })
+    await recordManualStyleSave()
     autosaveState.value = '已保存'
     WorkspaceMessage.success('所有页面已保存')
   } catch (error) {
@@ -7622,6 +7664,7 @@ const createWorkspaceProject = async () => {
   savedStructureVersion = localStructureVersion
   autosaveQueued = false
   autosaveState.value = '已保存 · 项目已落库'
+  manualStyleBaseline = deckStyleMetrics(slides)
   return String(createdId)
 }
 const persistGeneratedPresentationProject = async () => {
@@ -7837,6 +7880,8 @@ const quickExportDocx = async () => {
         subject: String(project.value?.subject || presentationMetadata.value?.subject || ''),
         grade: String(project.value?.grade || presentationMetadata.value?.grade || ''),
         outline: workspaceOutlinePayload(),
+        teaching_model: lessonPlanOutline.value?.teaching_model || 'boppps',
+        teaching_style: lessonPlanOutline.value?.teaching_style || null,
         slides: exportSlidesPayload().map(({ html, metadata, interactive_assets, ...slide }) => slide),
         language: 'zh-CN',
       })) || {}
@@ -7995,6 +8040,62 @@ const handleAssistantKeydown = (event) => {
   event.preventDefault()
   sendAssistantMessage()
 }
+const saveCurrentGeneratedImage = async () => {
+  if (savingGeneratedImage.value || current.value?.metadata?.asset_status !== 'generated') return
+  savingGeneratedImage.value = true
+  try {
+    const document = new DOMParser().parseFromString(slideHtmlSource(current.value), 'text/html')
+    const image = [...document.querySelectorAll('img[src^="data:image/"]')][0]
+    if (!image) throw new Error('当前页没有可转存的 AI 配图')
+    const blob = await fetch(image.getAttribute('src')).then((response) => response.blob())
+    const extension = blob.type === 'image/jpeg' ? 'jpg' : blob.type === 'image/webp' ? 'webp' : 'png'
+    await uploadResource(new File([blob], `AI配图_第${selectedSlide.value + 1}页.${extension}`, { type: blob.type || 'image/png' }), undefined, {
+      allowAi: true,
+      description: current.value?.metadata?.generated_image_prompt || '课堂教学 AI 配图',
+    })
+    WorkspaceMessage.success('AI 配图已保存到个人素材库，可在后续备课中引用')
+  } catch (error) {
+    WorkspaceMessage.error(error?.message || '配图转存失败')
+  } finally {
+    savingGeneratedImage.value = false
+  }
+}
+const generateImageForCurrentSlide = async () => {
+  const slide = current.value
+  if (!slide || generatingSlideImage.value) return
+  generatingSlideImage.value = true
+  try {
+    const result = unwrapResponse(await generateSlideImage({
+      lesson_title: String(project.value?.project_name || lessonPlanOutline.value?.title || slide.title || '教学课件'),
+      slide_title: String(slide.title || '课堂页面'),
+      subject: String(project.value?.subject || lessonPlanOutline.value?.subject || '通用'),
+      grade: String(project.value?.grade || lessonPlanOutline.value?.grade || ''),
+      visual_suggestion: String(slide?.metadata?.asset_plan?.reason || slide?.visual_suggestion || ''),
+    }))
+    if (!String(result?.data_url || '').startsWith('data:image/')) throw new Error('生图服务没有返回有效图片')
+    const document = new DOMParser().parseFromString(slideHtmlSource(slide), 'text/html')
+    document.querySelector('[data-a12-generated-image="manual"]')?.remove()
+    const figure = document.createElement('figure')
+    figure.setAttribute('data-a12-generated-image', 'manual')
+    figure.setAttribute('data-ppt-element', 'group')
+    figure.style.cssText = 'position:absolute;right:64px;top:180px;width:430px;height:340px;margin:0;z-index:12;overflow:hidden;border-radius:16px;'
+    const image = document.createElement('img')
+    image.setAttribute('data-ppt-element', 'image')
+    image.src = result.data_url
+    image.alt = `${slide.title || '课堂'}教学配图`
+    image.style.cssText = 'display:block;width:100%;height:100%;object-fit:cover;'
+    figure.appendChild(image)
+    ;(document.querySelector('section.slide') || document.body).appendChild(figure)
+    applyHtmlSlideChange(slide, `<!DOCTYPE html>${document.documentElement.outerHTML}`)
+    slide.metadata = { ...(slide.metadata || {}), asset_status: 'generated', generated_image_prompt: result.prompt,
+      generated_image_model: result.model }
+    WorkspaceMessage.success('本页配图已生成并插入，可拖动调整；点击“保存配图”可转存素材库')
+  } catch (error) {
+    WorkspaceMessage.error(error?.message || '本页配图生成失败')
+  } finally {
+    generatingSlideImage.value = false
+  }
+}
 const selectSlide = (index) => { selectedSlide.value = index; selectedElementId.value = null; pendingHtmlPanelSelection = null; loadProjectPageDetail(index) }
 </script>
 
@@ -8078,6 +8179,8 @@ const selectSlide = (index) => { selectedSlide.value = index; selectedElementId.
           </div>
           <div class="assistant-header-actions">
             <el-button text size="small" class="assistant-context-button" @click="openWorkspaceContextManager">上下文</el-button>
+            <el-button v-if="current" text size="small" :loading="generatingSlideImage" @click="generateImageForCurrentSlide">生成本页配图</el-button>
+            <el-button v-if="current?.metadata?.asset_status === 'generated'" text size="small" :loading="savingGeneratedImage" @click="saveCurrentGeneratedImage">保存配图</el-button>
             <el-tooltip :content="assistantDock === 'bottom' ? '移至左侧' : '移至底部'" placement="bottom">
               <el-button text circle size="small" class="assistant-dock-trigger assistant-icon-button" :aria-label="assistantDock === 'bottom' ? '将 AI 面板移至左侧' : '将 AI 面板移至底部'" @click="assistantDock = assistantDock === 'bottom' ? 'side' : 'bottom'"><span aria-hidden="true">{{ assistantDock === 'bottom' ? '←' : '↓' }}</span></el-button>
             </el-tooltip>
