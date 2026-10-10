@@ -181,7 +181,7 @@ public class AIServiceImpl implements AIService {
         String message = String.valueOf(data.getOrDefault("message", "")).trim();
         if (message.isEmpty() || message.length() > 60000) throw new RuntimeException("消息长度不合法");
         String status = String.valueOf(data.getOrDefault("status", ""));
-        if (!List.of("completed", "need_clarification", "failed").contains(status)) throw new RuntimeException("无效大纲状态");
+        if (!List.of("completed", "need_clarification", "awaiting_graph_confirmation", "failed").contains(status)) throw new RuntimeException("无效大纲状态");
         Object rawFinal = data.get("final_data");
         if ("completed".equals(status) && !(rawFinal instanceof Map<?, ?>)) throw new RuntimeException("大纲结果不能为空");
         OutlineResult pythonResult = new OutlineResult();
@@ -189,6 +189,7 @@ public class AIServiceImpl implements AIService {
         pythonResult.pythonSessionId = String.valueOf(data.getOrDefault("python_session_id", ""));
         pythonResult.question = String.valueOf(data.getOrDefault("question", ""));
         pythonResult.errorMessage = String.valueOf(data.getOrDefault("error_message", ""));
+        if (rawFinal == null && "awaiting_graph_confirmation".equals(status)) rawFinal = data.get("graph_data");
         if (rawFinal instanceof Map<?, ?> map) {
             Map<String, Object> finalData = new LinkedHashMap<>();
             map.forEach((key, value) -> finalData.put(String.valueOf(key), value));
@@ -419,6 +420,12 @@ public class AIServiceImpl implements AIService {
             task.setStatus("planning");
             task.setPlan_confirm_status("pending");
             task.setReflections("[{\"type\":\"clarification\",\"question\":\"" + escapeJson(result.question) + "\"}]");
+        } else if ("awaiting_graph_confirmation".equals(result.status)) {
+            task.setStatus("planning");
+            task.setPlan_confirm_status("pending");
+            task.setPlan_json(toJson(result.outline != null ? result.outline : result.finalData));
+            task.setExec_steps("[{\"step\":\"learning_graph_review\",\"status\":\"awaiting_confirmation\"}]");
+            task.setError_message("");
         } else if ("completed".equals(result.status)) {
             task.setStatus("planning");
             task.setPlan_confirm_status("pending");
@@ -573,6 +580,9 @@ public class AIServiceImpl implements AIService {
             messages.add(Map.of("role", "user", "content", userMessage));
             if (!isBlank(result.question)) {
                 messages.add(Map.of("role", "assistant", "content", result.question, "type", "question"));
+            } else if ("awaiting_graph_confirmation".equals(result.status)) {
+                messages.add(Map.of("role", "assistant", "content", "知识图谱与技能图谱已生成，请核对后确认，再生成大纲。",
+                        "type", "graph_review"));
             } else if ("completed".equals(result.status)) {
                 Map<String, Object> assistant = new LinkedHashMap<>();
                 assistant.put("role", "assistant");

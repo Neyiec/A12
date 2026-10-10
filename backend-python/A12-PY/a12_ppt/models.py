@@ -128,6 +128,7 @@ class OutlineChatStreamRequest(BaseModel):
     reasoning_effort: Literal["low", "medium", "high"] = "medium"
     teaching_model: Literal["boppps", "general"] = "boppps"
     teaching_style: str | None = None
+    confirm_learning_graphs: bool = False
 
 
 class IntentRecognizeRequest(BaseModel):
@@ -152,6 +153,25 @@ class OutlineChatSessionCreateRequest(BaseModel):
 
 class OutlineChatSessionUpdateRequest(BaseModel):
     title: str = Field(..., min_length=1, max_length=255)
+
+
+class SkillGraphUpdateRequest(BaseModel):
+    skill: dict[str, Any]
+
+
+class TeacherPreferencesRequest(BaseModel):
+    teaching_style: Literal["", "heuristic", "lecture", "cooperative", "project_based", "blended"] = ""
+    template_style: Literal["", "business", "academic", "lively", "tech"] = ""
+    interaction_forms: list[Literal["random_call", "group_discussion", "quiz", "poll", "bullet_chat", "raise_hand"]] = Field(default_factory=list, max_length=6)
+
+
+class LearningGraphUpdateRequest(BaseModel):
+    graphs: dict[str, Any]
+
+
+class LearningGraphAIEditRequest(LearningGraphUpdateRequest):
+    instruction: str = Field(..., min_length=1, max_length=2000)
+    kind: Literal["knowledge", "skill"]
 
 
 class PresentationExportRequest(BaseModel):
@@ -234,9 +254,11 @@ class ResourceIndexSearchRequest(BaseModel):
 
 
 class CourseGraphUpsertRequest(BaseModel):
-    user_id: str = Field(..., min_length=1)
+    user_id: str | None = Field(default=None, min_length=1)
     course_id: str = Field(..., pattern=r"^[a-zA-Z0-9_-]{1,80}$")
     title: str = Field(..., min_length=1, max_length=255)
+    subject: str = Field(default='', max_length=80)
+    grade: str = Field(default='', max_length=80)
     nodes: list[dict[str, Any]] = Field(default_factory=list)
     edges: list[dict[str, Any]] = Field(default_factory=list)
     expected_version: int | None = Field(default=None, ge=0)

@@ -12,6 +12,7 @@ import edu.zstu.entity.Ws_Project;
 import edu.zstu.mapper.ExpTaskMapper;
 import edu.zstu.mapper.WsPageMapper;
 import edu.zstu.mapper.WsProjectMapper;
+import edu.zstu.mapper.WsVersionMapper;
 import edu.zstu.service.BusinessLogService;
 import edu.zstu.service.ExportService;
 import edu.zstu.utils.CurrentHolder;
@@ -39,6 +40,7 @@ public class ExportServiceImpl implements ExportService {
     private final ExpTaskMapper taskMapper;
     private final WsProjectMapper projectMapper;
     private final WsPageMapper pageMapper;
+    private final WsVersionMapper versionMapper;
     private final BusinessLogService businessLogService;
     private final ObjectMapper objectMapper;
     private final Path exportDir;
@@ -47,6 +49,7 @@ public class ExportServiceImpl implements ExportService {
     public ExportServiceImpl(ExpTaskMapper taskMapper,
                              WsProjectMapper projectMapper,
                              WsPageMapper pageMapper,
+                             WsVersionMapper versionMapper,
                              BusinessLogService businessLogService,
                              ObjectMapper objectMapper,
                              @Value("${a12.export.local-dir:data/exports}") String exportDir,
@@ -54,6 +57,7 @@ public class ExportServiceImpl implements ExportService {
         this.taskMapper = taskMapper;
         this.projectMapper = projectMapper;
         this.pageMapper = pageMapper;
+        this.versionMapper = versionMapper;
         this.businessLogService = businessLogService;
         this.objectMapper = objectMapper;
         this.exportDir = Path.of(exportDir).toAbsolutePath().normalize();
@@ -65,7 +69,7 @@ public class ExportServiceImpl implements ExportService {
         Ws_Project project = requireProject(parseId(id));
         assertProjectReadable(project);
         String exportType = normalizeType(dto.getExport_type());
-        List<Ws_Page> pages = pageMapper.findByProjectId(project.getId());
+        List<Ws_Page> pages = exportPages(project, dto.getSnapshot_version());
         List<String> errors = new ArrayList<>();
         List<String> warnings = new ArrayList<>();
         if (!List.of("pptx", "word", "docx", "package").contains(exportType)) {
@@ -93,6 +97,9 @@ public class ExportServiceImpl implements ExportService {
         String exportType = normalizeType(dto.getExport_type());
         if (!List.of("pptx", "word", "docx", "package").contains(exportType)) {
             throw new RuntimeException("Unsupported export_type: " + dto.getExport_type());
+        }
+        if (dto.getSnapshot_version() != null && dto.getSnapshot_version() > 0) {
+            exportPages(project, dto.getSnapshot_version());
         }
 
         Exp_Task task = new Exp_Task();
@@ -126,7 +133,7 @@ public class ExportServiceImpl implements ExportService {
         payload.put("filename", stringValue(config.get("filename"), defaultFilename(project, task,
                 List.of("word", "docx").contains(task.getExport_type()) ? "docx" : "pptx")));
         payload.put("export_type", task.getExport_type());
-        payload.put("slides", buildSlides(project, config));
+        payload.put("slides", buildSlides(project, config, task.getSnapshot_version()));
         payload.put("fidelity", stringValue(config.get("fidelity"), "dom_editable"));
         payload.put("package_static_assets", !Boolean.FALSE.equals(config.get("package_static_assets")));
         payload.put("lesson_plan", config.get("lesson_plan"));
@@ -305,15 +312,15 @@ public class ExportServiceImpl implements ExportService {
     }
 
     @SuppressWarnings("unchecked")
-    private List<Map<String, Object>> buildSlides(Ws_Project project, Map<String, Object> config) {
+    private List<Map<String, Object>> buildSlides(Ws_Project project, Map<String, Object> config, Integer snapshotVersion) {
         Object configSlides = config.get("slides");
-        if (configSlides instanceof List<?> list && !list.isEmpty()) {
+        if ((snapshotVersion == null || snapshotVersion <= 0) && configSlides instanceof List<?> list && !list.isEmpty()) {
             return list.stream()
                     .filter(Map.class::isInstance)
                     .map(item -> (Map<String, Object>) new LinkedHashMap<>((Map<String, Object>) item))
                     .toList();
         }
-        List<Ws_Page> pages = pageMapper.findByProjectId(project.getId());
+        List<Ws_Page> pages = exportPages(project, snapshotVersion);
         List<Map<String, Object>> slides = new ArrayList<>();
         for (Ws_Page page : pages) {
             Map<String, Object> slide = parseJsonObject(page.getPage_content());
@@ -330,6 +337,30 @@ public class ExportServiceImpl implements ExportService {
             slides.add(slide);
         }
         return slides;
+    }
+
+    private List<Ws_Page> exportPages(Ws_Project project, Integer version) {
+        if (version == null || version <= 0) return pageMapper.findByProjectId(project.getId());
+        var snapshot = versionMapper.findByProjectId(project.getId()).stream()
+                .filter(item -> item.getVersion_number() == version).findFirst()
+                .orElseThrow(() -> new RuntimeException("所选项目快照不存在，请重新运行预检"));
+        try {
+            var pages = objectMapper.readTree(snapshot.getSnapshot_data()).path("pages");
+            if (!pages.isArray()) throw new RuntimeException("项目快照缺少页面数据，请重新保存快照");
+            List<Ws_Page> result = new ArrayList<>();
+            for (var item : pages) {
+                Ws_Page page = new Ws_Page();
+                page.setPage_order(item.path("page_order").asInt());
+                page.setPage_title(item.path("page_title").asText(""));
+                page.setPage_type(item.path("page_type").asText("ppt"));
+                page.setPage_content(item.path("page_content").asText("{}"));
+                page.setComponents(item.path("components").asText("[]"));
+                result.add(page);
+            }
+            return result;
+        } catch (IOException | IllegalArgumentException e) {
+            throw new RuntimeException("项目快照格式无效，请重新保存快照", e);
+        }
     }
 
     private String fallbackSlideHtml(Ws_Page page, Map<String, Object> content) {

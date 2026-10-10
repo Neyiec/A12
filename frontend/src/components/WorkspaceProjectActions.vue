@@ -12,8 +12,8 @@ defineEmits(['undo', 'quality', 'save-version', 'versions', 'permissions'])
     <span role="status">{{ status }}</span>
     <el-button v-if="canUndo" text size="small" type="warning" @click="$emit('undo')">撤销本次 AI 修改</el-button>
     <el-button text size="small" @click="$emit('quality')">质量建议</el-button>
-    <el-button text size="small" :loading="savingVersion" @click="$emit('save-version')">保存版本</el-button>
-    <el-button text size="small" :disabled="savingVersion" @click="$emit('versions')">版本历史</el-button>
+    <el-button text size="small" :loading="savingVersion" @click="$emit('save-version')">保存快照</el-button>
+    <el-button text size="small" :disabled="savingVersion" @click="$emit('versions')">快照与恢复</el-button>
     <el-button text size="small" @click="$emit('permissions')">协作授权</el-button>
   </nav>
 </template>

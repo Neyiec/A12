@@ -30,6 +30,7 @@ const activeHistoryId = ref(null)
 const iconMap = { ChatDotRound, FolderOpened, Grid, Download }
 const routeMap = {
   home: '/main',
+  workspace: '/main/workspace',
   resources: '/main/resources',
   community: '/main/community',
   courses: '/main/courses',
@@ -72,7 +73,7 @@ const toggleSidebar = () => { sidebarCollapsed.value = !sidebarCollapsed.value }
 /** 跳转到教师端目标功能模块。 */
 const handleMenuSelect = (index) => {
   const target = routeMap[index]
-  if (target) router.push({ path: target, query: route.query.preview ? { preview: '1' } : {} })
+  if (target) router.push({ path: target, query: { ...(route.query.preview ? { preview: '1' } : {}), ...(index === 'workspace' ? { manage: '1' } : {}) } })
 }
 
 /** 点击"新建对话"：无论当前在哪个页面，都跳回教师端首页的初始（欢迎）视图。 */

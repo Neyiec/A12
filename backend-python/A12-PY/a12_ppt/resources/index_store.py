@@ -207,7 +207,7 @@ class ResourceIndexStore:
             fingerprint = str(parsed.metadata.get("content_sha256") or fingerprint)
             text = parsed.text
             if not text.strip():
-                raise ValueError("资料未解析出有效文本，请检查格式、OCR、视觉模型或语音转写服务")
+                raise ValueError(parsed.metadata.get('error') or "资料未解析出有效文本，请检查格式、OCR、视觉模型或语音转写服务")
             chunk_items = chunk_records(text, metadata=metadata)
             chunks = [item["content"] for item in chunk_items]
             chunk_metadata = [self._compact_chunk_metadata(metadata, item.get("metadata") or {}) for item in chunk_items]

@@ -126,7 +126,8 @@ export const isPlanningPrompt = (text) => {
   const targets = '(?:课件|ppt|教案|教学设计|教学大纲|课堂活动|课程设计|问题链|学案|讲义|练习题|试卷|课程)'
   const creation = new RegExp(`(?:生成|制作|设计|编写|创建|准备|整理|做(?:一份|一个|个)?).{0,20}${targets}`, 'i')
   const targetQuestion = new RegExp(`${targets}.{0,12}(?:怎么做|如何做|帮我生成|帮我制作|帮我设计|帮我编写)`, 'i')
-  return creation.test(value) || targetQuestion.test(value)
+  const bareCourseware = /^(?:请|帮我|我想|我要|需要|给我)?\s*(?:(?:生成|制作|设计|做|准备)\s*(?:一份|一个|个)?\s*)?[\u4e00-\u9fa5A-Za-z0-9·、（）() ]{2,40}(?:课件|PPT)$/i
+  return creation.test(value) || targetQuestion.test(value) || bareCourseware.test(value)
 }
 
 /** 备课征询可选项：与工作台/后端使用的上下文字段保持一致。 */
@@ -162,18 +163,18 @@ export const extractPlanningContext = (text) => {
     .find((subject) => value.includes(subject)) || ''
 
   const gradeMatchers = [
+    ['高一', /(?:高一|高中一年级)/],
+    ['高二', /(?:高二|高中二年级)/],
+    ['高三', /(?:高三|高中三年级)/],
+    ['七年级', /(?:七年级|初一|初中(?:科学)?一(?:年级|年))/],
+    ['八年级', /(?:八年级|初二|初中(?:科学)?二(?:年级|年))/],
+    ['九年级', /(?:九年级|初三|初中(?:科学)?三(?:年级|年))/],
     ['一年级', /(?:小学)?一(?:年级|年)/],
     ['二年级', /(?:小学)?二(?:年级|年)/],
     ['三年级', /(?:小学)?三(?:年级|年)/],
     ['四年级', /(?:小学)?四(?:年级|年)/],
     ['五年级', /(?:小学)?五(?:年级|年)/],
     ['六年级', /(?:小学)?六(?:年级|年)/],
-    ['七年级', /(?:七年级|初一)/],
-    ['八年级', /(?:八年级|初二)/],
-    ['九年级', /(?:九年级|初三)/],
-    ['高一', /(?:高一|高中一年级)/],
-    ['高二', /(?:高二|高中二年级)/],
-    ['高三', /(?:高三|高中三年级)/],
   ]
   context.grade = gradeMatchers.find(([, matcher]) => matcher.test(value))?.[0] || ''
 
@@ -189,7 +190,19 @@ export const extractPlanningContext = (text) => {
 
   const quotedTitle = value.match(/《([^》]{2,40})》/)
   const labeledTitle = value.match(/(?:课题|主题|课程名称)\s*(?:是|为|：|:)?\s*[“"「]?([^，。！？；;\n”"」]{2,40})/)
-  context.courseName = String(quotedTitle?.[1] || labeledTitle?.[1] || '').trim()
+  const bareCourseware = value.match(/^(?:请|帮我|我想|我要|需要|给我)?\s*(?:(?:生成|制作|设计|做|准备)\s*(?:一份|一个|个)?\s*)?(.{2,40}?)\s*(?:的)?\s*(?:课件|PPT)(?:[，。！？\s].*)?$/i)
+  const preparation = value.match(/^(?:(?:请|帮我|我想|我要|需要|给我)\s*)*(?:备课|准备(?:一节|一堂)?课)\s*[:：]?\s*(.+)$/)
+  const cleanTopic = (topic) => {
+    let result = String(topic || '').replace(/(?:高中[一二三]年级|初中(?:科学)?[一二三](?:年级|年)|高[一二三]|初[一二三]|[一二三四五六七八九]年级)/g, '')
+    result = result.replace(/^(?:小学|初中|高中|大学)\s*/, '')
+    if (context.subject) result = result.replace(new RegExp(`^${context.subject}\\s*`), '')
+    return result.split(/[，,。！？；;\n]/)[0].replace(/(?:的)?\s*(?:课件|PPT|教案|大纲)$/i, '').trim()
+  }
+  context.courseName = String(quotedTitle?.[1] || labeledTitle?.[1] || cleanTopic(preparation?.[1] || bareCourseware?.[1]) || '').trim()
+  // Infer only distinctive subject terminology; an explicit subject always wins.
+  if (!context.subject && /(?:水解反应|盐类的水解|盐类水解|氧化还原|电解质|化学平衡|离子反应|酸碱中和)/.test(context.courseName)) {
+    context.subject = '化学'
+  }
 
   return context
 }

@@ -1,8 +1,21 @@
 import { apiRequest, del, get, post, put } from '../utils/api'
 import axios from 'axios'
 import { useUserStore } from '../storage/user.js'
+import { resourceUploadError } from '../utils/resourceUploadError.js'
 
 export const listResources = (params) => get('/api/v1/resources', params)
+export const updateOutlineSkillGraph = (sessionId, skill) => apiRequest({
+  url: `/api/v1/python/outlines/chat/sessions/${encodeURIComponent(sessionId)}/skill-graph`,
+  method: 'patch', data: { skill },
+})
+export const updateOutlineLearningGraphs = (sessionId, graphs) => apiRequest({
+  url: `/api/v1/python/outlines/chat/sessions/${encodeURIComponent(sessionId)}/learning-graphs`,
+  method: 'patch', data: { graphs },
+})
+export const aiEditOutlineLearningGraphs = (sessionId, graphs, kind, instruction) => apiRequest({
+  url: `/api/v1/python/outlines/chat/sessions/${encodeURIComponent(sessionId)}/learning-graphs/ai-edit`,
+  method: 'post', data: { graphs, kind, instruction }, timeout: 60000,
+})
 export const uploadResource = async (file, onProgress, { allowAi = false, description = '' } = {}) => {
   if (!file?.name || !Number.isFinite(file.size)) throw new Error('请选择有效文件')
   const tokenResult = await post('/api/v1/resources/upload-tokens', {
@@ -12,13 +25,17 @@ export const uploadResource = async (file, onProgress, { allowAi = false, descri
   if (tokenResult?.code !== 200 && tokenResult?.code !== 0) throw new Error(tokenResult?.message || '获取上传地址失败')
   const token = tokenResult?.data || {}
   if (!token.object_key || !token.upload_url) throw new Error('上传服务未返回对象地址')
-  await axios.put(token.upload_url, file, {
-    timeout: 30 * 60 * 1000,
-    headers: { 'Content-Type': file.type || 'application/octet-stream' },
-    onUploadProgress: (event) => {
-      if (onProgress && event.total) onProgress(Math.min(95, Math.round(event.loaded / event.total * 95)))
-    },
-  })
+  try {
+    await axios.put(token.upload_url, file, {
+      timeout: 30 * 60 * 1000,
+      headers: { 'Content-Type': file.type || 'application/octet-stream' },
+      onUploadProgress: (event) => {
+        if (onProgress && event.total) onProgress(Math.min(95, Math.round(event.loaded / event.total * 95)))
+      },
+    })
+  } catch (error) {
+    throw new Error(resourceUploadError(error), { cause: error })
+  }
   const confirmed = await post('/api/v1/resources/uploaded-files', {
     object_key: token.object_key,
     file_name: file.name,
@@ -122,6 +139,11 @@ export const listCommunityFavorites = (params) => get('/api/v1/community/favorit
 export const listCommunityRecentViews = (params) => get('/api/v1/community/recent-views', params)
 export const removeCommunityRecentView = (id) => del(`/api/v1/community/recent-views/${id}`)
 export const createCommunitySubmission = (data) => post('/api/v1/community/submissions', data)
+export const importCommunityPptx = (file) => {
+  const data = new FormData()
+  data.append('file', file)
+  return apiRequest({ url: '/api/v1/python/community/import-pptx', method: 'post', data, timeout: 120000 })
+}
 export const listCommunitySubmissions = (params) => get('/api/v1/community/submissions', params)
 export const getCommunitySubmission = (id) => get(`/api/v1/community/submissions/${id}`)
 export const updateCommunitySubmission = (id, data) => apiRequest({ url: `/api/v1/community/submissions/${id}`, method: 'patch', data })
@@ -176,6 +198,7 @@ async function runClientExport(task) {
     }
     const blob = generated?.data
     if (!(blob instanceof Blob) || !blob.size) throw new Error('Python 未返回有效导出文件')
+    if (blob.size > 100 * 1024 * 1024) throw new Error('导出文件超过 100MB，请减少导出页数或压缩图片后重试')
     const disposition = generated?.headers?.['content-disposition'] || ''
     const encodedName = disposition.match(/filename\*=UTF-8''([^;]+)/i)?.[1]
     const plainName = disposition.match(/filename="?([^";]+)"?/i)?.[1]
@@ -188,8 +211,11 @@ async function runClientExport(task) {
     if (saved?.code !== 200 && saved?.code !== 0) throw new Error(saved?.message || '登记导出文件失败')
     return saved
   } catch (error) {
-    await post(`/api/v1/export-tasks/${task.id}/failure`, { error: String(error?.message || '导出失败') }).catch(() => {})
-    throw error
+    const message = error?.response?.status === 413
+      ? '导出文件回传超过服务端大小限制，请重启更新后的 Java 服务；若仍失败，请检查代理上传限制（文件上限 100MB）'
+      : String(error?.message || '导出失败')
+    await post(`/api/v1/export-tasks/${task.id}/failure`, { error: message }).catch(() => {})
+    throw new Error(message, { cause: error })
   }
 }
 export const precheckProjectExport = (id, data) => post(`/api/v1/projects/${id}/export-prechecks`, data)
@@ -214,7 +240,7 @@ export async function sendDirectOutlineSessionMessage(id, message, knownContext 
   const reader = response.body?.getReader()
   if (!reader) throw new Error('大纲服务未返回数据流')
   const decoder = new TextDecoder()
-  let buffer = '', session = pythonSessionId, final = null, question = null, error = ''
+  let buffer = '', session = pythonSessionId, final = null, question = null, graphs = null, pendingGraphReview = false, error = ''
   const dispatch = (frame) => {
     const event = frame.match(/(?:^|\n)event:\s*([^\n]+)/)?.[1]?.trim()
     const raw = frame.match(/(?:^|\n)data:\s*([^\n]+)/)?.[1]
@@ -224,6 +250,8 @@ export async function sendDirectOutlineSessionMessage(id, message, knownContext 
     if (event === 'session') session = String(data.session_id || session)
     if (event === 'final') final = data
     if (event === 'question') question = data
+    if (event === 'learning_graphs') graphs = data
+    if (event === 'done' && data.status === 'awaiting_graph_confirmation') pendingGraphReview = true
     if (event === 'error') error = data.message || '大纲生成失败'
   }
   for (;;) {
@@ -237,12 +265,14 @@ export async function sendDirectOutlineSessionMessage(id, message, knownContext 
   if (buffer.trim()) dispatch(buffer)
   const saved = await saveDirectOutlineResult(id, {
     message, python_session_id: session,
-    status: final ? 'completed' : question ? 'need_clarification' : 'failed',
-    final_data: final, question: question?.question || '', error_message: error,
+    status: final ? 'completed' : question ? 'need_clarification'
+      : pendingGraphReview && graphs ? 'awaiting_graph_confirmation' : 'failed',
+    final_data: final, graph_data: pendingGraphReview ? { learning_graphs: graphs, status: 'awaiting_graph_confirmation' } : undefined,
+    question: question?.question || '', error_message: error,
   })
   if (saved?.code !== 200 && saved?.code !== 0) throw new Error(saved?.message || '大纲结果保存失败')
-  if (!final && !question) throw new Error(error || '大纲服务未返回有效结果')
-  return saved
+  if (!final && !question && !pendingGraphReview) throw new Error(error || '大纲服务未返回有效结果')
+  return pendingGraphReview ? { ...saved, data: { ...(saved.data || {}), graph_review_required: true } } : saved
 }
 export const listAiSessions = () => get('/api/v1/ai/sessions')
 export const getAiSession = (id) => get(`/api/v1/ai/sessions/${id}`)
@@ -400,7 +430,7 @@ export const findUserByEmail = (email) => get('/api/v1/users/by-email', { email 
  * 获取当前教师个人偏好设置
  * @returns {Promise} 后端返回 { teaching_style, template_style, interaction_forms }
  */
-export const getTeacherPreferences = () => get('/api/v1/teachers/me/preferences')
+export const getTeacherPreferences = () => get('/api/v1/python/teacher-style/preferences')
 
 /**
  * 调用 Python 语音转写 ASR，返回识别文本。
@@ -568,7 +598,7 @@ export const validatePresentationHtml = (data) => apiRequest({
  * @param {{ teaching_style: string, template_style: string, interaction_forms: string[] }} data - 偏好数据
  * @returns {Promise} 后端返回更新后的偏好配置
  */
-export const saveTeacherPreferences = (data) => put('/api/v1/teachers/me/preferences', data)
+export const saveTeacherPreferences = (data) => put('/api/v1/python/teacher-style/preferences', data)
 
 /** 长期教学画像由 Python AI 服务维护，账号偏好仍由 Java 保存。 */
 export const getTeacherStyleProfile = (userId) => get('/api/v1/python/teacher-style/profile', { user_id: userId })

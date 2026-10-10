@@ -45,6 +45,7 @@ class OutlineSessionStore:
         state = copy.deepcopy(state)
         state["user_id"] = user_id
         state["session_id"] = session_id
+        state["status"] = status
         state["updated_at"] = time.time()
         self._sessions[self._key(user_id, session_id)] = state
 
@@ -74,6 +75,45 @@ class OutlineSessionStore:
         self._sessions[key].setdefault("intent", {})["title"] = title
         self._sessions[key]["updated_at"] = time.time()
         return copy.deepcopy(self._sessions[key])
+
+    def update_skill_graph(self, user_id: str, session_id: str, skill: dict[str, Any]) -> dict[str, Any]:
+        from .learning_graphs import validate_skill_edit
+        state = self.get(user_id, session_id)
+        if not state:
+            raise LookupError("备课会话不存在")
+        pending = (state.get("outline") or {}).get("pending_graph_review")
+        if state.get("status") != "awaiting_graph_confirmation" or not isinstance(pending, dict):
+            raise ValueError("当前不处于双图谱确认阶段，不能修改技能图谱")
+        graphs = pending["learning_graphs"]
+        previous = copy.deepcopy(graphs["skill"])
+        graphs["skill"] = validate_skill_edit(skill, graphs["knowledge"])
+        graphs["status"] = "teacher_modified_draft"
+        self.save(user_id, session_id, state, status="awaiting_graph_confirmation")
+        self.append_message(user_id, session_id, "user", "教师修改了技能图谱", {
+            "type": "skill_graph_edit", "before": previous, "after": graphs["skill"],
+        })
+        return copy.deepcopy(graphs)
+
+    def graph_review(self, user_id: str, session_id: str) -> dict[str, Any]:
+        state = self.get(user_id, session_id)
+        if not state:
+            raise LookupError("备课会话不存在")
+        if state.get("status") != "awaiting_graph_confirmation" or not isinstance((state.get("outline") or {}).get("pending_graph_review"), dict):
+            raise ValueError("当前不处于双图谱确认阶段")
+        return state
+
+    def update_learning_graphs(self, user_id: str, session_id: str, graphs: dict[str, Any]) -> dict[str, Any]:
+        from .learning_graphs import validate_graph_edit
+        state = self.graph_review(user_id, session_id)
+        pending = state["outline"]["pending_graph_review"]
+        previous = copy.deepcopy(pending["learning_graphs"])
+        updated = {**previous, **validate_graph_edit(graphs), "status": "teacher_modified_draft"}
+        pending["learning_graphs"] = updated
+        self.save(user_id, session_id, state, status="awaiting_graph_confirmation")
+        self.append_message(user_id, session_id, "user", "教师确认保存了双图谱修改", {
+            "type": "learning_graph_edit", "before": previous, "after": updated,
+        })
+        return copy.deepcopy(updated)
 
     def delete(self, user_id: str, session_id: str) -> bool:
         deleted = postgres_memory_store.delete_session(user_id, session_id)

@@ -16,14 +16,24 @@ public class OssUtil {
 
     private final OSS ossClient;
     private final OssConfig ossConfig;
+    private final LocalObjectStorage local;
+    @org.springframework.beans.factory.annotation.Value("${a12.storage.provider:oss}")
+    private String provider;
 
-    public OssUtil(OSS ossClient, OssConfig ossConfig) {
+    public OssUtil(@org.springframework.context.annotation.Lazy OSS ossClient, OssConfig ossConfig, LocalObjectStorage local) {
         this.ossClient = ossClient;
         this.ossConfig = ossConfig;
+        this.local = local;
+    }
+
+    public String uploadObjectKey(String key) {
+        if (!"local".equals(provider) && !"oss".equals(provider)) throw new IllegalStateException("storage.provider 仅支持 local 或 oss");
+        return "local".equals(provider) ? "local/" + key : key;
     }
 
     /** 生成 OSS 文件上传签名 URL（PUT） */
     public URL generateUploadUrl(String objectKey, String content_type, long expiresMinutes) {
+        if (objectKey.startsWith("local/")) return local.signedUrl(objectKey,"PUT",expiresMinutes);
         Date expiration = new Date(System.currentTimeMillis() + expiresMinutes * 60 * 1000);
         GeneratePresignedUrlRequest request = new GeneratePresignedUrlRequest(
                 ossConfig.getBucketName(), objectKey, com.aliyun.oss.HttpMethod.PUT);
@@ -36,6 +46,7 @@ public class OssUtil {
 
     /** 生成 OSS 文件下载签名 URL（GET） */
     public URL generateDownloadUrl(String objectKey, long expiresMinutes) {
+        if (objectKey.startsWith("local/")) return local.signedUrl(objectKey,"GET",expiresMinutes);
         Date expiration = new Date(System.currentTimeMillis() + expiresMinutes * 60 * 1000);
         GeneratePresignedUrlRequest request = new GeneratePresignedUrlRequest(
                 ossConfig.getBucketName(), objectKey, com.aliyun.oss.HttpMethod.GET);
@@ -45,16 +56,19 @@ public class OssUtil {
 
     /** 上传文件流到 OSS */
     public void putObject(String objectKey, InputStream inputStream) {
+        if (objectKey.startsWith("local/")) { local.write(objectKey,inputStream); return; }
         ossClient.putObject(ossConfig.getBucketName(), objectKey, inputStream);
     }
 
     /** 判断文件是否存在 */
     public boolean doesObjectExist(String objectKey) {
+        if (objectKey.startsWith("local/")) return local.exists(objectKey);
         return ossClient.doesObjectExist(ossConfig.getBucketName(), objectKey);
     }
 
     /** 删除文件 */
     public void deleteObject(String objectKey) {
+        if (objectKey.startsWith("local/")) { local.delete(objectKey); return; }
         ossClient.deleteObject(ossConfig.getBucketName(), objectKey);
     }
 
@@ -73,6 +87,8 @@ public class OssUtil {
 
     /** 判断是否本 bucket 的 OSS 地址并提取 objectKey（自动剥离签名参数），非本 bucket 地址返回 null */
     public String tryExtractObjectKey(String fileUrl) {
+        String localKey = local.extract(fileUrl);
+        if (localKey != null) return localKey;
         if (fileUrl == null || fileUrl.isBlank()) {
             return null;
         }
@@ -83,6 +99,8 @@ public class OssUtil {
 
     /** 从完整 OSS URL 中提取 objectKey */
     public String extractObjectKey(String ossUrl) {
+        String localKey = local.extract(ossUrl);
+        if (localKey != null) return localKey;
         String prefix = "https://" + ossConfig.getBucketName() + "." + ossConfig.getEndpoint() + "/";
         if (ossUrl.startsWith(prefix)) {
             return ossUrl.substring(prefix.length());
@@ -93,6 +111,7 @@ public class OssUtil {
 
     /** 获取文件公开访问的完整 URL */
     public String getObjectUrl(String objectKey) {
+        if (objectKey.startsWith("local/")) return local.objectUrl(objectKey);
         return "https://" + ossConfig.getBucketName() + "." + ossConfig.getEndpoint() + "/" + objectKey;
     }
 }

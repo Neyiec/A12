@@ -19,6 +19,7 @@ public class OssConfig {
     private String bucketName;
 
     @Bean
+    @org.springframework.context.annotation.Lazy
     public OSS ossClient() {
         String region = "cn-hangzhou";
 

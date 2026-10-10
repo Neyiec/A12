@@ -1,0 +1,71 @@
+/* Keep the workspace and body-teleported menus/dialogs on one readable palette.
+   The selector stops applying when leaving the workspace; saved theme stays intact. */
+:root:has(.workspace-blue-white) {
+  color-scheme: light;
+  --zh-theme-primary: #2563eb;
+  --zh-color-primary: #2563eb;
+  --zh-text-theme: #1d4ed8;
+  --zh-line-theme: #2563eb;
+  --zh-line-theme50: #2563eb80;
+  --zh-line-theme20: #2563eb33;
+  --zh-background-primary: #ffffff;
+  --zh-background-base: #ffffff;
+  --zh-background-pc-sidebar: #f4f8ff;
+  --zh-background-pop: #ffffff;
+  --zh-background-capsule: #ffffff;
+  --zh-background-card: #eff6ff;
+  --zh-background-option: #eff6ff;
+  --zh-background-option-on: #dbeafe;
+  --zh-background-tag: #e7f0ff;
+  --zh-background-button: #2563eb;
+  --zh-background-button-hover: #1d4ed8;
+  --zh-background-gray-button-hover: #eff6ff;
+  --zh-background-light: #f4f8ff;
+  --zh-background-light-gray: #eff6ff;
+  --zh-background-light-grey: #e2eaff;
+  --zh-background-menu: #eff6ff;
+  --zh-background-select: #dbeafe;
+  --zh-background-user-query: #eff6ff;
+  --zh-background-answer-card: #ffffff;
+  --zh-background-area: #eff6ff;
+  --zh-background-weaken: #eff6ff;
+  --zh-background-input: #ffffff;
+  --zh-text-primary: #172b4d;
+  --zh-text-secondary: #405779;
+  --zh-text-caption: #526581;
+  --zh-text-disabled: #6b7c94;
+  --zh-text-link: #1d4ed8;
+  --zh-line-border: #bccfe9;
+  --zh-line-heavier: #8faed5;
+  --zh-line-parting: #dce6f4;
+  --zh-line-capsule: #c7dbfa;
+  --el-color-primary-light-3: #6592ef;
+  --el-color-primary-light-5: #a7c2f5;
+  --el-color-primary-light-7: #cbdcf9;
+  --el-color-primary-light-8: #dbeafe;
+  --el-color-primary-light-9: #eff6ff;
+  --el-color-primary-dark-2: #1d4ed8;
+}
+.workspace-blue-white .entry-projects article {
+  background: #ffffff;
+  border-color: #c5d6ee;
+  box-shadow: 0 4px 14px rgb(37 99 235 / 5%);
+}
+.workspace-blue-white .entry-projects article:hover {
+  border-color: #699aef;
+  box-shadow: 0 6px 18px rgb(37 99 235 / 10%);
+}
+.workspace-blue-white .el-button.is-disabled {
+  color: #64748b;
+  background: #edf2f8;
+  border-color: #cbd5e1;
+}
+.workspace-blue-white .el-input__wrapper,
+.workspace-blue-white .el-select__wrapper {
+  background: #ffffff;
+}
+.workspace-blue-white button:focus-visible,
+.workspace-blue-white a:focus-visible {
+  outline: 2px solid #2563eb;
+  outline-offset: 3px;
+}

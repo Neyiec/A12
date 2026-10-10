@@ -15,6 +15,78 @@ function handler(name, state) {
   return vm.runInNewContext(source.slice(node.start, node.end) + ';' + name, state)
 }
 const ref = value => ({ value })
+
+test('snapshot entry remains visible for local drafts and mobile menus', () => {
+  const toolbar = readFileSync(new URL('../src/components/CreationWorkspaceToolbar.vue', import.meta.url), 'utf8')
+  assert.match(toolbar, /<el-button class="toolbar-priority" :disabled="saving" @click="emit\('versions'\)">快照与恢复/)
+  assert.doesNotMatch(toolbar, /v-if="!isLocalDraft"[^\n]*emit\('versions'\)/)
+  assert.match(toolbar, /\.toolbar-actions > \.workspace-more \{ display: inline-flex; \}/)
+})
+
+test('opening snapshots on a draft first creates a project and initial version', async () => {
+  const calls = []
+  const state = { projectId: ref(''), manualSaveLoading: ref(false), hydratingProject: ref(false),
+    autosaveState: ref(''), autosaveTimer: null, clearTimeout() {},
+    persistGeneratedPresentationProject: async () => { calls.push('persist'); state.projectId.value = '99' },
+    WorkspaceMessage: { success: () => calls.push('success'), error: () => calls.push('error') },
+    workspaceRequestErrorMessage: error => error.message,
+  }
+  const ensure = handler('ensureSnapshotProject', state)
+  assert.equal(await ensure(), true)
+  assert.deepEqual(calls, ['persist', 'success'])
+  assert.equal(state.manualSaveLoading.value, false)
+  assert.equal(await ensure(), true)
+  assert.deepEqual(calls, ['persist', 'success'])
+})
+
+test('failed draft persistence does not open empty snapshot history', async () => {
+  const state = { projectId: ref(''), manualSaveLoading: ref(false), hydratingProject: ref(false),
+    autosaveState: ref(''), autosaveTimer: null, clearTimeout() {},
+    persistGeneratedPresentationProject: async () => { throw Error('save failed') },
+    WorkspaceMessage: { error() {} }, workspaceRequestErrorMessage: error => error.message,
+  }
+  assert.equal(await handler('ensureSnapshotProject', state)(), false)
+  assert.equal(state.manualSaveLoading.value, false)
+  assert.match(state.autosaveState.value, /保存为项目失败/)
+})
+
+test('home keeps project management visible and does not filter out editing projects', () => {
+  const home = readFileSync(new URL('../src/components/TeacherHome.vue', import.meta.url), 'utf8')
+  assert.match(home, /listProjects\(\{ page: 1, size: 4 \}\)/)
+  assert.doesNotMatch(home, /v-if="projectsLoading \|\| projects.length"/)
+  assert.match(home, /projectsError/)
+  const nav = readFileSync(new URL('../src/config/teacherHome.config.js', import.meta.url), 'utf8')
+  assert.match(nav, /index: 'workspace', label: '个人工作台'/)
+})
+
+function revisionState(failBackup = false) {
+  const calls = []
+  const preview = { before: [{}], after: [{}], data: {}, previousPageIds: [] }
+  const state = {
+    pendingDeckRevision: ref(preview), revisionPreviewVisible: ref(true), revisionStage: ref(''),
+    revisionUndoSnapshot: ref(null), projectId: ref('7'), slides: [], messages: [],
+    persistCurrentSlide: async () => calls.push('page'), persistVersionContent: async () => calls.push('content'),
+    saveProjectVersion: async (id, data) => { calls.push(data.description); if (failBackup) throw Error('backup failed'); return {} },
+    unwrapResponse: x => x, cloneRevisionSlides: x => x,
+    applyGeneratedPresentation: () => calls.push('apply'), persistSlideOrder: async () => calls.push('persist'),
+    closeDiscussionContext() {}, sendRevisionFeedback() {},
+    WorkspaceMessage: { success: () => calls.push('success'), error: () => calls.push('error') },
+  }
+  return { state, calls }
+}
+
+test('AI deck changes save durable versions before and after applying changes', async () => {
+  const {state, calls} = revisionState()
+  await handler('acceptDeckRevision', state)()
+  assert.deepEqual(calls, ['page', 'content', 'AI 修改前的自动备份', 'apply', 'persist', 'AI 修改后的确认版本', 'success'])
+})
+
+test('failed backup blocks AI changes and keeps the preview available', async () => {
+  const {state, calls} = revisionState(true)
+  await handler('acceptDeckRevision', state)()
+  assert.deepEqual(calls, ['page', 'content', 'AI 修改前的自动备份', 'error'])
+  assert.equal(state.revisionPreviewVisible.value, true)
+})
 test('audio player starts element dragging without cancelling its native controls', () => {
   const element = { id: 'audio-1', type: 'audio', position: { x: 8, y: 48 } }
   const canvas = { getBoundingClientRect: () => ({ width: 780, height: 438 }) }
@@ -157,10 +229,12 @@ function restoreState(failSave = false) {
   const calls = []
   const state = {
     versionActionLoading: ref(false), projectId: ref('7'), project: ref({}), versionDiff: ref({}), versionPage: ref(3),
+    revisionSubmitting: ref(false), revisionStage: ref(''),
     ElMessageBox: { confirm: async () => calls.push('confirm') },
     WorkspaceMessage: { success: () => calls.push('success'), error: () => calls.push('error') },
     clearTimeout() {}, autosaveTimer: null, unwrapResponse: value => value,
     lessonPlanEditorRef: ref(null), saveLessonPlanDraft: async () => calls.push('document'),
+    persistCurrentSlide: async () => calls.push('page'),
     persistSlideOrder: async () => { calls.push('save'); if (failSave) throw Error('conflict') },
     saveProjectVersion: async () => { calls.push('backup'); return {} },
     restoreProjectVersion: async () => { calls.push('restore'); return {current_version: 12} },
@@ -169,17 +243,17 @@ function restoreState(failSave = false) {
   state.persistVersionContent = handler('persistVersionContent', state)
   return { state, calls }
 }
-test('restoring first saves and backs up current content, then reloads page IDs', async () => {
+test('restoring flushes current content before the atomic server restore and reloads page IDs', async () => {
   const {state, calls} = restoreState()
   await handler('restoreVersion', state)({version_id: 4})
-  assert.deepEqual(calls, ['confirm', 'save', 'backup', 'restore', 'reload', 'versions', 'success'])
+  assert.deepEqual(calls, ['confirm', 'page', 'save', 'restore', 'reload', 'versions', 'success'])
   assert.equal(state.versionPage.value, 1)
   assert.equal(state.versionActionLoading.value, false)
 })
 test('save conflicts prevent backup and restoration', async () => {
   const {state, calls} = restoreState(true)
   await handler('restoreVersion', state)({version_id: 4})
-  assert.deepEqual(calls, ['confirm', 'save', 'error'])
+  assert.deepEqual(calls, ['confirm', 'page', 'save', 'error'])
   assert.equal(state.versionActionLoading.value, false)
 })
 
@@ -187,13 +261,45 @@ test('document edits are persisted before the shared project backup', async () =
   const {state, calls} = restoreState()
   state.lessonPlanEditorRef.value = { getLessonPlan: () => ({title: '修改后的教学案'}) }
   await handler('restoreVersion', state)({version_id: 4})
-  assert.deepEqual(calls, ['confirm', 'save', 'document', 'backup', 'restore', 'reload', 'versions', 'success'])
+  assert.deepEqual(calls, ['confirm', 'page', 'save', 'document', 'restore', 'reload', 'versions', 'success'])
 })
 test('document save failure blocks restoration and does not create an incomplete backup', async () => {
   const {state, calls} = restoreState()
   state.lessonPlanEditorRef.value = { getLessonPlan: () => ({title: '尚未保存的教学案'}) }
   state.saveLessonPlanDraft = async () => { calls.push('document'); throw Error('document conflict') }
   await handler('restoreVersion', state)({version_id: 4})
-  assert.deepEqual(calls, ['confirm', 'save', 'document', 'error'])
+  assert.deepEqual(calls, ['confirm', 'page', 'save', 'document', 'error'])
   assert.equal(state.versionActionLoading.value, false)
+})
+
+test('AI snapshot waits for page and deck content before persisting a durable version', async () => {
+  const calls = []
+  const state = { projectId: ref('7'), versionPage: ref(3), versionDiff: ref({}),
+    clearTimeout() {}, autosaveTimer: null, unwrapResponse: value => value,
+    persistCurrentSlide: async () => calls.push('page'),
+    persistVersionContent: async () => calls.push('content'),
+    saveProjectVersion: async (id, data) => { calls.push(data.description); return {version_id: 8} },
+  }
+  const result = await handler('saveAiRevisionSnapshot', state)('AI 修改前')
+  assert.deepEqual(calls, ['page', 'content', 'AI 修改前'])
+  assert.equal(result.version_id, 8)
+  assert.equal(state.versionDiff.value, null)
+})
+
+test('failed page flush prevents the snapshot API call', async () => {
+  let called = false
+  const state = { projectId: ref('7'), clearTimeout() {}, autosaveTimer: null,
+    persistCurrentSlide: async () => { throw Error('save failed') },
+    saveProjectVersion: async () => { called = true },
+  }
+  await assert.rejects(handler('saveAiRevisionSnapshot', state)('before'), /save failed/)
+  assert.equal(called, false)
+})
+
+test('single page, H5 and page additions preserve before and after snapshots', () => {
+  const fn = declarations.find(node => node.type === 'VariableDeclaration' && node.declarations.some(item => item.id.name === 'submitRevision'))
+  const code = source.slice(fn.start, fn.end)
+  assert.match(code, /saveAiRevisionSnapshot\(`AI 修改前/)
+  assert.match(code, /saveAiRevisionSnapshot\('AI 新增页面后的快照'\)/)
+  assert.match(code, /saveAiRevisionSnapshot\(`AI 修改后/)
 })

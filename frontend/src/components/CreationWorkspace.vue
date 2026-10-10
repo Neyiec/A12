@@ -6,6 +6,7 @@ import { Aim, ArrowDown, ArrowUp, Plus, Promotion } from '@element-plus/icons-vu
 import MarkdownRender from 'markstream-vue'
 import { addProjectPermission, archiveProject, batchSaveProjectPages, copyProject, createCommunitySubmission, createProject, createProjectPage, deleteProject, deleteProjectPage, downloadResource, exportLessonPlanDocx, exportPresentationPptx, findUserByEmail, findUserByUsername, generateInteractiveModule, generateLessonPlan, generatePresentationStream, generateSlideImage, getAiPlan, getProject, getProjectPage, getProjectVersionDiff, listProjectPages, listProjectVersions, listProjects, listResources, modifyPresentation, modifyPresentationSlide, patchProject, recognizeIntent, recordAiFeedback, restoreProject, restoreProjectVersion, reviseProjectWithAi, saveCommunitySubmissionVersion, saveProjectPage, saveProjectVersion, sendDirectOutlineSessionMessage, streamGeneralChat, submitCommunitySubmission, transcribeAudio, uploadResource, validatePresentationHtml, validateProjectComponent } from '../apis/teacher'
 import { secureHtmlForSandbox } from '../utils/htmlSecurity'
+import { persistedPageTitle } from '../utils/pageTitle'
 import { bindSubjectInteractions } from '../utils/subjectInteraction'
 import { cachedChemicalStructure, chemicalStructureKey, prepareChemicalStructure, renderChemicalStructure } from '../utils/chemicalStructure'
 import { canLandPptDirectEdit, placeLandPptCaret, serializeLandPptEditableDocument, shouldCommitLandPptInlineEdit } from '../utils/landpptQuickEdit'
@@ -5480,13 +5481,14 @@ const pagePayloadForSlide = (slide, index, overrides = {}) => {
   return {
     ...(includePageOrder ? { page_order: index + 1 } : {}),
     page_type: slide.pageType || slide.page_type || (index === 0 ? 'cover' : 'content'),
-    page_title: slide.title,
     page_content: JSON.stringify(persistedSlide),
     components: JSON.stringify(componentsPayloadForSlide(slide)),
     client_version: slide.clientVersion || workspaceClientVersion,
     autosave: false,
     dirty: Boolean(slide.dirty),
     ...payloadOverrides,
+    // Overrides must not bypass the storage limit; the original title stays in page_content.
+    page_title: persistedPageTitle(payloadOverrides.page_title ?? slide.title, `第 ${index + 1} 页`),
   }
 }
 const savedPageList = (response) => {
@@ -6598,6 +6600,12 @@ const acceptDeckRevision = async () => {
   revisionPreviewVisible.value = false
   revisionStage.value = '正在应用已确认的整套课件修改…'
   try {
+    if (projectId.value && !preview.beforeVersionSaved) {
+      await persistCurrentSlide({ throwOnError: true })
+      await persistVersionContent()
+      unwrapResponse(await saveProjectVersion(projectId.value, { description: 'AI 修改前的自动备份' }))
+      preview.beforeVersionSaved = true
+    }
     revisionUndoSnapshot.value = cloneRevisionSlides(preview.before)
     applyGeneratedPresentation(preview.data, { persist: true, notify: false })
     if (projectId.value) {
@@ -6606,6 +6614,7 @@ const acceptDeckRevision = async () => {
         deletedPageIds: preview.previousPageIds.filter((id) => !retainedPageIds.has(String(id))),
         throwOnError: true,
       })
+      unwrapResponse(await saveProjectVersion(projectId.value, { description: 'AI 修改后的确认版本' }))
     }
     closeDiscussionContext()
     messages.push({
@@ -6711,9 +6720,14 @@ const submitRevision = async ({ operation = 'modify_page' } = {}) => {
   revisionSubmitting.value = true
   revisionStage.value = '正在理解修改指令…'
   try {
+    // Deck revisions are snapshotted separately when the preview is accepted.
+    if (!isDeckRevisionInstruction(instruction)) {
+      await saveAiRevisionSnapshot(`AI 修改前 · 第 ${selectedSlide.value + 1} 页`)
+    }
     if (isAddPageInstruction(instruction) && !isDeckRevisionInstruction(instruction)) {
       revisionStage.value = '正在新增页面…'
       const result = await executeAddPageInstruction(instruction)
+      await saveAiRevisionSnapshot('AI 新增页面后的快照')
       closeDiscussionContext()
       messages.push({
         role: 'assistant',
@@ -6743,6 +6757,7 @@ const submitRevision = async ({ operation = 'modify_page' } = {}) => {
         revisionStage.value = '正在重新生成并替换选中的 H5 组件…'
         const revisedModule = await reviseSelectedH5WithAi(selectedElement, revisionInstruction)
         if (projectId.value) await persistCurrentSlide({ throwOnError: true })
+        await saveAiRevisionSnapshot(`AI 修改后 · 第 ${selectedSlide.value + 1} 页 H5`)
         closeDiscussionContext()
         messages.push({
           role: 'assistant',
@@ -6790,6 +6805,7 @@ const submitRevision = async ({ operation = 'modify_page' } = {}) => {
       applied = applyGeneratedPage(response)
       if (!applied) throw new Error('AI 修改接口未返回有效的 HTML 页面')
       if (projectId.value) await persistCurrentSlide({ throwOnError: true })
+      await saveAiRevisionSnapshot(`AI 修改后 · 第 ${selectedSlide.value + 1} 页`)
       closeDiscussionContext()
       messages.push({
         role: 'assistant',
@@ -6837,9 +6853,17 @@ const submitRevision = async ({ operation = 'modify_page' } = {}) => {
       if (response?.python_session_id) presentationMetadata.value = {
         ...(presentationMetadata.value || {}), python_session_id: response.python_session_id,
       }
+      if (response?.graph_review_required) {
+        messages.push({ role: 'assistant', text: '本轮知识图谱和技能图谱已生成。请返回 AI 教学助手核对并确认，确认后才会生成新大纲。', includeInContext: false })
+        WorkspaceMessage.warning('请先在 AI 教学助手确认双图谱')
+        return
+      }
       if (showClarificationForResponse(response, 'session')) return
     }
-    if (applied) closeDiscussionContext()
+    if (applied) {
+      await saveAiRevisionSnapshot(`AI 修改后 · 第 ${selectedSlide.value + 1} 页`)
+      closeDiscussionContext()
+    }
     messages.push({
       role: 'assistant',
       text: applied ? '已根据修改要求更新当前页面，页面元素仍可继续选中和编辑。' : '已收到修改要求，正在结合当前页面内容进行调整。',
@@ -6872,6 +6896,11 @@ const submitClarification = async (selection) => {
         selection.answer, { ...knownContext, workspace_context: workspaceContextPayload() }, workspacePythonSessionId()))
       if (response?.python_session_id) presentationMetadata.value = {
         ...(presentationMetadata.value || {}), python_session_id: response.python_session_id,
+      }
+      if (response?.graph_review_required) {
+        messages.push({ role: 'assistant', text: '双图谱已生成。请返回 AI 教学助手确认图谱，再继续生成大纲。', includeInContext: false })
+        WorkspaceMessage.warning('请先在 AI 教学助手确认双图谱')
+        return
       }
     } else {
       response = unwrapResponse(await reviseProjectWithAi(projectId.value, {
@@ -6984,6 +7013,7 @@ onMounted(async () => {
   void loadWorkspaceResources()
   await bootstrapTestCaseProject()
   await loadProject()
+  if (route.query.manage === '1') await openProjectManager()
   const interruptedRunNeedsAttention = restoreTrackedRun()
   if (!interruptedRunNeedsAttention && !projectId.value && (sessionId.value || presentationFixtureMode.value)) await startRun()
   await nextTick()
@@ -7271,9 +7301,24 @@ const dropSlide = (index, event) => {
   clearSlideDragState()
   reorderSlides(sourceIndex, dropIndex)
 }
+const ensureSnapshotProject = async () => {
+  if (projectId.value) return true
+  if (manualSaveLoading.value || hydratingProject.value) return false
+  manualSaveLoading.value = true
+  try {
+    clearTimeout(autosaveTimer)
+    await persistGeneratedPresentationProject()
+    WorkspaceMessage.success('本地草稿已保存为项目，并创建初始快照')
+    return Boolean(projectId.value)
+  } catch (error) {
+    autosaveState.value = '本地草稿 · 保存为项目失败'
+    WorkspaceMessage.error(workspaceRequestErrorMessage(error, '创建快照失败，本地草稿仍已保留'))
+    return false
+  } finally { manualSaveLoading.value = false }
+}
 const loadVersions = async () => {
-  if (!projectId.value) return WorkspaceMessage.warning('演示项目不支持版本管理')
   if (versionLoading.value) return
+  if (!await ensureSnapshotProject()) return
   versionLoading.value = true; versionDialogVisible.value = true
   versionError.value = ''
   try {
@@ -7289,9 +7334,21 @@ const persistVersionContent = async () => {
   const plan = lessonPlanEditorRef.value?.getLessonPlan?.()
   if (plan) await saveLessonPlanDraft(plan, { throwOnError: true })
 }
+const saveAiRevisionSnapshot = async (description) => {
+  clearTimeout(autosaveTimer)
+  if (!projectId.value) await persistGeneratedPresentationProject()
+  if (!projectId.value) throw new Error('课件尚未保存为项目，无法创建修改快照')
+  await persistCurrentSlide({ throwOnError: true })
+  await persistVersionContent()
+  const result = unwrapResponse(await saveProjectVersion(projectId.value, { description }))
+  versionPage.value = 1
+  versionDiff.value = null
+  return result
+}
 const createVersion = async () => {
-  if (!projectId.value) return WorkspaceMessage.warning('当前是临时课件，生成项目后才能保存版本')
+  if (revisionSubmitting.value || revisionStage.value) return WorkspaceMessage.warning('请等待当前 AI 修改完成后再保存快照')
   if (versionActionLoading.value) return
+  if (!await ensureSnapshotProject()) return
   versionActionLoading.value = true
   try {
     clearTimeout(autosaveTimer)
@@ -7324,13 +7381,15 @@ const showVersionDiff = async (version) => {
 }
 const restoreVersion = async (version) => {
   if (versionActionLoading.value) return
+  if (revisionSubmitting.value || revisionStage.value) return WorkspaceMessage.warning('请等待当前 AI 修改完成后再恢复快照')
   try { await ElMessageBox.confirm('将当前内容保存为备份版本后恢复此版本，恢复后可在版本历史中找回当前内容。', '恢复历史版本', { confirmButtonText: '备份并恢复', cancelButtonText: '取消', type: 'warning' }) }
   catch { return }
   versionActionLoading.value = true
   try {
     clearTimeout(autosaveTimer)
+    await persistCurrentSlide({ throwOnError: true })
     await persistVersionContent()
-    unwrapResponse(await saveProjectVersion(projectId.value, { description: '恢复历史版本前的自动备份' }))
+    // Server-side backup and restore share one transaction.
     const restored = unwrapResponse(await restoreProjectVersion(projectId.value, version.id || version.version_id))
     project.value = { ...(project.value || {}), ...(restored || {}) }
     versionDiff.value = null
@@ -7673,6 +7732,7 @@ const createWorkspaceProject = async () => {
   if (!createdId) throw new Error('项目创建接口未返回项目 ID')
 
   await batchCreateProjectPages(createdId, slides)
+  unwrapResponse(await saveProjectVersion(createdId, { description: '课件初始快照' }))
   project.value = { ...created, id: createdId }
   savedChangeVersion = localChangeVersion
   savedStructureVersion = localStructureVersion
@@ -8125,7 +8185,7 @@ const selectSlide = (index) => { selectedSlide.value = index; selectedElementId.
       :is-local-draft="isLocalDraft"
       :online-preview-loading="onlinePreviewLoading"
       :quick-export-loading="quickExportLoading"
-      :saving="manualSaveLoading || savingPage || hydratingProject"
+      :saving="manualSaveLoading || savingPage || hydratingProject || revisionSubmitting || versionActionLoading"
       @save="saveWorkspaceNow"
       @versions="loadVersions"
       @permissions="openPermissionDialog"

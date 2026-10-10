@@ -31,6 +31,21 @@ class ModelClarificationTests(unittest.IsolatedAsyncioTestCase):
             {"title": "分数课"}, [HumanMessage(content="请直接设计")], 0)
         self.assertIsNone(question)
 
+    async def test_confirmed_middle_school_grade_is_not_asked_again(self):
+        self.assertEqual(self.workflow._grade_from_text("初中科学二年级（八年级）"), "八年级")
+        self.assertEqual(self.workflow._grade_from_text("初中二年级"), "八年级")
+        intent = self.workflow._apply_explicit_grade(
+            {"title": "光的折射", "subject": "科学", "grade": "二年级"},
+            {"grade": "八年级"}, "初中二年级")
+        self.assertEqual(intent["grade"], "八年级")
+        self.workflow.llm.complete.return_value = '''{
+          "ask": true, "field": "grade",
+          "text": "初中二年级是八年级还是小学二年级？",
+          "options": []}'''
+        question = await self.workflow._model_clarification(
+            intent, [HumanMessage(content="初中二年级")], 1)
+        self.assertIsNone(question)
+
     async def test_three_questions_are_hard_limit_across_saved_messages(self):
         messages = [{"role": "assistant", "content": "问题", "metadata": {"type": "clarification"}}
                     for _ in range(3)]

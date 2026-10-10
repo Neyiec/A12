@@ -15,8 +15,9 @@ import MarkdownRender from 'markstream-vue'
 import { useUserStore } from '../storage/user.js'
 import { readOutlineDraft, saveOutlineDraft } from '../utils/presentationDraft.js'
 import { readOpenAiTextStream } from '../utils/openAiSse.js'
+import { upsertLearningGraphMessage } from '../utils/learningGraphMessage.js'
 import { normalizeModelProfile, normalizeReasoningEffort } from '../utils/aiOptions.js'
-import { beginGeneralChatTurn, completeGeneralChatTurn, confirmAiPlan, getAiPlan, getAiSession, getTeacherPreferences, listPptTemplates, routeTeachingChat, saveDirectOutlineResult, streamGeneralChat, streamOutlineChat, transcribeAudio, uploadResource } from '../apis/teacher.js'
+import { beginGeneralChatTurn, completeGeneralChatTurn, confirmAiPlan, getAiPlan, getAiSession, getTeacherPreferences, listPptTemplates, routeTeachingChat, saveDirectOutlineResult, streamGeneralChat, streamOutlineChat, transcribeAudio, uploadTempResource } from '../apis/teacher.js'
 import {
   CHAT_COMPOSER, CLASS_LEVEL_OPTIONS, CLARIFICATION_LABELS,
   extractPlanningContext, GRADE_OPTIONS, CHAT_RESUME, DESIGN_ACTION_BAR, GEN_RESOURCE_DEFAULTS, INFO_FORM_DEFAULTS,
@@ -27,6 +28,7 @@ import IntentClarificationDialog from './IntentClarificationDialog.vue'
 import PptTemplatePicker from './PptTemplatePicker.vue'
 import VoiceRecorderButton from './VoiceRecorderButton.vue'
 import LearningGraphPanel from './LearningGraphPanel.vue'
+import { updateOutlineLearningGraphs, aiEditOutlineLearningGraphs } from '../apis/teacher.js'
 
 const props = defineProps({
   sessionId: { type: [String, Number], default: null },
@@ -69,7 +71,12 @@ const uploadChatResources = async (event) => {
   let uploaded = 0
   try {
     for (const file of files) {
-      const result = await uploadResource(file, undefined, { allowAi: true })
+      const form = new FormData()
+      form.append('file', file)
+      const response = await uploadTempResource(form)
+      if (!isOk(response)) throw new Error(response?.message || `${file.name} 解析失败`)
+      const result = response.data || {}
+      if (!result.text_length) throw new Error(`${file.name} 未解析出可用内容，请检查PDF文本层或OCR配置`)
       const id = result?.id || result?.resource_id || result?.resourceId
       if (!id) throw new Error(`${file.name} 上传成功但未返回资源 ID`)
       attachedResources.value = [
@@ -121,6 +128,7 @@ const outlineGenerationStage = ref('')
  *   'general_chat' → 普通主对话，不展示备课表单
  *   'generating_outline' → 正在通过 Python SSE Agent 获取教学设计大纲
  *   'clarifying'         → 后端返回澄清问题，等待教师补充回复
+ *   'graph_review'       → 双图谱已生成，等待教师确认后再生成大纲
  *   'outline_ready'      → 大纲已展示，等待确认
  *   'resource_ready'     → 资源生成卡片展示，等待点击生成
  *   'generating_resource' → 正在生成资源
@@ -857,17 +865,12 @@ function finalizeLiveOutline() {
 
 /** 图谱先于大纲展示；同一次流的 final 只更新卡片，不重复插入。 */
 function showLearningGraphs(graphs) {
-  if (!graphs || !Array.isArray(graphs.knowledge?.nodes) || !Array.isArray(graphs.skill?.nodes)) return
-  if (activeLearningGraphMessageId != null) {
-    const existing = messages.find((message) => message.id === activeLearningGraphMessageId)
-    if (existing) {
-      existing.data = graphs
-      return
-    }
-  }
-  const message = addMessage('assistant', 'learning_graph', '', { data: graphs })
-  activeLearningGraphMessageId = message?.id ?? messages[messages.length - 1]?.id ?? null
+  activeLearningGraphMessageId = upsertLearningGraphMessage(messages, graphs, activeLearningGraphMessageId, addMessage)
   void scrollToBottom()
+}
+
+function hasCompleteLearningGraphs(graphs) {
+  return ['knowledge', 'skill'].every((kind) => Array.isArray(graphs?.[kind]?.nodes) && graphs[kind].nodes.length >= 4)
 }
 
 /**
@@ -876,10 +879,10 @@ function showLearningGraphs(graphs) {
  * @param {string} message - 本轮自然语言输入
  * @param {Object} options - 是否把切换前的普通对话作为首次备课背景注入
  */
-async function sendMessageToBackend(message, { includeContinuation = false, clarificationContext = {} } = {}) {
+async function sendMessageToBackend(message, { includeContinuation = false, clarificationContext = {}, confirmLearningGraphs = false } = {}) {
   phase.value = 'generating_outline'
   isRequesterLoading.value = true
-  activeLearningGraphMessageId = null
+  if (!confirmLearningGraphs) activeLearningGraphMessageId = null
   const payload = {
     message,
     resource_ids: JSON.stringify(activeResourceIds.value),
@@ -900,6 +903,8 @@ async function sendMessageToBackend(message, { includeContinuation = false, clar
   let finished = false
   let finalResult = null
   let questionResult = null
+  let graphResult = null
+  let awaitingGraphConfirmation = false
   let streamError = ''
   try {
     const res = await streamOutlineChat({
@@ -917,11 +922,17 @@ async function sendMessageToBackend(message, { includeContinuation = false, clar
       language: 'zh-CN',
       teaching_model: selectedTeachingModel.value,
       teaching_style: selectedTeachingStyle.value,
+      confirm_learning_graphs: confirmLearningGraphs,
     })
     await consumeSseStream(res, (event, data) => {
       if (event === 'session' && data.session_id) outlinePythonSessionId.value = String(data.session_id)
       if (event === 'learning_graphs') {
+        if (!hasCompleteLearningGraphs(data)) {
+          streamError = '双图谱生成不完整，请重新生成后再确认'
+          return
+        }
         showLearningGraphs(data)
+        graphResult = data
         return
       }
       if (event === 'outline_delta') {
@@ -946,21 +957,35 @@ async function sendMessageToBackend(message, { includeContinuation = false, clar
       }
       if (event === 'done') {
         finished = true
+        if (data.status === 'awaiting_graph_confirmation') awaitingGraphConfirmation = true
         if (data.status === 'failed') streamError ||= data.message || SYSTEM_MESSAGES.connectionError
       }
     })
     finalizeLiveOutline()
-    const status = finalResult ? 'completed' : questionResult ? 'need_clarification' : 'failed'
+    const status = finalResult ? 'completed' : questionResult ? 'need_clarification'
+      : awaitingGraphConfirmation && graphResult ? 'awaiting_graph_confirmation' : 'failed'
+    // A failed confirmation must not overwrite the saved graph-review checkpoint.
+    if (confirmLearningGraphs && status === 'failed') throw new Error(streamError || '大纲生成失败，请重试确认')
     const saved = await saveDirectOutlineResult(props.sessionId, {
       message,
       status,
       python_session_id: outlinePythonSessionId.value,
       question: normalizePlanningClarification(questionResult?.question)?.text || '',
       final_data: finalResult,
+      graph_data: awaitingGraphConfirmation ? { learning_graphs: graphResult, status } : undefined,
       error_message: streamError,
     })
     if (!isOk(saved)) throw new Error(saved?.message || '备课结果保存失败')
     if (finalResult) renderStreamedOutline(finalResult)
+    else if (awaitingGraphConfirmation && graphResult) {
+      phase.value = 'graph_review'
+      saveOutlineDraft(props.sessionId, {
+        ...(readOutlineDraft(props.sessionId) || {}),
+        python_session_id: outlinePythonSessionId.value,
+        learning_graphs: graphResult,
+        status: 'awaiting_graph_confirmation',
+      })
+    }
     else if (questionResult) {
       const question = normalizePlanningClarification(questionResult.question || questionResult.message)
       lastClarification.value = question?.text || ''
@@ -978,11 +1003,50 @@ async function sendMessageToBackend(message, { includeContinuation = false, clar
   } catch (error) {
     finalizeLiveOutline()
     ElMessage.error(error?.message || SYSTEM_MESSAGES.connectionError)
-    phase.value = 'info'
+    phase.value = confirmLearningGraphs ? 'graph_review' : 'info'
   } finally {
     isRequesterLoading.value = false
     outlineGenerationStage.value = ''
   }
+}
+
+async function confirmLearningGraphs() {
+  if (phase.value !== 'graph_review' || isRequesterLoading.value) return
+  await sendMessageToBackend('教师已确认知识图谱与技能图谱，请据此生成大纲。', { confirmLearningGraphs: true })
+}
+
+async function saveLearningGraphs(editedGraphs) {
+  if (phase.value !== 'graph_review' || isRequesterLoading.value || !outlinePythonSessionId.value) {
+    throw new Error('当前不能修改双图谱')
+  }
+  isRequesterLoading.value = true
+  try {
+    const result = await updateOutlineLearningGraphs(outlinePythonSessionId.value, editedGraphs)
+    if (!isOk(result)) throw new Error(result?.message || '双图谱保存失败')
+    const graphs = result.data.learning_graphs
+    showLearningGraphs(graphs)
+    saveOutlineDraft(props.sessionId, {
+      ...(readOutlineDraft(props.sessionId) || {}), python_session_id: outlinePythonSessionId.value,
+      learning_graphs: graphs, status: 'awaiting_graph_confirmation',
+    })
+    const saved = await saveDirectOutlineResult(props.sessionId, {
+      message: '教师确认保存了双图谱修改', status: 'awaiting_graph_confirmation',
+      python_session_id: outlinePythonSessionId.value,
+      graph_data: { learning_graphs: graphs, status: 'awaiting_graph_confirmation' },
+    })
+    if (!isOk(saved)) throw new Error(saved?.message || '会话记录同步失败，请再次保存')
+    ElMessage.success('双图谱已保存，确认后将据此生成大纲')
+  } finally { isRequesterLoading.value = false }
+}
+
+async function aiEditLearningGraphs(graphs, kind, instruction) {
+  if (phase.value !== 'graph_review' || isRequesterLoading.value || !outlinePythonSessionId.value) throw new Error('当前不能修改双图谱')
+  isRequesterLoading.value = true
+  try {
+    const result = await aiEditOutlineLearningGraphs(outlinePythonSessionId.value, graphs, kind, instruction)
+    if (!isOk(result)) throw new Error(result?.message || 'AI 修改失败')
+    return result.data.learning_graphs
+  } finally { isRequesterLoading.value = false }
 }
 
 /** 从 API-13A 返回的完整会话中取出本轮新增内容，避免语音消息只在服务端保存、页面却没有回显。 */
@@ -1279,6 +1343,7 @@ async function ensureOutlineQuality(response) {
 
 /** 通过本地开发代理调用已配置的 DeepSeek/OpenAI-compatible 大模型。 */
 async function requestGeneralChatReply() {
+  if (resourceUploading.value) return ElMessage.warning('资料正在上传解析，请完成后再发送')
   const latestUserMessage = [...messages].reverse().find((item) => item.role === 'user' && item.type === 'text')
   if (!latestUserMessage?.content?.trim()) return
   const assistantMessage = addMessage('assistant', 'text', '')
@@ -1314,6 +1379,7 @@ async function requestGeneralChatReply() {
         user_id: String(userStore.userInfo?.user_id || ''),
         mode: 'chat',
         messages: turn.messages,
+        resource_ids: [...activeResourceIds.value],
         model_profile: selectedModelProfile.value,
         reasoning_effort: selectedReasoningEffort.value,
       })
@@ -1498,6 +1564,7 @@ async function confirmOutlineFromDialog() {
 
 /** 点击"生成"按钮：确认模板后跳转到创作工作台编辑生成结果。 */
 function startGenerateResource() {
+  if (phase.value === 'generating_resource') return
   if (!selectedPptTemplateTheme.value) {
     ElMessage.warning('请先选择 PPT 生成模板')
     void openPptTemplateDialog()
@@ -1510,6 +1577,9 @@ function startGenerateResource() {
     generationKey: String(Date.now()),
     resourceIds: [...activeResourceIds.value],
     workspaceContext: activeWorkspaceContext.value,
+    onNavigationSettled: () => {
+      if (phase.value === 'generating_resource') phase.value = 'resource_ready'
+    },
   })
 }
 
@@ -1645,8 +1715,8 @@ async function restoreSession() {
     const task = isOk(planRes) ? planRes.data : null
     const localOutlineDraft = readOutlineDraft(props.sessionId)
     outlinePythonSessionId.value = String(
-      localOutlineDraft?.python_session_id
-      || task?.python_session_id
+      task?.python_session_id
+      || localOutlineDraft?.python_session_id
       || props.sessionId
       || '',
     )
@@ -1657,9 +1727,11 @@ async function restoreSession() {
     // Java mock 会话并不知道真实 Python 流生成的 plan_json，因此优先使用本地真实大纲快照。
     const backendPlanJson = parsePlanJson(task?.plan_json)
     const localPlanJson = parsePlanJson(localOutlineDraft?.plan_json ?? localOutlineDraft?.outline)
-    let planJson = hasGeneratedOutline(backendPlanJson)
-      ? backendPlanJson
-      : (hasGeneratedOutline(localPlanJson) ? localPlanJson : null)
+    let planJson = backendPlanJson?.status === 'awaiting_graph_confirmation'
+      ? null
+      : hasGeneratedOutline(backendPlanJson)
+        ? backendPlanJson
+        : (hasGeneratedOutline(localPlanJson) ? localPlanJson : null)
     let outlineWasRepaired = false
 
     // 历史会话可能保存过 Python 回退大纲；恢复时也要先做质量检查，避免绕过新生成流程。
@@ -1697,7 +1769,7 @@ async function restoreSession() {
         (msg.type === 'question' && session?.last_question)
         || (planJson && msg.outline_id)
       )
-      if (!isCurrentStructuredReply) {
+      if (!isCurrentStructuredReply && msg.type !== 'graph_review') {
         addMessage(msg.role, 'text', String(msg.content).trim())
       }
     })
@@ -1732,6 +1804,20 @@ async function restoreSession() {
       }
       await scrollToBottom()
       return
+    }
+
+    const pendingGraphs = backendPlanJson?.status === 'awaiting_graph_confirmation'
+      ? backendPlanJson.learning_graphs
+      : localOutlineDraft?.status === 'awaiting_graph_confirmation' ? localOutlineDraft.learning_graphs : null
+    if (hasCompleteLearningGraphs(pendingGraphs)) {
+      activeLearningGraphMessageId = null
+      showLearningGraphs(pendingGraphs)
+      phase.value = 'graph_review'
+      await scrollToBottom()
+      return
+    }
+    if (pendingGraphs) {
+      addMessage('assistant', 'text', '上次生成的双图谱不完整，请重新生成；系统不会用空图谱继续生成大纲。')
     }
 
     // 尚未生成大纲：有待答澄清 → 澄清；否则回落到补充信息卡继续发起
@@ -1936,7 +2022,9 @@ async function restoreSession() {
             </div>
 
             <!-- 双图谱：默认知识图谱，按钮切换技能图谱。 -->
-            <LearningGraphPanel v-else-if="msg.type === 'learning_graph'" :graphs="msg.data" />
+            <LearningGraphPanel v-else-if="msg.type === 'learning_graph'" :graphs="msg.data"
+                                :confirmable="phase === 'graph_review' && hasCompleteLearningGraphs(msg.data) && msg.id === activeLearningGraphMessageId"
+                                :confirming="isRequesterLoading" :graph-saver="saveLearningGraphs" :graph-ai-editor="aiEditLearningGraphs" @confirm="confirmLearningGraphs" />
 
             <!-- AI Markdown 大纲消息：使用 markstream-vue 渲染，占满全宽 -->
             <div v-else-if="msg.type === 'markdown'" class="ai-bubble">
@@ -2045,7 +2133,7 @@ async function restoreSession() {
       <div class="composer-resource-row">
         <input ref="resourceFileInput" class="composer-resource-input" type="file" multiple accept=".pdf,.doc,.docx,.ppt,.pptx,.xls,.xlsx,.csv,.tsv,.txt,.md,.jpg,.jpeg,.png,.gif,.webp,.mp3,.wav,.m4a,.ogg,.mp4,.avi,.mov,.mkv,.webm" @change="uploadChatResources" />
         <el-button text size="small" :icon="Paperclip" :loading="resourceUploading" :disabled="resourceUploading" @click="resourceFileInput?.click()">添加资料</el-button>
-        <span v-if="activeResourceIds.length" class="composer-resource-count">已绑定 {{ activeResourceIds.length }} 份资料 · 解析完成后用于生成</span>
+        <span v-if="activeResourceIds.length" class="composer-resource-count">已绑定 {{ activeResourceIds.length }} 份资料 · 用于问答与生成</span>
         <el-tag v-for="resource in attachedResources" :key="resource.id" size="small" closable class="composer-resource-tag" @close="removeChatResource(resource.id)">{{ resource.file_name }}</el-tag>
         <el-tag v-for="resource in tempContextResources" :key="`temp-${resource.resource_id}`" size="small" type="warning" effect="plain" class="composer-resource-tag" title="临时上传资料：仅本次生成引用，会话结束自动清理">{{ resource.file_name }}</el-tag>
       </div>

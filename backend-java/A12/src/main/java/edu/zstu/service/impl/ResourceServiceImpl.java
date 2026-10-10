@@ -73,6 +73,7 @@ public class ResourceServiceImpl implements ResourceService {
             throw new RuntimeException("文件名不能为空");
         }
         String objectKey = "uploads/" + userId + "/" + UUID.randomUUID() + "/" + dto.getFile_name();
+        objectKey = ossUtil.uploadObjectKey(objectKey);
         URL signedUrl = ossUtil.generateUploadUrl(objectKey, dto.getFile_type(),60);
         log.info("createUploadToken success userId={}, objectKey={}", userId, objectKey);
 
@@ -86,9 +87,12 @@ public class ResourceServiceImpl implements ResourceService {
     @Override
     @Transactional
     public MaterialVO confirmUpload(ResourceUploadConfirmDTO dto, Integer userId) {
+        String key = dto.getObject_key();
+        if (key == null || !(key.startsWith("uploads/" + userId + "/") || key.startsWith("local/uploads/" + userId + "/")))
+            throw new RuntimeException("无权确认该上传文件");
         log.info("confirmUpload userId={}, fileName={}, replaceTargetId={}", userId, dto.getFile_name(), dto.getReplace_target_id());
         if (!ossUtil.doesObjectExist(dto.getObject_key())) {
-            throw new RuntimeException("文件上传尚未完成或文件不存在于OSS");
+            throw new RuntimeException("文件上传尚未完成或文件不存在");
         }
 
         if (dto.getReplace_target_id() != null) {

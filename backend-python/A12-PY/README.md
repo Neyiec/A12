@@ -165,4 +165,6 @@ Current package layout:
 
 大纲 LangGraph 在意图解析后自动匹配或读取课程图谱，按“直接生成 / RAG / 图谱 / 图谱+RAG”选择检索路径，记录所用策略和图谱版本。图谱不可用时回退原路径；本轮明确启用 RAG 时不会被历史偏好关掉。教师反馈仍更新长期画像，针对大纲的接受、修改、拒绝记录用于计算策略修改率；至少积累 5 条反馈才参与策略偏好。这里的“自更新”是知识证据、教师画像与有边界的检索策略更新，**不包含模型权重微调或无审核地改变工作流代码**。
 
-教学助手入口的分流 LangGraph 状态包含 `route` 与 `next_stage`：普通聊天进入 `ordinary_chat`，备课进入 `outline_graph`。大纲 Graph 在工具检索后运行 `generate_learning_graphs`，产出本轮知识、技能两张小图，再生成大纲。SSE 的 `learning_graphs` 事件会先于大纲页发送；最终 `outline.learning_graphs` 同时落入 Java 侧的 `plan_json`，供历史会话恢复。前端默认展示知识图谱，点击按钮切换技能图谱。审核课程图谱优先；没有可用审核图谱时使用模型提议或确定性草案，并明确标记“请核对”。
+教学助手入口的分流 LangGraph 状态包含 `route` 与 `next_stage`：普通聊天进入 `ordinary_chat`，备课进入 `outline_graph`。大纲生成分两段：意图解析与工具检索后先运行 `generate_learning_graphs`，产出知识、技能双图谱；SSE 发出 `learning_graphs` 和 `done(status=awaiting_graph_confirmation)`，服务端保存待确认状态，**此时不生成大纲**。前端默认展示知识图谱，点击按钮切换技能图谱；教师核对后点击“确认双图谱，生成大纲”，以同一 `session_id` 和 `confirm_learning_graphs=true` 再次请求。服务端只使用保存的图谱与意图快照继续 `build_prompt → generate_outline → reflect → memory`，大纲完成后将 `outline.learning_graphs` 落入 Java 侧 `plan_json`；刷新页面也能恢复待确认的双图谱。审核课程图谱优先；没有可用审核图谱时使用模型提议或确定性草案，并明确标记“请核对”。
+
+双图谱分别表达“需要理解的概念、原理及关系”和“能够完成的可观察任务”。模型技能节点包含 `level`、`task`、`assessment`，`skill.knowledge_links` 以 `knowledge_id`、`skill_id` 表达多对多支撑关系。模型输出必须满足节点数、非重复节点、有效内部关系、技能任务与评价标准、支撑覆盖等校验；不合格结果回退为待核对草案。兜底按具体教学语义建立关系，不按节点序号强制串成链。前端按关系分层展示知识结构和技能递进，支持点击技能查看任务与评价，以及展开知识支撑列表；已保存的课程关系和手动布局继续保留。教师确认后的大纲将技能任务、达标依据对应到页面的学生活动与即时检测。

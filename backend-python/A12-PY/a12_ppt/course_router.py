@@ -11,6 +11,7 @@ from .course_draft import extract_course_draft, outline_from_path
 class DraftRequest(BaseModel):
     title: str = Field(min_length=1, max_length=255)
     subject: str = Field(default="", max_length=80)
+    grade: str = Field(default="", max_length=80)
     source_text: str = Field(default="", max_length=60000)
     resource_ids: list[str] = Field(default_factory=list, max_length=20)
 
