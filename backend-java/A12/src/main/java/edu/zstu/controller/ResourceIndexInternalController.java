@@ -38,7 +38,7 @@ public class ResourceIndexInternalController {
             metadata.put("resource_type", r.getResource_type());
             metadata.put("description", r.getDescription());
             data.put("title", r.getTitle());
-            data.put("file_type", detectedFileType(r.getFile_url(), r.getTitle(), r.getResource_type()));
+            data.put("file_type", detectedFileType(oss.tryExtractObjectKey(r.getFile_url()), r.getFile_url(), r.getTitle(), r.getResource_type()));
             data.put("file_size", r.getFile_size());
             data.put("uploaded_by", String.valueOf(r.getUploaded_by()));
             data.put("owner_user_id", null);

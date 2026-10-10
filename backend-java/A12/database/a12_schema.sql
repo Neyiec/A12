@@ -361,6 +361,7 @@ CREATE TABLE com_interaction (
   target_version INT DEFAULT NULL COMMENT '复用时来源版本号',
   target_project_id INT DEFAULT NULL COMMENT '派生项目ID',
   bind_materials JSON DEFAULT NULL COMMENT '绑定的私有素材ID列表',
+  favorite_guard TINYINT GENERATED ALWAYS AS (CASE WHEN action_type = 'favorite' THEN 1 ELSE NULL END) VIRTUAL,
   created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP COMMENT '操作时间',
   PRIMARY KEY (id),
   KEY idx_user_id (user_id),
@@ -368,6 +369,7 @@ CREATE TABLE com_interaction (
   KEY idx_target_id (target_id),
   KEY idx_user_action_created (user_id, action_type, created_at),
   KEY idx_user_action_target (user_id, action_type, target_type, target_id),
+  UNIQUE KEY uk_favorite_only (user_id, action_type, target_type, target_id, favorite_guard),
   KEY idx_com_interaction_ranking (action_type, target_id, created_at),
   KEY idx_action_created (action_type, created_at)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci COMMENT='社区互动表';

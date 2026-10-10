@@ -9,6 +9,7 @@ logger = logging.getLogger("a12_ppt.tools.rag")
 
 
 async def rag_search(resource_ids: list[str], query: str, limit: int = 12000) -> dict:
+    resource_ids = [f'personal:{item}' if item.isdecimal() else item for item in resource_ids]
     # Uploaded references enrich the retrieval query; they are additionally vector-searched
     # inside the temp partition (temp:{res_id}, written at /resources/upload). The global
     # knowledge base search scope stays unchanged.
@@ -49,7 +50,7 @@ async def rag_search(resource_ids: list[str], query: str, limit: int = 12000) ->
 
     context_parts = []
     if local_context:
-        context_parts.append("[Uploaded reference material]\n" + local_context[:4000])
+        context_parts.append("[Uploaded reference material]\n" + local_context[:limit])
     if selected_context:
         context_parts.append("[Teacher-selected material hits]\n" + selected_context)
     if temp_context:
@@ -67,7 +68,7 @@ async def rag_search(resource_ids: list[str], query: str, limit: int = 12000) ->
         "enriched_query": enriched_query,
         "resource_ids": resource_ids,
         "search_scope": "+".join(search_scopes),
-        "reference_context": local_context[:4000],
+        "reference_context": local_context[:limit],
         "temp_context": temp_context,
         "selected_context": selected_context,
         "knowledge_context": indexed_context,
@@ -75,6 +76,15 @@ async def rag_search(resource_ids: list[str], query: str, limit: int = 12000) ->
         "matches": structured_matches,
         "reference_matches": reference_matches,
     }
+
+
+def selected_material_context(result: dict) -> str:
+    """只把教师选择的资料算作上传证据，公共库命中不能替代上传失败。"""
+    parts = [result.get(key) or '' for key in ('reference_context', 'selected_context', 'temp_context')]
+    context = '\n\n'.join(part for part in parts if part.strip())[:12000]
+    if not context.strip():
+        raise ValueError('所选资料未读取到可用文本，请重新上传；扫描版 PDF 请确认 OCR 解析成功')
+    return context
 
 
 def _build_enriched_query(query: str, reference_context: str, max_reference_chars: int = 4000) -> str:

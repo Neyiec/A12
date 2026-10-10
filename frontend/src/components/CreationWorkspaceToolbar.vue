@@ -211,6 +211,7 @@ const toggleCompactTools = () => { compactToolsOpen.value = !compactToolsOpen.va
       <el-button class="mobile-preview-action" type="primary" plain :icon="View" :loading="onlinePreviewLoading" :aria-label="mobileView === 'plan' ? '预览教案' : '预览课件'" @click="openOnlinePreview">预览</el-button>
       <el-button v-if="isLocalDraft" class="toolbar-priority" type="primary" plain @click="saveAsProject">保存为项目</el-button>
       <el-button class="toolbar-priority" :icon="FolderOpened" @click="manageProject">项目</el-button>
+      <el-button class="toolbar-priority" :disabled="saving" @click="emit('versions')">快照与恢复</el-button>
       <el-button class="toolbar-priority" :icon="Share" @click="publishCommunity">发布社区</el-button>
       <el-button v-if="workspaceMode === 'document'" class="toolbar-priority workspace-content-mode-button" :icon="DataBoard" aria-label="返回 PPT 课件" @click="returnToPpt">PPT</el-button>
       <el-button v-else class="toolbar-priority workspace-content-mode-button" :icon="SetUp" @click="openLessonPlan">教案</el-button>
@@ -235,6 +236,7 @@ const toggleCompactTools = () => { compactToolsOpen.value = !compactToolsOpen.va
           <el-dropdown-item class="workspace-mobile-action" v-if="isLocalDraft" :disabled="saving" @click="saveAsProject">保存为项目</el-dropdown-item>
           <el-dropdown-item class="workspace-mobile-action" v-else-if="autosaveState.includes('失败')" :disabled="saving" @click="emit('save')">重试保存</el-dropdown-item>
           <el-dropdown-item class="workspace-mobile-action" @click="manageProject">项目管理</el-dropdown-item>
+          <el-dropdown-item class="workspace-mobile-action" :disabled="saving" @click="emit('versions')">快照与一键恢复</el-dropdown-item>
 
 
           <el-dropdown-item class="workspace-mobile-action" @click="workspaceMode === 'document' ? returnToPpt() : openLessonPlan()">{{ workspaceMode === 'document' ? '返回 PPT' : '打开教案' }}</el-dropdown-item>
@@ -498,7 +500,8 @@ const toggleCompactTools = () => { compactToolsOpen.value = !compactToolsOpen.va
   .toolbar-status-short { display: inline; }
   .toolbar-mode-suffix, .toolbar-project-suffix { display: none; }
   .toolbar-actions { overflow: visible; gap: 6px; }
-  .toolbar-actions > :not(.mobile-preview-action):not(.mobile-save-retry) { display: none; }
+  .toolbar-actions > :not(.mobile-preview-action):not(.mobile-save-retry):not(.workspace-more) { display: none; }
+  .toolbar-actions > .workspace-more { display: inline-flex; }
   .toolbar-actions > .mobile-preview-action { display: inline-flex; min-width: 76px; min-height: 44px; padding-inline: 10px; }
   .toolbar-actions > .mobile-save-retry { display: inline-flex; min-height: 44px; padding-inline: 10px; }
 }

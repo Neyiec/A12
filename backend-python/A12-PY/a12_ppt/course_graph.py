@@ -55,6 +55,8 @@ def validate_graph(payload: dict[str, Any]) -> dict[str, Any]:
                             "subject": str(node.get("subject") or "")[:80], "difficulty": difficulty,
                             "exam_frequency": exam_frequency, "bloom": bloom, "resource_ids": refs,
                             "mastery_standard": str(node.get("mastery_standard") or "")[:500]})
+        clean_nodes[-1]['task'] = str(node.get('task') or '')[:500]
+        clean_nodes[-1]['assessment'] = str(node.get('assessment') or node.get('mastery_standard') or '')[:500]
         position = node.get("position")
         if isinstance(position, dict):
             try:
@@ -77,7 +79,8 @@ def validate_graph(payload: dict[str, Any]) -> dict[str, Any]:
         seen_edges.add(key)
         clean_edges.append({"source": edge["source"], "target": edge["target"], "relation": edge["relation"]})
     topological_ids(clean_nodes, clean_edges)
-    return {"nodes": clean_nodes, "edges": clean_edges}
+    return {"nodes": clean_nodes, "edges": clean_edges,
+            "subject": str(payload.get('subject') or '')[:80], "grade": str(payload.get('grade') or '')[:80]}
 
 
 class CourseGraphStore:

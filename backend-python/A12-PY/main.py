@@ -42,6 +42,9 @@ from a12_ppt.models import (
     LessonPlanGenerateRequest,
     OutlineChatSessionCreateRequest,
     OutlineChatSessionUpdateRequest,
+    SkillGraphUpdateRequest,
+    LearningGraphUpdateRequest,
+    LearningGraphAIEditRequest,
     OutlineChatStreamRequest,
     OutlineGenerateRequest,
     OutlineUpdateRequest,
@@ -58,6 +61,7 @@ from a12_ppt.models import (
     TemplateMutationRequest,
     TeacherFeedbackRequest,
     TeacherStyleConfigRequest,
+    TeacherPreferencesRequest,
     TeacherStyleTagsRequest,
     TextToSpeechRequest,
     ClassroomEventRequest,
@@ -71,6 +75,7 @@ from a12_ppt.community_review_worker import start_community_review_worker
 from a12_ppt.outline_chat import OutlineChatWorkflow
 from a12_ppt.outline_chat.postgres_store import postgres_memory_store
 from a12_ppt.outline_chat.session_store import outline_session_store
+from a12_ppt.outline_chat.learning_graphs import propose_graph_edit, validate_graph_edit
 from a12_ppt.database import ensure_ai_schema
 from a12_ppt.ai_runtime import probe_model, use_runtime_options
 from a12_ppt.runtime_config import refresh_runtime_config
@@ -223,6 +228,22 @@ async def transcribe_audio_input(
         return Result(data=result)
     finally:
         temp_path.unlink(missing_ok=True)
+
+
+@app.post("/api/v1/python/community/import-pptx")
+async def import_community_courseware(file: UploadFile = File(...)) -> Result:
+    from a12_ppt.community_import import MAX_FILE_BYTES, import_community_pptx
+    content = await file.read(MAX_FILE_BYTES + 1)
+    try:
+        data = await asyncio.to_thread(import_community_pptx, file.filename or '', content)
+        return Result(data=data)
+    except ValueError as error:
+        raise HTTPException(status_code=400, detail=str(error)) from error
+    except Exception as error:
+        logging.exception('社区课件导入失败')
+        raise HTTPException(status_code=400, detail='无法解析课件，请确认文件未损坏且未加密') from error
+    finally:
+        await file.close()
 
 
 @app.post("/api/v1/python/resources/upload")
@@ -536,6 +557,62 @@ async def delete_outline_chat_session(session_id: str, user_id: str = Query(...,
     return Result(data={"user_id": user_id, "session_id": session_id, "deleted": True})
 
 
+@app.patch("/api/v1/python/outlines/chat/sessions/{session_id}/skill-graph")
+async def update_outline_skill_graph(session_id: str, request: SkillGraphUpdateRequest) -> Result:
+    user_id = direct_user_id.get()
+    if not user_id:
+        raise HTTPException(status_code=401, detail="请先登录")
+    try:
+        graphs = outline_session_store.update_skill_graph(str(user_id), session_id, request.skill)
+    except LookupError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+    except ValueError as exc:
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
+    return Result(data={"learning_graphs": graphs, "status": "awaiting_graph_confirmation"})
+
+
+@app.patch("/api/v1/python/outlines/chat/sessions/{session_id}/learning-graphs")
+async def update_learning_graphs(session_id: str, request: LearningGraphUpdateRequest) -> Result:
+    user_id = direct_user_id.get()
+    if not user_id:
+        raise HTTPException(status_code=401, detail="请先登录")
+    try:
+        graphs = outline_session_store.update_learning_graphs(str(user_id), session_id, request.graphs)
+    except LookupError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+    except ValueError as exc:
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
+    return Result(data={"learning_graphs": graphs, "status": "awaiting_graph_confirmation"})
+
+
+@app.post("/api/v1/python/outlines/chat/sessions/{session_id}/learning-graphs/ai-edit")
+async def ai_edit_learning_graphs(session_id: str, request: LearningGraphAIEditRequest) -> Result:
+    user_id = direct_user_id.get()
+    if not user_id:
+        raise HTTPException(status_code=401, detail="请先登录")
+    try:
+        state = outline_session_store.graph_review(str(user_id), session_id)
+        graphs = validate_graph_edit(request.graphs)
+        if not request.instruction.strip():
+            raise ValueError("请填写修改要求")
+        with use_runtime_options(str(user_id), "outline_chat", "standard", "medium"):
+            proposal = await propose_graph_edit(graphs, state["outline"]["pending_graph_review"].get("intent", {}),
+                                                request.instruction, request.kind, outline_chat_workflow.llm)
+        await require_active_browser_token()
+    except LookupError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+    except ValueError as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
+    except (RuntimeError, asyncio.TimeoutError) as exc:
+        raise HTTPException(status_code=503, detail="AI 修改暂不可用，请重试或手动编辑") from exc
+    except HTTPException:
+        raise
+    except Exception as exc:
+        logger.exception("AI 图谱修改请求失败")
+        raise HTTPException(status_code=503, detail="AI 修改服务异常，原图谱未改变，请重试或手动编辑") from exc
+    return Result(data={"learning_graphs": proposal, "preview_only": True})
+
+
 @app.get("/api/v1/python/teacher-style/profile")
 async def get_teacher_style_profile(user_id: str = Query(..., min_length=1)) -> Result:
     return Result(data={
@@ -553,6 +630,30 @@ async def update_teacher_style_profile(request: TeacherStyleConfigRequest) -> Re
     if not postgres_memory_store.set_teacher_profile_enabled(user_id, request.enabled):
         raise HTTPException(status_code=503, detail="教师画像暂时无法保存")
     return Result(data={"user_id": user_id, "enabled": request.enabled})
+
+
+@app.get("/api/v1/python/teacher-style/preferences")
+async def get_teacher_preferences() -> Result:
+    user_id = direct_user_id.get()
+    if not user_id:
+        raise HTTPException(status_code=401, detail="请先登录")
+    try:
+        return Result(data=postgres_memory_store.get_teacher_preferences(str(user_id)))
+    except Exception as exc:
+        logger.exception("教师偏好读取失败")
+        raise HTTPException(status_code=503, detail="教师偏好暂时无法读取") from exc
+
+
+@app.put("/api/v1/python/teacher-style/preferences")
+async def save_teacher_preferences(request: TeacherPreferencesRequest) -> Result:
+    user_id = direct_user_id.get()
+    if not user_id:
+        raise HTTPException(status_code=401, detail="请先登录")
+    data = request.model_dump()
+    data["interaction_forms"] = list(dict.fromkeys(data["interaction_forms"]))
+    if not postgres_memory_store.save_teacher_preferences(str(user_id), data):
+        raise HTTPException(status_code=503, detail="教师偏好暂时无法保存")
+    return Result(data=data)
 
 
 @app.post("/api/v1/python/teacher-style/profile/relearn")
@@ -622,16 +723,22 @@ async def update_teacher_style_tags(request: TeacherStyleTagsRequest) -> Result:
 
 @app.put("/api/v1/python/courses/graph")
 async def upsert_course_graph(request: CourseGraphUpsertRequest) -> Result:
+    user_id = direct_user_id.get()
+    if not user_id:
+        raise HTTPException(status_code=401, detail='请先登录')
     try:
-        return Result(data=course_graph_store.put(request.user_id, request.course_id, request.title, request.model_dump(), request.expected_version))
+        return Result(data=course_graph_store.put(str(user_id), request.course_id, request.title, request.model_dump(), request.expected_version))
     except ValueError as exc:
         from a12_ppt.course_graph import GraphVersionConflict
         raise HTTPException(status_code=409 if isinstance(exc, GraphVersionConflict) else 422, detail=str(exc)) from exc
 
 
 @app.get("/api/v1/python/courses/{course_id}/graph")
-async def get_course_graph(course_id: str, user_id: str = Query(..., min_length=1)) -> Result:
-    graph = course_graph_store.get(user_id, course_id)
+async def get_course_graph(course_id: str, user_id: str | None = Query(default=None, min_length=1)) -> Result:
+    owner = direct_user_id.get()
+    if not owner:
+        raise HTTPException(status_code=401, detail='请先登录')
+    graph = course_graph_store.get(str(owner), course_id)
     if not graph:
         raise HTTPException(status_code=404, detail="课程图谱不存在")
     return Result(data=graph)

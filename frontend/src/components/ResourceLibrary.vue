@@ -366,7 +366,7 @@ const stopProgressFallback = (item) => {
 const handleUpload = async () => {
   if (uploading.value) return
 
-  const pendingFiles = uploadQueue.value.filter((file) => file.status === 'ready')
+  const pendingFiles = uploadQueue.value.filter((file) => file.status === 'ready' || file.status === 'error')
   if (!pendingFiles.length) return ElMessage.warning('请先选择要上传的文件')
 
   uploading.value = true
@@ -404,7 +404,7 @@ const handleUpload = async () => {
     await loadResources()
     ElMessage.success(`${successCount} 个素材上传成功，已加入个人资源库`)
   }
-  if (failureCount) ElMessage.error(`${failureCount} 个文件上传失败，可确认后重新打开弹窗再试`)
+  if (failureCount) ElMessage.error(`${failureCount} 个文件上传失败，请点击“重试失败文件”`)
 }
 
 const confirmUploadDialog = () => {
@@ -918,6 +918,11 @@ onBeforeUnmount(() => {
 
       <template #footer>
         <div class="upload-dialog-footer">
+          <el-button
+            v-if="uploadQueue.some((file) => file.status === 'error')"
+            :disabled="uploading"
+            @click="handleUpload"
+          >重试失败文件</el-button>
           <el-button :disabled="uploading" @click="uploadDialogVisible = false">取消</el-button>
           <el-button
             type="primary"
@@ -988,7 +993,8 @@ onBeforeUnmount(() => {
             <el-table v-if="!isMobile" v-loading="indexLoading" :data="indexResources" size="small" max-height="460">
               <el-table-column prop="title" label="资源" min-width="220" show-overflow-tooltip />
               <el-table-column prop="resource_key" label="索引键" width="150" />
-              <el-table-column prop="parse_status" label="解析状态" width="110" />
+              <el-table-column label="解析状态" width="110"><template #default="{ row }"><el-tag :type="row.parse_status === 'failed' ? 'danger' : row.parse_status === 'completed' ? 'success' : 'info'">{{ ({ completed: '已解析', failed: '失败', pending: '待解析', processing: '解析中' })[row.parse_status] || row.parse_status }}</el-tag></template></el-table-column>
+              <el-table-column prop="error_message" label="失败原因" min-width="230" show-overflow-tooltip />
               <el-table-column prop="chunk_count" label="分块" width="70" />
               <el-table-column label="AI" width="70"><template #default="{ row }"><el-tag size="small" :type="row.allow_ai ? 'success' : 'info'">{{ row.allow_ai ? '允许' : '关闭' }}</el-tag></template></el-table-column>
               <el-table-column label="操作" width="170" align="right"><template #default="{ row }"><el-button link type="primary" :loading="indexActionLoading" @click="syncIndexedResource(row)">同步</el-button><el-button link type="danger" :loading="indexActionLoading" @click="removeIndex(row)">删除</el-button></template></el-table-column>

@@ -37,17 +37,20 @@ class OutlineToolNode:
         discovery_trace = self.mcp_client.drain_discovery_logs() if self.mcp_client.enabled else []
 
         rule_plans = self._rule_plans(intent, query)
+        cached_context = dict(state.get('tool_context') or {})
+        if cached_context.get('rag'):
+            rule_plans = [plan for plan in rule_plans if plan.name != 'rag_search']
         autonomous_plans = await self._autonomous_plans(
             intent,
             query,
             state,
             mcp_specs,
-            excluded_names={plan.name for plan in rule_plans},
+            excluded_names={plan.name for plan in rule_plans} | ({'rag_search'} if cached_context.get('rag') else set()),
         )
         plans = self._dedupe_and_filter([*rule_plans, *autonomous_plans], intent, mcp_specs)
 
         if not plans:
-            return {"tool_context": {}, "tool_trace": discovery_trace}
+            return {"tool_context": cached_context, "tool_trace": discovery_trace}
 
         mcp_by_name = {spec.qualified_name: spec for spec in mcp_specs}
         results = await asyncio.gather(
@@ -55,7 +58,7 @@ class OutlineToolNode:
             return_exceptions=False,
         )
 
-        tool_context: dict[str, Any] = {}
+        tool_context: dict[str, Any] = cached_context
         tool_trace: list[dict[str, Any]] = list(discovery_trace)
         for plan, (payload, latency_ms) in zip(plans, results):
             self._store_context(tool_context, plan, payload)

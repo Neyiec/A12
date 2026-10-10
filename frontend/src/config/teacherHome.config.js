@@ -17,6 +17,7 @@ export const TEACHER_HOME = {
   },
   navigation: [
     { index: 'home', label: 'AI 教学助手', icon: 'ChatDotRound' },
+    { index: 'workspace', label: '个人工作台', icon: 'Grid' },
     { index: 'resources', label: '个人资源库', icon: 'FolderOpened' },
     { index: 'community', label: '技能与案例', icon: 'Grid' },
     { index: 'courses', label: '课程双图谱', icon: 'Grid' },

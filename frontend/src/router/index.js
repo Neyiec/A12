@@ -7,6 +7,7 @@ import {getRouters} from'../apis/login.js'
 import {isSessionExpired} from '../utils/JWTParser.js'
 // 全局用户 store — 替代直接操作 localStorage
 import { useUserStore } from '../storage/user.js'
+import { ElMessage } from 'element-plus'
 
 // 所有页面保持按需加载。之前既静态导入页面、又用变量 import 扫描整个
 // components 目录，会把创作工作台及其编辑器依赖一并放入首屏包。
@@ -24,7 +25,7 @@ const TeacherLayout = getComponentLoader('TeacherLayout')
 const ResourceLibrary = getComponentLoader('ResourceLibrary')
 const CommunityHub = getComponentLoader('CommunityHub')
 const ExportCenter = getComponentLoader('ExportCenter')
-const CreationWorkspace = getComponentLoader('CreationWorkspace')
+const CreationWorkspace = getComponentLoader('WorkspaceEntry')
 const AccountSettings = getComponentLoader('AccountSettings')
 const CourseGraphWorkspace = getComponentLoader('CourseGraphWorkspace')
 
@@ -43,7 +44,7 @@ const routes = [
     name: 'M',
     component: TeacherLayout,
     children: [
-      { path: '', component: TeacherHome, meta: { menu: 'home', title: '个人工作空间', staticTeacherPage: true } },
+      { path: '', name: 'TeacherHome', component: TeacherHome, meta: { menu: 'home', title: '个人工作空间', staticTeacherPage: true } },
       { path: 'resources', component: ResourceLibrary, meta: { menu: 'resources', title: '个人资源库', staticTeacherPage: true } },
       { path: 'community', component: CommunityHub, meta: { menu: 'community', title: '技能与案例', staticTeacherPage: true } },
       { path: 'exports', component: ExportCenter, meta: { menu: 'exports', title: '成果导出中心', staticTeacherPage: true } },
@@ -74,7 +75,7 @@ export function addDynamicRoutes(menus) {
   // 遍历当前层
   menus.forEach(menu => {
     // 处理路径：确保是相对于 /main 的路径
-    let relativePath = menu.path
+    let relativePath = String(menu.path || '')
     if (relativePath.startsWith('/main/')) {
       relativePath = relativePath.replace('/main/', '')
     }
@@ -104,13 +105,12 @@ export function addDynamicRoutes(menus) {
 /* 添加路由守卫 */
 let menusLoaded = false
 
-router.beforeEach((to, from, next) => {
+router.beforeEach(async (to) => {
   // 本地开发预览入口：便于在外部浏览器检查教师端界面，不影响生产环境鉴权。
   const isDevelopmentPreview =
     import.meta.env.DEV && to.path.startsWith('/main') && to.query.preview === '1'
 
   if (isDevelopmentPreview) {
-    next()
     return
   }
 
@@ -120,8 +120,9 @@ router.beforeEach((to, from, next) => {
   const sessionExpired = !token || isSessionExpired(token, userStore.loginAt)
 
   if (!to.meta.publicPage && to.path !== '/login' && sessionExpired) {
-    next('/login')
-    return
+    userStore.clearUser()
+    menusLoaded = false
+    return '/login'
   }
 
   // 清除过期或缺失 token 的用户状态
@@ -132,7 +133,8 @@ router.beforeEach((to, from, next) => {
 
   // 动态路由加载：非静态教师页面且菜单未加载时，请求后端获取菜单
   if (to.path.startsWith('/main/') && !to.meta.staticTeacherPage && !menusLoaded) {
-    getRouters().then(res => {
+    try {
+      const res = await getRouters()
       // 添加动态路由
       addDynamicRoutes(res.data.menus)
       // 标记菜单已加载
@@ -140,11 +142,22 @@ router.beforeEach((to, from, next) => {
       // 将菜单数据存入 Pinia store（自动持久化）
       userStore.setMenus(res.data.menus)
 
-      next(to.fullPath)
-    })
-  } else {
-    next()
+      return to.fullPath
+    } catch (error) {
+      ElMessage.error('页面菜单加载失败，请稍后重试')
+      console.warn('[router] 菜单加载失败', error)
+      return false
+    }
   }
+})
+
+router.onError((error) => {
+  const message = String(error?.message || error)
+  const dependencyError = /Failed to fetch dynamically imported module|Importing a module script failed|Loading chunk|Outdated Optimize Dep/i.test(message)
+  ElMessage.error(dependencyError
+    ? '页面依赖加载失败，未开始生成 PPT。请刷新页面后重试；开发环境请重启前端。'
+    : '页面跳转失败，请稍后重试')
+  console.warn('[router] 页面加载失败', error)
 })
 
 export default router

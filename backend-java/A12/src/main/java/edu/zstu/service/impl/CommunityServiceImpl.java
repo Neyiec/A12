@@ -259,14 +259,20 @@ public class CommunityServiceImpl implements CommunityService {
     @Override
     public PageResult<ContentVO> listFavorites(int page, int size, Integer userId) {
         log.info("listFavorites userId={}, page={}, size={}", userId, page, size);
-        PageResult<ContentVO> result = redisCacheUtil.getOrLoad("community:favorites:" + userId + ":p" + page + ":s" + size,
+        PageResult<ContentVO> result = redisCacheUtil.getOrLoad("community:favorites:" + userId + ":time-v2:p" + page + ":s" + size,
                 new com.fasterxml.jackson.core.type.TypeReference<PageResult<ContentVO>>() {},
                 Duration.ofMinutes(3), () -> {
                     PageHelper.startPage(page, size);
                     List<Com_Interaction> interactions = interactionMapper.findByUserAndAction(userId, "favorite");
                     PageInfo<Com_Interaction> info = new PageInfo<>(interactions);
                     List<ContentVO> records = interactions == null ? List.of() : interactions.stream()
-                            .map(i -> cachedContent(i.getTarget_id()))
+                            .map(i -> {
+                                ContentVO item = cachedContent(i.getTarget_id());
+                                if (item == null) return null;
+                                ContentVO copy = BeanUtil.copyProperties(item, ContentVO.class);
+                                copy.setFavorited_at(i.getCreated_at());
+                                return copy;
+                            })
                             .filter(item -> item == null || "public".equals(item.getStatus()))
                             .filter(Objects::nonNull)
                             .toList();

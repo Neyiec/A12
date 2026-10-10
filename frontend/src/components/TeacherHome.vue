@@ -25,6 +25,7 @@ import {
 import { TEACHER_HOME } from '../config/teacherHome.config.js'
 import { INFO_FORM_DEFAULTS, requestNewChat, openChatSession } from '../config/teacherChat.config.js'
 import { useUserStore } from '../storage/user'
+import { navigateWorkspace } from '../utils/workspaceNavigation.js'
 import ChatView from './ChatView.vue'
 import { archiveProject, cleanupTempResources, copyProject, createAiSession, createProject, deleteProject, forgetTempResource, listProjects, listResources, listTempResourceIds, rememberTempResource, transcribeAudio, uploadResource, uploadTempResource } from '../apis/teacher'
 
@@ -54,6 +55,7 @@ const activeSuggestionId = ref(null)
 const iconMap = { Presentation: Monitor, Document, MagicStick }
 const projects = ref([])
 const projectsLoading = ref(true)
+const projectsError = ref('')
 const resourcesLoading = ref(false)
 const availableResources = ref([])
 const selectedResourceIds = ref([])
@@ -133,10 +135,12 @@ const normalizeWorkspaceContext = (context = {}, resourceIds = []) => {
 
 const loadProjects = async () => {
   projectsLoading.value = true
+  projectsError.value = ''
   try {
-    const result = await listProjects({ page: 1, size: 4, status: 'draft' })
+    const result = await listProjects({ page: 1, size: 4 })
     projects.value = result?.data?.records || result?.data?.list || result?.data?.items || []
   } catch {
+    projectsError.value = '项目加载失败，请重试；已有项目不会因此删除。'
     projects.value = []
   } finally {
     projectsLoading.value = false
@@ -418,7 +422,7 @@ const handleGeneralSession = (session) => {
 }
 
 /** 从聊天视图跳转到创作工作台，并携带生成前已选定的 PPT 模板 */
-const openWorkspaceFromChat = (payload) => {
+const openWorkspaceFromChat = async (payload) => {
   const projectId = payload && typeof payload === 'object' ? payload.projectId : payload
   const pptTheme = payload && typeof payload === 'object' ? payload.pptTheme : ''
   const generationKey = payload && typeof payload === 'object' ? payload.generationKey : ''
@@ -427,7 +431,8 @@ const openWorkspaceFromChat = (payload) => {
     payload && typeof payload === 'object' ? (payload.workspaceContext || {}) : chatWorkspaceContext.value,
     resourceIds,
   )
-  router.push({
+  try {
+  const failure = await navigateWorkspace(router, {
     path: '/main/workspace',
     query: {
       sessionId: chatSessionId.value,
@@ -437,7 +442,12 @@ const openWorkspaceFromChat = (payload) => {
       resourceIds: JSON.stringify(resourceIds),
       workspaceContext: JSON.stringify(workspaceContext),
     },
-  })
+  }, payload?.onNavigationSettled)
+  if (failure) ElMessage.warning('未能进入创作工作台，请重试')
+  } catch (error) {
+    // The router error handler displays dependency failures; consume the rejected promise.
+    console.warn('[workspace] 跳转失败', error)
+  }
 }
 
 const createProjectFromPrompt = async () => {
@@ -660,7 +670,6 @@ watch(viewMode, (value) => {
     </div>
 
     <section
-      v-if="projectsLoading || projects.length"
       class="recent-projects motion-stage motion-stage-2"
       aria-label="最近项目"
       :aria-busy="projectsLoading"
@@ -674,6 +683,8 @@ watch(viewMode, (value) => {
           </template>
         </el-skeleton>
       </div>
+      <div v-else-if="projectsError" role="alert"><span>{{ projectsError }}</span><el-button text @click="loadProjects">重试</el-button></div>
+      <el-empty v-else-if="!projects.length" description="暂无项目，可以新建课件或打开管理项目" :image-size="50" />
       <div v-else class="project-grid">
         <button v-for="project in projects" :key="project.id" type="button" class="project-card" data-hover-lift @click="openProject(project)">
           <strong>{{ project.project_name }}</strong>

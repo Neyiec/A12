@@ -10,7 +10,7 @@
     </resultMap>
     <sql id="Base_Columns">id, user_id, action_type, target_type, target_id, target_version, target_project_id, bind_materials, created_at</sql>
     <select id="findById" resultMap="BaseResultMap">SELECT <include refid="Base_Columns"/> FROM com_interaction WHERE id = #{id}</select>
-    <select id="findByUserAndAction" resultMap="BaseResultMap">SELECT <include refid="Base_Columns"/> FROM com_interaction WHERE user_id = #{userId} AND action_type = #{actionType}</select>
+    <select id="findByUserAndAction" resultMap="BaseResultMap">SELECT <include refid="Base_Columns"/> FROM com_interaction WHERE user_id = #{userId} AND action_type = #{actionType} ORDER BY created_at DESC, id DESC</select>
     <select id="findByTarget" resultMap="BaseResultMap">SELECT <include refid="Base_Columns"/> FROM com_interaction WHERE target_type = #{targetType} AND target_id = #{targetId}</select>
     <insert id="insert" useGeneratedKeys="true" keyProperty="id">
         INSERT INTO com_interaction(user_id, action_type, target_type, target_id, target_version, target_project_id, bind_materials, created_at)

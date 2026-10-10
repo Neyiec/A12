@@ -116,13 +116,15 @@ class PPTGenerator:
             return self._outline_response(outline)
 
         rag_context = ""
-        if req.enable_rag:
-            from ..tools.rag import rag_search
+        if req.enable_rag or req.resource_ids:
+            from ..tools.rag import rag_search, selected_material_context
             query = "\n".join([
                 req.instruction or "",
                 json.dumps(req.outline, ensure_ascii=False)[:4000],
             ]).strip()
             rag_result = await rag_search(req.resource_ids, query)
+            if req.resource_ids:
+                selected_material_context(rag_result)
             rag_context = rag_result.get("context", "")
         prompt = f"""
 请根据用户要求修订或重生成 PPT 大纲。只输出严格 JSON，不要 Markdown。
@@ -984,8 +986,8 @@ preferred_format(html5|gif|mp4)、integration(ppt_video|static_link)、descripti
             if reference_context:
                 context_parts.append("[Uploaded reference material]\n" + reference_context)
 
-        if req.enable_rag:
-            from ..tools.rag import rag_search
+        if req.enable_rag or req.resource_ids:
+            from ..tools.rag import rag_search, selected_material_context
             query = "\n".join([
                 req.title,
                 req.subject,
@@ -996,6 +998,8 @@ preferred_format(html5|gif|mp4)、integration(ppt_video|static_link)、descripti
                 req.reference_text or "",
             ]).strip()
             rag_result = await rag_search(req.resource_ids, query)
+            if req.resource_ids:
+                context_parts.append('[Teacher-selected reference material]\n' + selected_material_context(rag_result))
             if rag_result.get("knowledge_context"):
                 context_parts.append("[RAG knowledge base matches]\n" + rag_result["knowledge_context"])
 
@@ -1061,7 +1065,7 @@ preferred_format(html5|gif|mp4)、integration(ppt_video|static_link)、descripti
         if not resource_ids or not self.llm.available:
             return ""
         try:
-            from ..tools.rag import rag_search
+            from ..tools.rag import rag_search, selected_material_context
             query = "\n".join([
                 req.title or "",
                 str(outline.get("summary") or ""),
@@ -1069,10 +1073,13 @@ preferred_format(html5|gif|mp4)、integration(ppt_video|static_link)、descripti
                 str(outline.get("requirements") or ""),
             ]).strip()
             rag_result = await rag_search(resource_ids, query, limit=6000)
+            selected_material_context(rag_result)
             return str(rag_result.get("context") or "")
-        except Exception:
+        except ValueError:
+            raise
+        except Exception as exc:
             logger.warning("页面生成 RAG 上下文收集失败 title=%s", req.title, exc_info=True)
-            return ""
+            raise RuntimeError('课件参考资料读取失败，请稍后重试，不能忽略资料继续生成') from exc
 
     def _resolve_asset_policy(
         self, req: PresentationGenerateRequest, slides: list[dict[str, Any]]

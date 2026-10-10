@@ -49,6 +49,12 @@ public class JwtAuthenticationFilter implements Filter {
         HttpServletRequest req = (HttpServletRequest) request;
         HttpServletResponse res = (HttpServletResponse) response;
 
+        // 此唯一文件端点由 Controller 校验绑定方法、对象路径及有效期的签名。
+        if ("/api/v1/storage/local-object".equals(req.getRequestURI())) {
+            chain.doFilter(request, response);
+            return;
+        }
+
         if (req.getRequestURI().startsWith("/api/v1/internal/")) {
             String supplied = req.getHeader("X-A12-Internal-Key");
             if (internalKey == null || internalKey.isBlank() || supplied == null ||

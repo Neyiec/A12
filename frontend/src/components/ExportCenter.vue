@@ -34,6 +34,8 @@ const tasks = ref([])
 const loading = ref(false)
 const pageError = ref('')
 const exportDialogVisible = ref(false)
+const exportSubmitting = ref(false)
+const prechecking = ref(false)
 const reportVisible = ref(false)
 const previewVisible = ref(false)
 const taskDetailVisible = ref(false)
@@ -91,7 +93,12 @@ const statusText = {
 const runningStatuses = ['queued', 'generating', 'checking']
 const completedStatuses = ['success', 'partial']
 
-const unwrap = (response) => response?.data || response
+const unwrap = (response) => {
+  if (response?.code !== undefined && response.code !== 200 && response.code !== 0) {
+    throw new Error(response.message || '导出接口请求失败')
+  }
+  return response?.data || response
+}
 const recordsFrom = (response) => {
   const data = unwrap(response)
   return data?.records || data?.list || data?.items || []
@@ -573,7 +580,10 @@ const openExportDialog = async () => {
   if (exportForm.value.project_id) await loadVersionOptions(exportForm.value.project_id)
 }
 const runPrecheck = async () => {
+  if (prechecking.value) return
   if (!exportForm.value.project_id) return ElMessage.warning('请选择需要导出的项目')
+  prechecking.value = true
+  clearPrecheck()
   try {
     let snapshotVersion = Number(exportForm.value.snapshot_version)
     if (!Number.isFinite(snapshotVersion) || snapshotVersion <= 0) {
@@ -590,14 +600,19 @@ const runPrecheck = async () => {
     if (precheck.value?.passed) ElMessage.success(precheck.value.warnings?.length ? '导出预检通过，存在需确认的警告' : '导出预检通过')
     else ElMessage.warning('导出预检未通过，请处理错误项')
   } catch (error) { ElMessage.error(error?.message || '导出预检失败') }
+  finally { prechecking.value = false }
 }
 const submitExport = async () => {
+  if (exportSubmitting.value || prechecking.value) return
   if (!exportForm.value.project_id) return ElMessage.warning('请选择需要导出的项目')
+  exportSubmitting.value = true
   try {
+    let signature = JSON.stringify({ projectId: exportForm.value.project_id, snapshotVersion: Number(exportForm.value.snapshot_version), exportType: exportForm.value.export_type, config: buildExportConfig() })
+    if (!precheck.value?.passed || precheckSignature.value !== signature) await runPrecheck()
     const snapshotVersion = Number(exportForm.value.snapshot_version)
     if (!Number.isFinite(snapshotVersion) || snapshotVersion <= 0) return ElMessage.warning('请先运行预检，系统会固化所选快照')
     const config = buildExportConfig()
-    const signature = JSON.stringify({ projectId: exportForm.value.project_id, snapshotVersion, exportType: exportForm.value.export_type, config })
+    signature = JSON.stringify({ projectId: exportForm.value.project_id, snapshotVersion, exportType: exportForm.value.export_type, config })
     if (!precheck.value?.passed || precheckSignature.value !== signature) return ElMessage.warning('请先对当前快照和导出配置运行预检')
     if (precheck.value.warnings?.length) {
       await ElMessageBox.confirm('预检存在警告，继续后将按当前导出配置处理。是否确认创建任务？', '确认导出警告', { type: 'warning', confirmButtonText: '确认继续', cancelButtonText: '返回修改' })
@@ -613,7 +628,10 @@ const submitExport = async () => {
     exportDialogVisible.value = false
     ElMessage.success('导出任务已创建')
     await loadTasks()
-  } catch (error) { ElMessage.error(error?.message || '导出任务创建失败') }
+  } catch (error) {
+    if (error !== 'cancel' && error !== 'close') ElMessage.error(error?.message || '导出任务创建失败')
+    await loadTasks()
+  } finally { exportSubmitting.value = false }
 }
 
 const handleCreateTask = () => openExportDialog()
@@ -876,7 +894,7 @@ onBeforeUnmount(() => {
         <el-form-item label="教师备注"><el-input v-model="exportForm.teacher_notes" type="textarea" :rows="2" placeholder="可选，会随导出配置保存" @input="clearPrecheck" /></el-form-item>
       </el-form>
       <div v-if="precheck" class="dialog-precheck" :class="{ failed: !precheck.passed }"><strong>{{ precheck.passed ? '预检通过' : '预检未通过' }}</strong><span>{{ precheck.warnings?.length || 0 }} 条提示 · {{ precheck.errors?.length || 0 }} 条错误</span></div>
-      <template #footer><el-button @click="runPrecheck">运行预检</el-button><el-button type="primary" @click="submitExport">创建导出</el-button></template>
+      <template #footer><el-button :loading="prechecking" :disabled="exportSubmitting" @click="runPrecheck">运行预检</el-button><el-button type="primary" :loading="exportSubmitting" :disabled="prechecking" @click="submitExport">{{ exportSubmitting ? '正在生成导出文件…' : '创建导出' }}</el-button></template>
     </el-dialog>
 
     <el-dialog v-model="taskDetailVisible" title="任务详情" width="min(520px, 92vw)" align-center class="detail-dialog">

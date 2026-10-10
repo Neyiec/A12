@@ -2,6 +2,11 @@ server:
   port: 8088
 
 spring:
+  servlet:
+    multipart:
+      # 导出成果回传允许 100MB 文件；请求额外留出 multipart 头部空间。
+      max-file-size: 100MB
+      max-request-size: 105MB
   datasource:
     url: jdbc:mysql://localhost:3306/a12?useUnicode=true&characterEncoding=utf-8&serverTimezone=Asia/Shanghai&useSSL=false&allowPublicKeyRetrieval=true
     username: root
@@ -62,6 +67,12 @@ mybatis:
     log-impl: org.apache.ibatis.logging.stdout.StdOutImpl
 
 a12:
+  storage:
+    provider: ${A12_STORAGE_PROVIDER:oss}
+    local:
+      directory: ${A12_STORAGE_LOCAL_DIR:./data/uploads}
+      base-url: ${A12_STORAGE_LOCAL_BASE_URL:http://localhost:8088}
+      max-bytes: 104857600
   python:
     base-url: http://127.0.0.1:8001
     internal-key: ${A12_PYTHON_INTERNAL_KEY:}

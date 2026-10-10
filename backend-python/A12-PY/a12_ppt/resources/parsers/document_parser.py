@@ -11,17 +11,40 @@ async def parse_pdf(path: Path) -> ParsedResource:
         from PyPDF2 import PdfReader
 
         reader = PdfReader(str(path))
-        extracted = [(page.extract_text() or "").strip() for page in reader.pages]
+        if reader.is_encrypted and not reader.decrypt(''):
+            return ParsedResource(text='', metadata={'modality':'document','parser':'PyPDF2',
+                'error':'PDF已加密，请上传解除密码保护后的文件'})
+        extracted = []
+        warnings = []
+        blank_pages = []
+        for index, page in enumerate(reader.pages):
+            try:
+                text = (page.extract_text() or '').strip()
+            except Exception as exc:
+                text = ''
+                warnings.append(f'第{index + 1}页文本层提取失败: {exc}')
+            extracted.append(text)
+            contents = page.get_contents()
+            if not text and (contents is None or not contents.get_data().strip()) and not page.get('/Annots'):
+                blank_pages.append(index)
+        if len(blank_pages) == len(reader.pages):
+            return ParsedResource(text='', metadata={'modality':'document','parser':'PyPDF2',
+                'page_count':len(reader.pages),'blank_page_count':len(blank_pages),
+                'error':'PDF为空白文档：页面没有文字或图像内容，请重新导出或上传含正文的PDF'})
         page_blocks = {index: f"第 {index + 1} 页文本:\n{text}" for index, text in enumerate(extracted) if text}
-        empty_page_indexes = [index for index, text in enumerate(extracted) if not text]
+        empty_page_indexes = [index for index, text in enumerate(extracted) if not text and index not in blank_pages]
         # 扫描版 PDF 没有文本层，只渲染空白文本页再走 OCR + 视觉理解，避免整份资料静默为空。
         rendered_pages = await asyncio.to_thread(_render_pdf_pages, path, empty_page_indexes[:20])
         try:
             scanned_results = await asyncio.gather(*[
                 parse_image(image_path, f"这是扫描版教学 PDF 的第 {page_index + 1} 页，请提取文字、图表含义、知识点和例题信息。")
                 for page_index, image_path in rendered_pages
-            ])
-            for (page_index, _), (text, _metadata) in zip(rendered_pages, scanned_results):
+            ], return_exceptions=True)
+            for (page_index, _), result in zip(rendered_pages, scanned_results):
+                if isinstance(result, Exception):
+                    warnings.append(f'第{page_index + 1}页扫描识别失败: {result}')
+                    continue
+                text, _metadata = result
                 if text:
                     page_blocks[page_index] = f"第 {page_index + 1} 页扫描识别:\n{text}"
         finally:
@@ -33,14 +56,17 @@ async def parse_pdf(path: Path) -> ParsedResource:
                 "modality": "document",
                 "parser": "PyPDF2+pypdfium2+OCR/vision" if empty_page_indexes else "PyPDF2",
                 "page_count": len(reader.pages),
-                "text_layer_pages": len(reader.pages) - len(empty_page_indexes),
+                "text_layer_pages": sum(bool(text) for text in extracted),
                 "scan_pages_detected": len(empty_page_indexes),
                 "scan_pages_processed": len(rendered_pages),
                 "scan_pages_skipped": max(0, len(empty_page_indexes) - 20),
+                "blank_page_count": len(blank_pages),
+                "warnings": warnings,
+                **({'error':'PDF未提取到文字；请检查扫描页渲染依赖、Tesseract及中文语言包，或启用支持图片的视觉模型'} if not page_blocks else {}),
             },
         )
     except Exception as exc:
-        return ParsedResource(text="", metadata={"modality": "document", "parser": "PyPDF2", "error": str(exc)})
+        return ParsedResource(text="", metadata={"modality": "document", "parser": "PyPDF2", "error": f'PDF解析失败，请检查文件是否损坏：{exc}'})
 
 
 def _render_pdf_pages(path: Path, page_indexes: list[int]) -> list[tuple[int, Path]]:

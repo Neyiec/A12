@@ -18,6 +18,7 @@ import edu.zstu.mapper.WsVersionMapper;
 import edu.zstu.service.BusinessLogService;
 import edu.zstu.service.ProjectService;
 import edu.zstu.utils.PageResult;
+import edu.zstu.utils.PageTitleUtil;
 import edu.zstu.vo.PageVO;
 import edu.zstu.vo.ProjectVO;
 import edu.zstu.vo.SubjectComponentValidateVO;
@@ -260,7 +261,7 @@ public class ProjectServiceImpl implements ProjectService {
         page.setProject_id(p.getId());
         page.setPage_order(dto.getPage_order() == null ? nextPageOrder(p.getId()) : dto.getPage_order());
         page.setPage_type(defaultString(dto.getPage_type(), "content"));
-        page.setPage_title(dto.getPage_title());
+        page.setPage_title(PageTitleUtil.forStorage(dto.getPage_title()));
         page.setPage_content(defaultString(dto.getPage_content(), "{}"));
         page.setComponents(defaultString(dto.getComponents(), "[]"));
         page.setPage_version(1);
@@ -289,7 +290,7 @@ public class ProjectServiceImpl implements ProjectService {
         page.setId(current.getId());
         page.setPage_order(dto.getPage_order());
         page.setPage_type(dto.getPage_type());
-        page.setPage_title(dto.getPage_title());
+        page.setPage_title(PageTitleUtil.forStorage(dto.getPage_title()));
         page.setPage_content(dto.getPage_content());
         page.setComponents(dto.getComponents());
         page.setClient_version(dto.getClient_version());
@@ -418,7 +419,12 @@ public class ProjectServiceImpl implements ProjectService {
         Ws_Project p = findProject(id);
         checkPermission(p, userId);
         Ws_Version v1 = versionMapper.findById(Integer.valueOf(versionId));
-        if (v1 == null) throw new RuntimeException("版本不存在");
+        if (v1 == null || v1.getProject_id() != p.getId()) throw new RuntimeException("版本不存在或不属于当前项目");
+        if (compareVersionId != null) {
+            Ws_Version comparison = versionMapper.findById(compareVersionId);
+            if (comparison == null || comparison.getProject_id() != p.getId())
+                throw new RuntimeException("对比版本不属于当前项目");
+        }
         Map<String, Object> r = new HashMap<>();
         r.put("differences", new Object[]{});
         r.put("summary", compareVersionId != null
@@ -433,11 +439,19 @@ public class ProjectServiceImpl implements ProjectService {
         log.info("restoreVersion userId={}, projectId={}, versionId={}", userId, id, versionId);
         Ws_Project p = findProject(id);
         checkPermission(p, userId);
+        checkEditable(p);
         Ws_Version v = versionMapper.findById(Integer.valueOf(versionId));
-        if (v == null) throw new RuntimeException("版本不存在");
+        if (v == null || v.getProject_id() != p.getId()) throw new RuntimeException("版本不存在或不属于当前项目");
+        // Validate the complete target before any backup or destructive page replacement.
+        validateVersionSnapshot(v.getSnapshot_data());
+        VersionCreateDTO backup = new VersionCreateDTO();
+        backup.setDescription("恢复快照 v" + v.getVersion_number() + " 前的自动备份");
+        saveVersion(id, backup, userId);
+        int expectedVersion = p.getCurrent_version();
         restoreSnapshot(p, v.getSnapshot_data());
-        p.setCurrent_version(p.getCurrent_version() + 1);
-        projectMapper.update(p);
+        p.setCurrent_version(expectedVersion + 1);
+        if (projectMapper.updateWithVersion(p, expectedVersion) != 1)
+            throw new RuntimeException("版本冲突，请刷新后重试恢复");
         businessLogService.record("operation", "project", "restore_version", "project", p.getId(),
                 Map.of("source_version_id", Integer.valueOf(versionId), "current_version", p.getCurrent_version()));
         return toProjectVO(p);
@@ -741,10 +755,9 @@ public class ProjectServiceImpl implements ProjectService {
         if (projectSnapshot != null) {
             project.setProject_name(projectSnapshot.getStr("project_name", project.getProject_name()));
             project.setProject_type(projectSnapshot.getStr("project_type", project.getProject_type()));
-            project.setStatus(projectSnapshot.getStr("status", project.getStatus()));
             project.setSnapshots(projectSnapshot.getStr("snapshots"));
             project.setEdit_history(projectSnapshot.getStr("edit_history"));
-            project.setPermissions(projectSnapshot.getStr("permissions"));
+            // Restoring content must not revert collaborators or the project's lifecycle.
         }
 
         var pages = snapshot.getJSONArray("pages");
@@ -754,7 +767,26 @@ public class ProjectServiceImpl implements ProjectService {
             Ws_Page page = JSONUtil.toBean(JSONUtil.parseObj(item), Ws_Page.class);
             page.setId(0);
             page.setProject_id(project.getId());
+            page.setPage_version(1);
+            page.setPage_title(PageTitleUtil.forStorage(page.getPage_title()));
             pageMapper.insert(page);
+        }
+    }
+
+    private void validateVersionSnapshot(String data) {
+        if (data == null || data.isBlank()) throw new RuntimeException("快照内容为空，无法恢复");
+        try {
+            JSONObject snapshot = JSONUtil.parseObj(data);
+            JSONArray pages = snapshot.getJSONArray("pages");
+            if (pages == null) throw new RuntimeException("快照缺少页面数据，无法恢复");
+            Set<Integer> orders = new HashSet<>();
+            for (Object item : pages) {
+                Ws_Page page = JSONUtil.toBean(JSONUtil.parseObj(item), Ws_Page.class);
+                if (page.getPage_order() == null || page.getPage_order() < 1 || !orders.add(page.getPage_order()))
+                    throw new RuntimeException("快照页面顺序无效，无法恢复");
+            }
+        } catch (RuntimeException ex) {
+            throw new RuntimeException("快照数据无效，未修改当前课件", ex);
         }
     }
 }

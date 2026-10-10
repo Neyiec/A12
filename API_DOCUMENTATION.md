@@ -1,5 +1,11 @@
 # API 接口文档
 
+### 教师偏好设置（当前接口）
+
+`GET /api/v1/python/teacher-style/preferences`、`PUT /api/v1/python/teacher-style/preferences`：前端直连 Python，使用登录令牌确定当前用户并通过 Redis 校验。旧地址 `/api/v1/teachers/me/preferences` 不存在，不能继续调用。
+
+返回及保存字段为 `teaching_style`（空值或 `heuristic/lecture/cooperative/project_based/blended`）、`template_style`（空值或 `business/academic/lively/tech`）、`interaction_forms`（`random_call/group_discussion/quiz/poll/bullet_chat/raise_hand` 数组）。偏好保存到 `a12_teacher_style_profile.profile.preferences`，保留教师手动标签、历史学习证据和置信度。无记录时返回默认偏好，数据库故障返回 503，非法值返回 422。
+
 > **当前双端架构（2026-09）**：浏览器对 `/api/v1/python/**` 直接请求 FastAPI（开发环境由 Vite 路由，生产环境使用独立 AI 域名），携带原登录 Bearer；FastAPI 向 Java `/api/v1/users/me` 校验身份，并在请求及模型调用前比对 Redis 的 `token:user:{userId}` 当前令牌。Java 只管理账号、权限、资源、会话、项目、导出任务与成果落库，不转发 AI 请求。资源上传、删除和权限变更由 Java 发布 Redis Stream 事件，Python 后台消费并维护索引。下文 2026-08 的旧“Java 网关”记录是历史说明，不能作为当前可用接口依据。
 
 当前已移除的旧 Java AI 转发入口：`/api/v1/ai/intent/recognize`、`/api/v1/ai/intent/recognize-audio`、`/api/v1/ai/sessions/{id}/messages`、`/api/v1/ai/sessions/{id}/messages/stream`、`/api/v1/ai/sessions/{id}/audio-messages`、`/api/v1/admin/public-resources/ai-index/{overview,tasks,resources,search}`。请分别使用 Python 对应接口；Java 的 `/api/v1/ai/sessions/{id}/outline-results` 仅保存生成结果。导出任务先由 Java 创建并提供 `GET /api/v1/export-tasks/{id}/payload`，浏览器直连 Python 生成文件后上传至 Java `POST /api/v1/export-tasks/{id}/artifact`；失败时调用 `POST /api/v1/export-tasks/{id}/failure`。
@@ -3840,9 +3846,9 @@ const pptxBlob = await fetch("http://127.0.0.1:8001/api/v1/python/presentations/
 知识库概览返回 `ready_for_rag` 与 `readiness_message`。为空时应先上传资料或执行资源索引同步，系统不会把“可调用检索接口”等同于“已经拥有真实教学语料”。
 ## API-课程图谱：知识与技能关系（Python 直连）
 
-`PUT /api/v1/python/courses/graph`：导入或替换一门课程的审核版图谱。请求体包含 `user_id`、`course_id`、`title`、`nodes`（`id`、`label`、`kind=concept|skill`、可选 `description`）与 `edges`（`source`、`target`、`relation=prerequisite|contains|supports|assesses|applies`）。每次导入增加 `version`，不能提交悬空关系或重复节点。可从 `backend-python/A12-PY/examples/java_programming_course_graph.json` 复制示例，请先由任课教师确认内容。
+`PUT /api/v1/python/courses/graph`：保存教师确认后的课程双图谱。请求体包含 `course_id`、`title`、`subject`、`grade`、`expected_version`、`nodes`（`id`、`label`、`kind=concept|skill`、可选 `description`、`task`、`assessment`、`mastery_standard`）与 `edges`（`source`、`target`、`relation=prerequisite|contains|supports|assesses|applies|related`）。所属教师从 Bearer 会话确定，不要求前端提供 `user_id`；兼容提供时仍必须与登录用户一致。课程标识由前端自动生成，每次保存增加版本，版本冲突返回409。不能提交悬空关系、重复节点或循环先修关系。
 
-`GET /api/v1/python/courses/{course_id}/graph?user_id={user_id}`：返回当前课程图谱及版本，仅能读取当前登录用户自己的图谱。两个接口均需要 Bearer token；内部 Java 调用需要服务密钥。
+`GET /api/v1/python/courses/{course_id}/graph`：返回当前登录教师的课程图谱、学科、年级及版本，不要求 `user_id` 参数；兼容提供时必须与会话用户一致。浏览器直连 Python，两个接口均需要有效 Bearer token。
 
 资源索引 `POST /api/v1/python/resources/index/sync` 可在 `metadata.course_id` 传课程 ID。成功解析并向量化后，Python 为已审核节点补充带 `resource_key`、`content_sha256` 和摘录的证据；同一资源重解析时替换旧证据，删除索引时删除对应证据。新增课程关系仍须审核导入。大纲对话传 `known_context.course_id` 可明确指定课程；未指定时按主题和知识点保守匹配，无法唯一匹配则沿用原流程。
 
@@ -3869,7 +3875,7 @@ Python 使用内部密钥请求 `GET /api/v1/internal/ai-runtime-config`，该�
 | 方法 | 路径 | 说明 |
 | --- | --- | --- |
 | GET | `/api/v1/python/courses` | 当前教师的课程图谱列表 |
-| POST | `/api/v1/python/courses/graph/draft` | 根据 `title`、`subject`、`source_text`、`resource_ids` 提取双图谱候选；返回待教师确认结果，不自动入库 |
+| POST | `/api/v1/python/courses/graph/draft` | 根据 `title`、`subject`、`grade`、`source_text`、`resource_ids` 提取双图谱候选，每类至少3个节点；包含技能课堂任务、达标依据及知识支撑关系，返回待教师确认结果，不自动入库 |
 | GET | `/api/v1/python/courses/{course_id}/versions` | 图谱历史版本列表 |
 | POST | `/api/v1/python/courses/{course_id}/restore` | 提交 `version`、`expected_version`，将历史快照恢复为新版本；并发冲突返回409 |
 | POST | `/api/v1/python/courses/{course_id}/learning-path` | 按 `target_ids`、可选 `start_id`、`mastered_ids` 规划路径；`ordered_ids` 可提交人工调整后的完整顺序 |
@@ -3898,4 +3904,33 @@ Python 使用内部密钥请求 `GET /api/v1/internal/ai-runtime-config`，该�
 
 PPT 生成流的 `metadata.timing_ms` 返回准备、首张、总耗时；单页 `metadata.generation_ms` 记录每页生成耗时。资料检索和配图规划并行进行；快档精简模板上下文，并取消额外 HTML 修复模型调用，失败时回退本地合法 HTML。耗时取决于模型服务与页数，不承诺固定秒数。
 
-教学入口的 Python 分流 Graph 会在 `route` 外返回 `next_stage=ordinary_chat|outline_graph`。进入大纲 Graph 且信息足够时，工具检索之后会先发送 `learning_graphs` SSE 事件，结构为 `{knowledge:{title,nodes,edges},skill:{title,nodes,edges},status,course_id,course_version}`；随后才输出大纲增量。最终结果的 `outline.learning_graphs` 同步保存到 Java `plan_json`，历史会话可恢复图谱。前端默认展示知识图谱，切换按钮展示技能图谱；无审核课程图谱时返回标明待核对的草案。
+教学入口的 Python 分流 Graph 会在 `route` 外返回 `next_stage=ordinary_chat|outline_graph`。进入大纲 Graph 且信息足够时，工具检索之后会先发送 `learning_graphs` SSE 事件，结构为 `{knowledge:{title,nodes,edges},skill:{title,nodes,edges,knowledge_links},status,course_id,course_version}`，并以 `done.status=awaiting_graph_confirmation` 暂停。教师核对双图谱后，通过同一流式接口发送 `confirm_learning_graphs=true` 才生成大纲。最终结果的 `outline.learning_graphs` 同步保存到 Java `plan_json`，历史会话可恢复图谱。前端默认展示知识图谱，切换按钮展示技能图谱；无审核课程图谱时返回标明待核对的草案。
+
+#### 确认前修改技能图谱
+
+`PATCH /api/v1/python/outlines/chat/sessions/{session_id}/skill-graph`：前端直连 Python，携带登录令牌，身份由服务端确定并通过 Redis 校验，不可修改其他教师的会话。
+
+请求体：`{ "skill": { "title": "技能图谱", "nodes": [...], "edges": [...], "knowledge_links": [...] } }`。
+
+- `nodes`：4–12 个能力节点；必填 `id`、`label`（最多 48 字）、`task`、`assessment`（分别最多 240 字），可选 `level`、`description`。
+- `edges`：1–24 条能力关系，包含 `source`、`target`、`relation`（最多 16 字）。不得自连接、指向不存在的节点或重复连接同一对节点。
+- `knowledge_links`：最多 24 条支撑关系，包含 `knowledge_id`、`skill_id`；每个能力至少关联一个现有知识节点。
+
+成功响应：`Result.data={learning_graphs: 双图谱快照, status: "awaiting_graph_confirmation"}`。知识图谱保持不变，技能图谱写入待确认快照，修改前后内容保留用于溯源；确认生成大纲时使用修改后的快照。401 表示未登录，404 表示会话不存在或无权访问，409 表示非确认阶段或内容校验失败。
+
+#### 双图谱手动编辑及 AI 修改预览
+
+- `PATCH /api/v1/python/outlines/chat/sessions/{session_id}/learning-graphs`：请求体 `{graphs:{knowledge:{title,nodes,edges},skill:{title,nodes,edges,knowledge_links}}}`。知识图谱、技能图谱均可编辑，保存时同时校验两图及跨图关联。每图保留 4–12 个节点、1–24 条关系；技能需有课堂任务、达标依据及至少一个支撑知识点。修改写入待确认快照并记录前后内容，不改变审核课程原库。
+- `POST /api/v1/python/outlines/chat/sessions/{session_id}/learning-graphs/ai-edit`：请求体 `{graphs:当前双图谱草稿,kind:"knowledge"或"skill",instruction:"修改要求"}`。修改要求最多 2000 字；返回 `Result.data={learning_graphs:修改预览,preview_only:true}`，不会自动保存。AI 仅修改目标图谱，必要时修复知识与技能支撑关系；教师核对后调用上述保存接口。
+
+两接口均由前端直连 Python，通过 Redis 校验登录令牌，只允许当前教师操作处于双图谱确认阶段的会话。AI 预览格式或关联校验失败返回 422；模型不可用或超时返回 503，原图谱保持不变。只有教师保存并确认双图谱后才开始生成大纲。
+
+#### 社区投稿课件上传与解析
+
+`POST /api/v1/python/community/import-pptx`：前端直连 Python，携带登录令牌，通过 Redis 校验；multipart 表单字段为 `file`。
+
+- 支持 `.pptx`，文件最大 10MB、最多 100 页、解压总量最大 100MB。不支持旧版 `.ppt`、加密或损坏文件。
+- 成功响应 `Result.data={title,filename,page_count,content_data:{source:"a12-uploaded-pptx",slides:[{slide_no,title,html,content}]},warnings}`。
+- 导入文字、常见位图和表格，按页面坐标生成 HTML；复杂图表、组合形状、动画和主题样式不保证还原，需核对预览。不是保真原文件存储接口。
+- 前端将解析的页面写入投稿 `content_data`，调用现有 Java 投稿保存、版本及提交审核接口。上传不自动公开，审核通过后才展示；不经 Java 转发 AI 请求，也不依赖 OSS。
+- 格式、体积、页数不合规返回 400；未登录或令牌失效按现有 Python 鉴权规则拒绝。

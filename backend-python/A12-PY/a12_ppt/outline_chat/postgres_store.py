@@ -358,6 +358,26 @@ class PostgresOutlineMemoryStore:
             self.available = False
             return False
 
+    def get_teacher_preferences(self, user_id: str) -> dict[str, Any]:
+        # Read separately from the profile enrichment query; distinguish no row from DB failure.
+        import psycopg
+        with psycopg.connect(self.settings.postgres_dsn, connect_timeout=5) as conn:
+            with conn.cursor() as cur:
+                cur.execute("SELECT profile->'preferences' FROM a12_teacher_style_profile WHERE user_id=%s", (user_id,))
+                row = cur.fetchone()
+        defaults = {"teaching_style": "", "template_style": "", "interaction_forms": ["group_discussion", "quiz"]}
+        return {**defaults, **(row[0] if row and isinstance(row[0], dict) else {})}
+
+    def save_teacher_preferences(self, user_id: str, preferences: dict[str, Any]) -> bool:
+        # Update only explicit preferences, preserving learned evidence and manual tags.
+        payload = json.dumps({"preferences": preferences}, ensure_ascii=False)
+        return self._execute("""INSERT INTO a12_teacher_style_profile
+            (user_id,style_summary,profile,evidence_count,confidence)
+            VALUES (%s,'',%s::jsonb,0,0)
+            ON CONFLICT(user_id) DO UPDATE SET
+            profile=COALESCE(a12_teacher_style_profile.profile,'{}'::jsonb) || EXCLUDED.profile,
+            updated_at=NOW()""", (user_id, payload))
+
     def relearn_teacher_profile(self, user_id: str) -> dict[str, Any]:
         """根据已记录的历史接受/编辑反馈重算稳定偏好；单次指令不晋升为长期记忆。"""
         try:

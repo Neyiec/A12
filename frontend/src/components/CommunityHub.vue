@@ -12,6 +12,8 @@ import { COMMUNITY_PAGE } from '../config/teacherPages.config.js'
 import { createCommunityReport, createCommunitySubmission, favoriteCommunityItem, getCommunityItem, getCommunityReport, getCommunitySubmission, likeCommunityItem, listCommunityFavorites, listCommunityItems, listCommunityRankings, listCommunityRecentViews, listCommunityReports, listCommunitySubmissions, listResources, patchProject, recordCommunityView, removeCommunityRecentView, reuseCommunityItem, saveCommunitySubmissionVersion, submitCommunitySubmission, unlikeCommunityItem, unfavoriteCommunityItem, updateCommunitySubmission } from '../apis/teacher'
 import { useUserStore } from '../storage/user.js'
 import CommunityContentPreview from './CommunityContentPreview.vue'
+import { communityLoadError } from '../utils/communityLoadError.js'
+import { importCommunityPptx } from '../apis/teacher'
 
 const router = useRouter()
 const route = useRoute()
@@ -46,6 +48,7 @@ const rankItems = ref([])
 const rankLoading = ref(false)
 const rankError = ref('')
 const rankTypeTabs = [
+  { value: 'ppt', label: 'PPT 课件' },
   { value: 'skill', label: 'Skill' },
   { value: 'lesson_case', label: '教学案例' },
 ]
@@ -81,6 +84,9 @@ const detailAuthorAvatarText = computed(() => {
   return hasAuthorAvatar ? String(detailAuthorName.value || '教').slice(0, 2) : currentAvatarText.value
 })
 const collectionsLoading = ref(false)
+const collectionFavoritesOnly = ref(false)
+const favoritesPage = ref(1), favoritesTotal = ref(0)
+const favoritePending = ref(new Set())
 const collectionError = ref('')
 const reportsLoading = ref(false)
 const reportDetailVisible = ref(false)
@@ -88,6 +94,34 @@ const reportDetailLoading = ref(false)
 const reportDetail = ref(null)
 const submissionSaving = ref(false)
 const submissionLoading = ref(false)
+const coursewareUploading = ref(false)
+const coursewareInput = ref(null)
+const coursewareWarnings = ref([])
+const uploadSubmissionCourseware = async (event) => {
+  const file = event.target?.files?.[0]
+  if (event.target) event.target.value = ''
+  if (!file || coursewareUploading.value || submissionSaving.value || submissionReadOnly.value) return
+  if (!/\.pptx$/i.test(file.name)) return ElMessage.warning('请选择 PPTX 课件，旧版 PPT 请先另存为 PPTX')
+  if (file.size > 10 * 1024 * 1024) return ElMessage.warning('课件不能超过 10MB，请压缩图片后上传')
+  coursewareUploading.value = true
+  submissionError.value = ''
+  try {
+    const data = unwrap(assertApiSuccess(await importCommunityPptx(file)))
+    if (!data?.content_data?.slides?.length) throw new Error('课件未解析出页面，请检查文件')
+    syncSubmissionContentEditor()
+    submission.value = {
+      ...submission.value, content_type: 'ppt',
+      title: submission.value.title || data.title,
+      content_data: JSON.stringify({ ...(submissionContentObject.value || {}), ...data.content_data, original_filename: file.name }),
+    }
+    coursewareWarnings.value = data.warnings || []
+    hydrateSubmissionEditors()
+    ElMessage.success(`已导入 ${data.page_count} 页课件，请预览后提交审核`)
+  } catch (error) {
+    submissionError.value = error?.response?.data?.detail || error?.message || '课件上传失败，请重试'
+    ElMessage.error(submissionError.value)
+  } finally { coursewareUploading.value = false }
+}
 const submissionError = ref('')
 const emptySubmission = () => ({ id: null, content_type: 'lesson_case', title: '', description: '', subject: '', grade: '', lesson_type: '', keywords: '', content_data: '', input_variables: '', example_effect: '', license: 'CC BY-NC 4.0' })
 const submission = ref(emptySubmission())
@@ -172,6 +206,7 @@ const normalizeSubmissionPayload = () => {
   const title = String(submission.value.title || '').trim()
   if (!title) throw new Error('请输入投稿标题')
   const contentType = normalizeCommunityContentType(submission.value)
+  if (contentType === 'ppt' && !submissionContentObject.value?.slides?.length) throw new Error('请先上传 PPTX 课件，或从课件工作台发布')
   const license = String(submission.value.license || '').trim()
   if (!license) throw new Error('请填写授权许可')
   return {
@@ -522,7 +557,7 @@ const loadCommunity = async () => {
   } catch (error) {
     if (requestSeq !== communityRequestSeq) return
     communityTotal.value = 0
-    communityError.value = error?.message || '社区内容加载失败，请重试'
+    communityError.value = communityLoadError(error)
     if (isDevelopmentPreview.value) {
       usingDemoCards.value = true
       communityCards.value = COMMUNITY_PAGE.cards.map(normalizeCard)
@@ -712,6 +747,7 @@ const toggleFavorite = async (item) => {
   const rawId = item?.id ?? item?.item_id ?? item?.testCaseId
   if (rawId === null || rawId === undefined || rawId === '') return ElMessage.info('该内容暂不支持收藏')
   const favoriteKey = String(rawId)
+  if (favoritePending.value.has(favoriteKey)) return
   const next = !favoriteIds.value.has(favoriteKey)
   const previousIds = new Set(favoriteIds.value)
   const previousFavorites = [...favorites.value]
@@ -723,20 +759,29 @@ const toggleFavorite = async (item) => {
     return
   }
   try {
+    favoritePending.value.add(favoriteKey)
     if (next) await assertApiSuccess(await favoriteCommunityItem(rawId)); else await assertApiSuccess(await unfavoriteCommunityItem(rawId))
     if (next) {
       const existing = favorites.value.some((row) => String(favoriteItemId(row)) === favoriteKey)
-      if (!existing) favorites.value = [{ ...(item.raw || item), id: rawId }, ...favorites.value]
+      if (!existing) favorites.value = [{ ...(item.raw || item), id: rawId, favorited_at: new Date().toISOString() }, ...favorites.value]
     } else {
       favorites.value = favorites.value.filter((row) => String(favoriteItemId(row)) !== favoriteKey)
     }
     updateVisibleMetric(rawId, 'favorites', next ? 1 : -1)
     if (sortBy.value === 'favorite') loadCommunity()
     ElMessage.success(next ? '已收藏' : '已取消收藏')
+    if (next) {
+      collectionFavoritesOnly.value = true
+      favoritesPage.value = 1
+      collectionVisible.value = true
+      await loadCollections()
+    } else if (collectionVisible.value) await loadCollections()
   } catch (error) {
     favoriteIds.value = previousIds
     favorites.value = previousFavorites
     ElMessage.error(error?.message || '收藏状态未能更新')
+  } finally {
+    favoritePending.value.delete(favoriteKey)
   }
 }
 
@@ -833,7 +878,7 @@ const loadRankings = async () => {
   } catch (error) {
     if (requestSeq !== rankRequestSeq) return
     rankItems.value = []
-    rankError.value = error?.message || '热门榜单加载失败'
+    rankError.value = communityLoadError(error)
   } finally {
     if (requestSeq === rankRequestSeq) rankLoading.value = false
   }
@@ -866,13 +911,18 @@ const loadCollections = async () => {
   collectionsLoading.value = true
   collectionError.value = ''
   const [favoriteResult, recentResult] = await Promise.allSettled([
-    listCommunityFavorites({ page: 1, size: 30 }),
-    listCommunityRecentViews({ page: 1, size: 30 }),
+    listCommunityFavorites({ page: favoritesPage.value, size: 30 }),
+    collectionFavoritesOnly.value ? Promise.resolve({ code: 200, data: { records: [] } }) : listCommunityRecentViews({ page: 1, size: 30 }),
   ])
   let favoriteError = favoriteResult.status === 'rejected' ? favoriteResult.reason : null
   let recentError = recentResult.status === 'rejected' ? recentResult.reason : null
   if (favoriteResult.status === 'fulfilled') {
-    try { setFavoriteState(extractRecords(assertApiSuccess(favoriteResult.value))) } catch (error) { favoriteError = error; setFavoriteState([]) }
+    try {
+      const data = assertApiSuccess(favoriteResult.value)
+      favorites.value = extractRecords(data)
+      favoritesTotal.value = extractTotal(data, favorites.value.length)
+      favoriteIds.value = new Set([...favoriteIds.value, ...favorites.value.map(favoriteItemId).filter(id => id != null).map(String)])
+    } catch (error) { favoriteError = error }
   }
   if (recentResult.status === 'fulfilled') {
     try { recentViews.value = extractRecords(assertApiSuccess(recentResult.value)) } catch (error) { recentError = error; recentViews.value = [] }
@@ -883,6 +933,8 @@ const loadCollections = async () => {
   collectionsLoading.value = false
 }
 const openCollections = async () => {
+  collectionFavoritesOnly.value = false
+  favoritesPage.value = 1
   collectionVisible.value = true
   await loadCollections()
 }
@@ -897,6 +949,7 @@ const removeView = async (row) => {
 }
 
 const openSubmission = async () => {
+  coursewareWarnings.value = []
   submission.value = emptySubmission()
   hydrateSubmissionEditors()
   submissionError.value = ''
@@ -907,6 +960,7 @@ const openSubmission = async () => {
   }
 }
 const saveSubmission = async (submit = false) => {
+  if (submissionSaving.value || coursewareUploading.value) return
   submissionError.value = ''
   let payload
   try { payload = normalizeSubmissionPayload() } catch (error) {
@@ -1039,7 +1093,7 @@ onMounted(() => {
 
     <div class="community-status-row" aria-live="polite">
       <span v-if="usingDemoCards">演示内容</span>
-      <span v-else>{{ communityTotal }} 项公开内容</span>
+      <span v-else-if="!communityError">{{ communityTotal }} 项公开内容</span>
       <el-tag v-if="usingDemoCards" size="small" effect="plain">预览数据</el-tag>
       <span v-if="loading" class="status-muted">正在同步社区目录…</span>
     </div>
@@ -1094,7 +1148,7 @@ onMounted(() => {
         <div class="card-metrics"><span>收藏 {{ card.favorites }}</span><span>复用 {{ card.uses }}</span></div>
         <footer><span><el-icon><User /></el-icon>{{ card.author }}</span><div class="card-actions"><button class="card-detail" @click.stop="openDetail(card)">查看详情</button><button @click.stop="reuse(card)">{{ card.testCaseId ? '进入工作台 →' : `${card.uses} 次使用 →` }}</button></div></footer>
       </article>
-      <el-empty v-if="filteredCards.length === 0" class="community-empty" description="没有符合当前筛选条件的课件或教学内容" />
+      <el-empty v-if="!loading && !communityError && filteredCards.length === 0" class="community-empty" description="暂无符合条件的公开内容。Skill 可通过“我要投稿”提交，PPT 请从课件工作台发布；审核通过后才会展示。" />
     </section>
     <el-pagination v-if="communityTotal > communityPageSize" class="community-pagination" :current-page="communityPage" :page-size="communityPageSize" :total="communityTotal" layout="prev, pager, next" background @current-change="changeCommunityPage" />
     <p class="source-note">所有内容均标记来源、版本与授权信息；个人私有素材不会写回社区或进入公共索引。</p>
@@ -1115,12 +1169,12 @@ onMounted(() => {
             <el-alert v-if="submissionError" class="submission-inline-alert" :title="submissionError" type="error" show-icon :closable="false" />
             <div v-if="submissionReadOnly" class="submission-readonly-notice"><span>审核状态</span><strong>{{ statusLabel(submission.status) }}</strong><p>审核期间保留当前版本，仅支持查看。</p></div>
 
-            <el-form label-position="top" :disabled="submissionReadOnly" class="submission-form">
+            <el-form label-position="top" :disabled="submissionReadOnly || coursewareUploading || submissionSaving" class="submission-form">
               <section class="submission-section">
                 <header class="submission-section-heading"><div><span>基本信息</span><h3>这份内容适合什么课堂</h3></div><small>带 * 的内容为必填项</small></header>
                 <div class="submission-meta-grid">
                   <el-form-item class="submission-title-field" label="标题" required><el-input v-model="submission.title" maxlength="120" show-word-limit placeholder="用一句话说明案例主题" /></el-form-item>
-                  <el-form-item label="内容类型" required><el-select v-model="submission.content_type"><el-option label="教学案例" value="lesson_case" /><el-option label="Skill" value="skill" /><el-option label="PPT 课件（请从课件工作台发布）" value="ppt" disabled /></el-select></el-form-item>
+                  <el-form-item label="内容类型" required><el-select v-model="submission.content_type"><el-option label="教学案例" value="lesson_case" /><el-option label="Skill" value="skill" /><el-option label="PPT 课件" value="ppt" /></el-select></el-form-item>
                   <el-form-item label="学科"><el-input v-model="submission.subject" placeholder="例如 数学" /></el-form-item>
                   <el-form-item label="学段"><el-input v-model="submission.grade" placeholder="例如 初中" /></el-form-item>
                   <el-form-item label="课型"><el-input v-model="submission.lesson_type" placeholder="例如 探究课" /></el-form-item>
@@ -1132,6 +1186,11 @@ onMounted(() => {
               </section>
 
               <section class="submission-section submission-content-section">
+                <input ref="coursewareInput" type="file" accept=".pptx" hidden @change="uploadSubmissionCourseware" />
+                <el-button v-if="!submissionReadOnly" :loading="coursewareUploading" :disabled="submissionSaving" @click="coursewareInput?.click()">{{ submissionSlidePreviews.length ? '替换上传课件' : '上传 PPTX 课件' }}</el-button>
+                <p class="submission-section-intro">支持 PPTX，最大 10MB、100 页；文字、图片和表格会导入预览，复杂图表、动画与主题样式可能简化。上传不会直接公开，需提交审核。</p>
+                <el-alert v-for="warning in coursewareWarnings" :key="warning" :title="warning" type="warning" :closable="false" />
+                <CommunityContentPreview v-if="submission.content_type === 'ppt' && submissionSlidePreviews.length" :item="submission" />
                 <header class="submission-section-heading submission-content-heading"><div><span>内容概览</span></div></header>
                 <div class="submission-metric-grid"><div v-for="metric in submissionContentMetrics" :key="metric.label"><strong>{{ metric.value }}</strong><span>{{ metric.label }}</span></div></div>
                 <el-form-item label="教学目标 / 内容说明"><el-input v-model="submissionContentEditor.objective" type="textarea" :rows="3" maxlength="400" show-word-limit placeholder="例如：引导学生用实验现象解释光的折射规律" /></el-form-item>
@@ -1168,18 +1227,19 @@ onMounted(() => {
       </div>
       <template #footer><el-button :disabled="submissionSaving || submissionLoading" @click="submissionVisible = false">{{ submissionReadOnly ? '关闭' : '稍后继续' }}</el-button><el-button v-if="!submissionReadOnly" :loading="submissionSaving" :disabled="submissionLoading" @click="saveSubmission(false)">保存草稿</el-button><el-button v-if="!submissionReadOnly" type="primary" :loading="submissionSaving" :disabled="submissionLoading" @click="saveSubmission(true)">提交审核</el-button></template>
     </el-dialog>
-    <el-dialog v-model="collectionVisible" class="community-collection-dialog" title="我的收藏与最近浏览" width="min(680px, 92vw)">
+    <el-dialog v-model="collectionVisible" class="community-collection-dialog" :title="collectionFavoritesOnly ? '我的收藏夹' : '我的收藏与最近浏览'" width="min(680px, 92vw)">
       <div v-loading="collectionsLoading">
         <el-alert v-if="collectionError" :title="collectionError" type="error" show-icon :closable="false"><template #default><el-button text type="primary" @click="loadCollections">重试</el-button></template></el-alert>
         <section class="collection-section">
-          <h3>我的收藏</h3>
+          <h3>我的收藏 · 按收藏时间从新到旧</h3>
           <div v-for="row in favorites" :key="favoriteItemId(row)" class="collection-row">
-            <button class="collection-item-link" @click="openDetail(favoriteItem(row))">{{ favoriteItem(row).title || `内容 #${favoriteItemId(row)}` }}</button>
+            <div class="favorite-file"><button class="collection-item-link" @click="collectionVisible = false; openDetail(favoriteItem(row))">▤ {{ favoriteItem(row).title || `内容 #${favoriteItemId(row)}` }}</button><small>{{ row.favorited_at ? new Date(row.favorited_at).toLocaleString('zh-CN', { hour12: false }) : '收藏时间暂无记录' }}</small></div>
             <el-button text size="small" @click="toggleFavorite(favoriteItem(row))">取消收藏</el-button>
           </div>
           <el-empty v-if="!favorites.length" description="暂无收藏" />
+          <el-pagination v-if="favoritesTotal > 30" v-model:current-page="favoritesPage" :page-size="30" :total="favoritesTotal" layout="prev, pager, next" @current-change="loadCollections" />
         </section>
-        <section class="collection-section">
+        <section v-if="!collectionFavoritesOnly" class="collection-section">
           <h3>最近浏览</h3>
           <div v-for="row in recentViews" :key="recentViewId(row)" class="collection-row">
             <button class="collection-item-link" @click="openDetail(recentViewItem(row))">{{ recentViewTitle(row) }}</button>
@@ -1308,6 +1368,7 @@ onMounted(() => {
 </template>
 
 <style scoped>
+.favorite-file{display:grid;gap:6px;min-width:0;flex:1}.favorite-file small{color:#64748b;font-size:12px}.community-collection-dialog .collection-section{max-height:52vh;overflow:auto;padding-right:8px}
 .community-page { width: min(1180px, calc(100% - 48px)); margin: 0 auto; padding: 40px 0 60px; }
 .community-hero { width: 100%; padding: 26px 0 20px; }.community-hero > p { margin: 0 0 10px; color: var(--zh-text-theme); font-size: 12px; font-weight: 600; letter-spacing: .08em; }
 .community-hero h1 { max-width: 680px; margin: 0; font-size: clamp(32px, 4vw, 48px); line-height: 1.18; letter-spacing: var(--zh-tracking-tight); text-wrap: balance; }

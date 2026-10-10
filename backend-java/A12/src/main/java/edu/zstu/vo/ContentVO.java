@@ -37,4 +37,5 @@ public class ContentVO {
     private boolean liked;        //当前用户是否已点赞（未登录恒为 false，不参与缓存）
     private LocalDateTime created_at;
     private LocalDateTime updated_at;
+    private LocalDateTime favorited_at; // 当前用户收藏时间，不是内容发布时间
 }
