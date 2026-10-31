@@ -3,7 +3,7 @@ import { test } from 'node:test'
 import { createServer } from 'vite'
 
 test('学科组件离线渲染：公式、化学式、流程图和完整函数坐标图', async () => {
-  const server = await createServer({ server: { middlewareMode: true }, appType: 'custom' })
+  const server = await createServer({ configFile: false, server: { middlewareMode: true }, appType: 'custom', optimizeDeps: { noDiscovery: true } })
   try {
     const { subjectToolMarkup } = await server.ssrLoadModule('/src/utils/subjectTool.js')
     const formula = subjectToolMarkup({ subjectType: 'math_formula', data: { latex: 'y=x^2', display_mode: true } })

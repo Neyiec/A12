@@ -8,6 +8,7 @@ import { computed, onBeforeUnmount, onMounted, ref, watch } from 'vue'
 import { ElMessage } from 'element-plus'
 import { Delete, Edit, Folder, Loading, Lock, MoreFilled, Plus, Refresh, Search, Setting, Upload } from '@element-plus/icons-vue'
 import { downloadFile } from '../utils/api'
+import { resourceIndexStatus, indexSyncResult } from '../utils/resourceIndexStatus'
 import {
   batchResourceAction,
   bootstrapResourceIndex,
@@ -135,8 +136,10 @@ const normalizeRealResource = (item) => ({
   size: formatFileSize(item.file_size),
   fileSize: Number(item.file_size) || 0,
   date: formatUpdatedAt(item.updated_at || item.created_at),
-  // AI 索引状态：异步同步期间展示「索引中」过程态，完成后按 allow_ai 显示启用态
-  status: item.ai_index_status === 'indexing' ? '索引中' : (item.allow_ai === 1 ? '已启用' : '未启用'),
+  status: resourceIndexStatus(item).label,
+  statusType: resourceIndexStatus(item).type,
+  indexError: resourceIndexStatus(item).error,
+  aiUsable: resourceIndexStatus(item).usable,
   private: item.access_type !== 'shared',
   description: item.description || '',
   raw: item,
@@ -144,10 +147,10 @@ const normalizeRealResource = (item) => ({
 
 const resourceStats = computed(() => {
   const totalSize = resources.value.reduce((sum, item) => sum + item.fileSize, 0)
-  const aiAvailable = resources.value.filter((item) => item.status === '已启用').length
+  const aiAvailable = resources.value.filter((item) => item.aiUsable).length
   return [
     { label: '全部素材', value: resourcesError.value ? '—' : String(resourceTotal.value), detail: `当前已加载 ${resources.value.length} 项` },
-    { label: '可供 AI 引用', value: resourcesError.value ? '—' : String(aiAvailable), detail: '依据资源授权状态统计' },
+    { label: '可供 AI 引用', value: resourcesError.value ? '—' : String(aiAvailable), detail: '当前已加载素材中，已解析且允许 AI 使用的数量' },
     { label: '已加载空间', value: resourcesError.value ? '—' : formatFileSize(totalSize), detail: '当前列表资源总大小' },
   ]
 })
@@ -635,8 +638,9 @@ const syncIndexResource = async (row, forceReparse = false) => {
   if (!payload) return ElMessage.warning('该资源缺少可供 Python 解析的文件地址，暂时无法同步')
   indexActionLoading.value = true
   try {
-    await syncResourceIndex({ ...payload, force_reparse: forceReparse })
-    ElMessage.success(forceReparse ? '资源索引已重建' : '资源索引已同步')
+    const { complete } = indexSyncResult(await syncResourceIndex({ ...payload, force_reparse: forceReparse }))
+    if (complete) ElMessage.success(forceReparse ? '资源索引已重建' : '资源索引已同步')
+    else ElMessage.info('同步请求已提交，请刷新查看实际解析状态')
     await loadIndexPanel()
   } catch (error) { ElMessage.error(error?.message || '资源索引同步失败，请稍后重试') } finally { indexActionLoading.value = false }
 }
@@ -773,7 +777,7 @@ onBeforeUnmount(() => {
             </template>
           </el-table-column>
           <el-table-column prop="date" label="更新时间" min-width="120" />
-          <el-table-column label="解析状态" width="110"><template #default="{ row }"><el-tag :type="row.status === '已启用' ? 'success' : row.status === '索引中' ? 'warning' : 'info'" effect="light">{{ row.status }}</el-tag></template></el-table-column>
+          <el-table-column label="解析状态" min-width="120"><template #default="{ row }"><el-tooltip :content="row.indexError || row.status" placement="top"><el-tag :type="row.statusType" effect="light">{{ row.status }}</el-tag></el-tooltip></template></el-table-column>
           <el-table-column label="权限" width="108"><template #default="{ row }"><span class="private-label"><el-icon><Lock /></el-icon> {{ row.private ? '私有' : '共享' }}</span></template></el-table-column>
           <el-table-column class-name="resource-action-column" width="54" align="center"><template #default="{ row }"><el-dropdown trigger="click" @command="handleAction(row, $event)"><el-button class="resource-more-button" text circle data-hover-reveal aria-label="更多操作"><el-icon><MoreFilled /></el-icon></el-button><template #dropdown><el-dropdown-menu><el-dropdown-item command="edit"><el-icon><Edit /></el-icon>编辑信息</el-dropdown-item><el-dropdown-item command="permission">权限设置</el-dropdown-item><el-dropdown-item command="download">下载</el-dropdown-item><el-dropdown-item class="resource-danger-menu-item" command="delete" divided><el-icon><Delete /></el-icon>删除</el-dropdown-item></el-dropdown-menu></template></el-dropdown></template></el-table-column>
         </el-table>
@@ -800,7 +804,8 @@ onBeforeUnmount(() => {
                 <strong :title="row.name">{{ row.name }}</strong>
                 <small>{{ row.course }} · {{ row.size }} · {{ row.date }}</small>
                 <div class="resource-card-meta">
-                  <el-tag size="small" :type="row.status === '已启用' ? 'success' : row.status === '索引中' ? 'warning' : 'info'" effect="light">{{ row.status }}</el-tag>
+                  <el-tooltip :content="row.indexError || row.status" placement="top"><el-tag size="small" :type="row.statusType" effect="light">{{ row.status }}</el-tag></el-tooltip>
+                  <small v-if="row.indexError" role="status">{{ row.indexError }}</small>
                   <span class="private-label"><el-icon><Lock /></el-icon>{{ row.private ? '私有' : '共享' }}</span>
                 </div>
               </div>

@@ -27,7 +27,7 @@ class ProjectVersionRestoreTest {
         version.setId(4); version.setProject_id(7); version.setVersion_number(2);
         version.setSnapshot_data(snapshot); when(versions.findById(4)).thenReturn(version);
         when(pages.findByProjectId(7)).thenReturn(List.of());
-        when(projects.updateWithVersion(any(), eq(9))).thenReturn(1);
+        when(projects.restoreContentWithVersion(any(), eq(9))).thenReturn(1);
         when(versions.findMaxVersionNumber(7)).thenReturn(3);
         return project;
     }
@@ -40,7 +40,7 @@ class ProjectVersionRestoreTest {
         order.verify(pages).deleteByProjectId(7);
         ArgumentCaptor<Ws_Page> restored = ArgumentCaptor.forClass(Ws_Page.class);
         order.verify(pages).insert(restored.capture());
-        order.verify(projects).updateWithVersion(project, 9);
+        order.verify(projects).restoreContentWithVersion(project, 9);
         assertEquals(7, restored.getValue().getProject_id());
         assertEquals(1, restored.getValue().getPage_version());
         assertEquals("旧页面", restored.getValue().getPage_title());
@@ -59,6 +59,16 @@ class ProjectVersionRestoreTest {
         verify(versions, never()).insert(any()); verify(pages, never()).deleteByProjectId(any());
     }
 
+    @Test void directRestoreReplacesPagesWithoutCreatingBackupVersion() {
+        setup("{\"pages\":[{\"page_order\":1,\"page_title\":\"直接恢复\"}]}");
+        service.restoreVersion("7", "4", 1, false);
+        verify(versions, never()).insert(any());
+        verify(versions, never()).findMaxVersionNumber(any());
+        verify(pages).deleteByProjectId(7);
+        verify(pages).insert(any());
+        verify(projects).restoreContentWithVersion(any(), eq(9));
+    }
+
     @Test void rejectsBrokenSnapshotBeforeWriting() {
         setup("{\"project\":{}}");
         assertThrows(RuntimeException.class, () -> service.restoreVersion("7", "4", 1));
@@ -73,7 +83,18 @@ class ProjectVersionRestoreTest {
 
     @Test void rejectsConcurrentUpdate() {
         setup("{\"pages\":[]}");
-        when(projects.updateWithVersion(any(), eq(9))).thenReturn(0);
+        when(projects.restoreContentWithVersion(any(), eq(9))).thenReturn(0);
         assertThrows(RuntimeException.class, () -> service.restoreVersion("7", "4", 1));
+    }
+
+    @Test void oldNullMetadataClearsNewerLessonPlanAndUsesDedicatedRestoreUpdate() {
+        Ws_Project project = setup("{\"project\":{\"project_name\":\"旧版\",\"snapshots\":null,\"edit_history\":null},\"pages\":[]}");
+        project.setEdit_history("{\"lesson_plan\":{\"title\":\"新版教案\"}}");
+        project.setSnapshots("[{\"new\":true}]");
+        service.restoreVersion("7", "4", 1);
+        assertNull(project.getEdit_history());
+        assertNull(project.getSnapshots());
+        verify(projects).restoreContentWithVersion(project, 9);
+        verify(projects, never()).updateWithVersion(any(), any());
     }
 }

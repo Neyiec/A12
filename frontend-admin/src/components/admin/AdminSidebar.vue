@@ -27,6 +27,7 @@ import { useRouter, useRoute } from 'vue-router'
 import { useUserStore } from '../../storage/user'
 import { logout } from '../../apis/login.js'
 import { ElMessage } from 'element-plus'
+import { filterAdminMenus, permissionList } from '../../utils/adminAccess.js'
 import {
   Setting,
   UserFilled,
@@ -55,6 +56,7 @@ const userStore = useUserStore()
  * - type: 'sub'  → 父节点，渲染为 <el-sub-menu>，children 为子节点
  */
 const menuConfig = [
+  { type: 'item', key: 'questions', path: '/main/questions', icon: Checked, label: '题库录入与审核', subLabel: 'Question Bank' },
   {
     type: 'item',
     key: 'dashboard',
@@ -118,6 +120,7 @@ const menuConfig = [
  * 收集所有叶子节点路径，用于路由匹配判断
  * 遍历 menuConfig，提取 type === 'item' 的 path 字段
  */
+const visibleMenus = computed(() => filterAdminMenus(menuConfig, userStore.userInfo?.permissions))
 const allLeafPaths = []
 const collectLeafPaths = (items) => {
   for (const item of items) {
@@ -174,9 +177,10 @@ const adminName = computed(() => {
 /** 当前登录管理员角色标签 */
 const adminRole = computed(() => {
   const info = userStore.userInfo
-  if (info && info.user_type === 'admin') {
+  if (permissionList(info?.roles).includes('super_admin')) {
     return '超级管理员'
   }
+  if (info?.user_type === 'admin') return '后台管理员'
   return '管理员'
 })
 
@@ -246,7 +250,7 @@ const handleUserCommand = async (command) => {
       style="border-right: none;"
     >
       <!-- 遍历菜单配置：区分叶子节点 (el-menu-item) 与父节点 (el-sub-menu) -->
-      <template v-for="item in menuConfig" :key="item.key">
+      <template v-for="item in visibleMenus" :key="item.key">
         <!-- 叶子节点：直接可点击导航 -->
         <el-menu-item v-if="item.type === 'item'" :index="item.path">
           <el-icon><component :is="item.icon" /></el-icon>
@@ -283,6 +287,10 @@ const handleUserCommand = async (command) => {
           </el-menu-item>
         </el-sub-menu>
       </template>
+      <el-menu-item v-if="!visibleMenus.length" index="/main/access">
+        <el-icon><Setting /></el-icon>
+        <template #title>权限与访问说明</template>
+      </el-menu-item>
     </el-menu>
 
     <!-- ===== 底部：管理员信息区（视觉规范同步用户端 TeacherLayout .teacher-profile） ===== -->

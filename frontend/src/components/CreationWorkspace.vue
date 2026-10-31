@@ -214,6 +214,24 @@ const versionTotal = ref(0)
 const versionError = ref('')
 const versionDescription = ref('')
 const versionActionLoading = ref(false)
+const restoringVersion = ref(false)
+const restoreChoiceVisible = ref(false)
+const restoreChoiceVersion = ref(null)
+const restoredContentRevision = ref(0)
+let resolveRestoreChoice = null
+const finishVersionRestoreChoice = (mode) => {
+  const resolve = resolveRestoreChoice
+  resolveRestoreChoice = null
+  restoreChoiceVisible.value = false
+  resolve?.(mode)
+}
+const chooseVersionRestore = (version) => {
+  if (resolveRestoreChoice) return Promise.resolve(null)
+  restoreChoiceVersion.value = version
+  restoreChoiceVisible.value = true
+  return new Promise(resolve => { resolveRestoreChoice = resolve })
+}
+onBeforeUnmount(() => finishVersionRestoreChoice(null))
 const versionDiffLoading = ref(false)
 const compareVersionId = ref('')
 const manualSaveLoading = ref(false)
@@ -274,6 +292,7 @@ const pendingDeckRevision = ref(null)
 const revisionUndoSnapshot = ref(null)
 const workspaceClientVersion = `workspace-${Date.now()}`
 const loadedPageDetailIds = new Set()
+let projectHydrationEpoch = 0
 const componentValidationCache = new Map()
 const pendingComponentSync = new WeakMap()
 const subjectValidationPending = ref(false)
@@ -5071,18 +5090,21 @@ const applyGeneratedPage = (rawResponse) => {
 const loadProjectPageDetail = async (index) => {
   const slide = slides[index]
   if (!projectId.value || !slide?.pageId) return
+  const epoch = projectHydrationEpoch
+  const targetProjectId = projectId.value
   const detailKey = `${projectId.value}:${slide.pageId}`
   if (loadedPageDetailIds.has(detailKey)) return
   loadedPageDetailIds.add(detailKey)
   hydratingProject.value = true
   try {
-    const detail = unwrapResponse(await getProjectPage(projectId.value, slide.pageId))
-    if (detail && slides[index] === slide) slides.splice(index, 1, pageToSlide(detail, index))
+    const detail = unwrapResponse(await getProjectPage(targetProjectId, slide.pageId))
+    if (epoch === projectHydrationEpoch && targetProjectId === projectId.value && detail && slides[index] === slide) slides.splice(index, 1, pageToSlide(detail, index))
   } catch (error) {
+    if (epoch !== projectHydrationEpoch) return
     loadedPageDetailIds.delete(detailKey)
     WorkspaceMessage.warning(workspaceRequestErrorMessage(error, '页面详情加载失败，已使用页面列表数据'))
   } finally {
-    hydratingProject.value = false
+    if (epoch === projectHydrationEpoch) { await nextTick(); hydratingProject.value = false }
   }
 }
 const isProjectVersionConflict = (error) => {
@@ -5222,20 +5244,22 @@ const saveLessonPlanDraft = async (plan, { throwOnError = false, notify = true }
 }
 let lessonPlanAutosavePromise = Promise.resolve()
 const autosaveLessonPlanDraft = (plan) => {
+  if (restoringVersion.value) return Promise.resolve()
   lessonPlanAutosavePromise = lessonPlanAutosavePromise
     .catch(() => {})
     .then(() => saveLessonPlanDraft(plan, { notify: false }))
   return lessonPlanAutosavePromise
 }
-const loadProject = async () => {
+const loadProject = async ({ restoredProject = null, selectedIndex = 0, strict = false } = {}) => {
   if (!projectId.value) return
+  projectHydrationEpoch += 1
   hydratingProject.value = true
   projectLoadError.value = ''
   presentationMetadata.value = null
   qualityReport.value = null
   qualityReportSource.value = ''
   try {
-    project.value = unwrapResponse(await getProject(projectId.value))
+    project.value = restoredProject || unwrapResponse(await getProject(projectId.value))
     workspaceMode.value = normalizeWorkspaceMode(project.value?.project_type || routeQueryValue(route.query.workspaceMode || route.query.mode))
     const projectHistory = parseJson(project.value?.edit_history, {})
     const savedWorkspaceContext = projectHistory?.workspace_context || projectHistory?.workspaceContext
@@ -5246,7 +5270,7 @@ const loadProject = async () => {
     setQualityReport(project.value?.reflections || project.value?.reflection || project.value?.quality_report || project.value?.qualityReport, '项目记录')
     let pages = []
     try {
-      const listedPages = unwrapResponse(await listProjectPages(projectId.value))
+      const listedPages = restoredProject ? restoredProject.pages : unwrapResponse(await listProjectPages(projectId.value))
       pages = pageRecords(listedPages)
     } catch (error) {
       pages = pageRecords(project.value?.pages)
@@ -5285,7 +5309,11 @@ const loadProject = async () => {
         WorkspaceMessage.warning(workspaceRequestErrorMessage(error, '社区课件已载入，但页面保存失败，请先手动保存项目'))
       }
     }
-    selectedSlide.value = 0
+    selectedSlide.value = Math.min(Math.max(0, selectedIndex), slides.length - 1)
+    if (restoredProject) {
+      sourcePages.forEach(page => loadedPageDetailIds.add(`${projectId.value}:${page.id || page.page_id}`))
+      syncHtmlCanvasSource(current.value, { forceReload: true })
+    }
     savedChangeVersion = localChangeVersion
     savedStructureVersion = localStructureVersion
     autosaveQueued = false
@@ -5293,10 +5321,15 @@ const loadProject = async () => {
   } catch (error) {
     projectLoadError.value = workspaceRequestErrorMessage(error, '项目内容加载失败')
     WorkspaceMessage.error(projectLoadError.value)
-  } finally { hydratingProject.value = false }
-  await loadProjectPageDetail(0)
-  await syncProjectMetadataIfNeeded()
-  await syncProjectWorkspaceContextIfNeeded()
+    if (strict) throw error
+    return false
+  } finally { await nextTick(); hydratingProject.value = false }
+  await loadProjectPageDetail(selectedSlide.value)
+  if (!restoredProject) {
+    await syncProjectMetadataIfNeeded()
+    await syncProjectWorkspaceContextIfNeeded()
+  }
+  return true
 }
 const retryProjectLoad = async () => {
   if (!projectId.value) return
@@ -7330,6 +7363,7 @@ const loadVersions = async () => {
 }
 const persistVersionContent = async () => {
   await persistSlideOrder({ throwOnError: true })
+  lessonPlanEditorRef.value?.flushAutosave?.()
   if (typeof lessonPlanAutosavePromise !== 'undefined' && lessonPlanAutosavePromise) await lessonPlanAutosavePromise.catch(() => {})
   const plan = lessonPlanEditorRef.value?.getLessonPlan?.()
   if (plan) await saveLessonPlanDraft(plan, { throwOnError: true })
@@ -7382,24 +7416,38 @@ const showVersionDiff = async (version) => {
 const restoreVersion = async (version) => {
   if (versionActionLoading.value) return
   if (revisionSubmitting.value || revisionStage.value) return WorkspaceMessage.warning('请等待当前 AI 修改完成后再恢复快照')
-  try { await ElMessageBox.confirm('将当前内容保存为备份版本后恢复此版本，恢复后可在版本历史中找回当前内容。', '恢复历史版本', { confirmButtonText: '备份并恢复', cancelButtonText: '取消', type: 'warning' }) }
-  catch { return }
+  const mode = await chooseVersionRestore(version)
+  if (!mode) return
+  const backup = mode === 'backup'
   versionActionLoading.value = true
+  restoringVersion.value = true
   try {
     clearTimeout(autosaveTimer)
-    await persistCurrentSlide({ throwOnError: true })
-    await persistVersionContent()
+    const selectedIndex = selectedSlide.value
+    if (backup) {
+      await persistCurrentSlide({ throwOnError: true })
+      await persistVersionContent()
+    } else {
+      // 只等待已经发出的写入结束，不强制保存即将丢弃的本地修改。
+      await waitForPendingProjectWrites()
+      if (lessonPlanAutosavePromise) await lessonPlanAutosavePromise.catch(() => {})
+    }
+    clearTimeout(autosaveTimer)
     // Server-side backup and restore share one transaction.
-    const restored = unwrapResponse(await restoreProjectVersion(projectId.value, version.id || version.version_id))
+    const restored = unwrapResponse(await restoreProjectVersion(projectId.value, version.version_id || version.id, { backup }))
+    if (!restored || !Array.isArray(restored.pages)) throw new Error('恢复接口未返回完整页面，请重新加载项目核对')
     project.value = { ...(project.value || {}), ...(restored || {}) }
     versionDiff.value = null
     // 恢复接口会重建页面记录并生成新的页面 ID，不能继续沿用内存中的旧画布数据。
-    await loadProject()
+    await loadProject({ restoredProject: restored, selectedIndex, strict: true })
+    restoredContentRevision.value += 1
+    revisionUndoSnapshot.value = null
+    pendingDeckRevision.value = null
     versionPage.value = 1
     await loadVersions()
     WorkspaceMessage.success('已恢复历史版本，画布已刷新')
   } catch (error) { WorkspaceMessage.error(error?.message || '版本恢复失败') }
-  finally { versionActionLoading.value = false }
+  finally { clearTimeout(autosaveTimer); restoringVersion.value = false; versionActionLoading.value = false }
 }
 const parsePermissionIds = (value) => {
   const parsed = typeof value === 'string' ? parseJson(value, []) : value
@@ -7646,12 +7694,12 @@ const removeWorkspaceProject = async (id = projectId.value) => {
   finally { projectActionLoading.value = false }
 }
 const scheduleWorkspaceAutosave = (delay = 700, { force = false } = {}) => {
-  if (!projectId.value || testCaseBootstrapping.value || hydratingProject.value || suppressAutosaveAfterDiscard) return
+  if (!projectId.value || testCaseBootstrapping.value || hydratingProject.value || restoringVersion.value || suppressAutosaveAfterDiscard) return
   clearTimeout(autosaveTimer)
   autosaveState.value = '待保存'
   autosaveTimer = setTimeout(() => {
     autosaveTimer = null
-    if (!projectId.value || hydratingProject.value) return
+    if (!projectId.value || hydratingProject.value || restoringVersion.value) return
     if (savingPage.value || pageSavePromise || orderSavePromise) {
       autosaveQueued = true
       return
@@ -7667,7 +7715,7 @@ watch(slides, () => {
     if (!testCaseBootstrapping.value && !hydratingProject.value) saveCurrentPresentationDraft()
     return
   }
-  if (testCaseBootstrapping.value || hydratingProject.value || savingPage.value) return
+  if (testCaseBootstrapping.value || hydratingProject.value || restoringVersion.value || savingPage.value) return
   scheduleWorkspaceAutosave(700, { force: true })
 }, { deep: true })
 watch(selectedSlide, () => {
@@ -8376,7 +8424,7 @@ const selectSlide = (index) => { selectedSlide.value = index; selectedElementId.
           <LessonPlanEditor
             v-show="!isMobile || mobileLessonMode === 'edit' || !hasDocumentPlan"
             ref="lessonPlanEditorRef"
-            :key="`${projectId || currentDraftStorageId}:lesson-plan`"
+            :key="`${projectId || currentDraftStorageId}:lesson-plan:${restoredContentRevision}`"
             :title="lessonPlanTitle"
             :subject="lessonPlanSubject"
             :grade="lessonPlanGrade"
@@ -8879,8 +8927,14 @@ const selectSlide = (index) => { selectedSlide.value = index; selectedElementId.
       </div>
       <template #footer><el-button @click="contextManagerVisible = false">取消</el-button><el-button type="primary" :loading="contextManagerSaving" :disabled="contextResourceUploading" @click="saveWorkspaceContextBindings">保存绑定</el-button></template>
     </el-dialog>
+    <el-dialog v-model="restoreChoiceVisible" append-to-body align-center title="恢复历史版本" width="min(520px, 92vw)" :close-on-click-modal="false" @close="finishVersionRestoreChoice(null)">
+      <p>恢复到版本 {{ restoreChoiceVersion?.version_number || restoreChoiceVersion?.version_id || restoreChoiceVersion?.id }}，请选择恢复方式：</p>
+      <p><strong>直接恢复：</strong>不创建备份，当前未保存的修改将被丢弃。</p>
+      <p><strong>备份恢复：</strong>先将当前内容保存为新快照，再恢复指定版本。</p>
+      <template #footer><div style="display:flex;justify-content:flex-end;gap:8px;flex-wrap:wrap"><el-button @click="finishVersionRestoreChoice('direct')">直接恢复</el-button><el-button @click="finishVersionRestoreChoice(null)">取消</el-button><el-button type="primary" @click="finishVersionRestoreChoice('backup')">备份恢复</el-button></div></template>
+    </el-dialog>
     <el-dialog v-model="versionDialogVisible" align-center title="项目版本历史" width="min(720px, 92vw)" :close-on-click-modal="!versionActionLoading" :close-on-press-escape="!versionActionLoading" :show-close="!versionActionLoading">
-      <p class="dialog-hint">保存关键阶段的课件，随时比较或恢复；恢复前会自动备份当前内容。</p>
+      <p class="dialog-hint">保存关键阶段的课件，随时比较或恢复；恢复时可选择直接恢复，或先备份当前内容。</p>
       <div class="workspace-version-create">
         <el-input v-model="versionDescription" aria-label="版本说明" placeholder="版本说明，例如：完成课堂练习与讲解备注" maxlength="200" show-word-limit :disabled="versionActionLoading" />
         <el-button type="primary" :loading="versionActionLoading" @click="createVersion">保存新版本</el-button>

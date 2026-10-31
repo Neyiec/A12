@@ -5,10 +5,15 @@ import{
 
 import login from '../components/login.vue'
 import main from '../components/main.vue'
-import {getRouters} from'../apis/login.js'
+import {getCurrentUser} from'../apis/login.js'
 import {isTokenExpired} from '../utils/JWTParser.js'
 // 全局用户 store — 替代直接操作 localStorage
 import { useUserStore } from '../storage/user.js'
+import { ElMessage } from 'element-plus'
+import { canAccessAdminPath, firstAdminPath } from '../utils/adminAccess.js'
+import { loginLocation } from '../../../frontend/src/utils/sessionRedirect.js'
+
+const componentLoaders = import.meta.glob(['../components/*.vue', '../views/admin/*.vue'])
 
 const routes = [
   {
@@ -26,6 +31,12 @@ const routes = [
     redirect: '/main/dashboard',
     // 静态子路由 — 六个管理模块作为 main 布局的嵌套路由
     children: [
+      { path: 'access', name: 'AdminAccess', component: () => import('../views/admin/AccessNotice.vue'), meta: { staticTeacherPage: true } },
+      {
+        path: 'questions', name: 'QuestionManagement',
+        component: () => import('../views/admin/QuestionManagement.vue'),
+        meta: { staticTeacherPage: true },
+      },
       {
         path: 'dashboard',
         name: 'Dashboard',
@@ -86,18 +97,15 @@ export function addDynamicRoutes(menus) {
   // 遍历当前层
   menus.forEach(menu => {
     // 处理路径：确保是相对于 /main 的路径
-    let relativePath = menu.path
+    let relativePath = String(menu.path || '')
     if (relativePath.startsWith('/main/')) {
       relativePath = relativePath.replace('/main/', '')
     }
     // TODO 这里的父路由名被固定为Main，后期可以改成动态获取
-    if (menu.path && menu.component){
-      // 动态导入组件 - 从 components 目录加载
-      const component = () => import(`@/components/${menu.component}.vue`)
-      router.addRoute('M', {
-        path: relativePath,
-        component
-      })
+    if (menu.path && menu.component && !router.getRoutes().some(route => route.path === menu.path)){
+      const name = String(menu.component).replace(/\.vue$/i, '')
+      const component = componentLoaders[`../components/${name}.vue`] || componentLoaders[`../views/admin/${name}.vue`]
+      if(component && relativePath && !relativePath.startsWith('/')) router.addRoute('M', { path: relativePath, component })
     }
 
     // 递归处理子菜单
@@ -110,15 +118,14 @@ export function addDynamicRoutes(menus) {
 
 
 /* 添加路由守卫 */
-let menusLoaded = false
+let checkedToken = ''
 
-router.beforeEach((to, from, next) => {
+router.beforeEach(async (to) => {
   // 本地开发预览入口：便于在外部浏览器检查教师端界面，不影响生产环境鉴权。
   const isDevelopmentPreview =
     import.meta.env.DEV && to.path.startsWith('/main') && to.query.preview === '1'
 
   if (isDevelopmentPreview) {
-    next()
     return
   }
 
@@ -127,31 +134,36 @@ router.beforeEach((to, from, next) => {
   const token = userStore.token
 
   if (to.path !== '/login' && (!token || isTokenExpired(token))) {
-    next('/login')
-    return
+    userStore.clearUser()
+    checkedToken = ''
+    return loginLocation(to.fullPath)
   }
 
   // 清除过期或缺失 token 的用户状态
   if (!token || isTokenExpired(token)) {
     userStore.clearUser()
-    menusLoaded = false
+    checkedToken = ''
   }
 
-  // 动态路由加载：非静态教师页面且菜单未加载时，请求后端获取菜单
-  if (to.path.startsWith('/main/') && !to.meta.staticTeacherPage && !menusLoaded) {
-    getRouters().then(res => {
-      // 添加动态路由
-      addDynamicRoutes(res.data.menus)
-      // 标记菜单已加载
-      menusLoaded = true
-      // 将菜单数据存入 Pinia store（自动持久化）
-      userStore.setMenus(res.data.menus)
-
-      next(to.fullPath)
-    })
-  } else {
-    next()
+  if (to.path === '/login' || to.path === '/main/access') return
+  if (checkedToken !== token) {
+    try {
+      const result = await getCurrentUser()
+      if (userStore.token !== token) return loginLocation(to.fullPath)
+      userStore.setUserInfo(result.data)
+      checkedToken = token
+    } catch (error) {
+      ElMessage.error(error.message || '账号权限加载失败')
+      if (error.response?.status === 401 || error.code === 401) return loginLocation(to.fullPath)
+      return { path: '/main/access', query: { service: 'unavailable' } }
+    }
   }
+  if (!canAccessAdminPath(to.path, userStore.userInfo?.permissions)) return firstAdminPath(userStore.userInfo?.permissions)
+})
+
+router.onError((error) => {
+  console.warn('[admin-router] 页面加载失败', error)
+  ElMessage.error('管理页面加载失败，请刷新后重试；若仍有问题，请重启前端服务')
 })
 
 export default router

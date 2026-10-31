@@ -3,6 +3,8 @@ import router from '../router/index'
 import { ElMessage } from 'element-plus'
 // 全局用户 store — 统一管理 token，替代直接操作 localStorage
 import { useUserStore } from '../storage/user.js'
+import { assertApiSuccess, normalizeRequestError, responsePayload } from '../../../frontend/src/utils/apiError.js'
+import { loginLocation } from '../../../frontend/src/utils/sessionRedirect.js'
 
 // 从环境变量获取基础 URL
 const baseURL = import.meta.env.VITE_API_BASE_URL || ''
@@ -19,12 +21,19 @@ const service = axios.create({
 // 请求拦截器
 service.interceptors.request.use(
   config => {
+    if (config.url?.startsWith('/api/v1/python/')) {
+      config.baseURL = import.meta.env.VITE_PYTHON_API_BASE_URL || ''
+    }
     // 从 Pinia store 获取 token（由 pinia-plugin-persistedstate 自动从 localStorage 恢复）
     const userStore = useUserStore()
     const token = userStore.token
     if (token) {
       // 后端 JWT 过滤器及 MSW mock 均从 Authorization 请求头读取 Bearer token
       config.headers['Authorization'] = 'Bearer ' + token
+    }
+    if (typeof FormData !== 'undefined' && config.data instanceof FormData) {
+      config.headers.delete?.('Content-Type')
+      delete config.headers['Content-Type']
     }
     return config
   },
@@ -36,21 +45,21 @@ service.interceptors.request.use(
 
 // 响应拦截器
 service.interceptors.response.use(
-  response => {
+  async response => {
     // 根据后端返回的数据结构处理
 
-    console.log(response)
-    const res = response.data
-    const code = response.data.code
+    const res = await responsePayload(response)
+    const code = res?.code
 
     // 401 未授权 — 清除用户状态并跳转登录页，提前返回阻止业务层误处理
     if (code == 401) {
       const userStore = useUserStore()
       userStore.clearUser()
-      router.replace('/login')
+      if (router.currentRoute.value.path !== '/login') router.replace(loginLocation(router.currentRoute.value.fullPath))
       return Promise.reject(new Error('未授权'))
     }
 
+    assertApiSuccess(res, response)
     // 如果返回的是二进制数据（如下载文件），直接返回
     if (response.config.responseType === 'blob' || response.config.responseType === 'arraybuffer') {
       return response
@@ -58,7 +67,7 @@ service.interceptors.response.use(
 
     return res
   },
-  error => {
+  async error => {
     console.error('响应错误:', error)
 
     // 统一错误处理
@@ -74,7 +83,7 @@ service.interceptors.response.use(
           // 清除用户状态并使用 SPA 路由跳转，避免整页刷新
           const userStore = useUserStore()
           userStore.clearUser()
-          router.replace('/login')
+          if (router.currentRoute.value.path !== '/login') router.replace(loginLocation(router.currentRoute.value.fullPath))
           break
         }
         case 403: {
@@ -100,7 +109,7 @@ service.interceptors.response.use(
       console.error('请求配置错误:', error.message)
     }
 
-    return Promise.reject(error)
+    return Promise.reject(await normalizeRequestError(error))
   }
 )
 

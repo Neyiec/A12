@@ -3,6 +3,7 @@ import assert from 'node:assert/strict'
 import { readFileSync } from 'node:fs'
 import { computed, ref, watch } from 'vue'
 import { parse, compileTemplate } from '@vue/compiler-sfc'
+import { unwrapWorkspaceResult } from '../src/utils/workspaceEntry.js'
 
 const source = readFileSync(new URL('../src/components/CourseGraphWorkspace.vue', import.meta.url), 'utf8')
 const { descriptor } = parse(source)
@@ -10,7 +11,7 @@ function workspace(extra = {}) {
   const unmount = []
   const dependencies = { computed, ref, watch, onMounted() {}, onBeforeUnmount(fn) { unmount.push(fn) },
     useRouter: () => ({ push() {} }), useUserStore: () => ({ userInfo: { id: 7 } }),
-    ElMessage: { error() {}, success() {}, warning() {} }, cleanupTempResources: async () => {}, ...extra }
+    ElMessage: { error() {}, success() {}, warning() {} }, unwrapWorkspaceResult, cleanupTempResources: async () => {}, ...extra }
   const script = descriptor.scriptSetup.content.replace(/^import[\s\S]*?from ['"][^'"]+['"]\r?\n/gm, '')
   const state = new Function(...Object.keys(dependencies), script + '\nreturn {path,metrics,outline,slides,page,savedProjectId,generatedPagesSaved,targetIds,masteredIds,startId,subject,grade,dirty,busy,move,generate,abort:()=>abort,unmount:()=>{}}')(...Object.values(dependencies))
   state.unmount = () => unmount.forEach(fn => fn())
@@ -60,6 +61,7 @@ test('template locks form controls but keeps stop button outside disabled form',
   assert.deepEqual(result.errors, [])
   assert.match(descriptor.template.content, /<el-form :disabled="!!busy">/)
   assert.match(descriptor.template.content, /:closable="!busy"/)
-  assert.match(descriptor.template.content, /v-model="courseId" :disabled="version > 0 \|\| !!busy"/)
+  assert.match(descriptor.template.content, /<el-form :disabled="!!busy">[\s\S]*v-model="courseId"[^>]*@change="load"/)
+  assert.match(descriptor.template.content, /@click="newCourse"/)
   assert.match(descriptor.template.content, /<\/el-form>\s*<el-button[^>]*@click="abort\?\.abort\(\)"/)
 })

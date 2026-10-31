@@ -89,8 +89,22 @@ async def process_event(event: dict[str, str]) -> None:
         status_response = await client.post(f"{url}/status", headers=headers,
                                             json={"status": status, "error": error})
         status_response.raise_for_status()
+        status_result = status_response.json()
+        if status_result.get("code") not in (0, 200):
+            raise RuntimeError("资源索引状态回写失败，事件保留待重试")
         if status == "failed":
             raise RuntimeError(error or "资源索引失败")
+
+
+def _claim_pending(client, consumer: str):
+    """兼容 Redis 5 Streams；不依赖 Redis 6.2 才提供的 XAUTOCLAIM。"""
+    pending = client.xpending_range(STREAM, GROUP, "-", "+", 100)
+    overdue = [item["message_id"] for item in pending
+               if item.get("time_since_delivered", 0) >= 30_000]
+    if not overdue:
+        return []
+    return client.xclaim(STREAM, GROUP, consumer, min_idle_time=30_000,
+                         message_ids=overdue[:1])
 
 
 def _consume_forever() -> None:
@@ -106,9 +120,7 @@ def _consume_forever() -> None:
             except redis.exceptions.ResponseError as exc:
                 if "BUSYGROUP" not in str(exc):
                     raise
-            claimed = client.xautoclaim(STREAM, GROUP, consumer, min_idle_time=30_000,
-                                        start_id="0-0", count=1)
-            entries = claimed[1] if claimed else []
+            entries = _claim_pending(client, consumer)
             if not entries:
                 streams = client.xreadgroup(GROUP, consumer, {STREAM: ">"}, count=1, block=5000)
                 entries = streams[0][1] if streams else []

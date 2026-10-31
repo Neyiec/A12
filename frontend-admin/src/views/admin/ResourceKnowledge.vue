@@ -43,6 +43,9 @@ import {
   Grid,
 } from '@element-plus/icons-vue'
 import { ElMessage, ElMessageBox } from 'element-plus'
+import axios from 'axios'
+import { resourceUploadError } from '../../../../frontend/src/utils/resourceUploadError.js'
+import { pollStatus } from '@/utils/statusPoller'
 import {
   getPublicResources,
   createUploadSession,
@@ -971,7 +974,7 @@ const unwrapResult = (res, fallbackMessage) => {
  * @param {Function} onProgress - 进度回调（百分比数字）
  * @returns {Promise<void>}
  */
-const uploadToOss = (queueFile, uploadUrl, onProgress) => apiRequest({
+const uploadToOss = (queueFile, uploadUrl, onProgress) => axios({
   url: uploadUrl,
   method: 'put',
   data: queueFile.raw,
@@ -980,6 +983,8 @@ const uploadToOss = (queueFile, uploadUrl, onProgress) => apiRequest({
   onUploadProgress: (event) => {
     if (event.total) onProgress((event.loaded / event.total) * 100)
   },
+}).catch((error) => {
+  throw new Error(resourceUploadError(error))
 })
 
 /**
@@ -1020,6 +1025,7 @@ const uploadSingleFile = async (queueFile) => {
  * 执行上传：顺序走三段式（会话 → OSS 直传 → complete），全部结束后刷新列表并对新资源启动索引状态轮询
  */
 const handleUpload = () => {
+  if (isUploading.value) return
   const filesToUpload = uploadFileList.value.filter((file) => file.status === 'ready' || file.status === 'error')
   if (filesToUpload.length === 0) {
     if (uploadAllComplete.value) uploadDialogVisible.value = false
@@ -1045,7 +1051,7 @@ const runUploadQueue = async (filesToUpload) => {
     ElMessage.error('上传失败，请检查网络或稍后重试')
     return
   }
-  ElMessage.success(`成功上传 ${uploadedIds.length} 个资源，AI 索引解析已在后台进行`)
+  ElMessage.success(`成功上传 ${uploadedIds.length} 个资源，请在解析状态中查看索引结果`)
   resourcePagination.currentPage = 1
   await fetchResources()
   uploadedIds.forEach((id) => {
@@ -1086,8 +1092,12 @@ const handleDeleteResource = (row) => {
  * 重新解析单个公共资源（Tab 1：POST /{id}/reparse，后端异步执行）——触发后轮询 processing-status 至出结果
  * @param {Object} row - 当前行资源数据
  */
+const reparseRequests = reactive(new Set())
 const handleReparse = async (row) => {
   const resourceId = row.resourceId || row.id
+  const requestKey = `public:${resourceId}`
+  if (reparseRequests.has(requestKey)) return
+  reparseRequests.add(requestKey)
   const name = row.resourceName || row.name
   try {
     await unwrapResult(await reparseResource(resourceId), '重新解析失败')
@@ -1100,6 +1110,8 @@ const handleReparse = async (row) => {
     pollAiIndexStatus(resource || row)
   } catch (error) {
     ElMessage.error(error?.message || '重新解析失败')
+  } finally {
+    reparseRequests.delete(requestKey)
   }
 }
 
@@ -1109,6 +1121,9 @@ const handleReparse = async (row) => {
  * @param {Object} row - 当前任务行（需含 sourceType/resourceId/resourceName）
  */
 const handleKnowledgeReparse = async (row) => {
+  const requestKey = `${row.sourceType}:${row.resourceId}`
+  if (reparseRequests.has(requestKey)) return
+  reparseRequests.add(requestKey)
   try {
     await unwrapResult(await reparseAiIndex(row.sourceType, row.resourceId), '重新解析失败')
     row.status = 'indexing'
@@ -1116,6 +1131,8 @@ const handleKnowledgeReparse = async (row) => {
     pollKnowledgeTaskStatus(row)
   } catch (error) {
     ElMessage.error(error?.message || '重新解析失败')
+  } finally {
+    reparseRequests.delete(requestKey)
   }
 }
 
@@ -1136,7 +1153,6 @@ const handleDownloadResource = async (row) => {
 
 /** AI 索引状态轮询间隔与上限（4s × 150 ≈ 10 分钟） */
 const AI_POLL_INTERVAL = 4000
-const AI_POLL_MAX_ROUNDS = 150
 
 /** 进行中的索引状态轮询定时器（按资源 ID 索引，防止重复轮询） */
 const aiPollTimers = new Map()
@@ -1147,32 +1163,26 @@ const aiPollTimers = new Map()
  */
 const pollAiIndexStatus = (row) => {
   if (!row?.id || aiPollTimers.has(row.id)) return
-  let rounds = 0
-  const timer = setInterval(async () => {
-    rounds += 1
-    if (rounds > AI_POLL_MAX_ROUNDS) {
-      clearInterval(timer)
-      aiPollTimers.delete(row.id)
+  const stop = pollStatus({
+    interval: AI_POLL_INTERVAL,
+    request: async () => unwrapResult(await getProcessingStatus(row.id), '查询索引状态失败'),
+    onStop: () => aiPollTimers.delete(row.id),
+    onTimeout: () => {
       ElMessage.warning(`「${row.name}」索引解析超过 10 分钟仍未完成，请稍后手动刷新查看`)
-      return
-    }
-    try {
-      const res = await getProcessingStatus(row.id)
-      const payload = unwrapResult(res, '查询索引状态失败')
+    },
+    onError: (error) => ElMessage.warning(`「${row.name}」状态查询已暂停：${error?.message || '连接失败'}，请刷新后重试`),
+    onResult: (payload) => {
       const status = payload.index_status
-      if (status !== 'completed' && status !== 'failed') return
-      clearInterval(timer)
-      aiPollTimers.delete(row.id)
+      if (status !== 'completed' && status !== 'failed') return false
       row.status = status
       row.vectorProgress = status === 'completed' ? 100 : 0
       row.failReason = payload.error_msg || ''
       if (status === 'completed') ElMessage.success(`「${row.name}」AI 索引解析完成`)
       else ElMessage.error(`「${row.name}」解析失败：${row.failReason || '未知原因'}`)
-    } catch {
-      // 单次查询失败（网络抖动）忽略，等待下一轮重试
-    }
-  }, AI_POLL_INTERVAL)
-  aiPollTimers.set(row.id, timer)
+      return true
+    },
+  })
+  aiPollTimers.set(row.id, stop)
 }
 
 /** Tab 2 任务状态轮询定时器（按 sourceType:resourceId 索引，防止重复轮询） */
@@ -1184,34 +1194,39 @@ const knowledgePollTimers = new Map()
  * @param {Object} row - 任务行（需含 sourceType/resourceId/resourceName）
  */
 const pollKnowledgeTaskStatus = (row) => {
+  if (!row?.resourceId) return
   const key = `${row.sourceType}:${row.resourceId}`
-  if (!row?.resourceId || knowledgePollTimers.has(key)) return
-  let rounds = 0
-  const timer = setInterval(async () => {
-    rounds += 1
-    if (rounds > AI_POLL_MAX_ROUNDS) {
-      clearInterval(timer)
-      knowledgePollTimers.delete(key)
+  if (knowledgePollTimers.has(key)) return
+  const stop = pollStatus({
+    interval: AI_POLL_INTERVAL,
+    request: async () => {
+      // 公共资源先读取业务侧状态，避免事件发布失败却被旧 PG 成功状态覆盖。
+      if (row.sourceType === 'public') {
+        const business = unwrapResult(await getProcessingStatus(row.resourceId), '查询索引状态失败')
+        if (business.index_status !== 'completed') return {
+          parse_status: business.index_status, error_message: business.error_msg,
+        }
+      }
+      return unwrapResult(await getAiIndexResource(row.sourceType, row.resourceId, 1), '查询索引状态失败')
+    },
+    onStop: () => knowledgePollTimers.delete(key),
+    onTimeout: () => {
       ElMessage.warning(`「${row.resourceName}」索引解析超过 10 分钟仍未完成，请稍后手动刷新查看`)
-      return
-    }
-    try {
-      const payload = unwrapResult(await getAiIndexResource(row.sourceType, row.resourceId, 1), '查询索引状态失败')
+    },
+    onError: (error) => ElMessage.warning(`「${row.resourceName}」状态查询已暂停：${error?.message || '连接失败'}，请刷新后重试`),
+    onResult: (payload) => {
       const status = payload?.parse_status
-      if (status !== 'completed' && status !== 'failed') return
-      clearInterval(timer)
-      knowledgePollTimers.delete(key)
+      if (status !== 'completed' && status !== 'failed') return false
       row.status = status
-      row.entryCount = payload?.chunk_count || row.entryCount
+      row.entryCount = payload?.chunk_count ?? row.entryCount
       row.failReason = payload?.error_message || ''
       fetchIndexOverview()
       if (status === 'completed') ElMessage.success(`「${row.resourceName}」AI 索引解析完成`)
       else ElMessage.error(`「${row.resourceName}」解析失败：${row.failReason || '未知原因'}`)
-    } catch {
-      // 单次查询失败（网络抖动）忽略，等待下一轮重试
-    }
-  }, AI_POLL_INTERVAL)
-  knowledgePollTimers.set(key, timer)
+      return true
+    },
+  })
+  knowledgePollTimers.set(key, stop)
 }
 
 /**
@@ -1362,9 +1377,9 @@ onMounted(() => {
 onBeforeUnmount(() => {
   window.removeEventListener('admin-refresh', handleRefresh)
   if (knowledgeSearchTimer) clearTimeout(knowledgeSearchTimer)
-  aiPollTimers.forEach((timer) => clearInterval(timer))
+  aiPollTimers.forEach((stop) => stop())
   aiPollTimers.clear()
-  knowledgePollTimers.forEach((timer) => clearInterval(timer))
+  knowledgePollTimers.forEach((stop) => stop())
   knowledgePollTimers.clear()
 })
 </script>
@@ -1622,6 +1637,7 @@ onBeforeUnmount(() => {
                     type="primary" link size="small"
                     :style="{ fontSize: 'var(--zh-font-size12)' }"
                     @click="handleReparse(row)"
+                    :loading="reparseRequests.has(`public:${row.id}`)"
                   >
                     <el-icon class="mr-0.5"><Refresh /></el-icon>
                     重解析
@@ -2019,14 +2035,14 @@ onBeforeUnmount(() => {
                 <div class="flex items-center justify-center gap-1">
                   <!-- 已完成：重新解析 -->
                   <template v-if="row.status === 'completed'">
-                    <el-button type="primary" link size="small" :style="{ fontSize: 'var(--zh-font-size12)' }" @click="handleKnowledgeReparse(row)">
+                    <el-button type="primary" link size="small" :loading="reparseRequests.has(`${row.sourceType}:${row.resourceId}`)" :style="{ fontSize: 'var(--zh-font-size12)' }" @click="handleKnowledgeReparse(row)">
                       <el-icon class="mr-0.5"><Refresh /></el-icon>
                       重解析
                     </el-button>
                   </template>
                   <!-- 失败：重试 -->
                   <template v-if="row.status === 'failed'">
-                    <el-button type="primary" link size="small" :style="{ fontSize: 'var(--zh-font-size12)' }" @click="handleKnowledgeReparse(row)">
+                    <el-button type="primary" link size="small" :loading="reparseRequests.has(`${row.sourceType}:${row.resourceId}`)" :style="{ fontSize: 'var(--zh-font-size12)' }" @click="handleKnowledgeReparse(row)">
                       <el-icon class="mr-0.5"><Refresh /></el-icon>
                       重试
                     </el-button>

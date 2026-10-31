@@ -34,6 +34,7 @@ const routeMap = {
   resources: '/main/resources',
   community: '/main/community',
   courses: '/main/courses',
+  questions: '/main/questions',
   exports: '/main/exports',
 }
 const activeMenu = computed(() => route.meta.menu || 'home')
@@ -527,8 +528,8 @@ watch(latestSessionPush, (session) => {
 .avatar-button:active { transform: scale(.96); transition-duration: 150ms; }
 .profile-copy strong { overflow: hidden; font-size: 13px; text-overflow: ellipsis; white-space: nowrap; }
 .teacher-main { grid-area: main; min-width: 0; min-height: calc(100dvh - 68px); background: radial-gradient(circle at 50% 18%, rgb(37 99 235 / 5%), transparent 32%), var(--zh-background-primary); }
-.teacher-topbar { grid-area: topbar; position: sticky; z-index: 100; top: 0; height: 68px; display: grid; grid-template-columns: minmax(160px, 1fr) auto minmax(160px, 1fr); align-items: center; gap: 24px; padding: 0 24px; border-bottom: 1px solid var(--zh-line-parting); background: color-mix(in srgb, var(--zh-background-primary) 90%, transparent); backdrop-filter: blur(14px); }
-.top-navigation { display: flex; align-items: center; justify-content: center; gap: 4px; padding: 4px; border: 1px solid var(--zh-line-parting); border-radius: 14px; background: var(--zh-background-light); }
+.teacher-topbar { grid-area: topbar; position: sticky; z-index: 100; top: 0; height: 68px; display: grid; grid-template-columns: auto minmax(0, 1fr) auto; align-items: center; gap: 20px; padding: 0 24px; border-bottom: 1px solid var(--zh-line-parting); background: color-mix(in srgb, var(--zh-background-primary) 90%, transparent); backdrop-filter: blur(14px); }
+.top-navigation { display: flex; align-items: center; justify-content: flex-start; justify-self: center; min-width: 0; max-width: 100%; overflow-x: auto; gap: 4px; padding: 4px; border: 1px solid var(--zh-line-parting); border-radius: 14px; background: var(--zh-background-light); }
 .top-nav-item { min-height: 40px; display: inline-flex; align-items: center; gap: 7px; padding: 0 16px; border: 0; border-radius: 10px; color: var(--zh-text-secondary); background: transparent; font: inherit; font-size: 14px; white-space: nowrap; cursor: pointer; transition: color 180ms ease, background-color 180ms ease, box-shadow 180ms ease, transform 180ms ease; }
 .top-nav-item:hover, .top-nav-item:focus-visible { color: var(--zh-text-primary); background: var(--zh-background-primary); transform: translateY(-1px); }
 .top-nav-item.is-active { color: var(--zh-text-theme); background: var(--zh-background-primary); box-shadow: var(--zh-shadow1); font-weight: 650; }

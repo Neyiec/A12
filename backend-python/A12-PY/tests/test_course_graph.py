@@ -1,7 +1,7 @@
 import json
 import unittest
 from pathlib import Path
-from unittest.mock import patch
+from unittest.mock import patch, AsyncMock
 
 from a12_ppt.course_graph import CourseGraphStore, validate_graph
 from a12_ppt.outline_chat.workflow import OutlineChatWorkflow
@@ -41,103 +41,99 @@ class CourseGraphTests(unittest.TestCase):
         self.assertEqual(result["version"], 3)
 
 
+def ai_proposal():
+    concepts = ["介质与光速", "入射角与折射角", "折射方向", "光路可逆性"]
+    skills = ["标注法线与角度", "绘制折射光路", "判断偏折方向", "解释水中物体的视深"]
+    return {"knowledge": {"nodes": [{"id": f"k{i}", "label": label, "description": f"说明{label}的含义和适用条件"} for i, label in enumerate(concepts)],
+                          "edges": [{"source": "k0", "target": "k1", "relation": "先修"},
+                                    {"source": "k1", "target": "k2", "relation": "分析"},
+                                    {"source": "k2", "target": "k3", "relation": "关联"}]},
+            "skill": {"nodes": [{"id": f"s{i}", "label": label, "task": f"根据实验光路图{label}",
+                                 "assessment": "标注与方向正确，并说明所用依据"} for i, label in enumerate(skills)],
+                      "edges": [{"source": "s0", "target": "s1", "relation": "能力递进"},
+                                {"source": "s0", "target": "s2", "relation": "能力递进"},
+                                {"source": "s2", "target": "s3", "relation": "迁移"}],
+                      "knowledge_links": [{"knowledge_id": f"k{i}", "skill_id": f"s{i}"} for i in range(4)]}}
+
+
 class GraphWorkflowTests(unittest.IsolatedAsyncioTestCase):
-    async def test_refraction_drafts_have_distinct_relations_and_assessable_skills(self):
-        graphs = await build_learning_graphs({"title": "光的折射", "grade": "八年级"}, {}, {},
-                                             type("Offline", (), {"available": False})())
-        knowledge, skill = graphs["knowledge"], graphs["skill"]
-        self.assertFalse({node["label"] for node in knowledge["nodes"]} & {node["label"] for node in skill["nodes"]})
-        topology = lambda graph: {(edge["source"][1:], edge["target"][1:]) for edge in graph["edges"]}
-        self.assertNotEqual(topology(knowledge), topology(skill))
-        self.assertTrue(all(node.get("task") and node.get("assessment") for node in skill["nodes"]))
-        self.assertEqual({node["id"] for node in skill["nodes"]}, {link["skill_id"] for link in skill["knowledge_links"]})
+    async def test_offline_model_never_invents_local_topic_graph(self):
+        from a12_ppt.outline_chat.learning_graphs import LearningGraphGenerationError
+        for title in ("光的折射", "分数", "盐类水解"):
+            with self.assertRaisesRegex(LearningGraphGenerationError, "AI模型"):
+                await build_learning_graphs({"title": title}, {}, {}, type("Offline", (), {"available": False})())
 
-    async def test_model_cannot_copy_the_same_nodes_into_both_graphs(self):
-        nodes = [{"id": f"n{i}", "label": f"识别概念{i}", "task": "观察实例", "assessment": "判断正确"} for i in range(4)]
-        edges = [{"source": f"n{i}", "target": f"n{i+1}", "relation": "先修"} for i in range(3)]
-        payload = {"knowledge": {"nodes": nodes, "edges": edges}, "skill": {"nodes": nodes, "edges": edges,
-            "knowledge_links": [{"knowledge_id": f"n{i}", "skill_id": f"n{i}"} for i in range(4)]}}
-        class Model:
-            available = True
-            async def complete(self, *_args):
-                return json.dumps(payload, ensure_ascii=False)
-        graphs = await build_learning_graphs({"title": "光的折射"}, {}, {}, Model())
-        self.assertEqual(graphs["status"], "unverified_draft")
-        self.assertFalse({n["label"] for n in graphs["knowledge"]["nodes"]} & {n["label"] for n in graphs["skill"]["nodes"]})
-
-    async def test_model_keeps_task_assessment_and_valid_many_to_many_support(self):
-        payload = {"knowledge": {"nodes": [{"id": f"k{i}", "label": f"折射概念{i}"} for i in range(4)],
-                                  "edges": [{"source": "k0", "target": f"k{i}", "relation": "包含"} for i in range(1, 4)]},
-                   "skill": {"nodes": [{"id": f"s{i}", "label": f"解释现象{i}", "task": f"完成情境任务{i}",
-                                          "assessment": f"说明依据{i}"} for i in range(4)],
-                             "edges": [{"source": f"s{i}", "target": f"s{i+1}", "relation": "能力递进"} for i in range(3)],
-                             "knowledge_links": [{"knowledge_id": "k0", "skill_id": f"s{i}"} for i in range(4)]
-                                + [{"knowledge_id": "k1", "skill_id": "s3"}, {"knowledge_id": "missing", "skill_id": "s0"}]}}
-        class Model:
-            available = True
-            async def complete(self, *_args):
-                return json.dumps(payload, ensure_ascii=False)
-        graphs = await build_learning_graphs({"title": "光的折射"}, {}, {}, Model())
+    async def test_model_result_preserves_independent_topology_and_assessment(self):
+        model = type("Model", (), {"available": True, "complete": AsyncMock(return_value=json.dumps(ai_proposal()))})()
+        graphs = await build_learning_graphs({"title": "光的折射", "grade": "八年级"}, {}, {}, model)
         self.assertEqual(graphs["status"], "ai_proposal")
-        self.assertEqual(graphs["skill"]["nodes"][3]["assessment"], "说明依据3")
-        self.assertEqual(len(graphs["skill"]["knowledge_links"]), 5)
+        self.assertEqual(graphs["knowledge"]["source"], "ai_proposal")
+        self.assertEqual(graphs["skill"]["nodes"][3]["label"], "解释水中物体的视深")
+        self.assertTrue(graphs["skill"]["nodes"][3]["assessment"])
+        self.assertEqual(graphs["generation"]["attempts"], 1)
+        topology = lambda graph: {(edge["source"][1:], edge["target"][1:]) for edge in graph["edges"]}
+        self.assertNotEqual(topology(graphs["knowledge"]), topology(graphs["skill"]))
 
-    async def test_approved_course_yields_both_graphs_before_outline(self):
+    async def test_identical_graphs_trigger_model_repair_instead_of_fixed_replacement(self):
+        broken = ai_proposal()
+        for i in range(4):
+            broken["skill"]["nodes"][i]["label"] = broken["knowledge"]["nodes"][i]["label"]
+        model = type("Model", (), {"available": True, "complete": AsyncMock(side_effect=[
+            json.dumps(broken), json.dumps(ai_proposal())])})()
+        graphs = await build_learning_graphs({"title": "光的折射"}, {}, {}, model)
+        self.assertEqual(model.complete.await_count, 2)
+        self.assertEqual(graphs["generation"]["attempts"], 2)
+        self.assertIn("correction", json.loads(model.complete.call_args.args[1]))
+
+    async def test_approved_course_is_reference_and_does_not_bypass_model(self):
         approved = {"course_id": "java-programming", "version": 3, **EXAMPLE}
-        graphs = await build_learning_graphs({"title": "HashMap"}, approved, {}, type("Offline", (), {"available": False})())
-        self.assertEqual(graphs["status"], "approved_course")
-        self.assertIn("hashmap", {node["id"] for node in graphs["knowledge"]["nodes"]})
-        self.assertIn("use_hashmap", {node["id"] for node in graphs["skill"]["nodes"]})
+        model = type("Model", (), {"available": True, "complete": AsyncMock(return_value=json.dumps(ai_proposal()))})()
+        result = await build_learning_graphs({"title": "光的折射"}, approved, {}, model)
+        model.complete.assert_awaited_once()
+        context = json.loads(model.complete.call_args.args[1])
+        self.assertEqual(context["course_evidence"]["version"], 3)
+        self.assertTrue(context["course_evidence"]["edges"])
+        self.assertEqual(result["status"], "ai_proposal")
 
-    async def test_no_course_still_yields_two_drafts(self):
-        graphs = await build_learning_graphs({"title": "分数", "knowledge_points": ["分数意义", "同分母加法"]},
-                                             {}, {}, type("Offline", (), {"available": False})())
-        self.assertEqual(graphs["status"], "unverified_draft")
-        self.assertGreaterEqual(len(graphs["knowledge"]["nodes"]), 4)
-        self.assertGreaterEqual(len(graphs["skill"]["nodes"]), 4)
-        self.assertTrue(graphs["knowledge"]["edges"])
-        self.assertTrue(graphs["skill"]["edges"])
+    async def test_original_input_grade_and_uploaded_reference_reach_model(self):
+        model = type("Model", (), {"available": True, "complete": AsyncMock(return_value=json.dumps(ai_proposal()))})()
+        await build_learning_graphs({"title": "光的折射", "grade": "八年级", "requirements": "重实验"},
+            {}, {"teacher_request": "备课光的折射，学生刚学完反射", "teacher_conversation": ["只做空气到水的实验"],
+                 "rag": {"context": "教师教材摘录：比较入射角与折射角"}}, model)
+        prompt = json.loads(model.complete.call_args.args[1])
+        self.assertEqual(prompt["course_requirements"]["grade"], "八年级")
+        self.assertIn("反射", prompt["teacher_request"])
+        self.assertIn("教材摘录", prompt["reference_excerpt"])
+        self.assertIn("空气到水", prompt["recent_conversation"][0])
 
-    async def test_model_graph_is_bounded_and_dangling_edges_removed(self):
-        class Model:
-            available = True
+    async def test_invalid_or_generic_graph_never_becomes_a_template_draft(self):
+        from a12_ppt.outline_chat.learning_graphs import LearningGraphGenerationError
+        for bad in ({}, ai_proposal()):
+            if bad:
+                bad["knowledge"]["nodes"][0]["label"] = "光的折射的基本概念"
+            model = type("Model", (), {"available": True, "complete": AsyncMock(return_value=json.dumps(bad))})()
+            with self.assertRaises(LearningGraphGenerationError):
+                await build_learning_graphs({"title": "光的折射"}, {}, {}, model)
+            self.assertEqual(model.complete.await_count, 2)
 
-            async def complete(self, *_args):
-                return json.dumps({"knowledge": {"nodes": [{"id": "k1", "label": "分数"}],
-                                                  "edges": [{"source": "k1", "target": "missing", "relation": "先修"}]},
-                                   "skill": {"nodes": [{"id": "s1", "label": "比较分数大小"}], "edges": []}}, ensure_ascii=False)
+    async def test_timeout_retry_is_bounded_and_explicit(self):
+        from a12_ppt.outline_chat.learning_graphs import LearningGraphGenerationError
+        model = type("Model", (), {"available": True, "complete": AsyncMock(side_effect=TimeoutError())})()
+        with self.assertRaisesRegex(LearningGraphGenerationError, "未通过校验"):
+            await build_learning_graphs({"title": "光的折射"}, {}, {}, model)
+        self.assertEqual(model.complete.await_count, 2)
 
-        graphs = await build_learning_graphs({"title": "分数"}, {}, {}, Model())
-        self.assertEqual(graphs["status"], "unverified_draft")
-        self.assertGreaterEqual(len(graphs["knowledge"]["nodes"]), 4)
-        self.assertGreaterEqual(len(graphs["skill"]["nodes"]), 4)
-
-    async def test_sparse_approved_graph_is_enriched_as_draft(self):
-        sparse = {"course_id": "optics", "version": 2,
-                  "nodes": [{"id": "refraction", "kind": "concept", "label": "光的折射"},
-                            {"id": "observe", "kind": "skill", "label": "观察折射现象"}],
-                  "edges": []}
-        graphs = await build_learning_graphs({"title": "光的折射", "grade": "八年级"}, sparse, {},
-                                             type("Offline", (), {"available": False})())
-        self.assertEqual(graphs["status"], "unverified_draft")
-        self.assertIn("光的折射", {node["label"] for node in graphs["knowledge"]["nodes"]})
-        self.assertGreaterEqual(len(graphs["knowledge"]["nodes"]), 4)
-        self.assertGreaterEqual(len(graphs["skill"]["nodes"]), 4)
-
-    async def test_long_duplicate_course_labels_do_not_hide_fallback_knowledge_nodes(self):
-        course = {"nodes": [{"id": f"concept-{index}", "kind": "concept",
-                             "label": "很长的共同前缀" * 10 + str(index)} for index in range(12)]}
-        graphs = await build_learning_graphs({"title": "光的折射"}, course, {},
-                                             type("Offline", (), {"available": False})())
-        self.assertGreaterEqual(len(graphs["knowledge"]["nodes"]), 4)
-        self.assertGreaterEqual(len(graphs["skill"]["nodes"]), 4)
-        self.assertIn("折射现象与介质界面", {node["label"] for node in graphs["knowledge"]["nodes"]})
-
-    async def test_outline_graph_node_attaches_both_graphs_to_saved_outline(self):
+    async def test_graph_node_reports_failure_without_awaiting_teacher_confirmation(self):
         workflow = OutlineChatWorkflow.__new__(OutlineChatWorkflow)
         workflow.llm = type("Offline", (), {"available": False})()
-        state = {"intent": {"title": "分数", "knowledge_points": ["分数意义"]},
-                 "course_graph": {}, "tool_context": {}, "tool_trace": []}
+        update = await workflow._generate_learning_graphs_node({"intent": {"title": "分数"}})
+        self.assertEqual(update["learning_graphs"], {})
+        self.assertIn("AI模型", update["error"])
+
+    async def test_outline_node_keeps_real_ai_graphs(self):
+        workflow = OutlineChatWorkflow.__new__(OutlineChatWorkflow)
+        workflow.llm = type("Model", (), {"available": True, "complete": AsyncMock(return_value=json.dumps(ai_proposal()))})()
+        state = {"intent": {"title": "光的折射"}, "course_graph": {}, "tool_context": {}, "tool_trace": []}
         update = await workflow._generate_learning_graphs_node(state)
         response = {"outline": {"slides": []}}
         workflow._attach_tool_outputs(response, {**state, **update})

@@ -16,6 +16,7 @@ import java.util.Map;
 public class ResourceIndexEventPublisher {
     public static final String STREAM = "a12:resource-index:events";
     private final StringRedisTemplate redisTemplate;
+    private final ResourceIndexFailureRecorder failures;
 
     public void publish(String action, String sourceType, Integer resourceId, boolean forceReparse) {
         if (resourceId == null) return;
@@ -28,6 +29,14 @@ public class ResourceIndexEventPublisher {
                         "force_reparse", String.valueOf(forceReparse)
                 ));
             } catch (RuntimeException e) {
+                if ("sync".equals(action)) {
+                    try {
+                        failures.record(sourceType, resourceId,
+                                "索引事件发布失败，请检查 Redis 连接及 Streams 支持（Redis 5+），恢复后重新同步索引");
+                    } catch (RuntimeException recordError) {
+                        log.error("无法保存资源索引失败状态 source={} id={}", sourceType, resourceId, recordError);
+                    }
+                }
                 log.error("资源索引事件发布失败 source={} id={}；业务状态已保存，等待后台重建索引", sourceType, resourceId, e);
             }
         };

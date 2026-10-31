@@ -334,7 +334,7 @@ public class AuthServiceImpl implements AuthService {
     /**
      * 装配角色相关字段（RBAC 重构后不再存于 sys_user）：
      * roles = 角色编码数组 JSON，user_type = 首个角色编码（主角色，兼容前端），
-     * permissions 固定 "[]"（角色权限矩阵走 API-80/82 查询）
+     * permissions 为当前用户有效权限（供前端导航使用，接口授权仍由 RBAC 过滤器执行）
      */
     private void fillRoleFields(Object target) {
         Integer userId;
@@ -348,14 +348,15 @@ public class AuthServiceImpl implements AuthService {
                 .toList();
         try {
             String rolesJson = objectMapper.writeValueAsString(codes);
+            String permissionsJson = objectMapper.writeValueAsString(roleMapper.findPermCodesByUserId(userId));
             if (target instanceof UserVO) {
                 ((UserVO) target).setRoles(rolesJson);
-                ((UserVO) target).setUser_type(codes.isEmpty() ? null : codes.get(0));
-                ((UserVO) target).setPermissions("[]");
+                ((UserVO) target).setUser_type(edu.zstu.utils.UserAccessFields.userType(codes));
+                ((UserVO) target).setPermissions(permissionsJson);
             } else {
                 ((LoginVO) target).setRoles(rolesJson);
-                ((LoginVO) target).setUser_type(codes.isEmpty() ? null : codes.get(0));
-                ((LoginVO) target).setPermissions("[]");
+                ((LoginVO) target).setUser_type(edu.zstu.utils.UserAccessFields.userType(codes));
+                ((LoginVO) target).setPermissions(permissionsJson);
             }
         } catch (Exception ignored) {
             // 序列化失败时角色字段保持为空，不影响主流程

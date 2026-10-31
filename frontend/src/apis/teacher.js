@@ -407,7 +407,7 @@ export const restoreProject = (id) => post(`/api/v1/projects/${id}/restore`)
 export const deleteProject = (id) => del(`/api/v1/projects/${id}`)
 export const saveProjectVersion = (id, data) => post(`/api/v1/projects/${id}/versions`, data)
 export const listProjectVersions = (id, params) => get(`/api/v1/projects/${id}/versions`, params)
-export const restoreProjectVersion = (id, versionId) => post(`/api/v1/projects/${id}/versions/${versionId}/restore`)
+export const restoreProjectVersion = (id, versionId, { backup = true } = {}) => apiRequest({ url: `/api/v1/projects/${id}/versions/${versionId}/restore`, method: 'post', params: { backup }, timeout: 60000 })
 export const addProjectComponent = (id, data) => post(`/api/v1/projects/${id}/components`, data)
 /**
  * @deprecated 旧服务将 componentId 当作 pageId 处理。新代码请使用

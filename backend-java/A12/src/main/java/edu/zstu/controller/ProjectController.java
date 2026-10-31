@@ -287,11 +287,12 @@ public class ProjectController {
      */
     @PostMapping("/{id}/versions/{versionId}/restore")
     public Result<ProjectVO> restoreVersion(@PathVariable String id,
-                                            @PathVariable String versionId) {
+                                            @PathVariable String versionId,
+                                            @RequestParam(defaultValue = "true") boolean backup) {
         try {
             Integer userId = CurrentHolder.getCurrentId();
             if (userId == null) return Result.error(401, "未登录");
-            return Result.success(projectService.restoreVersion(id, versionId, userId));
+            return Result.success(projectService.restoreVersion(id, versionId, userId, backup));
         } catch (RuntimeException e) { return Result.error(400, e.getMessage()); }
     }
 }
