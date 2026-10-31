@@ -46,8 +46,10 @@ export function sendVerificationCode(params) {
  * @returns {Promise} 后端返回 { menus: Array } 菜单树数据
  */
 export function getRouters() {
-  return get('/api/v1/menu/routers')
+  return get('/api/v1/menu/routers', { client: 'admin' })
 }
+
+export function getCurrentUser() { return get('/api/v1/users/me') }
 
 /**
  * 退出登录（API-08）

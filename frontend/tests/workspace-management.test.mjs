@@ -229,6 +229,10 @@ function restoreState(failSave = false) {
   const calls = []
   const state = {
     versionActionLoading: ref(false), projectId: ref('7'), project: ref({}), versionDiff: ref({}), versionPage: ref(3),
+    restoringVersion: ref(false), selectedSlide: ref(1), revisionUndoSnapshot: ref(['newer']), pendingDeckRevision: ref({}),
+    restoredContentRevision: ref(0), lessonPlanAutosavePromise: Promise.resolve(),
+    chooseVersionRestore: async () => { calls.push('confirm'); return 'backup' },
+    waitForPendingProjectWrites: async () => calls.push('drain'),
     revisionSubmitting: ref(false), revisionStage: ref(''),
     ElMessageBox: { confirm: async () => calls.push('confirm') },
     WorkspaceMessage: { success: () => calls.push('success'), error: () => calls.push('error') },
@@ -237,7 +241,7 @@ function restoreState(failSave = false) {
     persistCurrentSlide: async () => calls.push('page'),
     persistSlideOrder: async () => { calls.push('save'); if (failSave) throw Error('conflict') },
     saveProjectVersion: async () => { calls.push('backup'); return {} },
-    restoreProjectVersion: async () => { calls.push('restore'); return {current_version: 12} },
+    restoreProjectVersion: async () => { calls.push('restore'); return {current_version: 12, pages: []} },
     loadProject: async () => calls.push('reload'), loadVersions: async () => calls.push('versions'),
   }
   state.persistVersionContent = handler('persistVersionContent', state)
@@ -249,12 +253,69 @@ test('restoring flushes current content before the atomic server restore and rel
   assert.deepEqual(calls, ['confirm', 'page', 'save', 'restore', 'reload', 'versions', 'success'])
   assert.equal(state.versionPage.value, 1)
   assert.equal(state.versionActionLoading.value, false)
+  assert.equal(state.restoringVersion.value, false)
+  assert.equal(state.revisionUndoSnapshot.value, null)
 })
 test('save conflicts prevent backup and restoration', async () => {
   const {state, calls} = restoreState(true)
   await handler('restoreVersion', state)({version_id: 4})
   assert.deepEqual(calls, ['confirm', 'page', 'save', 'error'])
   assert.equal(state.versionActionLoading.value, false)
+})
+
+test('restore reload uses authoritative pages and preserves selected page, not stale GET data', async () => {
+  const {state, calls} = restoreState()
+  const restored = {current_version: 12, pages: [{id: 91, page_order: 1}]}
+  state.restoreProjectVersion = async (id, versionId) => {
+    assert.equal(versionId, 4)
+    assert.equal(state.restoringVersion.value, true)
+    return restored
+  }
+  state.loadProject = async options => {
+    assert.equal(options.restoredProject, restored)
+    assert.equal(options.selectedIndex, 1)
+    assert.equal(options.strict, true)
+  }
+  await handler('restoreVersion', state)({version_id: 4, id: 999})
+  assert.equal(calls.at(-1), 'success')
+})
+
+test('missing restored pages or hydration error cannot display restore success', async () => {
+  for (const failHydration of [false, true]) {
+    const {state, calls} = restoreState()
+    if (failHydration) state.loadProject = async () => { throw Error('bad load') }
+    else state.restoreProjectVersion = async () => ({current_version: 12})
+    await handler('restoreVersion', state)({version_id: 4})
+    assert.equal(calls.at(-1), 'error')
+    assert.equal(calls.includes('success'), false)
+    assert.equal(state.restoringVersion.value, false)
+  }
+})
+
+test('pending autosave cannot schedule an old page write while restoring', () => {
+  const state = { projectId: ref('7'), testCaseBootstrapping: ref(false), hydratingProject: ref(false),
+    restoringVersion: ref(true), suppressAutosaveAfterDiscard: false,
+    setTimeout() { throw Error('must not schedule') }, clearTimeout() { throw Error('must not touch timer') } }
+  handler('scheduleWorkspaceAutosave', state)()
+})
+
+test('direct restoration skips saving discarded edits and explicitly disables backup', async () => {
+  const {state, calls} = restoreState()
+  state.chooseVersionRestore = async () => 'direct'
+  state.restoreProjectVersion = async (id, version, options) => {
+    assert.equal(options.backup, false)
+    calls.push('restore'); return {pages: []}
+  }
+  await handler('restoreVersion', state)({version_id: 4})
+  assert.deepEqual(calls, ['drain', 'restore', 'reload', 'versions', 'success'])
+})
+
+test('cancel restoration never writes project or calls restore endpoint', async () => {
+  const {state, calls} = restoreState()
+  state.chooseVersionRestore = async () => null
+  await handler('restoreVersion', state)({version_id: 4})
+  assert.deepEqual(calls, [])
+  assert.equal(state.restoringVersion.value, false)
 })
 
 test('document edits are persisted before the shared project backup', async () => {

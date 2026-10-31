@@ -22,11 +22,11 @@ export default defineConfig(({ mode }) => {
       },
       proxy: {
         '/api/v1/python': {
-          target: env.VITE_PYTHON_API_PROXY_TARGET || 'http://127.0.0.1:8000',
+          target: env.VITE_PYTHON_API_PROXY_TARGET || 'http://127.0.0.1:8001',
           changeOrigin: true
         },
         '/api': {
-          target: env.VITE_API_PROXY_TARGET,
+          target: env.VITE_JAVA_API_PROXY_TARGET || env.VITE_API_PROXY_TARGET || 'http://127.0.0.1:8088',
           changeOrigin: true
         },
         // '/content': {

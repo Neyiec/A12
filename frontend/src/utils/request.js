@@ -2,6 +2,8 @@ import axios from 'axios'
 import router from '../router/index'
 // 全局用户 store — 统一管理 token，替代直接操作 localStorage
 import { useUserStore } from '../storage/user.js'
+import { assertApiSuccess, normalizeRequestError, responsePayload } from './apiError.js'
+import { loginLocation } from './sessionRedirect.js'
 
 // 从环境变量获取基础 URL
 const baseURL = import.meta.env.VITE_API_BASE_URL || ''
@@ -47,19 +49,20 @@ service.interceptors.request.use(
 
 // 响应拦截器
 service.interceptors.response.use(
-  response => {
+  async response => {
     // 根据后端返回的数据结构处理
-    const res = response.data
-    const code = response.data.code
+    const res = await responsePayload(response)
+    const code = res?.code
 
     // 401 未授权 — 清除用户状态并跳转登录页，提前返回阻止业务层误处理
     if (code == 401 && !isDevelopmentPreview()) {
       const userStore = useUserStore()
       userStore.clearUser()
-      router.replace('/login')
+      if (router.currentRoute.value.path !== '/login') router.replace(loginLocation(router.currentRoute.value.fullPath))
       return Promise.reject(new Error('未授权'))
     }
 
+    assertApiSuccess(res, response)
     // 如果返回的是二进制数据（如下载文件），直接返回
     if (response.config.responseType === 'blob' || response.config.responseType === 'arraybuffer') {
       return response
@@ -67,7 +70,7 @@ service.interceptors.response.use(
 
     return res
   },
-  error => {
+  async error => {
     console.error('响应错误:', error)
 
     // 统一错误处理
@@ -84,7 +87,7 @@ service.interceptors.response.use(
             // 清除用户状态并使用 SPA 路由跳转，避免整页刷新
             const userStore = useUserStore()
             userStore.clearUser()
-            router.replace('/login')
+            if (router.currentRoute.value.path !== '/login') router.replace(loginLocation(router.currentRoute.value.fullPath))
           }
           break
         }
@@ -106,7 +109,7 @@ service.interceptors.response.use(
       console.error('请求配置错误:', error.message)
     }
 
-    return Promise.reject(error)
+    return Promise.reject(await normalizeRequestError(error))
   }
 )
 

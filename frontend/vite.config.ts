@@ -19,7 +19,6 @@ export default defineConfig(({ mode }) => {
     optimizeDeps: {
       // Lazy workspace imports must be discovered before the first navigation.
       include: ['katex', 'mathlive'],
-      force: mode === 'development',
     },
     server: {
       port: 5173,

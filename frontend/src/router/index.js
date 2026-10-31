@@ -8,6 +8,7 @@ import {isSessionExpired} from '../utils/JWTParser.js'
 // 全局用户 store — 替代直接操作 localStorage
 import { useUserStore } from '../storage/user.js'
 import { ElMessage } from 'element-plus'
+import { loginLocation } from '../utils/sessionRedirect.js'
 
 // 所有页面保持按需加载。之前既静态导入页面、又用变量 import 扫描整个
 // components 目录，会把创作工作台及其编辑器依赖一并放入首屏包。
@@ -51,6 +52,7 @@ const routes = [
       { path: 'workspace', component: CreationWorkspace, meta: { menu: 'workspace', title: '创作工作台', staticTeacherPage: true } },
       { path: 'settings', component: AccountSettings, meta: { menu: 'settings', title: '账号与安全', staticTeacherPage: true } },
       { path: 'courses', component: CourseGraphWorkspace, meta: { menu: 'courses', title: '课程双图谱', staticTeacherPage: true } },
+      { path: 'questions', component: getComponentLoader('QuestionBank'), meta: { menu: 'questions', title: '题库与组卷', staticTeacherPage: true } },
     ],
   },
 ]
@@ -80,7 +82,7 @@ export function addDynamicRoutes(menus) {
       relativePath = relativePath.replace('/main/', '')
     }
     // TODO 这里的父路由名被固定为Main，后期可以改成动态获取
-    if (menu.path && menu.component){
+    if (menu.path && menu.component && !router.getRoutes().some(route => route.path === menu.path)){
       const component = getComponentLoader(menu.component)
       if (component) {
         router.addRoute('M', {
@@ -122,7 +124,7 @@ router.beforeEach(async (to) => {
   if (!to.meta.publicPage && to.path !== '/login' && sessionExpired) {
     userStore.clearUser()
     menusLoaded = false
-    return '/login'
+    return loginLocation(to.fullPath)
   }
 
   // 清除过期或缺失 token 的用户状态

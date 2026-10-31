@@ -79,6 +79,20 @@
           AND deleted_at IS NULL
     </update>
 
+    <!-- 快照恢复必须能清空旧版本没有的内容，不能沿用 PATCH 的忽略 null 语义。 -->
+    <update id="restoreContentWithVersion">
+        UPDATE ws_project
+        SET project_name = #{project.project_name},
+            project_type = #{project.project_type},
+            snapshots = #{project.snapshots,jdbcType=LONGVARCHAR},
+            edit_history = #{project.edit_history,jdbcType=LONGVARCHAR},
+            current_version = #{project.current_version},
+            updated_at = NOW()
+        WHERE id = #{project.id}
+          AND current_version = #{expectedVersion}
+          AND deleted_at IS NULL
+    </update>
+
     <update id="updateStatus">
         UPDATE ws_project SET status = #{status}, updated_at = NOW() WHERE id = #{id}
     </update>

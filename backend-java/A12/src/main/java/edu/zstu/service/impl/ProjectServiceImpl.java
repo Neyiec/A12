@@ -436,6 +436,12 @@ public class ProjectServiceImpl implements ProjectService {
     @Override
     @Transactional
     public ProjectVO restoreVersion(String id, String versionId, Integer userId) {
+        return restoreVersion(id, versionId, userId, true);
+    }
+
+    @Override
+    @Transactional
+    public ProjectVO restoreVersion(String id, String versionId, Integer userId, boolean backup) {
         log.info("restoreVersion userId={}, projectId={}, versionId={}", userId, id, versionId);
         Ws_Project p = findProject(id);
         checkPermission(p, userId);
@@ -444,16 +450,18 @@ public class ProjectServiceImpl implements ProjectService {
         if (v == null || v.getProject_id() != p.getId()) throw new RuntimeException("版本不存在或不属于当前项目");
         // Validate the complete target before any backup or destructive page replacement.
         validateVersionSnapshot(v.getSnapshot_data());
-        VersionCreateDTO backup = new VersionCreateDTO();
-        backup.setDescription("恢复快照 v" + v.getVersion_number() + " 前的自动备份");
-        saveVersion(id, backup, userId);
+        if (backup) {
+            VersionCreateDTO backupRequest = new VersionCreateDTO();
+            backupRequest.setDescription("恢复快照 v" + v.getVersion_number() + " 前的自动备份");
+            saveVersion(id, backupRequest, userId);
+        }
         int expectedVersion = p.getCurrent_version();
         restoreSnapshot(p, v.getSnapshot_data());
         p.setCurrent_version(expectedVersion + 1);
-        if (projectMapper.updateWithVersion(p, expectedVersion) != 1)
+        if (projectMapper.restoreContentWithVersion(p, expectedVersion) != 1)
             throw new RuntimeException("版本冲突，请刷新后重试恢复");
         businessLogService.record("operation", "project", "restore_version", "project", p.getId(),
-                Map.of("source_version_id", Integer.valueOf(versionId), "current_version", p.getCurrent_version()));
+                Map.of("source_version_id", Integer.valueOf(versionId), "current_version", p.getCurrent_version(), "backup_created", backup));
         return toProjectVO(p);
     }
 

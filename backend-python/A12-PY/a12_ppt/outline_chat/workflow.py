@@ -14,7 +14,7 @@ from ..presentation.json_utils import extract_json
 from ..course_graph import course_graph_store
 from ..tools.rag import rag_search, selected_material_context
 from .message_utils import message_text, messages_to_dicts, normalize_messages
-from .learning_graphs import build_learning_graphs
+from .learning_graphs import build_learning_graphs, LearningGraphGenerationError
 from .postgres_store import postgres_memory_store
 from .session_store import outline_session_store
 from .tool_node import OutlineToolNode
@@ -192,8 +192,10 @@ class OutlineChatWorkflow:
             elif node_name == "generate_learning_graphs":
                 graphs = final_state.get("learning_graphs") or {}
                 if not all(len((graphs.get(kind) or {}).get("nodes") or []) >= 4 for kind in ("knowledge", "skill")):
+                    message = final_state.get("error") or "双图谱生成不完整，请重试；本轮尚未生成大纲"
+                    outline_session_store.save(user_id, session_id, self._session_snapshot(final_state), status="failed")
                     yield {"event": "error", "data": {"stage": "generate_learning_graphs",
-                                                   "message": "双图谱生成不完整，请重试；本轮尚未生成大纲"}}
+                                                   "message": message}}
                     yield {"event": "done", "data": {"status": "failed", "user_id": user_id, "session_id": session_id}}
                     return
                 pending_data = {key: final_state.get(key) for key in ("learning_graphs", "intent", "teacher_profile",
@@ -479,9 +481,15 @@ class OutlineChatWorkflow:
         return {"final_prompt": prompt, "tool_context": tool_context}
 
     async def _generate_learning_graphs_node(self, state: OutlineChatState) -> dict[str, Any]:
-        graphs = await build_learning_graphs(state["intent"], state.get("course_graph") or {},
-                                             state.get("tool_context") or {}, self.llm)
-        return {"learning_graphs": graphs}
+        context = {**(state.get("tool_context") or {}),
+                   "teacher_request": getattr(state.get("request"), "message", ""),
+                   "teacher_conversation": [message_text(message)[:1500]
+                                            for message in normalize_messages(state.get("messages", []))[-8:]]}
+        try:
+            graphs = await build_learning_graphs(state["intent"], state.get("course_graph") or {}, context, self.llm)
+            return {"learning_graphs": graphs, "error": ""}
+        except LearningGraphGenerationError as exc:
+            return {"learning_graphs": {}, "error": str(exc)}
 
     async def _select_strategy_node(self, state: OutlineChatState) -> dict[str, Any]:
         intent = dict(state.get("intent") or {})

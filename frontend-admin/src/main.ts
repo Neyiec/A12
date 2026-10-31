@@ -13,6 +13,7 @@ import { createApp } from 'vue'
 import App from './App.vue'
 import router from './router'
 import ElementPlus from 'element-plus'
+import zhCn from 'element-plus/es/locale/lang/zh-cn'
 import 'element-plus/dist/index.css'
 import './style.css'
 import { createPinia } from 'pinia'
@@ -36,9 +37,9 @@ async function bootstrap() {
   // 注册持久化插件，使 defineStore 中的 persist 选项生效
   pinia.use(piniaPluginPersistedstate)
 
-  app.use(router)
-  app.use(ElementPlus)
   app.use(pinia)
+  app.use(router)
+  app.use(ElementPlus, { locale: zhCn })
 
   app.mount('#app')
 }

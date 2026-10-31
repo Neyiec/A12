@@ -1,11 +1,15 @@
 package edu.zstu.service.impl;
 
 import cn.hutool.core.bean.BeanUtil;
+import cn.hutool.json.JSONUtil;
 import com.fasterxml.jackson.core.type.TypeReference;
 import edu.zstu.dto.PasswordChangeDTO;
 import edu.zstu.dto.ContactChangeDTO;
 import edu.zstu.entity.Sys_User;
 import edu.zstu.mapper.SysUserMapper;
+import edu.zstu.mapper.SysRoleMapper;
+import edu.zstu.entity.Sys_Role;
+import edu.zstu.utils.UserAccessFields;
 import edu.zstu.service.BusinessLogService;
 import edu.zstu.service.UserService;
 import edu.zstu.utils.CurrentHolder;
@@ -22,6 +26,8 @@ import java.time.Duration;
 import java.util.HashMap;
 import java.util.Map;
 import java.util.Objects;
+import java.util.List;
+import java.util.Optional;
 
 @Slf4j
 @Service
@@ -33,16 +39,18 @@ public class UserServiceImpl implements UserService {
     private final BusinessLogService businessLogService;
     private final RedisCacheUtil redisCacheUtil;
     private final StringRedisTemplate redisTemplate;
+    private final SysRoleMapper roleMapper;
 
     public UserServiceImpl(SysUserMapper userMapper, PasswordUtil passwordUtil,
                            JwtUtil jwtUtil, BusinessLogService businessLogService,
-                           RedisCacheUtil redisCacheUtil, StringRedisTemplate redisTemplate) {
+                           RedisCacheUtil redisCacheUtil, StringRedisTemplate redisTemplate, SysRoleMapper roleMapper) {
         this.userMapper = userMapper;
         this.passwordUtil = passwordUtil;
         this.jwtUtil = jwtUtil;
         this.businessLogService = businessLogService;
         this.redisCacheUtil = redisCacheUtil;
         this.redisTemplate = redisTemplate;
+        this.roleMapper = roleMapper;
     }
 
     @Override
@@ -53,7 +61,13 @@ public class UserServiceImpl implements UserService {
         Sys_User user = userMapper.findById(userId);
         if (user == null) throw new RuntimeException("用户不存在");
         if (user.getIs_active() != 1) throw new RuntimeException("用户未激活，请先激活");
-        return BeanUtil.copyProperties(user, UserVO.class);
+        UserVO profile=BeanUtil.copyProperties(user, UserVO.class);
+        List<String> roles=Optional.ofNullable(roleMapper.findRolesByUserId(userId)).orElse(List.of()).stream().map(Sys_Role::getRole_code).toList();
+        List<String> permissions=Optional.ofNullable(roleMapper.findPermCodesByUserId(userId)).orElse(List.of());
+        profile.setRoles(JSONUtil.toJsonStr(roles));
+        profile.setPermissions(JSONUtil.toJsonStr(permissions));
+        profile.setUser_type(UserAccessFields.userType(roles));
+        return profile;
     }
 
     @Override

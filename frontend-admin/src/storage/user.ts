@@ -70,7 +70,7 @@ export const useUserStore = defineStore('user', () => {
     } catch { /* 解析失败则使用空数组 */ }
 
     userInfo.value = {
-      user_id: info.user_id,
+      user_id: info.user_id ?? info.id,
       username: info.username,
       real_name: info.real_name || '',
       avatar: info.avatar || '',

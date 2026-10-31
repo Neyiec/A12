@@ -33,7 +33,7 @@ const route = useRoute()
 /** 搜索关键词 */
 const searchKeyword = ref('')
 /** 未读通知数 */
-const unreadCount = ref(3)
+const unreadCount = ref(0)
 /** 刷新按钮加载态 */
 const isRefreshing = ref(false)
 
@@ -42,6 +42,8 @@ const isRefreshing = ref(false)
  * 返回 [{ label, path? }] 数组，最后一项为当前页（无链接）
  */
 const breadcrumbMap = {
+  AdminAccess: { parent: '账号与权限', current: '权限与访问说明' },
+  QuestionManagement: { parent: '教学评价', current: '题库录入与审核' },
   Dashboard: { parent: '数据看板', current: 'Dashboard Overview' },
   Settings: { parent: '系统配置', current: 'System Settings' },
   Users: { parent: '用户管理', current: 'Users & Permissions' },
@@ -54,10 +56,9 @@ const breadcrumbs = computed(() => {
   const name = route.name
   const entry = breadcrumbMap[name]
   if (!entry) {
-    // 兜底：未知路由统一归入数据看板
     return [
-      { label: '数据看板', path: '/main/dashboard' },
-      { label: 'Dashboard Overview' },
+      { label: '管理工作台' },
+      { label: route.meta?.title || '当前页面' },
     ]
   }
   return [
@@ -86,8 +87,7 @@ const toggleTooltip = computed(() => {
  */
 const handleSearch = () => {
   if (!searchKeyword.value.trim()) return
-  // TODO: 接入全局搜索 API 或弹出搜索结果面板
-  ElMessage.info(`搜索：${searchKeyword.value}`)
+  ElMessage.info('请使用当前页面内的关键词筛选；跨模块搜索暂未接入')
 }
 
 /**
@@ -96,7 +96,7 @@ const handleSearch = () => {
  */
 const handleNotificationClick = () => {
   // TODO: 展开通知下拉面板
-  ElMessage.info('通知面板（待接入）')
+  ElMessage.info('暂无已接入的通知数据，请在看板查看待处理事项')
 }
 
 /**
@@ -166,6 +166,7 @@ const handleRefresh = () => {
       <el-input
         v-model="searchKeyword"
         placeholder="搜索账号、内容、日志..."
+        aria-label="管理端搜索提示：请使用各页面内的筛选"
         :prefix-icon="Search"
         size="small"
         clearable
@@ -184,6 +185,7 @@ const handleRefresh = () => {
           size="small"
           class="!text-lg"
           @click="handleNotificationClick"
+          aria-label="通知"
         />
       </el-badge>
 
@@ -195,6 +197,8 @@ const handleRefresh = () => {
         class="!text-lg"
         :class="{ 'animate-spin': isRefreshing }"
         @click="handleRefresh"
+        :disabled="isRefreshing"
+        aria-label="刷新当前管理页面"
       />
     </div>
   </header>

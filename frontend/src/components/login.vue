@@ -18,6 +18,7 @@ import { User, Lock, Message, Phone, Key } from '@element-plus/icons-vue'
 import { checkEmail, checkUsername, initialPasswordChange, login, register, resetPassword, sendVerificationCode } from '../apis/login.js'
 import { LOGIN_TEXT, VALIDATION_RULES } from '../config/login.config.js'
 import { useUserStore } from '../storage/user.js'
+import { safeLoginTarget } from '../utils/sessionRedirect.js'
 
 const router = useRouter()
 /** 用户状态 store — 登录成功后写入 token 与用户信息 */
@@ -296,9 +297,9 @@ const handleSendCode = async () => {
         cooldownTimer = null
       }
     }, 1000)
-  } catch {
-    // HTTP/网络错误已被 request.js 拦截器记录日志，此处仅做用户提示
-    ElMessage.error(LOGIN_TEXT.message.networkError)
+  } catch (error) {
+    // 账号密码错误、服务不可用和网络错误需要分别告知教师。
+    ElMessage.error(error?.message || LOGIN_TEXT.message.networkError)
   } finally {
     sendCodeLoading.value = false
   }
@@ -344,7 +345,7 @@ const handleLogin = async () => {
     ElMessage.success(LOGIN_TEXT.message.loginSuccess)
     // 短暂延迟后跳转，让用户看到成功提示
     setTimeout(() => {
-      router.push('/main')
+      router.replace(safeLoginTarget(router.currentRoute.value.query.redirect))
     }, 200)
   } catch {
     // HTTP/网络错误已被 request.js 拦截器记录日志，此处仅做用户提示

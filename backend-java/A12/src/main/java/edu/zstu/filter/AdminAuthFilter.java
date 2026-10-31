@@ -55,6 +55,10 @@ public class AdminAuthFilter implements Filter {
             new PermRule("PUT", "/api/v1/admin/users/{id}/roles", "roles:edit"),
             new PermRule("PUT", "/api/v1/admin/roles/{id}/permissions", "roles:configPerm"),
             // 内容审核与社区治理
+            new PermRule("GET", "/api/v1/admin/questions", "audit:view"),
+            new PermRule("GET", "/api/v1/admin/questions/{id}", "audit:view"),
+            new PermRule("POST", "/api/v1/admin/questions", "resources:edit"),
+            new PermRule("POST", "/api/v1/admin/questions/{id}/review", "audit:audit"),
             new PermRule("GET", "/api/v1/admin/moderation/tasks", "audit:view"),
             new PermRule("GET", "/api/v1/admin/moderation/tasks/{id}", "audit:view"),
             new PermRule("GET", "/api/v1/admin/moderation/content/{id}", "audit:view"),

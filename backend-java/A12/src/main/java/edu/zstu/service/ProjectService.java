@@ -33,4 +33,5 @@ public interface ProjectService {
     PageResult<VersionVO> listVersions(String id, PageQuery pageQuery, Integer userId);
     Map<String, Object> versionDiff(String id, String versionId, Integer compareVersionId, Integer userId);
     ProjectVO restoreVersion(String id, String versionId, Integer userId);
+    ProjectVO restoreVersion(String id, String versionId, Integer userId, boolean backup);
 }

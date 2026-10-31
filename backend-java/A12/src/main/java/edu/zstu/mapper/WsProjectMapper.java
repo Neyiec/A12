@@ -16,6 +16,7 @@ public interface WsProjectMapper {
     int insert(Ws_Project project);
     int update(Ws_Project project);
     int updateWithVersion(@Param("project") Ws_Project project, @Param("expectedVersion") Integer expectedVersion);
+    int restoreContentWithVersion(@Param("project") Ws_Project project, @Param("expectedVersion") Integer expectedVersion);
     int updateStatus(@Param("id") Integer id, @Param("status") String status);
     int softDeleteById(@Param("id") Integer id);
     int restoreById(@Param("id") Integer id, @Param("status") String status);

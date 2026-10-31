@@ -7,7 +7,7 @@
 <script setup>
 import { computed } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
-import { ChatDotRound, Download, Edit, Files, House } from '@element-plus/icons-vue'
+import { ChatDotRound, Download, Edit, Files, House, Document } from '@element-plus/icons-vue'
 
 const route = useRoute()
 const router = useRouter()
@@ -19,6 +19,7 @@ const tabs = [
   { path: '/main/workspace', label: '工作台', icon: Edit, emphasized: true },
   { path: '/main/exports', label: '导出', icon: Download },
   { path: '/main/community', label: '社区', icon: ChatDotRound },
+  { path: '/main/questions', label: '题库', icon: Document },
 ]
 
 /** 当前激活 Tab：与路由 path 精确匹配（query 不参与判断）。 */

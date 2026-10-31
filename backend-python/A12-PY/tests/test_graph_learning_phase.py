@@ -110,7 +110,16 @@ class LearningApiTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(response.status_code, 409)
 
     async def test_candidate_graph_is_not_silently_saved(self):
-        model = type("Model", (), {"available": True, "complete": AsyncMock(return_value=json.dumps(course()))})()
+        candidate = course()
+        candidate['nodes'].extend([
+            {'id': 'skill_basic', 'label': '计算函数值', 'kind': 'skill', 'task': '代入自变量计算函数值', 'assessment': '计算正确'},
+            {'id': 'skill_transfer', 'label': '建立函数模型', 'kind': 'skill', 'task': '根据情境建立函数模型', 'assessment': '表达式符合情境'},
+        ])
+        candidate['edges'].extend([
+            {'source': 'skill_basic', 'target': 'skill', 'relation': 'prerequisite'},
+            {'source': 'skill', 'target': 'skill_transfer', 'relation': 'prerequisite'},
+        ])
+        model = type("Model", (), {"available": True, "complete": AsyncMock(return_value=json.dumps(candidate))})()
         with patch("a12_ppt.course_draft.rag_search", AsyncMock(return_value={"context": "资料"})), \
              patch("a12_ppt.course_router.course_graph_store.put") as save:
             result = await extract_course_draft({"title": "函数", "resource_ids": ["temp:x"]}, model)

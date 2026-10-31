@@ -1,7 +1,12 @@
 import test from 'node:test'
 import assert from 'node:assert/strict'
-import { bindSubjectInteractions } from '../src/utils/subjectInteraction.js'
-import { geometryPoints } from '../src/utils/subjectTool.js'
+import { createServer } from 'vite'
+
+// 学科渲染依赖 ?inline CSS 与扩展名省略解析，应使用同生产代码一致的 Vite 加载器。
+const server = await createServer({ configFile: false, server: { middlewareMode: true }, appType: 'custom', optimizeDeps: { noDiscovery: true } })
+const { bindSubjectInteractions } = await server.ssrLoadModule('/src/utils/subjectInteraction.js')
+const { geometryPoints } = await server.ssrLoadModule('/src/utils/subjectTool.js')
+test.after(async () => { await server.close() })
 
 test('geometry drag converts screen coordinates and persists only at gesture completion', () => {
   const listeners = {}

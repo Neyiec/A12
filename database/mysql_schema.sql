@@ -1,6 +1,6 @@
 
 -- 智核 A12 MySQL 当前数据库结构快照，导出日期：2026-10-10。
--- 来源：本机 a12 数据库，共24张表；不包含业务数据、账号、角色种子数据。
+-- 来源：本机 a12 数据库，共27张表；不包含业务数据、账号、角色种子数据。
 -- 在空数据库中执行。本脚本不删除已有表；不要直接导入正在使用的数据库。
 -- 使用方式：先创建空的 a12 数据库，再使用 mysql -u 用户名 -p a12 < mysql_schema.sql
 -- 包含当前真实字段、生成列、主外键、唯一索引、默认值、注释和表选项。
@@ -283,6 +283,60 @@ CREATE TABLE `kb_retrieval_log` (
   KEY `idx_task_id` (`task_id`),
   KEY `idx_created_at` (`created_at`)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci COMMENT='检索与生成记录表';
+/*!40101 SET character_set_client = @saved_cs_client */;
+/*!40101 SET @saved_cs_client     = @@character_set_client */;
+/*!50503 SET character_set_client = utf8mb4 */;
+CREATE TABLE `qb_paper` (
+  `id` bigint NOT NULL AUTO_INCREMENT,
+  `owner_id` int NOT NULL,
+  `title` varchar(120) NOT NULL,
+  `subject` varchar(40) NOT NULL,
+  `duration_minutes` int NOT NULL,
+  `total_score` decimal(8,2) NOT NULL,
+  `content_json` mediumtext NOT NULL,
+  `revision` int NOT NULL DEFAULT '1',
+  `created_at` datetime NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  `updated_at` datetime NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  PRIMARY KEY (`id`),
+  KEY `idx_qb_paper_owner` (`owner_id`,`id`)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_0900_ai_ci;
+/*!40101 SET character_set_client = @saved_cs_client */;
+/*!40101 SET @saved_cs_client     = @@character_set_client */;
+/*!50503 SET character_set_client = utf8mb4 */;
+CREATE TABLE `qb_question` (
+  `id` bigint NOT NULL AUTO_INCREMENT,
+  `owner_id` int NOT NULL,
+  `subject` varchar(40) NOT NULL,
+  `grade` varchar(40) NOT NULL,
+  `question_type` varchar(20) NOT NULL,
+  `difficulty` varchar(20) NOT NULL,
+  `stem` text NOT NULL,
+  `knowledge_points` varchar(500) NOT NULL DEFAULT '',
+  `content_json` mediumtext NOT NULL,
+  `status` varchar(20) NOT NULL DEFAULT 'draft',
+  `review_note` varchar(1000) NOT NULL DEFAULT '',
+  `reviewer_id` int DEFAULT NULL,
+  `revision` int NOT NULL DEFAULT '1',
+  `created_at` datetime NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  `updated_at` datetime NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  PRIMARY KEY (`id`),
+  KEY `idx_qb_public` (`status`,`subject`,`grade`,`question_type`,`difficulty`,`id`),
+  KEY `idx_qb_owner` (`owner_id`,`status`,`id`)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_0900_ai_ci;
+/*!40101 SET character_set_client = @saved_cs_client */;
+/*!40101 SET @saved_cs_client     = @@character_set_client */;
+/*!50503 SET character_set_client = utf8mb4 */;
+CREATE TABLE `qb_review` (
+  `id` bigint NOT NULL AUTO_INCREMENT,
+  `question_id` bigint NOT NULL,
+  `reviewer_id` int NOT NULL,
+  `decision` varchar(20) NOT NULL,
+  `note` varchar(1000) NOT NULL DEFAULT '',
+  `question_revision` int NOT NULL,
+  `created_at` datetime NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  PRIMARY KEY (`id`),
+  KEY `idx_qb_review_question` (`question_id`,`id`)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_0900_ai_ci;
 /*!40101 SET character_set_client = @saved_cs_client */;
 /*!40101 SET @saved_cs_client     = @@character_set_client */;
 /*!50503 SET character_set_client = utf8mb4 */;
