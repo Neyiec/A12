@@ -347,9 +347,10 @@ const handleLogin = async () => {
     setTimeout(() => {
       router.replace(safeLoginTarget(router.currentRoute.value.query.redirect))
     }, 200)
-  } catch {
-    // HTTP/网络错误已被 request.js 拦截器记录日志，此处仅做用户提示
-    ElMessage.error(LOGIN_TEXT.message.networkError)
+  } catch (error) {
+    // 请求层也会拒绝业务失败，保留后端提示以区分账号错误和连接失败。
+    const mobile = window.Capacitor?.isNativePlatform?.() || isMobileViewport.value
+    ElMessage.error((mobile && error?.message) || LOGIN_TEXT.message.networkError)
     loginForm.password = ''
   } finally {
     loginLoading.value = false
@@ -496,7 +497,7 @@ onBeforeUnmount(() => {
     </aside>
 
     <!-- ========== 右侧：登录/注册表单区 (lg:w-4/12) ========== -->
-    <main class="flex-1 flex items-center justify-center px-6 sm:px-10 lg:px-16">
+    <main class="mobile-auth-main flex-1 flex items-center justify-center px-6 sm:px-10 lg:px-16">
       <div class="w-full max-w-[440px]">
 
         <!-- 登录页使用竖版完整品牌标志 -->

@@ -1,4 +1,5 @@
 <script setup>
+import MobileSection from './MobileSection.vue'
 import { computed, ref, watch } from 'vue'
 
 const props = defineProps({
@@ -55,7 +56,7 @@ const apply = () => { if (selectedTemplate.value?.theme) emit('apply', selectedT
     @open="emit('load')"
   >
     <div class="template-picker-layout">
-      <aside class="template-outline-panel">
+      <aside class="template-outline-panel"><MobileSection title="教学大纲">
         <div class="template-panel-heading"><span>结构大纲</span><small>{{ outlineSlides.length }} 页</small></div>
         <p class="template-outline-title">{{ outlineTitle }}</p>
         <el-collapse v-if="outlineSlides.length" accordion>
@@ -66,7 +67,7 @@ const apply = () => { if (selectedTemplate.value?.theme) emit('apply', selectedT
           </el-collapse-item>
         </el-collapse>
         <el-empty v-else description="当前没有可展示的大纲，将按现有页面重构" :image-size="54" />
-      </aside>
+      </MobileSection></aside>
 
       <section class="template-drawer-panel">
         <div class="template-panel-heading"><span>模板风格</span><small>选中后按当前大纲重生成 HTML PPT</small></div>

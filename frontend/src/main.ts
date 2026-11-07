@@ -17,6 +17,8 @@ import zhCn from 'element-plus/es/locale/lang/zh-cn'
 import 'element-plus/dist/index.css'
 import 'markstream-vue/index.css'
 import './style.css'
+import './mobile-ui.css'
+import './mobile-system.css'
 import { createPinia } from 'pinia'
 // Pinia 持久化插件 — 自动将 store 状态同步到 localStorage
 import piniaPluginPersistedstate from 'pinia-plugin-persistedstate'
@@ -27,7 +29,8 @@ import piniaPluginPersistedstate from 'pinia-plugin-persistedstate'
  */
 async function bootstrap() {
   // 本地演示模式用 MSW 返回模拟 API 数据，不连接 Java/Python 后端。
-  if (import.meta.env.VITE_ENABLE_MOCK_API === 'true') {
+  const mockApiEnabled = import.meta.env.VITE_ENABLE_MOCK_API === 'true'
+  if (mockApiEnabled) {
     const { startMockWorker } = await import('./mock/browser.ts')
     await startMockWorker()
   }
@@ -39,6 +42,13 @@ async function bootstrap() {
   pinia.use(piniaPluginPersistedstate)
 
   app.use(pinia)
+
+  // 预览页需要先在 MSW 中建立 mock 会话，再挂载路由和发起页面请求。
+  if (mockApiEnabled && window.location.hash.includes('preview=1')) {
+    const { ensureDevelopmentPreviewSession } = await import('./utils/previewSession.js')
+    await ensureDevelopmentPreviewSession()
+  }
+
   app.use(router)
   app.use(ElementPlus, { locale: zhCn })
 

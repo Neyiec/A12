@@ -18,7 +18,7 @@ test('ordinary workspace navigation stays on the project chooser', () => {
   assert.equal(hasWorkspaceTarget({manage:'1',preview:'1'}), false)
   for (const key of ['projectId','sessionId','localDraftId','testCase','pptGeneration']) assert.equal(hasWorkspaceTarget({[key]:'17'}), true)
   assert.match(file, /<Editor v-else-if="hasTarget"/)
-  assert.match(file, /<WorkspaceEditorState v-if="hasTarget && editorFailure"/)
+  assert.match(file, /<WorkspaceEditorState v-else-if="hasTarget && editorFailure"/)
 })
 
 test('editor loading has immediate feedback and a bounded error state', () => {

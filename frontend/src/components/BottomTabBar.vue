@@ -1,29 +1,27 @@
 <!--
   [数据交互说明]
   - 导入: Vue Router 当前路由（useRoute/useRouter）
-  - 输出: 教师端手机档（<768px）底部固定导航，5 个一级入口；是否渲染/显示由 TeacherLayout 控制（workspace-mode 或桌面档隐藏）
+  - 输出: 教师端手机档底部固定导航，4 个一级入口；课件预览中隐藏
   - 说明: 候选组件规范见 doc/pending-specs/BottomTabBar.md
 -->
 <script setup>
 import { computed } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
-import { ChatDotRound, Download, Edit, Files, House, Document } from '@element-plus/icons-vue'
+import { ChatDotRound, House, Document, User } from '@element-plus/icons-vue'
 
 const route = useRoute()
 const router = useRouter()
 
-/** 底部 5 个一级入口；工作台居中央主操作位，用品牌实色按钮突出。 */
 const tabs = [
   { path: '/main', label: '主页', icon: House },
-  { path: '/main/resources', label: '资源', icon: Files },
-  { path: '/main/workspace', label: '工作台', icon: Edit, emphasized: true },
-  { path: '/main/exports', label: '导出', icon: Download },
   { path: '/main/community', label: '社区', icon: ChatDotRound },
   { path: '/main/questions', label: '题库', icon: Document },
+  { path: '/main/me', label: '我的', icon: User },
 ]
 
-/** 当前激活 Tab：与路由 path 精确匹配（query 不参与判断）。 */
-const activePath = computed(() => route.path)
+/** Personal tools and settings belong to 我的 even while viewing their own routes. */
+const personalMenus = new Set(['me', 'workspace', 'resources', 'exports', 'settings', 'courses'])
+const activePath = computed(() => personalMenus.has(route.meta.menu) ? '/main/me' : route.path)
 
 /** 切换页面；点击当前页不重复跳转，保留开发预览 query 与桌面导航行为一致。 */
 const handleSelect = (tab) => {
@@ -38,13 +36,13 @@ const handleSelect = (tab) => {
       v-for="tab in tabs"
       :key="tab.path"
       type="button"
-      :class="['tab-item', { 'is-active': activePath === tab.path, 'is-emphasized': tab.emphasized }]"
+      :class="['tab-item', { 'is-active': activePath === tab.path }]"
       :aria-label="tab.label"
       :aria-current="activePath === tab.path ? 'page' : undefined"
       @click="handleSelect(tab)"
     >
       <el-icon class="tab-icon"><component :is="tab.icon" /></el-icon>
-      <span v-if="!tab.emphasized" class="tab-label">{{ tab.label }}</span>
+      <span class="tab-label">{{ tab.label }}</span>
     </button>
   </nav>
 </template>
@@ -60,7 +58,8 @@ const handleSelect = (tab) => {
   align-items: stretch;
   height: calc(var(--zh-tabbar-h) + var(--zh-safe-bottom));
   padding-bottom: var(--zh-safe-bottom);
-  box-shadow: 0 -2px 8px rgba(0, 0, 0, 0.08);
+  border-top: 1px solid var(--zh-line-parting);
+  box-shadow: 0 -3px 16px rgb(23 43 77 / 4%);
   background: var(--zh-background-primary);
 }
 .tab-item {
@@ -80,23 +79,11 @@ const handleSelect = (tab) => {
   cursor: pointer;
   transition: background-color 150ms ease, color 150ms ease, transform 150ms ease;
 }
-.tab-icon { font-size: 24px; }
-.tab-label { font-size: var(--zh-font-size10); line-height: 1; }
+.tab-icon { display: grid; place-items: center; width: 48px; height: 32px; border-radius: 12px; font-size: 26px; }
+.tab-label { font-size: 14px; line-height: 1.3; font-weight: 500; }
 .tab-item.is-active { color: var(--zh-text-theme); }
-/* 中央主操作位：以更大的品牌实色图标突出，文字由 aria-label 提供。 */
-.tab-item.is-emphasized { gap: 0; padding: 4px; }
-.tab-item.is-emphasized .tab-icon {
-  display: grid;
-  flex: 0 0 48px;
-  width: 48px;
-  height: 48px;
-  place-items: center;
-  border-radius: var(--zh-radius16);
-  color: var(--zh-background-primary);
-  background: var(--zh-theme-primary);
-  font-size: 26px;
-}
-.tab-item.is-emphasized.is-active .tab-icon { background: var(--zh-background-button-hover); }
+.tab-item.is-active .tab-icon { background: var(--zh-background-weaken); }
+.tab-item.is-active .tab-label { font-weight: 650; }
 .tab-item:active { color: var(--zh-text-theme); background: var(--zh-background-option); transform: scale(0.92); }
 /* 横屏矮屏：隐藏文字仅留图标，高度降为 48px */
 @media (orientation: landscape) and (max-height: 480px) {

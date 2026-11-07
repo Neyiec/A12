@@ -13,6 +13,7 @@ import { ElMessage } from 'element-plus'
 import { Brush, Document, Paperclip, Promotion } from '@element-plus/icons-vue'
 import MarkdownRender from 'markstream-vue'
 import { useUserStore } from '../storage/user.js'
+import MobileSection from './MobileSection.vue'
 import { readOutlineDraft, saveOutlineDraft } from '../utils/presentationDraft.js'
 import { readOpenAiTextStream } from '../utils/openAiSse.js'
 import { upsertLearningGraphMessage } from '../utils/learningGraphMessage.js'
@@ -111,10 +112,10 @@ watch(selectedReasoningEffort, (value) => localStorage.setItem('a12:reasoning-ef
 
 // ========== 响应式断点（design.md §9.3：手机档 <768px） ==========
 /** 手机档断点：补充信息表单由 display:table 降级为卡片堆叠渲染。 */
-const isMobile = ref(window.matchMedia('(max-width: 767.98px) and (hover: none) and (pointer: coarse)').matches)
+const isMobile = ref(window.matchMedia('(max-width: 767.98px) and (hover: none) and (pointer: coarse), (max-width: 1023.98px) and (max-height: 600px) and (hover: none) and (pointer: coarse)').matches)
 /** 触屏设备（无 hover + 粗指针）：Enter 不触发发送，避免与移动端键盘回车冲突。 */
 const isTouchDevice = window.matchMedia('(hover: none) and (pointer: coarse)').matches
-const mobileBreakpointQuery = window.matchMedia('(max-width: 767.98px) and (hover: none) and (pointer: coarse)')
+const mobileBreakpointQuery = window.matchMedia('(max-width: 767.98px) and (hover: none) and (pointer: coarse), (max-width: 1023.98px) and (max-height: 600px) and (hover: none) and (pointer: coarse)')
 const syncMobileBreakpoint = () => { isMobile.value = mobileBreakpointQuery.matches }
 mobileBreakpointQuery.addEventListener('change', syncMobileBreakpoint)
 onUnmounted(() => mobileBreakpointQuery.removeEventListener('change', syncMobileBreakpoint))
@@ -2251,14 +2252,14 @@ async function restoreSession() {
     <!-- 底部输入区（flex 布局固定在页面底部，不随消息滚动）
          澄清阶段启用输入框，供教师补充回复后端提出的澄清问题 -->
     <footer class="chat-composer">
-      <div class="composer-resource-row">
+      <MobileSection :title="`参考资料${activeResourceIds.length ? `（${activeResourceIds.length}）` : ''}`" class="chat-resource-section"><div class="composer-resource-row">
         <input ref="resourceFileInput" class="composer-resource-input" type="file" multiple accept=".pdf,.doc,.docx,.ppt,.pptx,.xls,.xlsx,.csv,.tsv,.txt,.md,.jpg,.jpeg,.png,.gif,.webp,.mp3,.wav,.m4a,.ogg,.mp4,.avi,.mov,.mkv,.webm" @change="uploadChatResources" />
         <el-button text size="small" :icon="Paperclip" :loading="resourceUploading" :disabled="resourceUploading" @click="resourceFileInput?.click()">添加资料</el-button>
         <span v-if="activeResourceIds.length" class="composer-resource-count">已绑定 {{ activeResourceIds.length }} 份资料 · 用于问答与生成</span>
         <el-tag v-for="resource in attachedResources" :key="resource.id" size="small" closable class="composer-resource-tag" @close="removeChatResource(resource.id)">{{ resource.file_name }}</el-tag>
         <el-tag v-for="resource in tempContextResources" :key="`temp-${resource.resource_id}`" size="small" type="warning" effect="plain" class="composer-resource-tag" title="临时上传资料：仅本次生成引用，会话结束自动清理">{{ resource.file_name }}</el-tag>
       </div>
-      <div v-if="isGeneralChat" class="route-preference-row">
+      </MobileSection><MobileSection v-if="isGeneralChat" title="对话设置" class="chat-preference-section"><div class="route-preference-row">
         <span>任务方式</span>
         <el-select v-model="selectedRoutePreference" size="small" aria-label="任务分流方式" style="width: 126px">
           <el-option label="自动判断" value="auto" />
@@ -2266,7 +2267,7 @@ async function restoreSession() {
           <el-option label="直接备课" value="planning" /><el-option label="批量备课" value="batch" />
         </el-select>
       </div>
-      <div class="composer-input-row" :class="{ 'is-editable': isGeneralChat || phase === 'info' || phase === 'clarifying' }">
+      </MobileSection><div class="composer-input-row" :class="{ 'is-editable': isGeneralChat || phase === 'info' || phase === 'clarifying' }">
         <el-input
           v-model="composerInput"
           type="textarea"
@@ -2798,14 +2799,18 @@ async function restoreSession() {
 }
 
 /* ===== 响应式（断点收敛：手机档 max-width 767.98px，design.md §9.3） ===== */
-@media (max-width: 767.98px) and (hover: none) and (pointer: coarse) {
+@media (max-width: 767.98px) and (hover: none) and (pointer: coarse), (max-width: 1023.98px) and (max-height: 600px) and (hover: none) and (pointer: coarse) {
   .chat-container {
     padding: 0 12px;
-    /* 手机档顶栏 48px+safe-top、底部 TabBar 56px+safe-bottom（TeacherLayout） */
-    height: calc(100dvh - 48px - var(--zh-safe-top) - var(--zh-tabbar-h) - var(--zh-safe-bottom));
+    height: 100%;
+    min-height: 0;
+  }
+  .chat-messages {
+    min-height: 0;
+    overscroll-behavior-y: contain;
   }
   .chat-composer {
-    padding-bottom: calc(16px + var(--zh-safe-bottom));
+    padding-bottom: 16px;
   }
   .ai-option-select { width: 78px; }
   .ai-option-select + .ai-option-select { width: 92px; }

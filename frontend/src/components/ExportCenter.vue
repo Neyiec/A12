@@ -11,7 +11,9 @@ import { ElMessage, ElMessageBox } from 'element-plus'
 import { CircleCheck, CircleClose, DocumentChecked, Download, Files, FolderOpened, MoreFilled, Refresh, Search, Timer, View, Warning } from '@element-plus/icons-vue'
 import { EXPORT_PAGE } from '../config/teacherPages.config.js'
 import { useUserStore } from '../storage/user.js'
+import { isAndroidApp, isBackendDownload, resolveDownloadUrl, saveAndroidDownload } from '../utils/fileDownload'
 import LearningVideoTasks from './LearningVideoTasks.vue'
+import MobileSection from './MobileSection.vue'
 import WordConversionDialog from './WordConversionDialog.vue'
 import { subscribeExportTasks } from '../utils/exportTaskSocket.js'
 import { cancelExportTask, createExportPreviewUrl, createExportTask, downloadExportArtifact, getExportArtifact, getExportQualityReport, getExportProgress, getExportTask, getProject, listExportTasks, listProjects, listProjectVersions, precheckProjectExport, retryExportTask, saveProjectVersion } from '../apis/teacher'
@@ -55,7 +57,7 @@ const versionOptions = ref([])
 const projectOptionsLoading = ref(false)
 const versionOptionsLoading = ref(false)
 
-const MOBILE_MEDIA_QUERY = '(max-width: 767.98px) and (hover: none) and (pointer: coarse)'
+const MOBILE_MEDIA_QUERY = '(max-width: 767.98px) and (hover: none) and (pointer: coarse), (max-width: 1023.98px) and (max-height: 600px) and (hover: none) and (pointer: coarse)'
 const isMobile = ref(window.matchMedia(MOBILE_MEDIA_QUERY).matches)
 const updateIsMobile = () => { isMobile.value = window.matchMedia(MOBILE_MEDIA_QUERY).matches }
 
@@ -574,26 +576,31 @@ const download = async (row) => {
     const result = unwrap(await downloadExportArtifact(row.id))
     const url = result?.download_url
     if (!url) return ElMessage.warning('服务端暂未返回下载链接')
-    // 文件接口走 JWT 鉴权，需要带 Authorization 头拉取为 Blob 后再触发下载。
     const userStore = useUserStore()
-    const response = await fetch(url, { headers: { Authorization: `Bearer ${userStore.token}` } })
-    if (!response.ok) {
-      let message = `下载失败（HTTP ${response.status}）`
-      try { const body = await response.json(); if (body?.message) message = body.message } catch { /* 非 JSON 响应则使用默认提示 */ }
-      throw new Error(message)
+    const android = isAndroidApp()
+    if (android) {
+      const nativeUrl = resolveDownloadUrl(url)
+      const authorization = isBackendDownload(nativeUrl) && userStore.token ? `Bearer ${userStore.token}` : undefined
+      if (!await saveAndroidDownload(nativeUrl, fallbackFilename, authorization)) return
+    } else {
+      const response = await fetch(url, { headers: { Authorization: `Bearer ${userStore.token}` } })
+      if (!response.ok) {
+        let message = `下载失败（HTTP ${response.status}）`
+        try { const body = await response.json(); if (body?.message) message = body.message } catch { /* 非 JSON 响应则使用默认提示 */ }
+        throw new Error(message)
+      }
+      const filename = extractDownloadFilename(response.headers.get('Content-Disposition'), fallbackFilename)
+      const objectUrl = URL.createObjectURL(await response.blob())
+      const started = triggerDownload(objectUrl, filename)
+      window.setTimeout(() => URL.revokeObjectURL(objectUrl), 1500)
+      if (!started) return ElMessage.warning('下载未启动，请重试')
     }
-    const filename = extractDownloadFilename(response.headers.get('Content-Disposition'), fallbackFilename)
-    const blob = await response.blob()
-    const objectUrl = URL.createObjectURL(blob)
-    const started = triggerDownload(objectUrl, filename)
-    window.setTimeout(() => URL.revokeObjectURL(objectUrl), 1500)
-    if (!started) return ElMessage.warning('下载未启动，请重试')
     if (autoExportFlowVisible.value && String(row.id) === String(flow.value.taskId)) {
       flow.value.downloaded = true
       flow.value.step = 5
       flow.value.message = '成果文件已交付，可继续在任务列表中查看和下载。'
     }
-    ElMessage.success('成果下载已开始')
+    ElMessage.success(android ? '成果文件已保存' : '成果下载已开始')
   } catch (error) {
     if (row.fileStatus === 'expired' || row.status === '已过期') {
       await retry(row)
@@ -783,8 +790,8 @@ onBeforeUnmount(() => {
 </script>
 
 <template>
-  <main class="export-page">
-    <LearningVideoTasks />
+  <main class="export-page" :class="{ 'mobile-export-page': isMobile }">
+    <MobileSection title="学习视频" lazy class="export-video-section"><LearningVideoTasks /></MobileSection>
     <header class="export-heading">
       <div>
         <p class="eyebrow">成果管理</p>
@@ -798,15 +805,15 @@ onBeforeUnmount(() => {
     </header>
     <WordConversionDialog v-if="conversionVisible" v-model="conversionVisible" />
 
-    <section class="export-stats" aria-label="导出概览">
+    <MobileSection title="导出概览" class="export-stats-section"><section class="export-stats" aria-label="导出概览">
       <article v-for="stat in stats" :key="stat.label">
         <span>{{ stat.label }}</span>
         <strong>{{ stat.value }}</strong>
         <small>{{ stat.detail }}</small>
       </article>
-    </section>
+    </section></MobileSection>
 
-    <section class="active-task" :class="{ empty: !primaryTaskView }" aria-label="当前导出">
+    <section v-if="!isMobile || primaryTaskView" class="active-task" :class="{ empty: !primaryTaskView }" aria-label="当前导出">
       <div class="active-task-icon"><Timer v-if="primaryTaskView && isRunning(primaryTaskView)" /><CircleCheck v-else /></div>
       <div class="active-task-copy">
         <p>{{ activeTaskLabel }}</p>
@@ -846,7 +853,7 @@ onBeforeUnmount(() => {
         <el-progress :percentage="flow.progress" :indeterminate="flowProgressIndeterminate" :duration="3" :status="flow.status === 'failed' ? 'exception' : flow.status === 'success' || flow.status === 'partial' ? 'success' : undefined" :show-text="false" />
       </div>
 
-      <ol class="flow-steps">
+      <MobileSection title="生成步骤"><ol class="flow-steps">
         <li v-for="(item, index) in flowSteps" :key="item.title" :class="flowStepState(index)">
           <span class="flow-step-index">
             <CircleCheck v-if="flowStepState(index) === 'complete'" />
@@ -854,7 +861,7 @@ onBeforeUnmount(() => {
           </span>
           <span class="flow-step-copy"><strong>{{ item.title }}</strong><small>{{ item.detail }}</small></span>
         </li>
-      </ol>
+      </ol></MobileSection>
 
       <div v-if="flow.error" class="inline-error" role="alert"><Warning /><span>{{ flow.error }}</span></div>
       <div v-if="flow.precheck" class="precheck-strip" :class="{ failed: !flow.precheck.passed }">
@@ -872,14 +879,14 @@ onBeforeUnmount(() => {
       <small class="flow-footnote">导出基于当前不可变快照执行，任务完成后仍可从下方任务记录查看成果。</small>
     </section>
 
-    <section class="quality-card">
+    <MobileSection title="质量报告" class="export-quality-section"><section class="quality-card">
       <div class="quality-card-heading">
         <div class="quality-title"><CircleCheck /><div><strong>最近一次导出质量</strong><span>{{ latestCompletedTask ? `${latestCompletedTask.fileName} · ${latestCompletedTask.version}` : '完成任务后显示服务端报告' }}</span></div></div>
         <el-button text type="primary" :disabled="!latestCompletedTask" @click="openLatestQualityReport">查看完整报告</el-button>
       </div>
       <div v-if="latestCompletedTask" class="quality-meta"><span><CircleCheck /> 任务状态：{{ latestCompletedTask.status }}</span><span><Files /> 文件大小：{{ latestCompletedTask.size }}</span><span><DocumentChecked /> 质量报告：{{ latestCompletedTask.quality }}</span></div>
       <el-empty v-else :image-size="46" description="暂无已完成的导出任务" />
-    </section>
+    </section></MobileSection>
 
     <section class="history-section" aria-labelledby="history-title">
       <header class="history-header">
@@ -916,16 +923,16 @@ onBeforeUnmount(() => {
         <article v-for="row in filteredTasks" :key="row.id" class="task-card">
           <header class="task-card-top">
             <div class="task-card-title">
-              <strong :title="row.fileName">{{ row.fileName || row.project }}</strong>
-              <span :title="row.project">{{ row.project }} · {{ row.version }} · {{ row.time }}</span>
+              <button class="task-title-button" :title="row.fileName" @click="openTaskDetail(row)">{{ row.fileName || row.project }}</button>
+              <span>{{ row.format }} · {{ row.time }}</span>
             </div>
             <el-tag :type="statusTagType(row.status)" effect="plain">{{ row.status }}</el-tag>
           </header>
-          <div class="task-card-meta">
+          <div v-if="!isMobile" class="task-card-meta">
             <span class="format-label">{{ row.format }}</span>
             <span class="quality-label">{{ row.quality }}</span>
           </div>
-          <div class="task-card-progress">
+          <div v-if="isRunning(row)" class="task-card-progress">
             <el-progress :percentage="row.progress" :status="row.apiStatus === 'failed' ? 'exception' : undefined" :show-text="false" />
             <span>{{ row.progress }}%</span>
           </div>
@@ -960,7 +967,7 @@ onBeforeUnmount(() => {
           <small class="form-field-hint">仅显示当前账号有权访问且未归档的项目。</small>
         </el-form-item>
         <el-form-item label="导出格式"><el-select v-model="exportForm.export_type" style="width: 100%" @change="clearPrecheck"><el-option label="PowerPoint 课件（PPTX）" value="pptx" /><el-option label="Word 教案（DOCX）" value="word" /><el-option label="教学成果包（ZIP）" value="package" /></el-select></el-form-item>
-        <el-form-item label="快照版本">
+        <MobileSection title="更多导出选项"><el-form-item label="快照版本">
           <el-select v-model="exportForm.snapshot_version" :disabled="!exportForm.project_id" :loading="versionOptionsLoading" placeholder="请先选择项目" style="width: 100%" @change="clearPrecheck">
             <el-option label="基于当前内容创建新快照（推荐）" value="auto" />
             <el-option v-for="item in versionOptions" :key="item.version_id" :label="`v${item.version_number} · ${item.description || '历史快照'}`" :value="String(item.version_number)">
@@ -975,14 +982,14 @@ onBeforeUnmount(() => {
         <el-form-item><el-checkbox v-model="exportForm.header_enabled" @change="clearPrecheck">添加页眉页脚</el-checkbox></el-form-item>
         <template v-if="exportForm.header_enabled"><el-form-item label="页眉"><el-input v-model="exportForm.header_text" placeholder="可选" @input="clearPrecheck" /></el-form-item><el-form-item label="页脚"><el-input v-model="exportForm.footer_text" placeholder="可选" @input="clearPrecheck" /></el-form-item></template>
         <el-form-item label="教师备注"><el-input v-model="exportForm.teacher_notes" type="textarea" :rows="2" placeholder="可选，会随导出配置保存" @input="clearPrecheck" /></el-form-item>
-      </el-form>
+      </MobileSection></el-form>
       <div v-if="precheck" class="dialog-precheck" :class="{ failed: !precheck.passed }"><strong>{{ precheck.passed ? '预检通过' : '预检未通过' }}</strong><span>{{ precheck.warnings?.length || 0 }} 条提示 · {{ precheck.errors?.length || 0 }} 条错误</span></div>
       <template #footer><el-button :loading="prechecking" :disabled="exportSubmitting" @click="runPrecheck">运行预检</el-button><el-button type="primary" :loading="exportSubmitting" :disabled="prechecking" @click="submitExport">{{ exportSubmitting ? '正在生成导出文件…' : '创建导出' }}</el-button></template>
     </el-dialog>
 
     <el-dialog v-model="taskDetailVisible" title="任务详情" width="min(520px, 92vw)" align-center class="detail-dialog">
-      <div class="detail-grid"><div><span>文件名</span><strong :title="taskDetailView.title">{{ taskDetailView.title }}</strong></div><div><span>项目</span><strong :title="taskDetailView.project">{{ taskDetailView.project }}</strong></div><div><span>状态</span><el-tag :type="statusTagType(taskDetailView.status)" effect="plain">{{ taskDetailView.status }}</el-tag></div><div><span>格式 / 版本</span><strong>{{ taskDetailView.format }} · {{ taskDetailView.version }}</strong></div><div><span>生成进度</span><strong>{{ taskDetailView.progress }}%</strong></div><div><span>任务创建</span><strong>{{ taskDetailView.createdAt }}</strong></div><div><span>任务完成</span><strong>{{ taskDetailView.completedAt }}</strong></div><div><span>项目 ID</span><strong>{{ taskDetailView.projectId }}</strong></div><div><span>数据来源</span><strong>{{ taskDetailView.source }}</strong></div></div><div class="detail-stage"><Timer /><span>{{ taskDetailView.stage }}</span></div>
-      <template #footer><el-button @click="taskDetailVisible = false">关闭</el-button><el-button type="primary" :disabled="!canDownload(taskDetailRow)" @click="download(taskDetailRow)">下载成果</el-button></template>
+      <div v-if="isMobile"><h2 class="mobile-detail-title">{{ taskDetailView.title }}</h2><dl class="mobile-info-list"><div><dt>状态</dt><dd>{{ taskDetailView.status }}</dd></div><div><dt>格式</dt><dd>{{ taskDetailView.format }} · {{ taskDetailView.version }}</dd></div><div><dt>进度</dt><dd>{{ taskDetailView.progress }}%</dd></div></dl><p>{{ taskDetailView.stage }}</p><MobileSection title="更多任务信息"><dl class="mobile-info-list"><div><dt>项目</dt><dd>{{ taskDetailView.project }}</dd></div><div><dt>创建时间</dt><dd>{{ taskDetailView.createdAt }}</dd></div><div><dt>完成时间</dt><dd>{{ taskDetailView.completedAt }}</dd></div><div><dt>项目编号</dt><dd>{{ taskDetailView.projectId }}</dd></div><div><dt>数据来源</dt><dd>{{ taskDetailView.source }}</dd></div></dl></MobileSection></div><template v-else><div class="detail-grid"><div><span>文件名</span><strong :title="taskDetailView.title">{{ taskDetailView.title }}</strong></div><div><span>项目</span><strong :title="taskDetailView.project">{{ taskDetailView.project }}</strong></div><div><span>状态</span><el-tag :type="statusTagType(taskDetailView.status)" effect="plain">{{ taskDetailView.status }}</el-tag></div><div><span>格式 / 版本</span><strong>{{ taskDetailView.format }} · {{ taskDetailView.version }}</strong></div><div><span>生成进度</span><strong>{{ taskDetailView.progress }}%</strong></div><div><span>任务创建</span><strong>{{ taskDetailView.createdAt }}</strong></div><div><span>任务完成</span><strong>{{ taskDetailView.completedAt }}</strong></div><div><span>项目 ID</span><strong>{{ taskDetailView.projectId }}</strong></div><div><span>数据来源</span><strong>{{ taskDetailView.source }}</strong></div></div><div class="detail-stage"><Timer /><span>{{ taskDetailView.stage }}</span></div>
+      </template><template #footer><el-button @click="taskDetailVisible = false">关闭</el-button><el-button type="primary" :disabled="!canDownload(taskDetailRow)" @click="download(taskDetailRow)">下载成果</el-button></template>
     </el-dialog>
 
     <el-dialog v-model="reportVisible" title="导出质量报告" width="min(620px, 92vw)" align-center class="quality-dialog">
@@ -1154,7 +1161,7 @@ onBeforeUnmount(() => {
   .active-task > .el-button { grid-column: 2; justify-self: start; }
   .task-table { overflow-x: auto; }
 }
-@media (max-width: 767.98px) and (hover: none) and (pointer: coarse) {
+@media (max-width: 767.98px) and (hover: none) and (pointer: coarse), (max-width: 1023.98px) and (max-height: 600px) and (hover: none) and (pointer: coarse) {
   .export-page { display: flex; flex-direction: column; width: min(100% - 28px, 1220px); padding: 20px 0 calc(100px + env(safe-area-inset-bottom)); }
   .export-heading, .flow-console-header, .history-header, .quality-card-heading { align-items: stretch; flex-direction: column; gap: 14px; }
   .export-heading h1 { font-size: 26px; }

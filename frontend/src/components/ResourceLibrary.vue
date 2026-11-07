@@ -6,8 +6,10 @@
 <script setup>
 import { computed, onBeforeUnmount, onMounted, ref, watch } from 'vue'
 import { ElMessage } from 'element-plus'
-import { Delete, Edit, Folder, Loading, Lock, MoreFilled, Plus, Refresh, Search, Setting, Upload } from '@element-plus/icons-vue'
+import { Delete, Edit, Filter, Folder, Loading, Lock, MoreFilled, Plus, Refresh, Search, Setting, Upload } from '@element-plus/icons-vue'
 import { downloadFile } from '../utils/api'
+import { useUserStore } from '../storage/user'
+import { isAndroidApp, isBackendDownload, resolveDownloadUrl, saveAndroidDownload } from '../utils/fileDownload'
 import { resourceIndexStatus, indexSyncResult } from '../utils/resourceIndexStatus'
 import {
   batchResourceAction,
@@ -80,6 +82,17 @@ const batchForm = ref({ action: 'delete', target: '' })
 
 // 移动端判定（<768px）：表格切换为卡片列表、分类入口移到顶部下拉
 const isMobile = ref(false)
+const mobileFiltersOpen = ref(false)
+const mobileBatchMode = ref(false)
+const mobileOverviewOpen = ref(false)
+const mobileResource = ref(null)
+const mobileResourceOpen = ref(false)
+const handleMobileResourceMenu = command => {
+  if (command === 'overview') mobileOverviewOpen.value = true
+  if (command === 'index') openIndexDialog()
+  if (command === 'taxonomy') openTaxonomyDialog('category')
+  if (command === 'batch') { mobileBatchMode.value = !mobileBatchMode.value; selectedRows.value = [] }
+}
 let mobileMediaQuery = null
 const handleMobileMediaChange = (event) => {
   isMobile.value = event.matches
@@ -436,11 +449,21 @@ const handleAction = async (row, command) => {
     if (command === 'download') {
       const result = await downloadResource(row.id)
       const url = result?.data?.download_url || result?.download_url
-      if (url?.startsWith('/api/v1/resources/')) await downloadFile(url, row.file_name)
+      if (isAndroidApp()) {
+        if (!url) return ElMessage.warning('服务端暂未返回下载链接')
+        const downloadUrl = resolveDownloadUrl(url)
+        const token = useUserStore().token
+        const authorization = isBackendDownload(downloadUrl) && downloadUrl.pathname.startsWith('/api/v1/resources/') && token
+          ? `Bearer ${token}` : undefined
+        if (await saveAndroidDownload(downloadUrl, row.file_name || '教学资源', authorization)) ElMessage.success('资源已保存')
+      } else if (url?.startsWith('/api/v1/resources/')) await downloadFile(url, row.file_name)
       else if (url) window.open(url, '_blank', 'noopener')
     }
     if (command === 'delete') { await deleteResource(row.id); resources.value = resources.value.filter((item) => item.id !== row.id); selectedRows.value = selectedRows.value.filter((item) => item.id !== row.id) }
-  } catch { ElMessage.error('操作未成功，请稍后重试') }
+  } catch (error) {
+    const message = isAndroidApp() && command === 'download' ? error?.message : undefined
+    ElMessage.error(message || '操作未成功，请稍后重试')
+  }
 }
 
 const unwrapResponse = (response) => response?.data ?? response
@@ -712,7 +735,7 @@ const indexResultTimeRange = (item) => {
 onMounted(() => {
   void loadResources()
   void loadTaxonomy()
-  mobileMediaQuery = window.matchMedia('(max-width: 767.98px) and (hover: none) and (pointer: coarse)')
+  mobileMediaQuery = window.matchMedia('(max-width: 767.98px) and (hover: none) and (pointer: coarse), (max-width: 1023.98px) and (max-height: 600px) and (hover: none) and (pointer: coarse)')
   isMobile.value = mobileMediaQuery.matches
   mobileMediaQuery.addEventListener('change', handleMobileMediaChange)
 })
@@ -725,16 +748,17 @@ onBeforeUnmount(() => {
 </script>
 
 <template>
-  <div class="page-wrap">
+  <div class="page-wrap" :class="{ 'mobile-resource-page': isMobile }">
     <header class="page-heading">
-      <div><p class="page-kicker">个人教学资产</p><h1>个人资源库</h1><p>统一管理私有素材，并决定哪些内容可供智能体引用。</p></div>
+      <div v-if="!isMobile"><p class="page-kicker">个人教学资产</p><h1>个人资源库</h1><p>统一管理私有素材，并决定哪些内容可供智能体引用。</p></div>
       <div class="heading-actions">
-        <el-button :icon="Setting" @click="openIndexDialog">知识库索引</el-button>
+        <el-button v-if="!isMobile" :icon="Setting" @click="openIndexDialog">知识库索引</el-button>
         <el-button type="primary" :icon="Upload" @click="startUpload">上传素材</el-button>
+        <el-dropdown v-if="isMobile" trigger="click" @command="handleMobileResourceMenu"><el-button class="mobile-icon-button" aria-label="资源更多功能" :icon="MoreFilled" /><template #dropdown><el-dropdown-menu><el-dropdown-item command="overview">资源概览</el-dropdown-item><el-dropdown-item command="index">知识库索引</el-dropdown-item><el-dropdown-item command="taxonomy">分类与标签</el-dropdown-item><el-dropdown-item command="batch">{{ mobileBatchMode ? '退出批量选择' : '批量选择' }}</el-dropdown-item></el-dropdown-menu></template></el-dropdown>
       </div>
     </header>
 
-    <section class="stat-strip" aria-label="资源库概览">
+    <section v-if="!isMobile" class="stat-strip" aria-label="资源库概览">
       <article v-for="stat in resourceStats" :key="stat.label">
         <span>{{ stat.label }}</span><strong>{{ stat.value }}</strong><small>{{ stat.detail }}</small>
       </article>
@@ -751,23 +775,26 @@ onBeforeUnmount(() => {
 
       <div class="resource-content">
         <div class="resource-toolbar">
-          <el-input v-model="keyword" :prefix-icon="Search" placeholder="搜索素材名称" clearable aria-label="搜索素材名称" />
+          <el-input v-model="keyword" :prefix-icon="Search" placeholder="搜索素材" clearable aria-label="搜索素材名称"><template v-if="isMobile" #append><el-button class="mobile-search-action" @click="keyword = keyword.trim()">搜索</el-button></template></el-input>
+          <el-button v-if="isMobile" class="mobile-icon-button" :type="mobileFiltersOpen ? 'primary' : undefined" :plain="mobileFiltersOpen" :icon="Filter" aria-label="筛选资源" :aria-expanded="mobileFiltersOpen" @click="mobileFiltersOpen = !mobileFiltersOpen" />
           <el-select
-            v-if="isMobile"
+            v-if="isMobile && mobileFiltersOpen"
             v-model="activeFolder"
             class="mobile-folder-select"
             aria-label="选择分类目录"
           >
             <el-option v-for="folder in resourceFolders" :key="folder" :label="folder" :value="folder" />
           </el-select>
-          <el-select v-model="typeFilter" aria-label="资源类型" clearable placeholder="全部类型"><el-option label="全部类型" value="" /><el-option label="课件" value="ppt" /><el-option label="文档" value="word" /><el-option label="PDF" value="pdf" /><el-option label="图片" value="image" /><el-option label="音视频" value="audio" /></el-select>
+          <el-select v-if="!isMobile || mobileFiltersOpen" v-model="typeFilter" aria-label="资源类型" clearable placeholder="全部类型"><el-option label="全部类型" value="" /><el-option label="课件" value="ppt" /><el-option label="文档" value="word" /><el-option label="PDF" value="pdf" /><el-option label="图片" value="image" /><el-option label="音视频" value="audio" /></el-select>
           <div class="resource-toolbar-actions">
-            <el-button :icon="Setting" @click="openTaxonomyDialog('category')">词典管理</el-button>
+            <el-button v-if="!isMobile" :icon="Setting" @click="openTaxonomyDialog('category')">词典管理</el-button>
+            <el-button v-if="isMobile && mobileFiltersOpen" text @click="clearResourceFilters">重置筛选</el-button>
+            <el-button v-if="isMobile && mobileBatchMode" text @click="mobileBatchMode = false; selectedRows = []">退出多选</el-button>
             <el-button v-if="!isMobile || selectedRows.length" :icon="Delete" :disabled="selectedRows.length === 0" @click="openBatchDialog">批量管理{{ isMobile ? `（${selectedRows.length}）` : '' }}</el-button>
           </div>
         </div>
         <div v-if="isMobile" class="mobile-list-heading">
-          <strong>我的素材</strong>
+          <strong>{{ mobileBatchMode ? '选择素材' : '我的素材' }}</strong>
           <span>{{ resourcesError ? '加载失败' : `当前显示 ${visibleFiles.length} 项${selectedRows.length ? ` · 已选 ${selectedRows.length} 项` : ''}` }}</span>
         </div>
         <div v-if="resourcesError && !isMobile" class="resource-load-error" role="alert"><span>{{ resourcesError }}</span><el-button type="primary" plain @click="loadResources">重试</el-button></div>
@@ -802,21 +829,19 @@ onBeforeUnmount(() => {
           <template v-else><article v-for="row in visibleFiles" :key="row.id" class="resource-card">
             <div class="resource-card-main">
               <el-checkbox
+                v-if="mobileBatchMode"
                 class="resource-card-check"
                 :model-value="selectedRows.some((item) => item.id === row.id)"
                 :aria-label="`选择${row.name}`"
                 @change="toggleCardSelection(row)"
               />
-              <span class="file-mark">{{ row.type.slice(0, 1) }}</span>
-              <div class="resource-card-info">
+              <button class="resource-card-open" type="button" :aria-label="`查看${row.name}`" @click="mobileResource = row; mobileResourceOpen = true"><div class="resource-card-info">
                 <strong :title="row.name">{{ row.name }}</strong>
-                <small>{{ row.course }} · {{ row.size }} · {{ row.date }}</small>
-                <div class="resource-card-meta">
+                <small>{{ row.course }} · {{ row.size }}</small>
+                <div v-if="row.indexError" class="resource-card-meta">
                   <el-tooltip :content="row.indexError || row.status" placement="top"><el-tag size="small" :type="row.statusType" effect="light">{{ row.status }}</el-tag></el-tooltip>
-                  <small v-if="row.indexError" role="status">{{ row.indexError }}</small>
-                  <span class="private-label"><el-icon><Lock /></el-icon>{{ row.private ? '私有' : '共享' }}</span>
                 </div>
-              </div>
+              </div></button>
             </div>
             <el-dropdown trigger="click" @command="handleAction(row, $event)">
               <el-button class="resource-more-button" text circle data-hover-reveal aria-label="更多操作"><el-icon><MoreFilled /></el-icon></el-button>
@@ -834,6 +859,9 @@ onBeforeUnmount(() => {
         </div>
       </div>
     </section>
+
+    <el-dialog v-model="mobileOverviewOpen" title="资源概览" class="resource-dialog"><dl class="mobile-info-list"><div v-for="stat in resourceStats" :key="stat.label"><dt>{{ stat.label }}</dt><dd>{{ stat.value }}</dd></div></dl></el-dialog>
+    <el-dialog v-model="mobileResourceOpen" title="素材详情" class="resource-dialog"><template v-if="mobileResource"><h2 class="mobile-detail-title">{{ mobileResource.name }}</h2><dl class="mobile-info-list"><div><dt>课程</dt><dd>{{ mobileResource.course }}</dd></div><div><dt>大小</dt><dd>{{ mobileResource.size }}</dd></div><div><dt>更新</dt><dd>{{ mobileResource.date }}</dd></div><div><dt>权限</dt><dd>{{ mobileResource.private ? '私有' : '共享' }}</dd></div><div><dt>索引状态</dt><dd>{{ mobileResource.status }}</dd></div></dl><p v-if="mobileResource.indexError" class="mobile-inline-error" role="status">{{ mobileResource.indexError }}</p></template><template #footer><el-button @click="mobileResourceOpen = false">关闭</el-button><el-button type="primary" @click="handleAction(mobileResource, 'download')">下载素材</el-button></template></el-dialog>
 
     <el-dialog
       v-model="uploadDialogVisible"
@@ -1159,7 +1187,7 @@ onBeforeUnmount(() => {
 @media (min-width: 768px) and (max-width: 1023.98px) { .folder-panel { width: 76px; padding: 12px 6px; }.panel-title { justify-content: center; padding: 0 0 8px; }.panel-title > span { display: none; }.folder-panel > button { flex-direction: column; gap: 4px; padding: 8px 2px; }.folder-panel > button .el-icon { display: none; }.folder-panel > button > span { display: block; max-width: 100%; overflow: hidden; font-size: 11px; text-align: center; text-overflow: ellipsis; white-space: nowrap; }.privacy-note { display: none; } }
 /* 手机档：分类面板隐藏（顶部 el-select 承载入口）、主表格切换为卡片列表 */
 /* 手机资源页：概览压缩为一行，搜索和素材列表进入首屏。 */
-@media (max-width: 767.98px) and (hover: none) and (pointer: coarse) {
+@media (max-width: 767.98px) and (hover: none) and (pointer: coarse), (max-width: 1023.98px) and (max-height: 600px) and (hover: none) and (pointer: coarse) {
   .folder-panel { display: none; }
   .resource-card-list { display: grid; }
   .resource-card { display: flex; justify-content: space-between; border: 1px solid var(--zh-line-border); border-radius: var(--zh-radius12); }
