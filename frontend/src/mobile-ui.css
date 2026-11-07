@@ -1,0 +1,57 @@
+/* Phone typography and touch controls; desktop styling remains component-owned. */
+@media (max-width: 767.98px) and (hover: none) and (pointer: coarse), (max-width: 1023.98px) and (max-height: 600px) and (hover: none) and (pointer: coarse) {
+  :root {
+    --zh-font-size10: 12px;
+    --zh-font-size11: 13px;
+    --zh-font-size12: 14px;
+    --zh-font-size13: 15px;
+    --zh-font-size14: 16px;
+    --zh-font-size16: 18px;
+    --zh-tabbar-h: 68px;
+    --el-font-size-base: 16px;
+    --el-font-size-small: 14px;
+    --el-component-size: 46px;
+    --el-component-size-small: 44px;
+    --el-component-size-large: 48px;
+  }
+  body { font-size: 16px; }
+  :root .teacher-shell.assistant-mode .teacher-main { background: var(--zh-background-primary); }
+  :root .teacher-shell .el-button, .el-dialog .el-button { min-height: 44px; font-size: 15px; }
+  :root .teacher-shell .el-input__inner, :root .teacher-shell .el-select__wrapper,
+  .el-dialog .el-input__inner, .el-dialog .el-textarea__inner { font-size: 16px; }
+  :root .teacher-shell .el-input__wrapper, :root .teacher-shell .el-select__wrapper { min-height: 46px; }
+  :root .teacher-shell .el-tag { height: auto; min-height: 24px; padding: 2px 7px; font-size: 13px; line-height: 1.4; }
+  .el-dropdown-menu__item { min-height: 44px; font-size: 15px; }
+  :root .teacher-shell .mobile-page-title { font-size: 18px; }
+  :root .teacher-shell .resource-card-info strong { font-size: 16px; line-height: 1.5; }
+  :root .teacher-shell .resource-card-info small { font-size: 14px; color: var(--zh-text-secondary); }
+  :root .teacher-shell .resource-card { padding: 16px 12px; gap: 8px; border-color: var(--zh-line-parting); }
+  :root .teacher-shell .resource-card-main { gap: 10px; }
+  :root .teacher-shell .resource-card .file-mark { width: 42px; height: 48px; flex-basis: 42px; font-size: 14px; border-radius: 8px; }
+  :root .teacher-shell .resource-more-button .el-icon { font-size: 24px; }
+  :root .teacher-shell .page-heading h1 { font-size: 28px; }
+  :root .teacher-shell .stat-strip span { font-size: 13px; }
+  :root .teacher-shell .stat-strip strong { font-size: 24px; }
+  :root .teacher-shell .stat-strip article:last-child strong { font-size: clamp(16px, 5vw, 20px); line-height: 1.32; }
+  :root .teacher-shell .stat-strip article { padding: 14px 12px; gap: 8px; }
+  :root .teacher-shell .mobile-list-heading strong { font-size: 18px; }
+  :root .teacher-shell .mobile-list-heading span { font-size: 14px; }
+  :root .teacher-shell .resource-toolbar-actions { min-height: 44px; }
+  :root .teacher-shell .resource-toolbar-actions .el-button { min-height: 44px; }
+  :root .teacher-shell .community-hero > p, :root .teacher-shell .community-hero > span,
+  :root .teacher-shell .export-heading .eyebrow, :root .teacher-shell .export-heading > div:first-child > span,
+  :root .teacher-shell .welcome-copy > .intro { display: none; }
+  :root .teacher-shell:has(.is-mobile-community) .teacher-main { background: var(--zh-background-light); }
+  :root .teacher-shell:has(.is-mobile-community) .mobile-page-title { font-size: 20px; }
+  :root .community-detail-dialog .detail-heading > p { font-size: 16px; line-height: 1.7; }
+  :root .community-detail-dialog .detail-tags { font-size: 14px; }
+  :root .community-detail-dialog .detail-favorite-button { min-height: 44px; font-size: 15px; }
+  :root .community-detail-dialog .detail-aside-label { font-size: 14px; }
+  :root .teacher-shell .export-stats span { font-size: 13px; }
+  :root .teacher-shell .task-card-title strong { font-size: 17px; }
+  :root .teacher-shell .task-card-actions .el-button { min-height: 44px; }
+  :root .teacher-shell .recent-projects h2 { font-size: 21px; }
+  :root .teacher-shell .project-card strong { font-size: 17px; }
+  :root .teacher-shell .project-card span { font-size: 14px; }
+  :root .teacher-shell .private-label { font-size: 13px; }
+}

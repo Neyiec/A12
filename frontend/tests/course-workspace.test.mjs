@@ -10,6 +10,7 @@ const { descriptor } = parse(source)
 function workspace(extra = {}) {
   const unmount = []
   const dependencies = { computed, ref, watch, onMounted() {}, onBeforeUnmount(fn) { unmount.push(fn) },
+    useMobileViewport: () => ref(false),
     useRouter: () => ({ push() {} }), useUserStore: () => ({ userInfo: { id: 7 } }),
     ElMessage: { error() {}, success() {}, warning() {} }, unwrapWorkspaceResult, cleanupTempResources: async () => {}, ...extra }
   const script = descriptor.scriptSetup.content.replace(/^import[\s\S]*?from ['"][^'"]+['"]\r?\n/gm, '')
@@ -59,9 +60,9 @@ test('unmount aborts generation and rejects late stream callbacks and final resu
 test('template locks form controls but keeps stop button outside disabled form', () => {
   const result = compileTemplate({ source: descriptor.template.content, filename: 'CourseGraphWorkspace.vue', id: 'course-test' })
   assert.deepEqual(result.errors, [])
-  assert.match(descriptor.template.content, /<el-form :disabled="!!busy">/)
+  assert.match(descriptor.template.content, /<el-form :disabled="!!busy"[^>]*>/)
   assert.match(descriptor.template.content, /:closable="!busy"/)
-  assert.match(descriptor.template.content, /<el-form :disabled="!!busy">[\s\S]*v-model="courseId"[^>]*@change="load"/)
+  assert.match(descriptor.template.content, /<el-form :disabled="!!busy"[^>]*>[\s\S]*v-model="courseId"[^>]*@change="load"/)
   assert.match(descriptor.template.content, /@click="newCourse"/)
   assert.match(descriptor.template.content, /<\/el-form>\s*<el-button[^>]*@click="abort\?\.abort\(\)"/)
 })

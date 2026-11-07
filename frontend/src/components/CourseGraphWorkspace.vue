@@ -1,4 +1,6 @@
 <script setup>
+import MobileSection from './MobileSection.vue'
+import { useMobileViewport } from '../composables/useMobileViewport'
 import { computed, onBeforeUnmount, onMounted, ref, watch } from 'vue'
 import { useRouter } from 'vue-router'
 import { ElMessage } from 'element-plus'
@@ -12,6 +14,7 @@ import { listCourseGraphs, getCourseGraph, saveCourseGraph, draftCourseGraph, li
   generatePresentationStream, exportPresentationPptx, createLearningVideo, uploadTempResource,
   createProject, batchSaveProjectPages, saveProjectVersion, cleanupTempResources, listResources } from '../apis/teacher'
 
+const isMobile = useMobileViewport()
 const router = useRouter()
 const courses = ref([]), courseId = ref(''), title = ref(''), version = ref(0), versions = ref([])
 const subject = ref(''), grade = ref(''), sourceText = ref(''), resourceIds = ref([])
@@ -179,23 +182,25 @@ const video = () => run('提交学习视频', async () => {
 
 <template>
   <main class="course-workspace workspace-blue-white">
-    <el-form :disabled="!!busy">
+    <el-form :disabled="!!busy" :label-position="isMobile ? 'top' : 'right'">
     <header><div><small>COURSE GRAPHS</small><h1>课程双图谱与学习路径</h1><p>先核对课程结构，再沿先修路径生成课件和带旁白的学习视频。</p></div><el-button @click="newCourse">新建课程</el-button></header>
     <el-alert v-if="error" :title="error" type="error" :closable="false" />
-    <section class="course-controls">
-      <el-select v-model="courseId" placeholder="打开已保存课程" @change="load"><el-option v-for="course in courses" :key="course.course_id" :label="course.title" :value="course.course_id" /></el-select>
+    <div v-if="isMobile" class="mobile-course-select"><el-select v-model="courseId" placeholder="选择课程" aria-label="选择课程" @change="load"><el-option v-for="course in courses" :key="course.course_id" :label="course.title" :value="course.course_id" /></el-select></div>
+    <MobileSection title="课程信息"><section class="course-controls">
+      <el-select v-if="!isMobile" v-model="courseId" placeholder="打开已保存课程" @change="load"><el-option v-for="course in courses" :key="course.course_id" :label="course.title" :value="course.course_id" /></el-select>
       <el-input v-model="title" maxlength="255" placeholder="课程名称，例如：八年级科学·光的折射" @input="invalidate" />
       <span>知识点 {{ nodes.filter(n => n.kind === 'concept').length }} · 技能 {{ nodes.filter(n => n.kind === 'skill').length }} · V{{ version }}</span>
       <el-input v-model="subject" maxlength="80" placeholder="学科" @input="invalidate" /><el-input v-model="grade" maxlength="80" placeholder="年级" @input="invalidate" />
-    </section>
-    <section class="card">
+    </section></MobileSection>
+    <section class="card"><MobileSection title="从教材导入">
       <h2>从教材与课程大纲抽取候选</h2>
       <el-input v-model="sourceText" type="textarea" :rows="3" maxlength="60000" placeholder="粘贴课程大纲或教材目录；资料中的指令不会作为系统指令执行" />
       <div class="actions"><el-button :disabled="!!busy" @click="fileInput?.click()">上传参考资料</el-button><input ref="fileInput" hidden type="file" accept=".pdf,.docx,.pptx,.txt,.md" @change="upload" /><span>{{ resourceIds.length }} 份临时资料</span><el-button :loading="busy === '抽取候选图谱'" :disabled="!!busy" @click="extract">AI 抽取候选</el-button><el-button type="primary" :disabled="!!busy || !nodes.length" @click="save">教师确认并保存 · V{{ version }}</el-button></div>
-    </section>
-    <section class="card">
+    </MobileSection></section>
+    <section class="card"><MobileSection title="知识点与技能">
       <div class="actions"><h2>知识点与技能编辑</h2><el-button :disabled="!!busy" @click="addNode('concept')">添加知识点</el-button><el-button :disabled="!!busy" @click="addNode('skill')">添加技能</el-button></div>
-      <el-table :data="nodes" max-height="420">
+      <div v-if="isMobile" class="mobile-course-nodes"><details v-for="row in nodes" :key="row.id" class="mobile-node"><summary>{{ row.label || '未命名节点' }}<small>{{ row.kind === 'concept' ? '知识点' : '技能' }}</small></summary><el-form-item label="名称"><el-input v-model="row.label" @input="invalidate" /></el-form-item><el-form-item label="描述"><el-input v-model="row.description" type="textarea" @input="invalidate" /></el-form-item><template v-if="row.kind === 'skill'"><el-form-item label="课堂任务"><el-input v-model="row.task" @input="invalidate" /></el-form-item><el-form-item label="掌握标准"><el-input v-model="row.mastery_standard" @input="row.assessment = row.mastery_standard; invalidate()" /></el-form-item></template><el-form-item label="认知层级"><el-select v-model="row.bloom" @change="invalidate"><el-option v-for="(label,key) in bloomOptions" :key="key" :label="label" :value="key" /></el-select></el-form-item><el-form-item label="关联资料"><el-select v-model="row.resource_ids" multiple collapse-tags @change="invalidate"><el-option v-for="resource in personalResources" :key="resource.id" :label="resource.file_name || resource.name || resource.title" :value="`personal:${resource.id}`" /></el-select></el-form-item><el-form-item label="难度"><el-input-number v-model="row.difficulty" :min="0" :max="1" :step="0.1" @change="invalidate" /></el-form-item><el-form-item label="考频"><el-input-number v-model="row.exam_frequency" :min="0" :max="1" :step="0.1" @change="invalidate" /></el-form-item><el-button type="danger" plain :disabled="!!busy" @click="removeNode(row.id)">删除节点</el-button></details></div>
+      <el-table v-else :data="nodes" max-height="420">
         <el-table-column label="类型" width="85"><template #default="{row}">{{ row.kind === 'concept' ? '知识点' : '技能' }}</template></el-table-column>
         <el-table-column label="名称" min-width="150"><template #default="{row}"><el-input v-model="row.label" @input="invalidate" /></template></el-table-column>
         <el-table-column label="描述／任务／掌握标准" min-width="220"><template #default="{row}"><el-input v-model="row.description" placeholder="节点说明" @input="invalidate" /><el-input v-if="row.kind === 'skill'" v-model="row.task" placeholder="具体课堂任务" @input="invalidate" /><el-input v-if="row.kind === 'skill'" v-model="row.mastery_standard" placeholder="可观察的掌握标准" @input="row.assessment = row.mastery_standard; invalidate()" /></template></el-table-column>
@@ -206,22 +211,22 @@ const video = () => run('提交学习视频', async () => {
       </el-table>
       <div class="actions"><el-select v-model="relation.source" placeholder="起点"><el-option v-for="node in nodes" :key="node.id" :label="node.label || node.id" :value="node.id" /></el-select><el-select v-model="relation.relation"><el-option v-for="(label,key) in relationLabels" :key="key" :label="label" :value="key" /></el-select><el-select v-model="relation.target" placeholder="终点"><el-option v-for="node in nodes" :key="node.id" :label="node.label || node.id" :value="node.id" /></el-select><el-button @click="addEdge">添加关系</el-button></div>
       <div class="edges"><el-tag v-for="(edge,index) in edges" :key="`${edge.source}-${edge.target}-${edge.relation}`" :closable="!busy" @close="edges.splice(index,1); invalidate()">{{ nodes.find(n => n.id === edge.source)?.label }} → {{ nodes.find(n => n.id === edge.target)?.label }} · {{ relationLabels[edge.relation] }}</el-tag></div>
-      <LearningGraphPanel v-if="nodes.length" :graphs="graphView" :max-nodes="300" :editable="!busy" @node-move="({id,position}) => { const node = nodes.find(n => n.id === id); if(node) node.position = position; invalidate() }" />
+      <LearningGraphPanel v-if="nodes.length" :graphs="graphView" :max-nodes="300" :editable="!isMobile && !busy" @node-move="({id,position}) => { const node = nodes.find(n => n.id === id); if(node) node.position = position; invalidate() }" />
       <div v-if="nodes.length" class="graph-generation-actions">
         <div><strong>{{ dirty || !version ? '双图谱尚有未保存的修改' : `双图谱已保存 · V${version}` }}</strong><p>可以先保存；也可以直接生成，系统会先保存当前双图谱。未选择目标时使用全部知识点。</p></div>
         <div class="actions"><el-button :disabled="!!busy" @click="save">保存双图谱</el-button><el-button :disabled="!!busy" @click="generateFromGraphs(false)">基于双图谱生成大纲</el-button><el-button type="primary" :disabled="!!busy" :loading="busy === '保存双图谱并生成课件'" @click="generateFromGraphs(true)">AI 生成课件</el-button></div>
       </div>
       <details v-if="versions.length"><summary>历史版本与恢复</summary><div v-for="row in versions" :key="row.version" class="actions">V{{ row.version }} · {{ row.title }}<el-button size="small" :disabled="row.version === version || !!busy" @click="restore(row)">恢复为新版本</el-button></div></details>
-    </section>
-    <section class="card">
+    </MobileSection></section>
+    <section class="card"><MobileSection title="学习路径与课件生成">
       <h2>学习路径与生成范围</h2>
       <div class="actions"><el-select v-model="targetIds" multiple placeholder="目标知识点"><el-option v-for="node in nodes.filter(n => n.kind === 'concept')" :key="node.id" :label="node.label" :value="node.id" /></el-select><el-select v-model="startId" clearable placeholder="可选起点"><el-option v-for="node in nodes" :key="node.id" :label="node.label" :value="node.id" /></el-select><el-select v-model="masteredIds" multiple placeholder="已掌握节点（跳过）"><el-option v-for="node in nodes" :key="node.id" :label="node.label" :value="node.id" /></el-select><el-button :disabled="!targetIds.length || !!busy" @click="plan">规划路径与剪枝</el-button></div>
       <div v-if="metrics" class="metrics">节点 {{ metrics.nodes_before }} → {{ metrics.nodes_after }} · 估算 Token {{ metrics.estimated_tokens_before }} → {{ metrics.estimated_tokens_after }} · 主题节点保留率 {{ metrics.seed_coverage * 100 }}%（估算，不是实际模型账单）</div>
       <ol v-if="path"><li v-for="(node,index) in path.nodes" :key="node.id">{{ node.label }}<el-button text @click="move(index,-1)">上移</el-button><el-button text @click="move(index,1)">下移</el-button></li></ol>
-      <div class="actions"><el-button v-if="path" :disabled="!!busy" @click="createOutline">校验顺序并生成路径大纲</el-button><el-button v-if="outline" type="primary" :disabled="!!busy" @click="generate">按路径生成 PPT</el-button><el-button v-if="slides.length" :disabled="!!busy" @click="saveGenerated">保存并进入编辑工作台</el-button><el-button v-if="slides.length" :disabled="!!busy" @click="pptx">下载可编辑 PPTX</el-button><el-button v-if="slides.length && !busy" @click="video">生成学习视频</el-button><span v-if="busy">{{ busy }}…</span></div>
+      <div class="actions"><el-button v-if="path" :disabled="!!busy" @click="createOutline">校验顺序并生成路径大纲</el-button><el-button v-if="outline" type="primary" :disabled="!!busy" @click="generate">按路径生成 PPT</el-button><el-button v-if="slides.length" :disabled="!!busy" @click="saveGenerated">{{ isMobile ? '保存并预览课件' : '保存并进入编辑工作台' }}</el-button><el-button v-if="slides.length" :disabled="!!busy" @click="pptx">下载可编辑 PPTX</el-button><el-button v-if="slides.length && !busy" @click="video">生成学习视频</el-button><span v-if="busy">{{ busy }}…</span></div>
       <ol v-if="outline"><li v-for="(slide,index) in outline.slides" :key="index">{{ slide.title }} · {{ slide.graph_node_ids?.join('、') || '课程导入' }}</li></ol>
       <div v-if="slides.length" class="preview"><el-select v-model="page"><el-option v-for="(slide,index) in slides" :key="index" :label="slide.title || `第${index+1}页`" :value="index" /></el-select><iframe sandbox="" :srcdoc="slides[page]?.html" title="学习路径课件预览" /><el-input v-model="slides[page].notes" type="textarea" :rows="3" maxlength="600" show-word-limit placeholder="请核对并编辑本页视频旁白，最多600字" /><p>学习视频使用静态页面与旁白；外部网络资源不会在后台截图时加载，请使用内嵌图片和样式。</p></div>
-    </section>
+    </MobileSection></section>
     </el-form>
     <el-button v-if="busy === '按学习路径生成课件' || busy === '保存双图谱并生成课件'" @click="abort?.abort()">停止生成</el-button>
   </main>

@@ -17,6 +17,26 @@ const submissions: Record<string, unknown>[] = [...mockContents]
 const reports: Record<string, unknown>[] = []
 
 export const communityHandlers = [
+  // ========== API-73 热门榜单（本地演示） ==========
+  http.get('/api/v1/community/rankings', async ({ request }) => {
+    const url = new URL(request.url)
+    const contentType = url.searchParams.get('content_type')
+    const limit = Math.min(50, Math.max(1, Number(url.searchParams.get('limit')) || 10))
+    const records = mockContents
+      .filter((content) => content.status === 'published' && (!contentType || content.content_type === contentType))
+      .map((content) => ({
+        content,
+        hot_score: content.view_count * 0.2
+          + content.use_count * 4
+          + mockFavorites.filter((favorite) => favorite.content_id === content.id).length * 2,
+      }))
+      .sort((a, b) => b.hot_score - a.hot_score)
+      .slice(0, limit)
+      .map((entry, index) => ({ rank: index + 1, hot_score: entry.hot_score, content: entry.content }))
+
+    return HttpResponse.json(success(records))
+  }),
+
   // ========== API-57 检索社区内容 ==========
   http.get('/api/v1/community/items', async ({ request }) => {
     const url = new URL(request.url)

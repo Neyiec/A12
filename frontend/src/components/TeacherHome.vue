@@ -25,6 +25,7 @@ import {
 import { TEACHER_HOME } from '../config/teacherHome.config.js'
 import { INFO_FORM_DEFAULTS, requestNewChat, openChatSession } from '../config/teacherChat.config.js'
 import { useUserStore } from '../storage/user'
+import { useMobileViewport } from '../composables/useMobileViewport'
 import { navigateWorkspace } from '../utils/workspaceNavigation.js'
 import ChatView from './ChatView.vue'
 import { syncReadyBatches } from '../apis/batchPresentations'
@@ -33,6 +34,7 @@ import { archiveProject, cleanupTempResources, copyProject, createAiSession, cre
 const router = useRouter()
 const route = useRoute()
 const userStore = useUserStore()
+const isMobile = useMobileViewport()
 const currentTime = ref(new Date())
 let greetingClockTimer = null
 const teacherSurname = computed(() => {
@@ -107,7 +109,7 @@ const voiceStatusText = computed(() => {
 
 const openProject = (project) => router.push({
   path: '/main/workspace',
-  query: { projectId: project.id },
+  query: { projectId: project.id, ...(isMobile.value && route.query.preview ? { preview: '1' } : {}) },
 })
 const openNewWorkspace = () => router.push({
   path: '/main/workspace',
@@ -636,13 +638,7 @@ const handleManagedProjectCommand = ({ action, project }) => {
   else if (action === 'delete') deleteManagedProject(project)
 }
 
-/** 手机档视口判断（<768px）：项目操作收进下拉、上传改「选择文件」等触屏降级。 */
-const mobileViewport = window.matchMedia('(max-width: 767.98px) and (hover: none) and (pointer: coarse)')
-const isMobile = ref(mobileViewport.matches)
-const handleMobileViewportChange = (event) => { isMobile.value = event.matches }
-onMounted(() => mobileViewport.addEventListener('change', handleMobileViewportChange))
 onUnmounted(() => {
-  mobileViewport.removeEventListener('change', handleMobileViewportChange)
   if (greetingClockTimer) window.clearInterval(greetingClockTimer)
 })
 
@@ -683,7 +679,11 @@ watch(viewMode, (value) => {
     <!-- 欢迎视图 -->
     <template v-if="viewMode === 'welcome'">
     <div class="welcome-scroll">
-    <div class="welcome-copy motion-stage motion-stage-1">
+    <div v-if="isMobile" class="mobile-home-intro motion-stage motion-stage-1">
+      <div class="mobile-home-emblem"><img src="/branding/logo-intro.png" alt="智核" /></div>
+      <h1>今天要上什么课</h1>
+    </div>
+    <div v-else class="welcome-copy motion-stage motion-stage-1">
       <div class="welcome-greeting">
         <img src="/branding/logo-intro.png" alt="" aria-hidden="true" />
         <p class="eyebrow">{{ teacherGreeting }}</p>
@@ -697,6 +697,7 @@ watch(viewMode, (value) => {
     </div>
 
     <section
+      v-if="!isMobile"
       class="recent-projects motion-stage motion-stage-2"
       aria-label="最近项目"
       :aria-busy="projectsLoading"
@@ -720,7 +721,7 @@ watch(viewMode, (value) => {
       </div>
     </section>
 
-    <section class="suggestions-section motion-stage motion-stage-3" aria-label="快速开始">
+    <section v-if="!isMobile" class="suggestions-section motion-stage motion-stage-3" aria-label="快速开始">
       <div class="suggestions-heading">
         <h2>快速开始</h2>
         <span>选择一项，快速填入需求</span>
@@ -775,7 +776,7 @@ watch(viewMode, (value) => {
         ref="composerInput"
         v-model="prompt"
         type="textarea"
-        :autosize="{ minRows: 3, maxRows: 7 }"
+        :autosize="{ minRows: isMobile ? 2 : 3, maxRows: isMobile ? 5 : 7 }"
         resize="none"
         :placeholder="TEACHER_HOME.composer.placeholder"
         @keydown.enter="handlePromptKeydown"
@@ -981,98 +982,83 @@ h1 { margin: 0; font-size: clamp(36px, 4vw, 48px); line-height: 1.15; letter-spa
 .voice-wave.is-recording i:nth-child(1){animation-delay:0s}.voice-wave.is-recording i:nth-child(2){animation-delay:.08s}.voice-wave.is-recording i:nth-child(3){animation-delay:.16s}.voice-wave.is-recording i:nth-child(4){animation-delay:.24s}.voice-wave.is-recording i:nth-child(5){animation-delay:.32s}.voice-wave.is-recording i:nth-child(6){animation-delay:.4s}.voice-wave.is-recording i:nth-child(7){animation-delay:.48s}.voice-wave.is-recording i:nth-child(8){animation-delay:.56s}.voice-wave.is-recording i:nth-child(9){animation-delay:.64s}
 @keyframes waveMove{0%,100%{transform:scaleY(.35)}50%{transform:scaleY(1)}}
 
-@media (max-width: 767.98px) and (hover: none) and (pointer: coarse) {
+@media (max-width: 767.98px) and (hover: none) and (pointer: coarse), (max-width: 1023.98px) and (max-height: 600px) and (hover: none) and (pointer: coarse) {
+  .home-welcome {
+    height: 100%;
+    min-height: 0;
+  }
   .home-welcome:not(.is-chat-mode) {
-    /* 手机档顶栏 48px+safe-top，底部 TabBar 56px+safe-bottom */
     width: 100%;
     max-width: none;
     margin: 0;
-    height: calc(100dvh - 48px - var(--zh-safe-top) - var(--zh-tabbar-h) - var(--zh-safe-bottom));
+    height: 100%;
     padding: 0 0 10px;
   }
   .welcome-scroll {
     display: flex;
     flex-direction: column;
-    align-items: stretch;
-    justify-content: flex-start;
+    align-items: center;
+    justify-content: center;
     width: 100%;
     min-width: 0;
-    padding: 18px calc(18px + var(--zh-safe-right)) 20px calc(18px + var(--zh-safe-left));
+    padding: 24px calc(16px + var(--zh-safe-right)) 24px calc(16px + var(--zh-safe-left));
     scrollbar-gutter: auto;
     overscroll-behavior-y: contain;
-    text-align: left;
+    text-align: center;
   }
   .composer-hint { display: none; }
-  .welcome-copy { max-width: none; padding: 0 2px; }
-  .welcome-greeting {
+  .mobile-home-intro {
     display: flex;
+    flex: none;
+    flex-direction: column;
     align-items: center;
-    gap: 9px;
-    margin-bottom: 8px;
+    justify-content: center;
+    gap: 24px;
+    width: 100%;
+    padding: 16px 0;
   }
-  .welcome-greeting img {
+  .mobile-home-emblem {
+    position: relative;
+    width: 76px;
+    height: 76px;
+    flex: none;
+    overflow: hidden;
+    border-radius: 22px;
+  }
+  .mobile-home-emblem img {
+    position: absolute;
+    top: 50%;
+    left: 50%;
     display: block;
-    width: 30px;
-    height: 30px;
-    flex: 0 0 30px;
-    object-fit: contain;
+    width: 134px;
+    height: 134px;
+    max-width: none;
+    transform: translate(-50%, -50%);
   }
-  .eyebrow { margin: 0; font-size: 12px; }
-  .welcome-copy h1 { max-width: 16em; font-size: clamp(22px, 6vw, 26px); line-height: 1.3; letter-spacing: -0.035em; }
-  .intro { max-width: 42ch; margin-top: 8px; font-size: 13px; line-height: 1.6; }
-  .welcome-actions { display: none; }
-
-  .suggestions-section { order: 1; margin-top: 22px; }
-  .suggestions-heading h2 { font-size: 16px; }
-  .suggestions-heading span { font-size: 10px; white-space: nowrap; }
-  .suggestion-grid {
-    display: flex;
-    gap: 9px;
-    margin: 10px calc(-18px - var(--zh-safe-right)) 0 calc(-18px - var(--zh-safe-left));
-    padding: 2px calc(18px + var(--zh-safe-right)) 8px calc(18px + var(--zh-safe-left));
-    overflow-x: auto;
-    overscroll-behavior-x: contain;
-    scroll-snap-type: x mandatory;
-    scrollbar-width: none;
+  .mobile-home-intro h1 {
+    margin: 0;
+    font-size: clamp(24px, 6.4vw, 28px);
+    font-weight: 600;
+    line-height: 1.4;
+    letter-spacing: -.025em;
   }
-  .suggestion-grid::-webkit-scrollbar { display: none; }
-  .suggestion-card { flex: 0 0 min(216px, calc(100vw - 82px)); scroll-snap-align: start; }
-  .suggestion-card :deep(.el-card) { border-color: var(--zh-line-border); border-radius: var(--zh-radius12); background: var(--zh-background-light); }
-  .suggestion-card :deep(.el-card__body) { min-height: 108px; padding: 13px; }
-  .suggestion-icon { width: 30px; height: 30px; margin-bottom: 10px; }
-  .suggestion-card h2 { font-size: 14px; }
-  .suggestion-card p { margin-top: 5px; font-size: 11px; line-height: 1.45; }
-  .suggestion-card .card-arrow { right: 12px; bottom: 13px; }
-
-  .recent-projects { order: 2; margin-top: 20px; }
-  .recent-projects-heading { align-items: center; }
-  .recent-projects-heading h2 { font-size: 16px; }
-  .project-grid {
-    display: flex;
-    gap: 9px;
-    margin: 10px calc(-18px - var(--zh-safe-right)) 0 calc(-18px - var(--zh-safe-left));
-    padding: 0 calc(18px + var(--zh-safe-right)) 4px calc(18px + var(--zh-safe-left));
-    overflow-x: auto;
-    overscroll-behavior-x: contain;
-    scroll-snap-type: x mandatory;
-    scrollbar-width: none;
-  }
-  .project-grid::-webkit-scrollbar { display: none; }
-  .project-card, .project-skeleton { flex: 0 0 min(236px, calc(100vw - 74px)); scroll-snap-align: start; }
-  .project-card { min-height: 66px; justify-content: center; padding: 11px 13px; border-radius: var(--zh-radius12); }
 
   .composer {
-    margin: 12px calc(12px + var(--zh-safe-right)) 0 calc(12px + var(--zh-safe-left));
+    flex-shrink: 0;
+    margin: 12px calc(16px + var(--zh-safe-right)) 0 calc(16px + var(--zh-safe-left));
     padding: 8px;
     border-radius: var(--zh-radius16);
     box-shadow: 0 -4px 18px rgb(31 63 120 / 6%);
   }
   .composer :deep(.el-textarea__inner) { min-height: 70px !important; padding: 8px 10px 4px; font-size: 16px; }
-  .composer-toolbar { gap: 4px; }
-  .composer-tools { min-width: 0; gap: 0; }
-  .composer-tools :deep(.el-select) { width: 90px !important; flex: 0 0 90px; }
-  .composer-tools :deep(.el-select .el-input__wrapper) { padding-inline: 8px; }
-  .composer-tools :deep(.el-button) { padding-inline: 8px; }
+  .composer-toolbar { display: grid; grid-template-columns: minmax(0, 1fr) repeat(4, 44px); gap: 0; padding: 0; }
+  .composer-tools { display: contents; }
+  .composer-tools :deep(.el-select) { width: 100% !important; min-width: 0; }
+  .composer-tools :deep(.el-select .el-select__wrapper) { gap: 4px; padding-inline: 6px; font-size: 15px; }
+  .composer-tools :deep(.el-select .el-select__caret) { font-size: 12px; }
+  .composer-tools > span { display: grid; place-items: center; min-width: 0; }
+  .composer-toolbar :deep(.el-button) { width: 44px; height: 44px; min-width: 44px; padding: 0; margin: 0; }
+  .composer-toolbar :deep(.el-button .el-icon) { font-size: 21px; }
   .composer-tool-label { display: none; }
   .composer-hint { margin-top: 7px; font-size: 11px; text-align: left; }
   .composer-shortcut-hint { display: none; }
