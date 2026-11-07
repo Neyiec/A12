@@ -45,6 +45,12 @@ export function createUploadSession(data) {
   return post('/api/v1/admin/public-resources/uploads', data)
 }
 
+/** AI request goes directly to Python; it reloads the registered file URL and source from Java. */
+export function syncPublicAiResource(id, { title = '公共教学资料', force = false } = {}) {
+  return apiRequest({ url: '/api/v1/python/resources/index/sync', method: 'post', timeout: AI_INDEX_TIMEOUT,
+    data: { source_type: 'public', resource_id: String(id), title, file_url: 'https://registration.invalid', force_reparse: force } })
+}
+
 /**
  * 完成上传（三段式第三段）
  * 后端仅标记 ai_index_status='indexing' 后立即返回，Python 解析在后台线程池执行——前端轮询 processing-status 获取最终状态

@@ -16,6 +16,7 @@ import edu.zstu.mapper.ComContentMapper;
 import edu.zstu.mapper.SysUserMapper;
 import edu.zstu.service.AdminModerationService;
 import edu.zstu.service.BusinessLogService;
+import edu.zstu.service.CommunityReviewSampling;
 import edu.zstu.service.ResourceIndexEventPublisher;
 import edu.zstu.utils.PageResult;
 import edu.zstu.utils.RedisCacheUtil;
@@ -29,13 +30,14 @@ import java.util.LinkedHashMap;
 import java.util.Map;
 import java.util.Objects;
 import java.util.Set;
-import java.util.concurrent.ThreadLocalRandom;
 import java.time.LocalDateTime;
 import lombok.extern.slf4j.Slf4j;
 
 @Slf4j
 @Service
 public class AdminModerationServiceImpl implements AdminModerationService {
+    private static final Set<String> REVIEW_CHECKS = Set.of(
+            "政治敏感", "广告导流", "侵权嫌疑", "内容质量");
 
     private final AdmAuditMapper auditMapper;
     private final ComContentMapper contentMapper;
@@ -44,11 +46,12 @@ public class AdminModerationServiceImpl implements AdminModerationService {
     private final RedisCacheUtil redisCacheUtil;
     private final ObjectMapper objectMapper;
     private final ResourceIndexEventPublisher indexEvents;
+    private final CommunityReviewSampling reviewSampling;
 
     public AdminModerationServiceImpl(AdmAuditMapper auditMapper, ComContentMapper contentMapper,
                                       SysUserMapper userMapper, BusinessLogService businessLogService,
                                       RedisCacheUtil redisCacheUtil, ObjectMapper objectMapper,
-                                      ResourceIndexEventPublisher indexEvents) {
+                                      ResourceIndexEventPublisher indexEvents, CommunityReviewSampling reviewSampling) {
         this.auditMapper = auditMapper;
         this.contentMapper = contentMapper;
         this.userMapper = userMapper;
@@ -56,6 +59,7 @@ public class AdminModerationServiceImpl implements AdminModerationService {
         this.redisCacheUtil = redisCacheUtil;
         this.objectMapper = objectMapper;
         this.indexEvents = indexEvents;
+        this.reviewSampling = reviewSampling;
     }
 
     @Override
@@ -75,6 +79,17 @@ public class AdminModerationServiceImpl implements AdminModerationService {
             throw new RuntimeException("Review task not found");
         }
         return toAuditVO(audit);
+    }
+
+    @Override
+    public Map<String, Object> getModerationMetrics() {
+        Map<String, Object> metrics = new LinkedHashMap<>(auditMapper.moderationMetrics());
+        long comparable = ((Number) metrics.getOrDefault("comparable", 0)).longValue();
+        long agreements = ((Number) metrics.getOrDefault("agreements", 0)).longValue();
+        metrics.put("agreement_rate", comparable == 0 ? null : (double) agreements / comparable);
+        metrics.put("sample_rate", 0.10);
+        metrics.put("score_threshold", 60);
+        return metrics;
     }
 
     @Override
@@ -98,13 +113,16 @@ public class AdminModerationServiceImpl implements AdminModerationService {
             throw new IllegalStateException("审核任务已失效");
         }
         Com_Content content = contentMapper.findById(audit.getTarget_id());
-        if (content == null || !"reviewing".equals(content.getStatus()) || !"ppt".equals(content.getContent_type())
+        if (content == null || !"reviewing".equals(content.getStatus())
                 || !Objects.equals(content.getContent_type(), audit.getTarget_type())) {
             throw new IllegalStateException("课件已不是待审核状态");
         }
+        requireReviewedVersion(audit, content);
         Map<String, Object> payload = new LinkedHashMap<>();
         payload.put("audit_id", auditId);
         payload.put("content_version", content.getVersion());
+        payload.put("content_type", content.getContent_type());
+        payload.put("input_variables", content.getInput_variables());
         payload.put("title", content.getTitle());
         payload.put("description", content.getDescription());
         payload.put("subject", content.getSubject());
@@ -121,28 +139,44 @@ public class AdminModerationServiceImpl implements AdminModerationService {
         Adm_Audit audit = auditMapper.findByIdForUpdate(auditId);
         if (audit == null || !"audit".equals(audit.getAudit_type())) throw new RuntimeException("审核任务不存在");
         if (!"pending".equals(audit.getStatus()) || audit.getAi_verdict() != null) return;
-        Com_Content content = contentMapper.findById(audit.getTarget_id());
-        if (content == null || !"reviewing".equals(content.getStatus()) || !"ppt".equals(content.getContent_type())
+        Com_Content content = contentMapper.findByIdForUpdate(audit.getTarget_id());
+        if (content == null || !"reviewing".equals(content.getStatus())
+                || !Objects.equals(content.getContent_type(), audit.getTarget_type())
                 || result == null || !Objects.equals(result.content_version(), content.getVersion())) {
             throw new IllegalStateException("课件版本或审核状态已变化，忽略过期的 AI 结果");
         }
+        requireReviewedVersion(audit, content);
         String domain = Set.of("arts", "science", "engineering").contains(String.valueOf(result.domain()))
                 ? result.domain() : "unknown";
         String verdict = Set.of("pass", "review", "fail", "error").contains(String.valueOf(result.verdict()))
                 ? result.verdict() : "review";
         int score = Math.max(0, Math.min(100, result.score() == null ? 0 : result.score()));
-        boolean checksPassed = result.checks() != null && result.checks().size() >= 4
-                && result.checks().stream().allMatch(check -> "pass".equals(check.get("status")));
+        boolean completeChecks = result.checks() != null && result.checks().size() == REVIEW_CHECKS.size()
+                && result.checks().stream().allMatch(check -> check != null
+                        && Set.of("pass", "review", "fail").contains(String.valueOf(check.get("status")))
+                        && check.get("evidence") instanceof String evidence && !evidence.isBlank())
+                && result.checks().stream().map(check -> check.get("name")).collect(java.util.stream.Collectors.toSet())
+                        .equals(REVIEW_CHECKS);
+        boolean validReport = completeChecks && result.score() != null && result.score() >= 0 && result.score() <= 100
+                && !"error".equals(verdict) && result.summary() != null && !result.summary().isBlank();
+        boolean checksPassed = completeChecks && result.checks().stream().allMatch(check -> "pass".equals(check.get("status")));
         boolean noFindings = result.findings() != null && result.findings().isEmpty();
-        boolean autoEligible = "pass".equals(verdict) && score >= 90 && checksPassed && noFindings
+        boolean autoReject = validReport && score < 60;
+        if (autoReject) verdict = "fail";
+        boolean autoEligible = validReport && "pass".equals(verdict) && score >= 60 && checksPassed && noFindings
                 && !"unknown".equals(domain);
-        boolean spotCheck = autoEligible && ThreadLocalRandom.current().nextInt(10) == 0;
+        if ("pass".equals(verdict) && !autoEligible) verdict = "review";
+        boolean spotCheck = autoEligible && reviewSampling.selected();
         Map<String, Object> report = new LinkedHashMap<>();
         report.put("summary", result.summary() == null ? "" : result.summary());
         report.put("checks", result.checks() == null ? List.of() : result.checks());
         report.put("findings", result.findings() == null ? List.of() : result.findings());
         report.put("content_version", content.getVersion());
         report.put("spot_check", spotCheck);
+        report.put("policy_version", "score60-sample10-v1");
+        report.put("auto_reject", autoReject);
+        report.put("sample_rate", 0.10);
+        report.put("score_threshold", 60);
         try {
             String json = objectMapper.writeValueAsString(report);
             if (json.length() > 40000) throw new RuntimeException("AI 审核报告过长");
@@ -153,18 +187,26 @@ public class AdminModerationServiceImpl implements AdminModerationService {
         audit.setAi_score(score);
         audit.setAi_model(result.model() == null ? "" : result.model().substring(0, Math.min(100, result.model().length())));
         boolean autoPublish = autoEligible && !spotCheck;
-        audit.setAction(autoPublish ? "ai_approve" : null);
-        audit.setStatus(autoPublish ? "processed" : "pending");
-        audit.setProcessed_at(autoPublish ? LocalDateTime.now() : null);
+        boolean automaticallyProcessed = autoPublish || autoReject;
+        audit.setAction(autoPublish ? "ai_approve" : autoReject ? "ai_reject" : null);
+        audit.setComment(autoReject ? "AI 评分 " + score + "/100，低于 60 分自动驳回。"
+                + result.summary().substring(0, Math.min(350, result.summary().length()))
+                + " 可联系审核员复核。" : null);
+        audit.setStatus(automaticallyProcessed ? "processed" : "pending");
+        audit.setProcessed_at(automaticallyProcessed ? LocalDateTime.now() : null);
         if (auditMapper.saveAiReview(audit) != 1) throw new RuntimeException("AI 审核结果保存冲突");
-        if (autoPublish) {
-            content.setStatus("public");
+        if (automaticallyProcessed) {
+            content.setStatus(autoPublish ? "public" : "offline");
             contentMapper.update(content);
-            indexEvents.publish("sync", "community", content.getId(), false);
+            if ("ppt".equals(content.getContent_type())) {
+                indexEvents.publish(autoPublish ? "sync" : "delete", "community", content.getId(), false);
+            }
             evictContentCache(content.getId());
         }
-        businessLogService.record("audit", "ai_moderation", autoPublish ? "auto_approve" : "human_review_required",
-                "audit", auditId, Map.of("content_id", content.getId(), "domain", domain, "verdict", verdict));
+        businessLogService.record("audit", "ai_moderation",
+                autoPublish ? "auto_approve" : autoReject ? "auto_reject" : "human_review_required",
+                "audit", auditId, Map.of("content_id", content.getId(), "domain", domain, "verdict", verdict,
+                        "content_version", content.getVersion(), "spot_check", spotCheck));
     }
 
     @Override
@@ -204,18 +246,27 @@ public class AdminModerationServiceImpl implements AdminModerationService {
         if (audit == null || !"audit".equals(audit.getAudit_type())) {
             throw new RuntimeException("Review task not found");
         }
-        if (!"pending".equals(audit.getStatus()) && !("processed".equals(audit.getStatus()) && "ai_approve".equals(audit.getAction()))) {
+        boolean automaticDecision = Set.of("ai_approve", "ai_reject").contains(Objects.toString(audit.getAction(), ""));
+        if (!"pending".equals(audit.getStatus()) && !("processed".equals(audit.getStatus()) && automaticDecision)) {
             throw new RuntimeException("Review task has already been processed");
         }
         String action = normalizeReviewAction(dto == null ? null : dto.getAction());
-        Com_Content content = contentMapper.findById(audit.getTarget_id());
+        Com_Content content = contentMapper.findByIdForUpdate(audit.getTarget_id());
         if (content == null) throw new RuntimeException("Related submission content not found");
-        if ("ai_approve".equals(audit.getAction()) && !"public".equals(content.getStatus())) {
-            throw new RuntimeException("AI 自动通过的课件已变更状态，不能按旧审核单再次操作");
+        boolean postPublishCheck = "ai_approve".equals(audit.getAction());
+        String expectedStatus = postPublishCheck ? "public" : "ai_reject".equals(audit.getAction()) ? "offline" : "reviewing";
+        if (!expectedStatus.equals(content.getStatus())) {
+            throw new IllegalStateException("投稿状态已变化，请刷新审核列表");
         }
         if (!Objects.equals(content.getContent_type(), audit.getTarget_type())) {
             throw new RuntimeException("Review task target does not match content type");
         }
+        requireReviewedVersion(audit, content);
+        String comment = dto.getComment() == null ? "" : dto.getComment().strip();
+        if (!"approve".equals(action) && comment.isBlank()) {
+            throw new IllegalArgumentException("请填写驳回或退回修改的原因");
+        }
+        if (comment.length() > 500) throw new IllegalArgumentException("审核意见最多 500 字");
 
         String newStatus = switch (action) {
             case "approve" -> "public";
@@ -230,20 +281,24 @@ public class AdminModerationServiceImpl implements AdminModerationService {
         }
 
         audit.setHandler_id(adminId);
+        recordHumanComparison(audit, action, adminId);
         audit.setAction(action);
-        audit.setComment(dto == null ? null : dto.getComment());
+        audit.setComment(comment);
         audit.setStatus("processed");
         auditMapper.process(audit);
         evictContentCache(content.getId());
         businessLogService.record("audit", "admin_moderation", "make_decision", "audit", id,
-                Map.of("action", action, "content_id", content.getId(), "new_status", newStatus));
+                Map.of("action", action, "content_id", content.getId(), "new_status", newStatus,
+                        "content_version", content.getVersion(), "reviewer_id", adminId,
+                        "ai_verdict", Objects.toString(audit.getAi_verdict(), ""),
+                        "post_publish_check", postPublishCheck, "comment", comment));
     }
 
     @Override
     @Transactional
     public ContentVO updateItemStatus(Integer id, String status) {
         log.info("updateItemStatus id={}, status={}", id, status);
-        Com_Content content = contentMapper.findById(id);
+        Com_Content content = contentMapper.findByIdForUpdate(id);
         if (content == null) throw new RuntimeException("Community content not found");
 
         String dbStatus = normalizeContentStatus(status);
@@ -265,7 +320,7 @@ public class AdminModerationServiceImpl implements AdminModerationService {
     @Transactional
     public ContentVO updateRecommendation(Integer id, RecommendationDTO dto) {
         log.info("updateRecommendation id={}", id);
-        Com_Content content = contentMapper.findById(id);
+        Com_Content content = contentMapper.findByIdForUpdate(id);
         if (content == null) throw new RuntimeException("Community content not found");
         int isTop = dto == null ? 0 : dto.getIs_top();
         if (isTop != 0 && isTop != 1) {
@@ -305,7 +360,7 @@ public class AdminModerationServiceImpl implements AdminModerationService {
     @Transactional
     public void resolveReport(Integer id, AuditDTO dto, Integer adminId) {
         log.info("resolveReport id={}, action={}", id, dto == null ? null : dto.getAction());
-        Adm_Audit report = auditMapper.findById(id);
+        Adm_Audit report = auditMapper.findByIdForUpdate(id);
         if (report == null || !"report".equals(report.getAudit_type())) {
             throw new RuntimeException("Report not found");
         }
@@ -313,7 +368,7 @@ public class AdminModerationServiceImpl implements AdminModerationService {
             throw new RuntimeException("Report has already been processed");
         }
         String action = normalizeReportAction(dto == null ? null : dto.getAction());
-        Com_Content content = contentMapper.findById(report.getTarget_id());
+        Com_Content content = contentMapper.findByIdForUpdate(report.getTarget_id());
         if (content == null) throw new RuntimeException("Reported content not found");
 
         if (List.of("approve", "offline").contains(action)) {
@@ -339,6 +394,45 @@ public class AdminModerationServiceImpl implements AdminModerationService {
 
     // ==================== 内部辅助 ====================
 
+
+    private void recordHumanComparison(Adm_Audit audit, String action, int reviewerId) {
+        try {
+            var report = audit.getAi_report() == null
+                    ? objectMapper.createObjectNode() : objectMapper.readTree(audit.getAi_report());
+            if (!(report instanceof com.fasterxml.jackson.databind.node.ObjectNode object)) {
+                throw new IllegalStateException("审核报告格式无效");
+            }
+            var human = object.putObject("human_review");
+            human.put("action", action);
+            human.put("reviewer_id", reviewerId);
+            human.put("reviewed_at", LocalDateTime.now().toString());
+            boolean comparable = Set.of("pass", "fail").contains(Objects.toString(audit.getAi_verdict(), ""))
+                    && Set.of("approve", "reject").contains(action);
+            if (comparable) {
+                human.put("agrees_with_ai", ("pass".equals(audit.getAi_verdict()) && "approve".equals(action))
+                        || ("fail".equals(audit.getAi_verdict()) && "reject".equals(action)));
+            }
+            audit.setAi_report(objectMapper.writeValueAsString(object));
+        } catch (JsonProcessingException e) {
+            throw new IllegalStateException("人工复核记录无法保存", e);
+        }
+    }
+
+    private void requireReviewedVersion(Adm_Audit audit, Com_Content content) {
+        Adm_Audit latest = auditMapper.findLatestSubmissionAudit(content.getId());
+        if (latest != null && !Objects.equals(latest.getId(), audit.getId())) {
+            throw new IllegalStateException("已有更新的投稿审核单，请刷新审核列表");
+        }
+        if (audit.getAi_report() == null) return; // 历史人工待审记录没有版本字段。
+        try {
+            var version = objectMapper.readTree(audit.getAi_report()).path("content_version");
+            if (!version.isMissingNode() && (!version.isIntegralNumber() || version.asInt() != content.getVersion())) {
+                throw new IllegalStateException("投稿版本已变化，请刷新审核列表");
+            }
+        } catch (JsonProcessingException e) {
+            throw new IllegalStateException("审核记录版本无法读取", e);
+        }
+    }
 
     private String normalizeReviewAction(String action) {
         if (action == null || action.isBlank()) {

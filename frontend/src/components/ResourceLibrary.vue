@@ -200,18 +200,24 @@ const normalizeResource = (item) => ({
   private: item.access_type !== 'shared',
 })
 
+let resourceRequestSeq = 0
+let resourceDisposed = false
 const loadResources = async () => {
+  if (resourceDisposed) return
+  const sequence = ++resourceRequestSeq
   loading.value = true
   resourcesError.value = ''
   selectedRows.value = []
   try {
     const result = await listResources({ keyword: keyword.value || undefined, page: 1, size: 50 })
+    if (resourceDisposed || sequence !== resourceRequestSeq) return
     const records = result?.data?.records || result?.data?.list || result?.data?.items || result?.records || []
     resources.value = records.map(normalizeRealResource)
     resourceTotal.value = Number(result?.data?.total ?? result?.total ?? resources.value.length)
   } catch {
+    if (resourceDisposed || sequence !== resourceRequestSeq) return
     resourcesError.value = '素材加载失败，请检查登录状态或网络连接后重试。'
-  } finally { loading.value = false }
+  } finally { if (!resourceDisposed && sequence === resourceRequestSeq) loading.value = false }
 }
 
 const clearUploadProgressTimers = () => {
@@ -711,6 +717,8 @@ onMounted(() => {
   mobileMediaQuery.addEventListener('change', handleMobileMediaChange)
 })
 onBeforeUnmount(() => {
+  resourceDisposed = true
+  resourceRequestSeq += 1
   mobileMediaQuery?.removeEventListener('change', handleMobileMediaChange)
   clearUploadProgressTimers()
 })

@@ -5,6 +5,7 @@ import { ElMessage } from 'element-plus'
 import { useUserStore } from '../storage/user.js'
 import { assertApiSuccess, normalizeRequestError, responsePayload } from '../../../frontend/src/utils/apiError.js'
 import { loginLocation } from '../../../frontend/src/utils/sessionRedirect.js'
+import { startRequestLog, finishRequestLog } from '../../../frontend/src/utils/requestLog.js'
 
 // 从环境变量获取基础 URL
 const baseURL = import.meta.env.VITE_API_BASE_URL || ''
@@ -21,6 +22,7 @@ const service = axios.create({
 // 请求拦截器
 service.interceptors.request.use(
   config => {
+    startRequestLog(config)
     if (config.url?.startsWith('/api/v1/python/')) {
       config.baseURL = import.meta.env.VITE_PYTHON_API_BASE_URL || ''
     }
@@ -38,7 +40,7 @@ service.interceptors.request.use(
     return config
   },
   error => {
-    console.error('请求错误:', error)
+    finishRequestLog(error.config, 'request_setup_error', true)
     return Promise.reject(error)
   }
 )
@@ -50,6 +52,7 @@ service.interceptors.response.use(
 
     const res = await responsePayload(response)
     const code = res?.code
+    finishRequestLog(response.config, code || response.status, Boolean(code && code !== 200 && code !== 0))
 
     // 401 未授权 — 清除用户状态并跳转登录页，提前返回阻止业务层误处理
     if (code == 401) {
@@ -68,7 +71,7 @@ service.interceptors.response.use(
     return res
   },
   async error => {
-    console.error('响应错误:', error)
+    finishRequestLog(error.config, error.response?.status || error.code || 'network_error', true)
 
     // 统一错误处理
     if (error.response) {

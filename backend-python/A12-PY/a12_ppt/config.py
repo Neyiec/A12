@@ -75,6 +75,8 @@ def get_settings() -> Settings:
     request_timeout_seconds = float(os.getenv("REQUEST_TIMEOUT_SECONDS", "90"))
     if enable_quality_pipeline:
         request_timeout_seconds = max(request_timeout_seconds, 60.0)
+    asr_base_url=os.getenv('ASR_BASE_URL') or os.getenv('OPENAI_BASE_URL','https://api.openai.com/v1')
+    asr_default='qwen3-asr-flash' if 'dashscope' in asr_base_url.lower() or '.maas.aliyuncs.com' in asr_base_url.lower() else 'whisper-1'
     return Settings(
         app_name=os.getenv("APP_NAME", "a12-python-ppt-service"),
         app_version=os.getenv("APP_VERSION", "0.1.0"),
@@ -89,11 +91,11 @@ def get_settings() -> Settings:
         embedding_base_url=os.getenv("EMBEDDING_BASE_URL") or "https://dashscope.aliyuncs.com/compatible-mode/v1",
         embedding_model=os.getenv("EMBEDDING_MODEL", "text-embedding-v4"),
         embedding_dimensions=int(os.getenv("EMBEDDING_DIMENSIONS")) if os.getenv("EMBEDDING_DIMENSIONS") else None,
-        asr_model=os.getenv("ASR_MODEL", "whisper-1"),
+        asr_model=os.getenv("ASR_MODEL") or asr_default,
         # ASR 独立接入配置：可指向与 OPENAI_BASE_URL 不同的平台（如硅基流动 SenseVoice）；
         # 未设置 ASR_API_KEY/ASR_BASE_URL 时回落 LLM 组（OPENAI_*），保持旧行为兼容
         asr_api_key=os.getenv("ASR_API_KEY") or os.getenv("OPENAI_API_KEY", ""),
-        asr_base_url=os.getenv("ASR_BASE_URL") or os.getenv("OPENAI_BASE_URL", "https://api.openai.com/v1"),
+        asr_base_url=asr_base_url,
         # 资源索引下载+解析整体限时：卡死按超时转 failed，必须小于 Java→Python 的 600s 超时
         index_parse_timeout_seconds=float(os.getenv("INDEX_PARSE_TIMEOUT_SECONDS", "540")),
         # 资源解析的视觉理解开关（逐图调用主 LLM，图片多时耗时线性增长）：

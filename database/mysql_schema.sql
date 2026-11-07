@@ -59,6 +59,7 @@ CREATE TABLE `adm_resource` (
   `template_data` json DEFAULT NULL COMMENT '组件模板数据',
   `thumbnail` varchar(500) COLLATE utf8mb4_unicode_ci DEFAULT NULL COMMENT '缩略图',
   `description` varchar(500) COLLATE utf8mb4_unicode_ci DEFAULT NULL COMMENT '描述',
+  `source_metadata` longtext COLLATE utf8mb4_unicode_ci COMMENT '来源、版本及有效期登记',
   `file_size` bigint DEFAULT NULL COMMENT '文件大小',
   `status` tinyint NOT NULL DEFAULT '1' COMMENT '状态: 1启用/0禁用',
   `uploaded_by` int DEFAULT NULL COMMENT '上传人ID',
@@ -615,3 +616,9 @@ CREATE TABLE `ws_version` (
 /*!40101 SET CHARACTER_SET_RESULTS=@OLD_CHARACTER_SET_RESULTS */;
 /*!40101 SET COLLATION_CONNECTION=@OLD_COLLATION_CONNECTION */;
 /*!40111 SET SQL_NOTES=@OLD_SQL_NOTES */;
+
+-- Idempotent batch materialization (20261105)
+CREATE TABLE IF NOT EXISTS ws_batch_import (
+ user_id INT NOT NULL,batch_id VARCHAR(32) NOT NULL,item_id VARCHAR(32) NOT NULL,
+ project_id INT NULL,created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+ PRIMARY KEY(user_id,batch_id,item_id)) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;

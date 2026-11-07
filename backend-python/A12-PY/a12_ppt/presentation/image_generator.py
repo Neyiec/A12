@@ -22,7 +22,7 @@ import redis.asyncio as async_redis
 from ..config import get_settings
 from ..direct_auth import direct_user_id, require_active_browser_token
 from ..runtime_config import image_generation_model, image_monthly_quota
-
+from ..timing import timed, timing_stage, log_timing
 
 @dataclass(frozen=True)
 class GeneratedImage:
@@ -44,6 +44,7 @@ class ImageGenerationClient:
     def available(self) -> bool:
         return bool(self.settings.image_generation_api_key and image_generation_model(self.settings.image_generation_model))
 
+    @timed("image.total")
     async def generate(self, prompt: str, aspect_ratio: str = "16:9") -> GeneratedImage | None:
         prompt = (prompt or "").strip()[:1800]
         if not self.available or not prompt:
@@ -53,8 +54,10 @@ class ImageGenerationClient:
 
         model = image_generation_model(self.settings.image_generation_model)
         cache_key = hashlib.sha256(f"{model}\n{aspect_ratio}\n{prompt}".encode("utf-8")).hexdigest()
-        cached = self._read_cache(cache_key, prompt, model)
+        with timing_stage("image.cache_lookup"):
+            cached = self._read_cache(cache_key, prompt, model)
         if cached:
+            log_timing("image.cache_hit", 0)
             return cached
 
         quota_key = await self._reserve_quota()
@@ -93,6 +96,7 @@ class ImageGenerationClient:
             # 外部调用失败已降级；Redis 暂停时退款需依靠月度 TTL 自清理。
             pass
 
+    @timed("image.request_poll_download")
     async def _request_image(self, prompt: str, aspect_ratio: str, cache_key: str, model: str) -> GeneratedImage:
 
         headers = {
@@ -143,9 +147,10 @@ class ImageGenerationClient:
             if not source_url:
                 raise TimeoutError("文生图任务等待超时")
 
-            downloaded = await client.get(source_url)
-            downloaded.raise_for_status()
-            image_bytes = downloaded.content
+            with timing_stage("image.download"):
+                downloaded = await client.get(source_url)
+                downloaded.raise_for_status()
+                image_bytes = downloaded.content
             if not image_bytes or len(image_bytes) > 15 * 1024 * 1024:
                 raise RuntimeError("生成图片为空或超过 15MB 限制")
             content_type = (downloaded.headers.get("content-type") or "").split(";", 1)[0]
@@ -162,6 +167,7 @@ class ImageGenerationClient:
                 return GeneratedImage("", f"data:{content_type};base64,{encoded}", prompt, model, cache_key)
         return None
 
+    @timed("image.cache_write_and_encode")
     def _write_cache(
         self, cache_key: str, prompt: str, source_url: str, content_type: str, image_bytes: bytes, model: str
     ) -> GeneratedImage:

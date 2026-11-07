@@ -21,7 +21,7 @@ import {
   ChatDotRound, EditPen, Promotion, Message, Microphone,
 } from '@element-plus/icons-vue'
 import { changeContact, changePassword, getCurrentUser, logout, sendVerificationCode } from '../apis/login.js'
-import { getTeacherPreferences, getTeacherStyleProfile, relearnTeacherStyleProfile, learnTeacherMaterialStyle, saveTeacherPreferences, updateTeacherStyleProfile, updateTeacherStyleTags } from '../apis/teacher.js'
+import { getTeacherPreferences, getTeacherStrategyEffects, getTeacherStyleProfile, relearnTeacherStyleProfile, learnTeacherMaterialStyle, saveTeacherPreferences, updateTeacherStyleProfile, updateTeacherStyleTags } from '../apis/teacher.js'
 import { useUserStore } from '../storage/user.js'
 import { TEACHING_STYLES, TEMPLATES, INTERACTION_FORMS, PREFERENCES_DEFAULTS } from '../config/preferences.config.js'
 
@@ -181,10 +181,22 @@ async function learnStyleFromMaterial(event) {
   } finally { learningMaterial.value = false }
 }
 
+const strategyEffects = ref([])
+const strategyEffectsError = ref(false)
+const strategyNames = { direct: '直接生成', rag: '检索资料', graph: '课程图谱', graph_rag: '图谱与资料检索' }
+const feedbackLabels = { accept: '采纳', reject: '拒绝', undo: '撤销', manual_edit: '手动编辑', regenerate: '要求重做' }
+
 async function loadLearnedProfile() {
   const userId = String(userStore.userInfo?.user_id || userStore.userInfo?.id || '')
   if (!userId) return
   learnedProfileLoading.value = true
+  void getTeacherStrategyEffects().then((result) => {
+    strategyEffects.value = result?.data?.strategies || []
+    strategyEffectsError.value = false
+  }).catch(() => {
+    strategyEffects.value = []
+    strategyEffectsError.value = true
+  })
   try {
     const result = await getTeacherStyleProfile(userId)
     learnedProfile.value = result?.data?.profile || null
@@ -437,6 +449,33 @@ onBeforeUnmount(() => clearInterval(contactTimer))
             <el-input v-model="manualStyleTags" style="max-width: 430px" placeholder="自定义风格标签，如多案例、少文字、重实践（用顿号分隔）" />
             <el-button :loading="manualTagsSaving" @click="saveManualStyleTags">保存风格标签</el-button>
           </div>
+          <details v-if="learnedProfile?.recent_feedback?.length" class="mt-3">
+            <summary>近期编辑与反馈</summary>
+            <ul>
+              <li v-for="(item, index) in learnedProfile.recent_feedback.slice(0, 8)" :key="index">
+                {{ feedbackLabels[item.action] || item.action }} ·
+                {{ item.change_summary || item.instruction || (item.target_type === 'outline' ? '教学大纲' : '教学作品') }}
+              </li>
+            </ul>
+          </details>
+        </fieldset>
+
+        <fieldset class="pref-section">
+          <legend class="pref-section-title">大纲策略效果</legend>
+          <p>近 90 天按会话统计。同一会话确认后仍可计入返工，返工率以有反馈的会话为分母。</p>
+          <p v-if="strategyEffectsError">策略统计暂时无法读取。</p>
+          <p v-else-if="!strategyEffects.length">还没有可统计的课程策略记录。</p>
+          <el-table v-else :data="strategyEffects" size="small">
+            <el-table-column label="策略" min-width="125">
+              <template #default="{ row }">{{ strategyNames[row.strategy] || row.strategy }}</template>
+            </el-table-column>
+            <el-table-column prop="runs" label="会话数" />
+            <el-table-column prop="samples" label="有反馈" />
+            <el-table-column prop="accepted" label="已采纳" />
+            <el-table-column label="返工率">
+              <template #default="{ row }">{{ row.revision_rate == null ? '—' : Math.round(row.revision_rate * 100) + '%' }}</template>
+            </el-table-column>
+          </el-table>
         </fieldset>
 
         <!-- 区块2：默认课件模板（单选，带缩略图占位） -->

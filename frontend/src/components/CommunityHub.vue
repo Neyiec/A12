@@ -126,6 +126,12 @@ const submissionError = ref('')
 const emptySubmission = () => ({ id: null, content_type: 'lesson_case', title: '', description: '', subject: '', grade: '', lesson_type: '', keywords: '', content_data: '', input_variables: '', example_effect: '', license: 'CC BY-NC 4.0' })
 const submission = ref(emptySubmission())
 const submissionReadOnly = computed(() => Boolean(submission.value.id && submission.value.status && String(submission.value.status).toLowerCase() !== 'draft'))
+const submissionReviewLabel = computed(() => {
+  const review = submission.value.submission_review
+  if (!review) return ''
+  if (review.status === 'pending') return '审核中'
+  return { approve: '人工通过', ai_approve: 'AI 通过', ai_reject: 'AI 评分低于 60 分，已驳回', reject: '已驳回', rework: '退回修改' }[review.action] || ''
+})
 const submissionContentEditor = ref({ objective: '', objectiveKey: 'objective', stepKey: 'steps', steps: [] })
 const submissionVariableEditor = ref([])
 const submissionVariablesShape = ref('array')
@@ -160,7 +166,7 @@ const normalizeCommunityType = (item = {}) => {
   if (['case', 'lesson_case', 'lesson-case', '教学案例', '案例'].includes(type)) return '案例'
   return item.type || (normalizeCommunityContentType(item) === 'skill' ? 'Skill' : normalizeCommunityContentType(item) === 'ppt' ? 'PPT' : '案例')
 }
-const statusLabel = (status) => ({ draft: '草稿', reviewing: '审核中', pending: '待处理', approved: '已通过', rejected: '已退回', resolved: '已处理' }[String(status || '').toLowerCase()] || status || '草稿')
+const statusLabel = (status) => ({ draft: '草稿', reviewing: '审核中', pending: '待处理', approved: '已通过', rejected: '已退回', resolved: '已处理', public: '已发布', offline: '未发布' }[String(status || '').toLowerCase()] || status || '草稿')
 const isDevelopmentPreview = computed(() => import.meta.env.DEV && route.query.preview === '1')
 const extractRecords = (value) => {
   const data = unwrap(value)
@@ -1167,7 +1173,11 @@ onMounted(() => {
         <div class="submission-layout">
           <main class="submission-main">
             <el-alert v-if="submissionError" class="submission-inline-alert" :title="submissionError" type="error" show-icon :closable="false" />
-            <div v-if="submissionReadOnly" class="submission-readonly-notice"><span>审核状态</span><strong>{{ statusLabel(submission.status) }}</strong><p>审核期间保留当前版本，仅支持查看。</p></div>
+            <div v-if="submissionReviewLabel" class="submission-readonly-notice">
+              <span>最近一次审核</span><strong>{{ submissionReviewLabel }}</strong>
+              <p v-if="submission.submission_review.comment">{{ submission.submission_review.comment }}</p>
+              <p v-if="submission.submission_review.action === 'rework' && submission.status === 'draft'">按审核意见修改后可再次投稿。</p>
+            </div>
 
             <el-form label-position="top" :disabled="submissionReadOnly || coursewareUploading || submissionSaving" class="submission-form">
               <section class="submission-section">

@@ -12,7 +12,9 @@ import { CircleCheck, CircleClose, DocumentChecked, Download, Files, FolderOpene
 import { EXPORT_PAGE } from '../config/teacherPages.config.js'
 import { useUserStore } from '../storage/user.js'
 import LearningVideoTasks from './LearningVideoTasks.vue'
-import { cancelExportTask, createExportPreviewUrl, createExportTask, downloadExportArtifact, getExportArtifact, getExportQualityReport, getExportTask, getProject, listExportTasks, listProjects, listProjectVersions, precheckProjectExport, retryExportTask, saveProjectVersion } from '../apis/teacher'
+import WordConversionDialog from './WordConversionDialog.vue'
+import { subscribeExportTasks } from '../utils/exportTaskSocket.js'
+import { cancelExportTask, createExportPreviewUrl, createExportTask, downloadExportArtifact, getExportArtifact, getExportQualityReport, getExportProgress, getExportTask, getProject, listExportTasks, listProjects, listProjectVersions, precheckProjectExport, retryExportTask, saveProjectVersion } from '../apis/teacher'
 
 const route = useRoute()
 const router = useRouter()
@@ -34,6 +36,7 @@ const tasks = ref([])
 const loading = ref(false)
 const pageError = ref('')
 const exportDialogVisible = ref(false)
+const conversionVisible = ref(false)
 const exportSubmitting = ref(false)
 const prechecking = ref(false)
 const reportVisible = ref(false)
@@ -70,6 +73,48 @@ const flow = ref({
 
 let taskPollTimer = null
 let activePoll = false
+let pushReady = false
+let stopPush = () => {}
+let pushRefreshTimer
+let progressPulse = 0
+let wakeProgress
+
+const signalProgress = () => {
+  progressPulse++
+  wakeProgress?.()
+}
+
+const queuePushRefresh = () => {
+  clearTimeout(pushRefreshTimer)
+  pushRefreshTimer = window.setTimeout(() => { void loadTasks() }, 120)
+}
+
+const startPush = (token) => {
+  stopPush()
+  pushReady = false
+  signalProgress()
+  scheduleTaskPolling()
+  stopPush = subscribeExportTasks({
+    token,
+    onReady: () => {
+      pushReady = true
+      signalProgress()
+      queuePushRefresh()
+    },
+    onDisconnect: () => {
+      pushReady = false
+      signalProgress()
+      scheduleTaskPolling()
+    },
+    onChanged: (taskId) => {
+      if (String(taskId) === String(flow.value.taskId)) signalProgress()
+      queuePushRefresh()
+    },
+  })
+}
+let disposed = false
+let taskRequestSeq = 0
+let pollEpoch = 0
 let autoExportStarted = false
 let autoPrecheckStarted = false
 
@@ -213,11 +258,14 @@ const loadProjectContext = async () => {
 }
 
 const loadTasks = async () => {
+  if (disposed) return
+  const sequence = ++taskRequestSeq
   loading.value = true
   pageError.value = ''
   try {
     // 预览入口也调用分页接口，保证任务列表来自服务端内存状态。
     const result = await listExportTasks({ page: 1, size: 50 })
+    if (disposed || sequence !== taskRequestSeq) return
     const context = project.value || {}
     tasks.value = recordsFrom(result).map((task) => normalizeTask(task, context))
     const flowTask = flow.value.taskId && tasks.value.find((row) => String(row.id) === String(flow.value.taskId))
@@ -226,41 +274,61 @@ const loadTasks = async () => {
       flow.value.status = flowTask.apiStatus
     }
   } catch (error) {
+    if (disposed || sequence !== taskRequestSeq) return
     pageError.value = error?.message || '导出任务加载失败'
-    tasks.value = []
   } finally {
-    loading.value = false
-    scheduleTaskPolling()
+    if (!disposed && sequence === taskRequestSeq) {
+      loading.value = false
+      scheduleTaskPolling()
+    }
   }
 }
 
 const scheduleTaskPolling = () => {
   clearTimeout(taskPollTimer)
-  if (!tasks.value.some(isRunning)) return
+  if (disposed || activePoll || !tasks.value.some(isRunning)) return
   taskPollTimer = window.setTimeout(async () => {
     await loadTasks()
-  }, 900)
+  }, pushReady ? 30000 : 2500)
 }
 
 const pollTask = async (taskId) => {
+  if (disposed) throw new DOMException('页面已关闭', 'AbortError')
+  if (activePoll) throw new Error('已有导出任务正在跟踪，请等待当前任务')
   // 真实导出可能等待 Python 文件服务，轮询窗口与创建请求保持一致。
   const timeoutAt = Date.now() + 210_000
   activePoll = true
+  clearTimeout(taskPollTimer)
+  const epoch = ++pollEpoch
   try {
     while (Date.now() < timeoutAt) {
-      const latest = normalizeTask(unwrap(await getExportTask(taskId)), project.value || {})
+      if (disposed || epoch !== pollEpoch) throw new DOMException('页面已关闭', 'AbortError')
+      const beforeFetch = progressPulse
+      const fetchProgress = pushReady ? getExportTask : getExportProgress
+      const latest = normalizeTask(unwrap(await fetchProgress(taskId)), project.value || {})
+      if (disposed || epoch !== pollEpoch) throw new DOMException('页面已关闭', 'AbortError')
       mergeTask(latest)
       flow.value.progress = latest.progress
       flow.value.status = latest.apiStatus
       flow.value.message = latest.stage
       if (latest.apiStatus === 'success' || latest.apiStatus === 'partial') return latest
       if (['failed', 'cancelled'].includes(latest.apiStatus)) throw new Error(latest.error_msg || `导出任务${latest.status}`)
-      await new Promise((resolve) => window.setTimeout(resolve, 400))
+      if (beforeFetch !== progressPulse) continue
+      await new Promise((resolve) => {
+        const timer = window.setTimeout(() => wakeProgress?.(), pushReady ? 30000 : 1200)
+        wakeProgress = () => {
+          clearTimeout(timer)
+          wakeProgress = undefined
+          resolve()
+        }
+      })
     }
     throw new Error('导出任务轮询超时，请查看任务列表')
   } finally {
-    activePoll = false
-    scheduleTaskPolling()
+    if (epoch === pollEpoch) {
+      activePoll = false
+      scheduleTaskPolling()
+    }
   }
 }
 
@@ -306,6 +374,7 @@ const runFullFlow = async (exportTypeOverride = '') => {
   flow.value = { ...flow.value, status: 'snapshotting', step: 1, taskId: null, progress: 0, exportType, error: '', precheck: null, downloaded: false, message: '正在保存不可变项目快照…' }
   try {
     const snapshotVersion = await saveImmutableSnapshot(projectId.value, '导出前自动固化快照')
+    if (disposed) return
     const config = buildExportConfig({ source: showFlowTest.value ? 'community-test-case' : 'workspace-export', ...(showFlowTest.value ? { test_case_id: testCase.id } : {}) })
     flow.value.step = 2
     flow.value.status = 'prechecking'
@@ -314,6 +383,7 @@ const runFullFlow = async (exportTypeOverride = '') => {
       export_type: exportType,
       snapshot_version: snapshotVersion,
     }))
+    if (disposed) return
     flow.value.precheck = check
     if (!check?.passed) throw new Error(check?.errors?.[0]?.message || '导出预检未通过')
 
@@ -326,10 +396,12 @@ const runFullFlow = async (exportTypeOverride = '') => {
       snapshot_version: snapshotVersion,
       config: JSON.stringify(config),
     }))
+    if (disposed) return
     if (!created?.id) throw new Error('导出任务接口未返回任务 ID')
     flow.value.taskId = created.id
     mergeTask(normalizeTask(created, project.value || {}))
     const completed = await pollTask(created.id)
+    if (disposed) return
     flow.value.step = 5
     flow.value.status = completed.apiStatus
     flow.value.progress = completed.progress
@@ -337,6 +409,7 @@ const runFullFlow = async (exportTypeOverride = '') => {
     await loadTasks()
     ElMessage.success('导出任务已创建并完成')
   } catch (error) {
+    if (disposed) return
     flow.value.status = 'failed'
     flow.value.error = error?.message || '导出流程执行失败'
     flow.value.message = '流程未完成，请根据错误信息处理后重试。'
@@ -626,7 +699,7 @@ const submitExport = async () => {
     if (!created?.id) throw new Error('导出任务接口未返回任务 ID')
     mergeTask(normalizeTask(created, project.value || {}))
     exportDialogVisible.value = false
-    ElMessage.success('导出任务已创建')
+    ElMessage.success(created.reused ? '已有相同导出任务，已显示当前进度' : '导出任务已创建')
     await loadTasks()
   } catch (error) {
     if (error !== 'cancel' && error !== 'close') ElMessage.error(error?.message || '导出任务创建失败')
@@ -655,6 +728,7 @@ watch(projectId, async () => {
 })
 
 onMounted(async () => {
+  startPush(useUserStore().token)
   window.addEventListener('resize', updateIsMobile)
   if (autoExportRequested.value) {
     autoExportFlowVisible.value = true
@@ -696,6 +770,13 @@ onMounted(async () => {
   }
 })
 onBeforeUnmount(() => {
+  disposed = true
+  taskRequestSeq += 1
+  pollEpoch += 1
+  activePoll = false
+  stopPush()
+  signalProgress()
+  clearTimeout(pushRefreshTimer)
   window.removeEventListener('resize', updateIsMobile)
   clearTimeout(taskPollTimer)
 })
@@ -711,9 +792,11 @@ onBeforeUnmount(() => {
         <span>从项目快照创建成果文件，并在这里跟踪生成、校验与交付状态。</span>
       </div>
       <div class="heading-actions">
+        <el-button @click="conversionVisible = true">格式转换</el-button>
         <el-button type="primary" :icon="Files" @click="openExportDialog">新建导出</el-button>
       </div>
     </header>
+    <WordConversionDialog v-if="conversionVisible" v-model="conversionVisible" />
 
     <section class="export-stats" aria-label="导出概览">
       <article v-for="stat in stats" :key="stat.label">

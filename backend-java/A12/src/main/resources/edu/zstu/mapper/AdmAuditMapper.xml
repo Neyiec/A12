@@ -19,17 +19,24 @@
     <select id="findByStatus" resultMap="BaseResultMap">SELECT <include refid="Base_Columns"/> FROM adm_audit WHERE status = #{status} ORDER BY created_at DESC</select>
     <select id="findByTarget" resultMap="BaseResultMap">SELECT <include refid="Base_Columns"/> FROM adm_audit WHERE target_type = #{targetType} AND target_id = #{targetId}</select>
     <select id="findAll" resultMap="BaseResultMap">SELECT <include refid="Base_Columns"/> FROM adm_audit</select>
+    <select id="findLatestSubmissionAudit" resultMap="BaseResultMap">
+        SELECT <include refid="Base_Columns"/> FROM adm_audit
+        WHERE audit_type = 'audit' AND target_id = #{targetId}
+        ORDER BY id DESC LIMIT 1
+    </select>
     <insert id="insert" useGeneratedKeys="true" keyProperty="id">
-        INSERT INTO adm_audit(audit_type, target_type, target_id, reporter_id, reason, handler_id, action, comment, status, created_at, processed_at)
-        VALUES(#{audit_type}, #{target_type}, #{target_id}, #{reporter_id}, #{reason}, #{handler_id}, #{action}, #{comment}, #{status}, NOW(), #{processed_at})
+        INSERT INTO adm_audit(audit_type, target_type, target_id, reporter_id, reason, handler_id, action, comment, status, ai_report, created_at, processed_at)
+        VALUES(#{audit_type}, #{target_type}, #{target_id}, #{reporter_id}, #{reason}, #{handler_id}, #{action}, #{comment}, #{status}, #{ai_report}, NOW(), #{processed_at})
     </insert>
     <update id="process">
-        UPDATE adm_audit SET handler_id = #{handler_id}, action = #{action}, comment = #{comment}, status = #{status}, processed_at = NOW() WHERE id = #{id}
+        UPDATE adm_audit SET handler_id = #{handler_id}, action = #{action}, comment = #{comment}, status = #{status},
+        <if test="ai_report != null">ai_report = #{ai_report},</if>
+        processed_at = NOW() WHERE id = #{id}
     </update>
     <update id="saveAiReview">
         UPDATE adm_audit SET ai_domain = #{ai_domain}, ai_verdict = #{ai_verdict}, ai_score = #{ai_score},
         ai_report = #{ai_report}, ai_model = #{ai_model}, ai_reviewed_at = NOW(),
-        action = #{action}, status = #{status}, processed_at = #{processed_at}
+        action = #{action}, comment = #{comment}, status = #{status}, processed_at = #{processed_at}
         WHERE id = #{id} AND audit_type = 'audit' AND status = 'pending'
     </update>
     <select id="findByReporter" resultMap="BaseResultMap">
@@ -67,13 +74,41 @@
             <if test="handlerId != null">
                 AND handler_id = #{handlerId}
             </if>
-            <if test="aiVerdict != null and aiVerdict != ''">
-                AND ai_verdict = #{aiVerdict}
-            </if>
+            <choose>
+                <when test="aiVerdict == 'spot_check'">
+                    AND status = 'pending' AND ai_verdict = 'pass'
+                    AND JSON_UNQUOTE(JSON_EXTRACT(ai_report, '$.spot_check')) = 'true'
+                </when>
+                <when test="aiVerdict == 'auto_approved'">
+                    AND status = 'processed' AND action = 'ai_approve'
+                </when>
+                <when test="aiVerdict == 'auto_rejected'">
+                    AND status = 'processed' AND action = 'ai_reject'
+                </when>
+                <when test="aiVerdict == 'needs_review'">
+                    AND status = 'pending'
+                    AND COALESCE(JSON_UNQUOTE(JSON_EXTRACT(ai_report, '$.spot_check')), 'false') != 'true'
+                </when>
+                <when test="aiVerdict != null and aiVerdict != ''">
+                    AND ai_verdict = #{aiVerdict}
+                </when>
+            </choose>
             <if test="aiDomain != null and aiDomain != ''">
                 AND ai_domain = #{aiDomain}
             </if>
         </where>
-        ORDER BY created_at DESC
+        ORDER BY created_at DESC, id DESC
+    </select>
+    <select id="moderationMetrics" resultType="map">
+        SELECT COUNT(*) AS total,
+            COUNT(CASE WHEN status = 'pending' AND JSON_UNQUOTE(JSON_EXTRACT(ai_report,'$.spot_check')) = 'true' THEN 1 END) AS pending_samples,
+            COUNT(CASE WHEN status = 'pending' AND COALESCE(JSON_UNQUOTE(JSON_EXTRACT(ai_report,'$.spot_check')),'false') != 'true' THEN 1 END) AS pending_reviews,
+            COUNT(CASE WHEN action = 'ai_approve' THEN 1 END) AS auto_approved,
+            COUNT(CASE WHEN action = 'ai_reject' THEN 1 END) AS auto_rejected,
+            COUNT(CASE WHEN handler_id IS NOT NULL
+                AND JSON_TYPE(JSON_EXTRACT(ai_report,'$.human_review.agrees_with_ai')) = 'BOOLEAN' THEN 1 END) AS comparable,
+            COUNT(CASE WHEN handler_id IS NOT NULL
+                AND JSON_UNQUOTE(JSON_EXTRACT(ai_report,'$.human_review.agrees_with_ai')) = 'true' THEN 1 END) AS agreements
+        FROM adm_audit WHERE audit_type = 'audit'
     </select>
 </mapper>

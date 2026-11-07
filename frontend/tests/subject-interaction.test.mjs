@@ -1,12 +1,16 @@
 import test from 'node:test'
 import assert from 'node:assert/strict'
 import { createServer } from 'vite'
+import { mkdtemp, rm } from 'node:fs/promises'
+import { tmpdir } from 'node:os'
+import { join } from 'node:path'
 
 // 学科渲染依赖 ?inline CSS 与扩展名省略解析，应使用同生产代码一致的 Vite 加载器。
-const server = await createServer({ configFile: false, server: { middlewareMode: true }, appType: 'custom', optimizeDeps: { noDiscovery: true } })
+const cacheDir = await mkdtemp(join(tmpdir(), 'a12-subject-interaction-'))
+const server = await createServer({ configFile: false, cacheDir, server: { middlewareMode: true }, appType: 'custom', optimizeDeps: { noDiscovery: true } })
 const { bindSubjectInteractions } = await server.ssrLoadModule('/src/utils/subjectInteraction.js')
 const { geometryPoints } = await server.ssrLoadModule('/src/utils/subjectTool.js')
-test.after(async () => { await server.close() })
+test.after(async () => { await server.close(); await rm(cacheDir, { recursive: true, force: true }) })
 
 test('geometry drag converts screen coordinates and persists only at gesture completion', () => {
   const listeners = {}

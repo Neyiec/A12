@@ -8,6 +8,7 @@ import edu.zstu.vo.ResourceVO;
 import java.util.Map;
 
 public interface AdminResourceService {
+    ResourceVO recordIndexResult(Integer id, Map<String, String> result, Integer adminId);
     PageResult<ResourceVO> listResources(String resourceType, Integer status, int page, int size);
     Map<String, Object> createUploadSession(ResourceDTO dto, Integer adminId);
     ResourceVO completeUpload(Integer id, Integer adminId);

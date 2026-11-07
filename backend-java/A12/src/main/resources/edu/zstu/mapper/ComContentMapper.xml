@@ -21,6 +21,7 @@
         WHERE content_type = 'ppt' AND id &gt; #{afterId} ORDER BY id LIMIT #{limit}
     </select>
     <select id="findById" resultMap="BaseResultMap">SELECT <include refid="Base_Columns"/> FROM com_content WHERE id = #{id}</select>
+    <select id="findByIdForUpdate" resultMap="BaseResultMap">SELECT <include refid="Base_Columns"/> FROM com_content WHERE id = #{id} FOR UPDATE</select>
     <select id="findByAuthorId" resultMap="BaseResultMap">SELECT <include refid="Base_Columns"/> FROM com_content WHERE author_id = #{authorId} ORDER BY updated_at DESC</select>
     <select id="findPublic" resultMap="BaseResultMap">SELECT <include refid="Base_Columns"/> FROM com_content WHERE status = 'public' ORDER BY is_top DESC, updated_at DESC</select>
     <select id="findByType" resultMap="BaseResultMap">SELECT <include refid="Base_Columns"/> FROM com_content WHERE content_type = #{contentType} AND status = 'public' ORDER BY updated_at DESC</select>

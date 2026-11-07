@@ -70,6 +70,8 @@ function revisionState(failBackup = false) {
     unwrapResponse: x => x, cloneRevisionSlides: x => x,
     applyGeneratedPresentation: () => calls.push('apply'), persistSlideOrder: async () => calls.push('persist'),
     closeDiscussionContext() {}, sendRevisionFeedback() {},
+    deckStyleMetrics: () => ({ avg_text_chars: 12 }), deckContentDigest: async () => 'after-ai-edit',
+    manualStyleBaseline: null, manualContentBaseline: null,
     WorkspaceMessage: { success: () => calls.push('success'), error: () => calls.push('error') },
   }
   return { state, calls }
@@ -79,6 +81,7 @@ test('AI deck changes save durable versions before and after applying changes', 
   const {state, calls} = revisionState()
   await handler('acceptDeckRevision', state)()
   assert.deepEqual(calls, ['page', 'content', 'AI 修改前的自动备份', 'apply', 'persist', 'AI 修改后的确认版本', 'success'])
+  assert.equal(await state.manualContentBaseline, 'after-ai-edit')
 })
 
 test('failed backup blocks AI changes and keeps the preview available', async () => {

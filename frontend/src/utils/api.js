@@ -92,11 +92,11 @@ export function uploadFile(url, formData, onProgress) {
       'Content-Type': 'multipart/form-data'
     },
     onUploadProgress: (progressEvent) => {
-      if (onProgress) {
+      if (onProgress && Number.isFinite(progressEvent.total) && progressEvent.total > 0) {
         const percentCompleted = Math.round(
           (progressEvent.loaded * 100) / progressEvent.total
         )
-        onProgress(percentCompleted)
+        if (Number.isFinite(percentCompleted)) onProgress(Math.max(0, Math.min(100, percentCompleted)))
       }
     }
   })

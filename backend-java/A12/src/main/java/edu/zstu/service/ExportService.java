@@ -21,6 +21,7 @@ public interface ExportService {
     ExportTaskVO failExportTask(String id, String error);
     PageResult<ExportTaskVO> listExportTasks(TaskQueryDTO dto);
     ExportTaskVO getExportTask(String id);
+    ExportTaskVO getExportProgress(String id);
     ExportTaskVO cancelExport(String id);
     ExportTaskVO retryExport(String id);
     Map<String, Object> getQualityReport(String id);

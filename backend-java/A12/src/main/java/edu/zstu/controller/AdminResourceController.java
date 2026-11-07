@@ -107,6 +107,14 @@ public class AdminResourceController {
         } catch (RuntimeException e) { return Result.error(400, e.getMessage()); }
     }
 
+    /** AI 服务直连完成后回写业务状态；本接口不代理 AI 请求。 */
+    @PostMapping("/{id}/index-result")
+    public Result<ResourceVO> recordIndexResult(@PathVariable Integer id, @RequestBody Map<String, String> result) {
+        Integer adminId = CurrentHolder.getCurrentId();
+        if (adminId == null) return Result.error(401, "未登录");
+        return Result.success(adminResourceService.recordIndexResult(id, result, adminId));
+    }
+
     @PostMapping("/ai-index/bootstrap")
     public Result<Map<String, Object>> bootstrapAiResourceIndex(
             @RequestParam(defaultValue = "false") boolean force_reparse) {

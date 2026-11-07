@@ -27,6 +27,7 @@ import { INFO_FORM_DEFAULTS, requestNewChat, openChatSession } from '../config/t
 import { useUserStore } from '../storage/user'
 import { navigateWorkspace } from '../utils/workspaceNavigation.js'
 import ChatView from './ChatView.vue'
+import { syncReadyBatches } from '../apis/batchPresentations'
 import { archiveProject, cleanupTempResources, copyProject, createAiSession, createProject, deleteProject, forgetTempResource, listProjects, listResources, listTempResourceIds, rememberTempResource, transcribeAudio, uploadResource, uploadTempResource } from '../apis/teacher'
 
 const router = useRouter()
@@ -266,12 +267,13 @@ const startPlanningSession = async (text, resourceIds = [], history = null, work
   const previousMode = chatMode.value
   const normalizedText = String(text || '').trim()
   // 功能 2：兜底并入已就绪的临时上传 id，保证 resource_ids 与 uploadedResources 一致。
-  const normalizedResourceIds = normalizeResourceIds([...(resourceIds || []), ...readyTempIds.value])
+  const conversion = workspaceContext.source === 'word_conversion'
+  const normalizedResourceIds = normalizeResourceIds([...(resourceIds || []), ...(conversion ? [] : readyTempIds.value)])
   const normalizedWorkspaceContext = normalizeWorkspaceContext({
     ...workspaceContext,
     uploadedResources: [
       ...(workspaceContext.uploadedResources || workspaceContext.uploaded_resources || pendingUploadedResources.value),
-      ...tempContextEntries.value,
+      ...(conversion ? [] : tempContextEntries.value),
     ],
   }, normalizedResourceIds)
   const normalizedPreviousHistory = Array.isArray(history)
@@ -310,10 +312,12 @@ const startPlanningSession = async (text, resourceIds = [], history = null, work
     chatResume.value = false
     viewMode.value = 'chat'
     ElMessage.success('已进入备课流程，请先确认课程信息')
+    return true
   } catch (error) {
     // 普通对话中途切换失败时，保留原聊天模式，避免输入区被锁死。
     chatMode.value = previousMode
     ElMessage.error(error?.message || '创建会话失败，请登录后重试')
+    return false
   }
 }
 
@@ -385,6 +389,7 @@ const closeChatView = () => {
   chatContinuationHistory.value = []
   chatMode.value = 'planning'
   chatResume.value = false
+  routePreference.value = 'auto'
   prompt.value = ''
   loadProjects()
 }
@@ -643,8 +648,29 @@ onUnmounted(() => {
 
 onMounted(() => {
   loadProjects()
+  void syncReadyBatches().then(result => { if (result.data?.saved) loadProjects() }).catch(() => {})
   pruneMissingTempUploads()
   greetingClockTimer = window.setInterval(() => { currentTime.value = new Date() }, 60_000)
+})
+
+onMounted(async () => {
+  if (route.query.wordConversion !== '1') return
+  const source = router.options.history.state?.wordSource
+  if (!source?.id || !source?.name) {
+    ElMessage.warning('未找到转换资料，请重新选择 Word 文件')
+    await router.replace('/main/exports')
+    return
+  }
+  const title = source.name.replace(/\.docx$/i, '')
+  chatPrompt.value = source.single
+    ? `将 Word 讲义《${title}》规划为一份可编辑 PPT，先展示生成计划。`
+    : `按 Word 教学计划《${title}》逐章生成整套 PPT，先展示批量生成方案。`
+  chatResourceIds.value = [String(source.id)]
+  chatWorkspaceContext.value = { source: 'word_conversion', single: Boolean(source.single),
+    uploadedResources: [{ resource_id: source.id, id: source.id, file_name: source.name, file_type: 'docx', temp: source.temp }] }
+  chatMode.value = 'general'; chatResume.value = false; chatSessionId.value = null
+  routePreference.value = 'batch'; viewMode.value = 'chat'
+  await router.replace({ name: 'TeacherHome', query: {}, state: { wordSource: null } })
 })
 // 聊天侧栏删除会话会清空临时登记表：切回欢迎页时同步摘除已被清理的芯片
 watch(viewMode, (value) => {
@@ -666,6 +692,7 @@ watch(viewMode, (value) => {
       <p class="intro">{{ TEACHER_HOME.greeting.description }}</p>
       <div class="welcome-actions motion-stage motion-stage-2">
         <el-button type="primary" :icon="EditPen" @click="openNewWorkspace">新建课件</el-button>
+        <el-button @click="router.push('/main/batch-tasks')">批量备课任务</el-button>
       </div>
     </div>
 
@@ -758,7 +785,7 @@ watch(viewMode, (value) => {
           <el-select v-model="routePreference" size="small" aria-label="任务分流方式" style="width: 118px">
             <el-option label="自动判断" value="auto" />
             <el-option label="仅对话" value="chat" />
-            <el-option label="直接备课" value="planning" />
+            <el-option label="直接备课" value="planning" /><el-option label="批量备课" value="batch" />
           </el-select>
           <el-tooltip content="上传本地资料：本次生成直接引用，可一键转存到素材库"><span><el-button text :icon="Paperclip" aria-label="添加资料" @click="triggerTempUpload"><span class="composer-tool-label">{{ TEACHER_HOME.composer.attach }}</span></el-button></span></el-tooltip>
           <input ref="tempFileInput" class="resource-file-input" type="file" multiple accept=".pdf,.doc,.docx,.ppt,.pptx,.txt,.md,.jpg,.jpeg,.png,.gif,.webp,.svg,.mp3,.wav,.m4a,.ogg,.mp4,.avi,.mov,.mkv,.webm" @change="handleTempFilesPicked" />

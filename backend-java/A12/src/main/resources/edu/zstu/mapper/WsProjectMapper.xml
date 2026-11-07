@@ -30,6 +30,9 @@
     <select id="findByIdIncludingDeleted" resultMap="BaseResultMap">
         SELECT <include refid="Base_Columns"/> FROM ws_project WHERE id = #{id}
     </select>
+    <select id="findByIdForUpdate" resultMap="BaseResultMap">
+        SELECT <include refid="Base_Columns"/> FROM ws_project WHERE id = #{id} AND deleted_at IS NULL FOR UPDATE
+    </select>
 
     <select id="findByUserId" resultMap="BaseResultMap">
         SELECT <include refid="Base_Columns"/> FROM ws_project WHERE user_id = #{userId} AND deleted_at IS NULL ORDER BY updated_at DESC

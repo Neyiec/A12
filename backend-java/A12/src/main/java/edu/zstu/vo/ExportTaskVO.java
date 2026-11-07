@@ -35,4 +35,5 @@ public class ExportTaskVO {
     private LocalDateTime created_at;
     private LocalDateTime updated_at;
     private LocalDateTime completed_at;
+    private boolean reused;
 }

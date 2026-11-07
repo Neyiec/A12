@@ -15,7 +15,7 @@
 -->
 
 <script setup>
-import { ref, reactive, onMounted, onBeforeUnmount } from 'vue'
+import { computed, ref, reactive, onMounted, onBeforeUnmount } from 'vue'
 import {
   Refresh,
   View,
@@ -25,6 +25,7 @@ import {
 import { ElMessage, ElMessageBox } from 'element-plus'
 import {
   getModerationTasks,
+  getModerationMetrics,
   getModerationContent,
   createModerationDecision,
   getReports,
@@ -88,6 +89,7 @@ const AUDIT_STATUS_DOT_COLOR_MAP = {
 const AUDIT_ACTION_LABEL_MAP = {
   approve: '通过',
   ai_approve: 'AI 自动通过',
+  ai_reject: '低于 60 分自动驳回',
   reject: '驳回',
   rework: '退回修改',
 }
@@ -158,7 +160,26 @@ const filters = reactive({
 const parsedAiReport = (row) => {
   try { return typeof row?.ai_report === 'string' ? JSON.parse(row.ai_report) : (row?.ai_report || {}) } catch { return {} }
 }
-const canHumanReview = (row) => row?.status === 'pending' || (row?.status === 'processed' && row?.action === 'ai_approve')
+const canHumanReview = (row) => row?.status === 'pending' || (row?.status === 'processed' && ['ai_approve', 'ai_reject'].includes(row?.action))
+const auditQueueOptions = [
+  { value: '', label: '全部投稿' },
+  { value: 'spot_check', label: '待抽检' },
+  { value: 'needs_review', label: '待人工复核' },
+  { value: 'auto_approved', label: 'AI 已发布' },
+  { value: 'auto_rejected', label: 'AI 自动驳回' },
+]
+const moderationMetrics = ref(null)
+let metricsRequestId = 0
+async function loadModerationMetrics() {
+  const requestId = ++metricsRequestId
+  try {
+    const response = await getModerationMetrics()
+    if (requestId !== metricsRequestId) return
+    moderationMetrics.value = [0, 200].includes(response?.code) ? response.data : null
+  } catch {
+    if (requestId === metricsRequestId) moderationMetrics.value = null
+  }
+}
 
 /** 分页参数 */
 const pagination = reactive({
@@ -184,8 +205,14 @@ const contentPreviewError = ref('')
 /** 投稿预览的内容视图与 PPT 当前页 */
 const contentPreviewView = ref('ppt')
 const contentPreviewSlideIndex = ref(0)
+const previewVersionMatches = computed(() => {
+  if (!contentPreview.value) return false
+  const version = parsedAiReport(currentContent.value).content_version
+  return version == null || Number(version) === Number(contentPreview.value.version)
+})
 /** 操作执行中 */
 const isActionLoading = ref(false)
+let listRequestId = 0
 
 // ===================================================================
 // 数据获取
@@ -203,6 +230,8 @@ const fetchData = () => {
  * 状态与目标类型筛选由后端处理，空值不传避免空字符串匹配不到数据
  */
 const fetchAuditTasks = async () => {
+  void loadModerationMetrics()
+  const requestId = ++listRequestId
   isTableLoading.value = true
   try {
     const res = await getModerationTasks({
@@ -213,6 +242,7 @@ const fetchAuditTasks = async () => {
       page: pagination.currentPage,
       size: pagination.pageSize,
     })
+    if (requestId !== listRequestId) return
     if (res?.code !== 0 && res?.code !== 200) {
       ElMessage.error(res?.message || '审核任务加载失败')
       contentList.value = []
@@ -222,11 +252,12 @@ const fetchAuditTasks = async () => {
     contentList.value = res?.data?.records || []
     pagination.total = res?.data?.total || 0
   } catch {
+    if (requestId !== listRequestId) return
     ElMessage.error('审核任务加载失败，请稍后重试')
     contentList.value = []
     pagination.total = 0
   } finally {
-    isTableLoading.value = false
+    if (requestId === listRequestId) isTableLoading.value = false
   }
 }
 
@@ -235,6 +266,7 @@ const fetchAuditTasks = async () => {
  * 状态筛选由后端处理，空值不传避免空字符串匹配不到数据
  */
 const fetchReports = async () => {
+  const requestId = ++listRequestId
   isTableLoading.value = true
   try {
     const res = await getReports({
@@ -242,6 +274,7 @@ const fetchReports = async () => {
       page: pagination.currentPage,
       size: pagination.pageSize,
     })
+    if (requestId !== listRequestId) return
     if (res?.code !== 0 && res?.code !== 200) {
       ElMessage.error(res?.message || '举报数据加载失败')
       reportList.value = []
@@ -251,11 +284,12 @@ const fetchReports = async () => {
     reportList.value = res?.data?.records || []
     pagination.total = res?.data?.total || 0
   } catch {
+    if (requestId !== listRequestId) return
     ElMessage.error('举报数据加载失败，请稍后重试')
     reportList.value = []
     pagination.total = 0
   } finally {
-    isTableLoading.value = false
+    if (requestId === listRequestId) isTableLoading.value = false
   }
 }
 
@@ -296,6 +330,12 @@ const handleRefresh = () => {
 const handleFilterChange = () => {
   pagination.currentPage = 1
   fetchData()
+}
+
+const selectAuditQueue = (queue) => {
+  filters.aiVerdict = queue
+  filters.status = ''
+  handleFilterChange()
 }
 
 /**
@@ -392,15 +432,15 @@ const loadContentPreview = async (row = currentContent.value) => {
   try {
     const res = await getModerationContent(targetId)
     if (res?.code !== 0 && res?.code !== 200) throw new Error(res?.message || '内容预览加载失败')
-    if (Number(currentContent.value?.target_id) === targetId) {
+    if (currentContent.value === row) {
       contentPreview.value = { ...res.data, id: res.data?.id ?? targetId }
     }
   } catch (error) {
-    if (Number(currentContent.value?.target_id) === targetId) {
+    if (currentContent.value === row) {
       contentPreviewError.value = error?.message || '内容预览加载失败，请稍后重试'
     }
   } finally {
-    if (Number(currentContent.value?.target_id) === targetId) {
+    if (currentContent.value === row) {
       contentPreviewLoading.value = false
     }
   }
@@ -442,21 +482,23 @@ const handleApprove = (row) => {
  * 驳回操作 — 需要填写处理意见（API-91：reject → 关联内容下架）
  * @param {Object} row - 当前行审核任务数据
  */
-const handleReject = (row) => {
-  ElMessageBox.prompt('请输入驳回理由（将通过通知发送给作者）', '驳回内容', {
-    confirmButtonText: '确认驳回',
+const handleReject = (row, action = 'reject') => {
+  const label = action === 'rework' ? '退回修改' : '驳回'
+  ElMessageBox.prompt('请填写原因，投稿教师可在我的投稿中查看。', label, {
+    confirmButtonText: `确认${label}`,
     cancelButtonText: '取消',
     type: 'warning',
     confirmButtonClass: 'el-button--danger',
     inputType: 'textarea',
     inputPlaceholder: '请输入驳回理由...',
     inputValidator: (val) => {
-      if (!val || !val.trim()) return '请填写驳回理由'
+      if (!val || !val.trim()) return '请填写审核意见'
+      if (val.trim().length > 500) return '审核意见最多 500 字'
       return true
     },
   })
     .then(({ value }) => {
-      submitDecision(row.id, 'reject', value.trim())
+      submitDecision(row.id, action, value.trim())
     })
     .catch(() => {})
 }
@@ -468,6 +510,7 @@ const handleReject = (row) => {
  * @param {string} comment - 处理意见
  */
 const submitDecision = async (taskId, action, comment) => {
+  if (isActionLoading.value) return
   isActionLoading.value = true
   try {
     const res = await createModerationDecision(taskId, { action, comment })
@@ -475,7 +518,7 @@ const submitDecision = async (taskId, action, comment) => {
       ElMessage.error(res?.message || '审核操作失败')
       return
     }
-    ElMessage.success(action === 'approve' ? '审核通过，内容已公开' : '已驳回，内容已下架')
+    ElMessage.success({ approve: '审核通过，内容已公开', reject: '已驳回，内容已下架', rework: '已退回，教师可以修改后重新投稿' }[action])
     if (drawerVisible.value && Number(currentContent.value?.id) === Number(taskId)) drawerVisible.value = false
     fetchData()
   } catch {
@@ -560,6 +603,8 @@ onMounted(() => {
 })
 
 onBeforeUnmount(() => {
+  listRequestId++
+  metricsRequestId++
   window.removeEventListener('admin-refresh', handleRefresh)
 })
 </script>
@@ -632,6 +677,10 @@ onBeforeUnmount(() => {
         </el-select>
         <el-select v-if="activeTab === 'audit'" v-model="filters.aiVerdict" placeholder="AI 初审结果" clearable @change="handleFilterChange">
           <el-option label="全部 AI 结果" value="" />
+          <el-option label="待抽检" value="spot_check" />
+          <el-option label="待人工复核" value="needs_review" />
+          <el-option label="AI 已发布" value="auto_approved" />
+          <el-option label="AI 自动驳回" value="auto_rejected" />
           <el-option label="AI 通过（可抽查）" value="pass" />
           <el-option label="AI 未通过（需复核）" value="fail" />
           <el-option label="AI 待复核" value="review" />
@@ -645,6 +694,25 @@ onBeforeUnmount(() => {
         </el-select>
       </div>
     </section>
+
+    <section v-if="activeTab === 'audit'" class="audit-policy">
+      <p>有效机审低于 60 分自动驳回。达到 60 分且 AI 通过的投稿随机抽检 10%，抽中后经人工复审再发布。</p>
+      <p>AI 待复核、报告异常或检查不完整的稿件保留人工处理。</p>
+      <p v-if="moderationMetrics">
+        待抽检 {{ moderationMetrics.pending_samples }} · 待复核 {{ moderationMetrics.pending_reviews }} ·
+        自动驳回 {{ moderationMetrics.auto_rejected }} ·
+        AI 与人工判定一致率
+        {{ moderationMetrics.agreement_rate == null ? '暂无可比较样本' : (moderationMetrics.agreement_rate * 100).toFixed(1) + '%' }}
+        （一致 {{ moderationMetrics.agreements }} / 可比较 {{ moderationMetrics.comparable }}，全量记录）
+      </p>
+      <small>一致率只统计 AI pass/fail 与人工通过/驳回，退回修改和 AI 待复核不计入。</small>
+    </section>
+    <nav v-if="activeTab === 'audit'" class="audit-queues" aria-label="审核队列">
+      <el-button v-for="queue in auditQueueOptions" :key="queue.value"
+        :type="filters.aiVerdict === queue.value ? 'primary' : 'default'"
+        :aria-pressed="filters.aiVerdict === queue.value"
+        @click="selectAuditQueue(queue.value)">{{ queue.label }}</el-button>
+    </nav>
 
     <!-- ===================================================================
          3. 数据表格区
@@ -758,7 +826,7 @@ onBeforeUnmount(() => {
                   <el-tag :type="row.ai_verdict === 'pass' ? 'success' : row.ai_verdict === 'fail' ? 'danger' : 'warning'" size="small" effect="plain">{{ AI_VERDICT_LABEL_MAP[row.ai_verdict] || row.ai_verdict }}</el-tag>
                   <small>{{ AI_DOMAIN_LABEL_MAP[row.ai_domain] || '人工分流' }} · {{ row.ai_score ?? '—' }} 分</small>
                 </div>
-                <span v-else class="ai-review-pending">{{ row.target_type === 'ppt' && row.status === 'pending' ? 'AI 未完成 · 可人工审核' : '人工审核' }}</span>
+                <span v-else class="ai-review-pending">{{ row.status === 'pending' ? '可人工审核' : '人工审核' }}</span>
               </template>
             </el-table-column>
 
@@ -808,32 +876,8 @@ onBeforeUnmount(() => {
                     @click="openDetailDrawer(row, 'audit')"
                   >
                     <el-icon class="mr-0.5"><View /></el-icon>
-                    详情
+                    {{ row.action === 'ai_approve' ? '人工抽查' : canHumanReview(row) ? '查看并审核' : '详情' }}
                   </el-button>
-
-                  <!-- 待审核：通过 + 驳回 -->
-                  <template v-if="canHumanReview(row)">
-                    <el-button
-                      type="success"
-                      link
-                      size="small"
-                      :style="{ fontSize: 'var(--zh-font-size12)' }"
-                      @click="handleApprove(row)"
-                    >
-                      <el-icon class="mr-0.5"><Select /></el-icon>
-                      {{ row.action === 'ai_approve' ? '抽查确认' : '通过' }}
-                    </el-button>
-                    <el-button
-                      type="danger"
-                      link
-                      size="small"
-                      :style="{ fontSize: 'var(--zh-font-size12)' }"
-                      @click="handleReject(row)"
-                    >
-                      <el-icon class="mr-0.5"><Close /></el-icon>
-                      {{ row.action === 'ai_approve' ? '撤回' : '驳回' }}
-                    </el-button>
-                  </template>
                 </div>
               </template>
             </el-table-column>
@@ -1127,7 +1171,11 @@ onBeforeUnmount(() => {
             <span>AI 初审 · {{ AI_DOMAIN_LABEL_MAP[currentContent.ai_domain] || '人工分流' }}</span>
             <p><strong>{{ AI_VERDICT_LABEL_MAP[currentContent.ai_verdict] || currentContent.ai_verdict }}</strong> · {{ currentContent.ai_score ?? '—' }} 分 · {{ currentContent.ai_model || '模型未记录' }}</p>
             <p>{{ parsedAiReport(currentContent).summary || '未提供审核摘要' }}</p>
-            <p v-if="parsedAiReport(currentContent).spot_check">本稿进入人工抽查池，尚未自动公开。</p>
+            <p v-if="parsedAiReport(currentContent).auto_reject">该稿件的机审评分低于 60 分，曾自动驳回，人工复核结果以处理意见为准。</p>
+            <p v-if="parsedAiReport(currentContent).human_review?.agrees_with_ai !== undefined">
+              人工与 AI 判定{{ parsedAiReport(currentContent).human_review.agrees_with_ai ? '一致' : '不一致' }}
+            </p>
+            <p v-if="parsedAiReport(currentContent).spot_check">{{ currentContent.status === 'pending' ? '已抽中，人工确认通过后发布。' : '该稿件已完成人工抽检。' }}</p>
             <ul v-if="parsedAiReport(currentContent).checks?.length">
               <li v-for="(check, index) in parsedAiReport(currentContent).checks" :key="index"><strong>{{ check.name }}：</strong>{{ AI_CHECK_LABEL_MAP[check.status] || '需核验' }} · {{ check.evidence }}</li>
             </ul>
@@ -1141,14 +1189,16 @@ onBeforeUnmount(() => {
             <div>
               <strong>{{ drawerMode === 'audit' ? '做出审核决定' : '处理本条举报' }}</strong>
               <p>{{ drawerMode === 'audit' ? '决定会即时更新投稿的社区状态。' : '确认违规会下架对应的社区内容。' }}</p>
+              <p v-if="drawerMode === 'audit' && contentPreview && !previewVersionMatches">稿件版本已变化，此审核单仅供查阅。</p>
             </div>
             <div class="task-action-buttons">
               <template v-if="drawerMode === 'audit'">
-                <el-button type="primary" :loading="isActionLoading" @click="handleApprove(currentContent)">
+                <el-button type="primary" :disabled="!previewVersionMatches" :loading="isActionLoading" @click="handleApprove(currentContent)">
                   <el-icon><Select /></el-icon>
-                  审核通过
+                  {{ currentContent.action === 'ai_approve' ? '抽查确认' : '审核通过' }}
                 </el-button>
-                <el-button type="danger" plain :loading="isActionLoading" @click="handleReject(currentContent)">
+                <el-button :disabled="!previewVersionMatches" :loading="isActionLoading" @click="handleReject(currentContent, 'rework')">退回修改</el-button>
+                <el-button type="danger" plain :disabled="!previewVersionMatches" :loading="isActionLoading" @click="handleReject(currentContent)">
                   <el-icon><Close /></el-icon>
                   驳回
                 </el-button>
@@ -1925,6 +1975,10 @@ onBeforeUnmount(() => {
   }
 }
 .ai-review-cell { display: grid; justify-items: start; gap: 3px; }
+.audit-queues { display: flex; flex-wrap: wrap; gap: 8px; margin: 0 0 12px; }
+.audit-policy { margin: 0 0 16px; padding: 12px 16px; background: #eff6ff; border: 1px solid #bfdbfe; border-radius: 10px; color: #1e3a8a; line-height: 1.7; }
+.audit-policy p { margin: 4px 0; }
+.audit-queues :deep(.el-button) { margin-left: 0; }
 .ai-review-cell small,.ai-review-pending { color: var(--zh-text-caption); font-size: 11px; }
 .ai-review-report ul { margin: 8px 0; padding-left: 18px; }
 .ai-review-report li { margin: 5px 0; line-height: 1.5; overflow-wrap: anywhere; }

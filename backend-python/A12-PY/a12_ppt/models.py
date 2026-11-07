@@ -1,5 +1,16 @@
 from typing import Any, Literal
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, PrivateAttr, model_validator
+
+
+class SlideCountRange(BaseModel):
+    min_pages: int = Field(ge=1, le=30)
+    max_pages: int = Field(ge=1, le=30)
+
+    @model_validator(mode="after")
+    def ordered(self):
+        if self.min_pages > self.max_pages:
+            raise ValueError("最少页数不能大于最多页数")
+        return self
 
 
 class Result(BaseModel):
@@ -24,6 +35,8 @@ class TemplateMutationRequest(BaseModel):
 
 
 class OutlineGenerateRequest(BaseModel):
+    _retrieval_citations: dict[str, Any] = PrivateAttr(default_factory=dict)
+    slide_count_range: SlideCountRange | None = None
     session_id: int | None = None
     title: str
     subject: str
@@ -49,6 +62,7 @@ class OutlineGenerateRequest(BaseModel):
 
 
 class PresentationGenerateRequest(BaseModel):
+    stream_compact: bool = False  # 流式客户端可选：最终事件不重复已发送的页面HTML。
     session_id: int | None = None
     outline_id: str | None = None
     title: str
@@ -114,6 +128,7 @@ class OutlineChatMessage(BaseModel):
 
 
 class OutlineChatStreamRequest(BaseModel):
+    slide_count_range: SlideCountRange | None = None
     user_id: str = Field(..., min_length=1)
     session_id: str | None = None
     message: str
@@ -132,6 +147,7 @@ class OutlineChatStreamRequest(BaseModel):
 
 
 class IntentRecognizeRequest(BaseModel):
+    slide_count_range: SlideCountRange | None = None
     user_id: str | None = None
     session_id: str | None = None
     title: str | None = None
@@ -265,7 +281,9 @@ class CourseGraphUpsertRequest(BaseModel):
 
 
 class TeacherFeedbackRequest(BaseModel):
-    user_id: str = Field(..., min_length=1)
+    prompt_run_id: str | None = Field(default=None, pattern=r"^[0-9a-f]{32}$")
+    event_id: str | None = Field(default=None, min_length=1, max_length=80)
+    user_id: str | None = Field(default=None, min_length=1)
     session_id: str | None = None
     project_id: str | None = None
     action: Literal["accept", "reject", "undo", "manual_edit", "regenerate"]

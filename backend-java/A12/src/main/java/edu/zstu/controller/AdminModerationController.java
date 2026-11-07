@@ -8,6 +8,7 @@ import edu.zstu.utils.PageResult;
 import edu.zstu.utils.Result;
 import edu.zstu.vo.AuditVO;
 import edu.zstu.vo.ContentVO;
+import org.springframework.dao.DataAccessException;
 import org.springframework.web.bind.annotation.*;
 
 import java.util.Map;
@@ -33,21 +34,26 @@ public class AdminModerationController {
             @RequestParam(defaultValue = "10") int size) {
         try {
             return Result.success(adminModerationService.listModerationTasks(status, target_type, handler_id, ai_verdict, ai_domain, page, size));
-        } catch (RuntimeException e) { return Result.error(400, e.getMessage()); }
+        } catch (RuntimeException e) { if (e instanceof DataAccessException) throw e; return Result.error(400, e.getMessage()); }
+    }
+
+    @GetMapping("/moderation/metrics")
+    public Result<Map<String, Object>> getModerationMetrics() {
+        return Result.success(adminModerationService.getModerationMetrics());
     }
 
     @GetMapping("/moderation/tasks/{id}")
     public Result<AuditVO> getModerationTask(@PathVariable Integer id) {
         try {
             return Result.success(adminModerationService.getModerationTask(id));
-        } catch (RuntimeException e) { return Result.error(400, e.getMessage()); }
+        } catch (RuntimeException e) { if (e instanceof DataAccessException) throw e; return Result.error(400, e.getMessage()); }
     }
 
     /** 读取待审核内容详情，供审核抽屉只读预览。 */
     @GetMapping("/moderation/content/{id}")
     public Result<ContentVO> getModerationContent(@PathVariable Integer id) {
         try { return Result.success(adminModerationService.getModerationContent(id)); }
-        catch (RuntimeException e) { return Result.error(404, e.getMessage()); }
+        catch (RuntimeException e) { if (e instanceof DataAccessException) throw e; return Result.error(404, e.getMessage()); }
     }
 
     @PostMapping("/community-items/reindex")
@@ -68,7 +74,7 @@ public class AdminModerationController {
             if (adminId == null) return Result.error(401, "未登录");
             adminModerationService.makeDecision(id, dto, adminId);
             return Result.success();
-        } catch (RuntimeException e) { return Result.error(400, e.getMessage()); }
+        } catch (RuntimeException e) { if (e instanceof DataAccessException) throw e; return Result.error(400, e.getMessage()); }
     }
 
     @PutMapping("/community-items/{id}/status")
@@ -77,14 +83,14 @@ public class AdminModerationController {
             String status = body != null ? body.get("status") : null;
             if (status == null || status.isBlank()) return Result.error(400, "缺少 status 字段");
             return Result.success(adminModerationService.updateItemStatus(id, status));
-        } catch (RuntimeException e) { return Result.error(400, e.getMessage()); }
+        } catch (RuntimeException e) { if (e instanceof DataAccessException) throw e; return Result.error(400, e.getMessage()); }
     }
 
     @PutMapping("/community-items/{id}/recommendation")
     public Result<ContentVO> updateRecommendation(@PathVariable Integer id, @RequestBody RecommendationDTO dto) {
         try {
             return Result.success(adminModerationService.updateRecommendation(id, dto));
-        } catch (RuntimeException e) { return Result.error(400, e.getMessage()); }
+        } catch (RuntimeException e) { if (e instanceof DataAccessException) throw e; return Result.error(400, e.getMessage()); }
     }
 
     @GetMapping("/reports")
@@ -94,14 +100,14 @@ public class AdminModerationController {
             @RequestParam(defaultValue = "10") int size) {
         try {
             return Result.success(adminModerationService.listReports(status, page, size));
-        } catch (RuntimeException e) { return Result.error(400, e.getMessage()); }
+        } catch (RuntimeException e) { if (e instanceof DataAccessException) throw e; return Result.error(400, e.getMessage()); }
     }
 
     @GetMapping("/reports/{id}")
     public Result<AuditVO> getReport(@PathVariable Integer id) {
         try {
             return Result.success(adminModerationService.getReport(id));
-        } catch (RuntimeException e) { return Result.error(400, e.getMessage()); }
+        } catch (RuntimeException e) { if (e instanceof DataAccessException) throw e; return Result.error(400, e.getMessage()); }
     }
 
     @PostMapping("/reports/{id}/resolution")
@@ -111,6 +117,6 @@ public class AdminModerationController {
             if (adminId == null) return Result.error(401, "未登录");
             adminModerationService.resolveReport(id, dto, adminId);
             return Result.success();
-        } catch (RuntimeException e) { return Result.error(400, e.getMessage()); }
+        } catch (RuntimeException e) { if (e instanceof DataAccessException) throw e; return Result.error(400, e.getMessage()); }
     }
 }

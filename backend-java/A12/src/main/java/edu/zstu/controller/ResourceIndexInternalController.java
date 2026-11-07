@@ -7,6 +7,7 @@ import edu.zstu.mapper.ResMaterialMapper;
 import edu.zstu.mapper.ComContentMapper;
 import edu.zstu.entity.Com_Content;
 import edu.zstu.utils.OssUtil;
+import edu.zstu.utils.ResourceProvenance;
 import edu.zstu.utils.Result;
 import lombok.RequiredArgsConstructor;
 import org.springframework.web.bind.annotation.*;
@@ -36,6 +37,8 @@ public class ResourceIndexInternalController {
             metadata.put("subject", r.getSubject());
             metadata.put("grade", r.getGrade());
             metadata.put("resource_type", r.getResource_type());
+            metadata.put("provenance", ResourceProvenance.read(r.getSource_metadata()));
+            metadata.put("ingested_at", r.getCreated_at());
             metadata.put("description", r.getDescription());
             data.put("title", r.getTitle());
             data.put("file_type", detectedFileType(oss.tryExtractObjectKey(r.getFile_url()), r.getFile_url(), r.getTitle(), r.getResource_type()));

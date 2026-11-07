@@ -5,6 +5,7 @@ source evidence to existing nodes, never silently create curriculum facts.
 """
 
 import json
+import hashlib
 import re
 import math
 from typing import Any
@@ -207,27 +208,53 @@ class CourseGraphStore:
                     VALUES (%s,%s,%s,%s,%s,%s)""", (user_id, course_id, resource_key, digest, node_id, excerpt))
         return len(evidence)
 
-    def choose_strategy(self, user_id: str, course_id: str, graph_available: bool, rag_enabled: bool) -> dict[str, Any]:
+    def strategy_effects(self, user_id: str, course_id: str | None = None) -> list[dict[str, Any]]:
+        with self._connect() as conn, conn.cursor() as cur:
+            cur.execute("""WITH outcomes AS (
+                SELECT session_id, BOOL_OR(action='accept') AS accepted,
+                    BOOL_OR(action IN ('manual_edit','reject','regenerate','undo')) AS revised
+                FROM a12_ai_feedback
+                WHERE user_id=%s AND target_type='outline'
+                  AND created_at >= NOW() - INTERVAL '90 days'
+                GROUP BY session_id
+            )
+            SELECT r.strategy, COUNT(*) AS runs,
+                COUNT(o.session_id) FILTER (WHERE o.accepted OR o.revised) AS samples,
+                COUNT(*) FILTER (WHERE o.accepted) AS accepted,
+                COUNT(*) FILTER (WHERE o.revised) AS revisions
+            FROM a12_outline_strategy_run r LEFT JOIN outcomes o USING (session_id)
+            WHERE r.user_id=%s AND (%s::text IS NULL OR r.course_id=%s)
+              AND r.created_at >= NOW() - INTERVAL '90 days'
+            GROUP BY r.strategy ORDER BY r.strategy""", (user_id, user_id, course_id, course_id))
+            rows = cur.fetchall()
+        return [{**row, "revision_rate": row["revisions"] / row["samples"] if row["samples"] else None}
+                for row in rows]
+
+    def choose_strategy(self, user_id: str, course_id: str, graph_available: bool, rag_enabled: bool,
+                        session_id: str | None = None) -> dict[str, Any]:
         if not graph_available:
             return {"name": "rag" if rag_enabled else "direct", "reason": "无课程图谱，使用现有路径"}
-        # Conservative policy: require enough real feedback before preferring one route.
-        with self._connect() as conn, conn.cursor() as cur:
-            cur.execute("""SELECT r.strategy, COUNT(*) AS samples,
-                    COUNT(*) FILTER (WHERE f.action IN ('manual_edit','reject','regenerate')) AS revisions
-                FROM a12_outline_strategy_run r JOIN a12_ai_feedback f
-                  ON f.user_id=r.user_id AND f.session_id=r.session_id
-                WHERE r.user_id=%s AND r.course_id=%s AND f.target_type='outline'
-                GROUP BY r.strategy""", (user_id, course_id))
-            rows = cur.fetchall()
-        rates = {row["strategy"]: row["revisions"] / row["samples"] for row in rows if row["samples"] >= 5}
-        candidates = ("rag", "graph_rag") if rag_enabled else ("direct", "graph")
-        # Compare routes only after both have enough evidence, otherwise keep
-        # the graph-assisted default rather than overfitting one-sided feedback.
-        preferred = min(candidates, key=lambda name: rates[name]) if all(name in rates for name in candidates) else candidates[1]
-        return {"name": preferred, "reason": "基于至少 5 条大纲反馈的修改率" if rates else "冷启动默认图谱与 RAG 结合",
-                "observed_revision_rates": rates}
+        alternative, default = ("rag", "graph_rag") if rag_enabled else ("direct", "graph")
+        if session_id:
+            with self._connect() as conn, conn.cursor() as cur:
+                cur.execute("""SELECT strategy FROM a12_outline_strategy_run
+                    WHERE user_id=%s AND session_id=%s AND course_id=%s""", (user_id, session_id, course_id))
+                previous = cur.fetchone()
+            if previous and previous["strategy"] in (alternative, default):
+                return {"name": previous["strategy"], "reason": "延续当前大纲会话的策略"}
+        rows = self.strategy_effects(user_id, course_id)
+        rates = {row["strategy"]: row["revision_rate"] for row in rows if row["samples"] >= 5}
+        preferred, reason = default, "可比较的历史反馈不足，优先使用课程图谱"
+        if default in rates and alternative in rates:
+            preferred = alternative if rates[default] - rates[alternative] >= 0.15 else default
+            reason = "根据本课程近 90 天的大纲返工率选择"
+        elif default in rates and session_id:
+            bucket = int(hashlib.sha256(f"{user_id}:{session_id}".encode()).hexdigest()[:8], 16) % 10
+            if bucket == 0:
+                preferred, reason = alternative, "小流量试用备选策略，收集对照反馈"
+        return {"name": preferred, "reason": reason, "observed_revision_rates": rates}
 
-    def record_strategy(self, user_id: str, session_id: str, course_id: str, strategy: str, graph_version: int | None) -> None:
+    def record_strategy(self, user_id: str, session_id: str, course_id: str | None, strategy: str, graph_version: int | None) -> None:
         with self._connect() as conn, conn.cursor() as cur:
             cur.execute("""INSERT INTO a12_outline_strategy_run(user_id,session_id,course_id,strategy,graph_version)
                 VALUES (%s,%s,%s,%s,%s) ON CONFLICT(user_id,session_id) DO NOTHING""",

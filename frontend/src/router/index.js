@@ -48,6 +48,7 @@ const routes = [
       { path: '', name: 'TeacherHome', component: TeacherHome, meta: { menu: 'home', title: '个人工作空间', staticTeacherPage: true } },
       { path: 'resources', component: ResourceLibrary, meta: { menu: 'resources', title: '个人资源库', staticTeacherPage: true } },
       { path: 'community', component: CommunityHub, meta: { menu: 'community', title: '技能与案例', staticTeacherPage: true } },
+      { path: 'batch-tasks', component: getComponentLoader('BatchTaskPanel'), meta: { menu: 'exports', title: '批量备课任务', staticTeacherPage: true } },
       { path: 'exports', component: ExportCenter, meta: { menu: 'exports', title: '成果导出中心', staticTeacherPage: true } },
       { path: 'workspace', component: CreationWorkspace, meta: { menu: 'workspace', title: '创作工作台', staticTeacherPage: true } },
       { path: 'settings', component: AccountSettings, meta: { menu: 'settings', title: '账号与安全', staticTeacherPage: true } },

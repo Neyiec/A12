@@ -1,4 +1,5 @@
 import json
+import logging
 import re
 import time
 import uuid
@@ -78,7 +79,7 @@ class PostgresOutlineMemoryStore:
         result = self.relearn_teacher_profile(user_id)
         if not result.get("error"):
             self._profile_refresh_at[user_id] = now + 86400
-        return self.get_teacher_profile(user_id) if result.get("updated") else profile
+        return self.get_teacher_profile(user_id) if not result.get("error") else profile
 
     def load_or_create_session(self, user_id: str, session_id: str | None) -> tuple[str, dict[str, Any]]:
         session_id = session_id or f"outline_chat_{uuid.uuid4().hex[:12]}"
@@ -280,6 +281,9 @@ class PostgresOutlineMemoryStore:
                         return None
                     result = dict(row)
                     result["enabled"] = (result.get("profile") or {}).get("enabled", True)
+                    feedback_summary = (result.get("profile") or {}).get("feedback_style_summary")
+                    if feedback_summary:
+                        result["style_summary"] = "。".join(filter(None, [result.get("style_summary"), feedback_summary]))
                     manual_tags = (result.get("profile") or {}).get("manual_tags") or []
                     if manual_tags:
                         result["style_summary"] = "教师明确设置：" + "、".join(manual_tags) + "。历史学习：" + str(result.get("style_summary") or "暂无")
@@ -383,29 +387,37 @@ class PostgresOutlineMemoryStore:
         try:
             import psycopg
             from psycopg.rows import dict_row
-            counts = {name: 0 for name in STYLE_SIGNALS}
+            evidence = {name: set() for name in STYLE_SIGNALS}
             with psycopg.connect(self.settings.postgres_dsn, row_factory=dict_row) as conn:
                 with conn.cursor() as cur:
+                    cur.execute("SELECT pg_advisory_xact_lock(hashtext(%s))", (f"teacher-feedback:{user_id}",))
                     cur.execute(
-                        """SELECT instruction,change_summary,metadata FROM a12_ai_feedback
+                        """SELECT project_id,session_id,instruction,change_summary,metadata FROM a12_ai_feedback
                            WHERE user_id=%s AND action IN ('accept','manual_edit')
-                           ORDER BY created_at DESC LIMIT 100""", (user_id,),
+                             AND created_at >= NOW() - INTERVAL '90 days'
+                           ORDER BY created_at DESC, id DESC LIMIT 100""", (user_id,),
                     )
                     rows = cur.fetchall()
                     for row in rows:
+                        source = ("project", row["project_id"]) if row["project_id"] else ("session", row["session_id"])
+                        if not source[1]:
+                            continue
                         metadata = row.get("metadata") or {}
                         signals = set(metadata.get("style_signals") or [])
                         signals.update(infer_style_signals_from_edit(metadata))
                         signals.update(extract_style_signals(" ".join([
                             str(row.get("instruction") or ""), str(row.get("change_summary") or ""),
                         ])))
-                        for signal in signals & counts.keys():
-                            counts[signal] += 1
-                    stable = [name for name, count in counts.items() if count >= 2]
+                        for signal in signals & evidence.keys():
+                            evidence[signal].add(source)
+                    stable = [name for name, sources in evidence.items() if len(sources) >= 2]
+                    evidence_count = len(set().union(*(evidence[name] for name in stable)))
                     if not stable:
                         cur.execute("""UPDATE a12_teacher_style_profile SET profile =
                             COALESCE(profile, '{}'::jsonb) || %s::jsonb WHERE user_id=%s""",
-                            (json.dumps({"last_relearn_at": datetime.now(timezone.utc).isoformat()}), user_id))
+                            (json.dumps({"last_relearn_at": datetime.now(timezone.utc).isoformat(),
+                                         "feedback_style_summary": "", "feedback_evidence_count": 0,
+                                         "style_preferences": []}), user_id))
                         conn.commit()
                         return {"updated": False, "evidence_count": len(rows), "stable_preferences": []}
                     summary = "；".join(STYLE_SIGNALS[name][0] for name in stable)
@@ -414,16 +426,19 @@ class PostgresOutlineMemoryStore:
                            (user_id,style_summary,profile,evidence_count,confidence)
                            VALUES (%s,%s,%s::jsonb,%s,%s)
                            ON CONFLICT (user_id) DO UPDATE SET
-                             style_summary=EXCLUDED.style_summary,
                              profile=a12_teacher_style_profile.profile || EXCLUDED.profile,
-                             evidence_count=EXCLUDED.evidence_count,
-                             confidence=EXCLUDED.confidence,updated_at=NOW()""",
-                        (user_id, summary, json.dumps({"style_preferences": stable,
+                             evidence_count=GREATEST(a12_teacher_style_profile.evidence_count, EXCLUDED.evidence_count),
+                             confidence=GREATEST(a12_teacher_style_profile.confidence, EXCLUDED.confidence),
+                             updated_at=CASE WHEN a12_teacher_style_profile.profile->>'feedback_style_summary'
+                                 IS DISTINCT FROM EXCLUDED.profile->>'feedback_style_summary'
+                                 THEN NOW() ELSE a12_teacher_style_profile.updated_at END""",
+                        (user_id, "", json.dumps({"style_preferences": stable,
+                          "feedback_style_summary": summary, "feedback_evidence_count": evidence_count,
                           "last_relearn_at": datetime.now(timezone.utc).isoformat()}, ensure_ascii=False),
-                         len(rows), min(0.9, 0.5 + len(rows) * 0.01)),
+                         evidence_count, min(0.9, 0.5 + evidence_count * 0.01)),
                     )
                 conn.commit()
-            return {"updated": True, "evidence_count": len(rows), "stable_preferences": stable}
+            return {"updated": True, "evidence_count": evidence_count, "stable_preferences": stable}
         except Exception:
             self.available = False
             return {"updated": False, "error": "教师反馈数据库暂时不可用"}
@@ -450,41 +465,25 @@ class PostgresOutlineMemoryStore:
              payload.get("change_summary"), json.dumps(payload.get("before_data") or {}, ensure_ascii=False, default=_json_default),
              json.dumps(payload.get("after_data") or {}, ensure_ascii=False, default=_json_default), json.dumps(metadata, ensure_ascii=False, default=_json_default)),
         )
-        # A single edit can be task-specific. Only repeat signals promote to
-        # long-term preference; rejection stays negative evidence.
-        repeated: list[str] = []
-        if saved and signals and action in {"accept", "manual_edit"}:
-            try:
-                import psycopg
-                from psycopg.rows import dict_row
-                with psycopg.connect(self.settings.postgres_dsn, row_factory=dict_row) as conn:
-                    with conn.cursor() as cur:
-                        cur.execute("""SELECT metadata FROM a12_ai_feedback WHERE user_id=%s
-                            AND action IN ('accept','manual_edit') ORDER BY created_at DESC LIMIT 20""", (user_id,))
-                        evidence = [dict(row.get("metadata") or {}) for row in cur.fetchall()]
-                repeated = [signal for signal in signals if sum(signal in row.get("style_signals", []) for row in evidence) >= 2]
-            except Exception:
-                self.available = False
         profile_saved = False
-        if saved and repeated:
-            preference = {
-                "style_preferences": repeated,
-                "last_positive_action": action,
-                "last_change_summary": str(payload.get("change_summary") or "")[:500],
-                "last_instruction": str(payload.get("instruction") or "")[:500],
-                "subject": metadata.get("subject"), "grade": metadata.get("grade"),
-            }
-            profile_saved = self._execute(
-                """INSERT INTO a12_teacher_style_profile(user_id,style_summary,profile,evidence_count,confidence)
-                   VALUES (%s,%s,%s::jsonb,1,0.55)
-                   ON CONFLICT(user_id) DO UPDATE SET profile=a12_teacher_style_profile.profile || EXCLUDED.profile,
-                   style_summary=EXCLUDED.style_summary,evidence_count=a12_teacher_style_profile.evidence_count+1,
-                   confidence=LEAST(0.98, a12_teacher_style_profile.confidence + 0.03),updated_at=NOW()""",
-                (user_id, "；".join(STYLE_SIGNALS[name][0] for name in repeated),
-                 json.dumps(preference, ensure_ascii=False, default=_json_default)),
-            )
+        evaluation_recorded = False
+        if saved and payload.get("prompt_run_id"):
+            try:
+                from ..agent_evolution import record_outcome
+                outcome = "revision" if action in {"manual_edit", "regenerate", "undo"} or (
+                    action == "accept" and payload.get("instruction")) else action
+                event_id = payload.get("event_id") or uuid.uuid4().hex
+                evaluation_recorded = record_outcome(user_id, payload["prompt_run_id"], outcome, "feedback:" + event_id,
+                                                       project_id=payload.get("project_id"))
+                if action == "accept" and outcome == "revision":
+                    record_outcome(user_id, payload["prompt_run_id"], "accept", "adopt:" + event_id,
+                                   project_id=payload.get("project_id"))
+            except Exception:
+                logging.getLogger(__name__).warning("教师反馈已保存，但生成版本效果记录失败")
+        if saved and metadata.get("style_signals"):
+            profile_saved = bool(self.relearn_teacher_profile(user_id).get("updated"))
         return {"stored": bool(saved), "action": action, "profile_updated": bool(profile_saved),
-                "style_signals": signals}
+                "style_signals": signals, "evaluation_recorded": evaluation_recorded}
 
     def ai_metrics(self, limit: int = 50, user_id: str | None = None) -> dict[str, Any]:
         try:

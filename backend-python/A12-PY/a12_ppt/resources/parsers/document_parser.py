@@ -6,6 +6,20 @@ from .common import ParsedResource, merge_text_blocks, plain_text_file
 from .vision_parser import describe_image, parse_image
 
 
+def paged_text(blocks):
+    text, spans = '', []
+    for number, block in blocks:
+        block = block.strip()
+        if not block:
+            continue
+        if text:
+            text += '\n\n'
+        start = len(text)
+        text += block
+        spans.append({'page_number': number, 'start': start, 'end': len(text)})
+    return text, spans
+
+
 async def parse_pdf(path: Path) -> ParsedResource:
     try:
         from PyPDF2 import PdfReader
@@ -50,9 +64,11 @@ async def parse_pdf(path: Path) -> ParsedResource:
         finally:
             for _, image_path in rendered_pages:
                 image_path.unlink(missing_ok=True)
+        text, spans = paged_text([(index + 1, page_blocks[index]) for index in sorted(page_blocks)])
         return ParsedResource(
-            text=merge_text_blocks([page_blocks[index] for index in sorted(page_blocks)]),
+            text=text,
             metadata={
+                "page_spans": spans,
                 "modality": "document",
                 "parser": "PyPDF2+pypdfium2+OCR/vision" if empty_page_indexes else "PyPDF2",
                 "page_count": len(reader.pages),
@@ -101,20 +117,28 @@ def _render_pdf_pages(path: Path, page_indexes: list[int]) -> list[tuple[int, Pa
 async def parse_word(path: Path) -> ParsedResource:
     try:
         from docx import Document
+        from docx.table import Table
 
         doc = Document(str(path))
-        paragraphs = [paragraph.text for paragraph in doc.paragraphs if paragraph.text]
-        table_blocks = []
-        for table_index, table in enumerate(doc.tables):
-            rows = [" | ".join(cell.text.strip() for cell in row.cells) for row in table.rows]
-            table_blocks.append(f"表格 {table_index + 1}:\n" + "\n".join(rows))
+        blocks = []
+        paragraph_count = 0
+        table_count = 0
+        for item in doc.iter_inner_content():
+            if isinstance(item, Table):
+                table_count += 1
+                rows = [" | ".join(cell.text.strip() for cell in row.cells) for row in item.rows]
+                if any(cell.text.strip() for row in item.rows for cell in row.cells):
+                    blocks.append(f"表格 {table_count}:\n" + "\n".join(rows))
+            elif item.text.strip():
+                paragraph_count += 1
+                blocks.append(item.text)
         return ParsedResource(
-            text=merge_text_blocks(paragraphs + table_blocks),
+            text=merge_text_blocks(blocks),
             metadata={
                 "modality": "document",
                 "parser": "python-docx",
-                "paragraph_count": len(paragraphs),
-                "table_count": len(doc.tables),
+                "paragraph_count": paragraph_count,
+                "table_count": table_count,
             },
         )
     except Exception as exc:
@@ -146,9 +170,11 @@ async def parse_presentation(path: Path) -> ParsedResource:
                 f"第 {slide_index + 1} 页 PPT 文本:\n" + "\n".join(texts),
                 *image_summaries,
             ]))
+        text, spans = paged_text(list(enumerate(blocks, start=1)))
         return ParsedResource(
-            text=merge_text_blocks(blocks),
+            text=text,
             metadata={
+                "page_spans": spans,
                 "modality": "presentation",
                 "parser": "python-pptx+vision",
                 "slide_count": len(presentation.slides),

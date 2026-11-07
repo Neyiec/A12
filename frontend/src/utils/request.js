@@ -4,6 +4,7 @@ import router from '../router/index'
 import { useUserStore } from '../storage/user.js'
 import { assertApiSuccess, normalizeRequestError, responsePayload } from './apiError.js'
 import { loginLocation } from './sessionRedirect.js'
+import { startRequestLog, finishRequestLog } from './requestLog.js'
 
 // 从环境变量获取基础 URL
 const baseURL = import.meta.env.VITE_API_BASE_URL || ''
@@ -23,6 +24,7 @@ const isDevelopmentPreview = () => import.meta.env.DEV && router.currentRoute.va
 // 请求拦截器
 service.interceptors.request.use(
   config => {
+    startRequestLog(config)
     // AI 引擎接口由浏览器直接调用 FastAPI；账号/业务接口仍由 Java 提供。
     if (config.url?.startsWith('/api/v1/python/')) {
       config.baseURL = import.meta.env.VITE_PYTHON_API_BASE_URL || ''
@@ -42,7 +44,7 @@ service.interceptors.request.use(
     return config
   },
   error => {
-    console.error('请求错误:', error)
+    finishRequestLog(error.config, 'request_setup_error', true)
     return Promise.reject(error)
   }
 )
@@ -53,6 +55,7 @@ service.interceptors.response.use(
     // 根据后端返回的数据结构处理
     const res = await responsePayload(response)
     const code = res?.code
+    finishRequestLog(response.config, code || response.status, Boolean(code && code !== 200 && code !== 0))
 
     // 401 未授权 — 清除用户状态并跳转登录页，提前返回阻止业务层误处理
     if (code == 401 && !isDevelopmentPreview()) {
@@ -71,7 +74,7 @@ service.interceptors.response.use(
     return res
   },
   async error => {
-    console.error('响应错误:', error)
+    finishRequestLog(error.config, error.response?.status || error.code || 'network_error', true)
 
     // 统一错误处理
     if (error.response) {

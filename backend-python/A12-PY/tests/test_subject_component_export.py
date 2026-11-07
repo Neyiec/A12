@@ -38,7 +38,8 @@ class SubjectComponentExportTests(unittest.IsolatedAsyncioTestCase):
         result = await asyncio.to_thread(subprocess.run, [node, "--input-type=module", "-e", script],
                                          cwd=frontend, capture_output=True, text=True, encoding="utf-8", timeout=45)
         self.assertEqual(result.returncode, 0, result.stderr)
-        slides = json.loads(result.stdout.split("A12_RESULT:")[-1])
+        # Vite can emit optimizer logs after the explicit result marker during shutdown.
+        slides, _ = json.JSONDecoder().raw_decode(result.stdout.split("A12_RESULT:")[-1])
         try:
             output = await _export_dom_to_pptx("学科组件导出回归", slides, "subject-export-test.pptx")
         except Exception as exc:

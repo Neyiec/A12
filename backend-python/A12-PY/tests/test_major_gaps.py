@@ -100,11 +100,15 @@ class MajorGapTests(unittest.IsolatedAsyncioTestCase):
                 "content_points": ["显微镜观察"], "visual_suggestion": "实验场景照片",
             }]},
         )
-        with patch("a12_ppt.presentation.generator.get_template", return_value={
+        with self.assertLogs("a12_ppt.timing", level="INFO") as captured, patch("a12_ppt.presentation.generator.get_template", return_value={
             "_selected_theme": "素白风", "template_name": "素白风", "html_template": "",
         }):
             events = [item async for item in generator.stream_presentation(request)]
 
+        logs = "\n".join(captured.output)
+        self.assertIn("stage=presentation.total status=success", logs)
+        self.assertIn("stage=slide.queue", logs)
+        self.assertIn("stage=presentation.first_slide", logs)
         final = events[-1]["response"]
         self.assertEqual(final["metadata"]["generated_image_count"], 1)
         self.assertEqual(final["slides"][0]["metadata"]["asset_status"], "generated")

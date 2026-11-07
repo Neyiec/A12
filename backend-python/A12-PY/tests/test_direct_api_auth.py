@@ -2,6 +2,8 @@ import os
 import json
 import tempfile
 import unittest
+from contextlib import asynccontextmanager
+from types import SimpleNamespace
 from pathlib import Path
 from unittest.mock import AsyncMock, patch
 
@@ -45,6 +47,18 @@ class DirectApiAuthTests(unittest.IsolatedAsyncioTestCase):
             admin_only = await self.client.post("/api/v1/python/templates", json={"name": "unauthorized"},
                                                 headers={"Authorization": "Bearer valid-token"})
             self.assertEqual(admin_only.status_code, 403)
+
+    async def test_teacher_feedback_uses_authenticated_identity_and_reports_storage_failure(self):
+        headers = {"Authorization": "Bearer valid-token"}
+        payload = {"session_id": "outline-1", "action": "accept", "target_type": "outline"}
+        with patch("main.authenticate_browser", new_callable=AsyncMock, return_value=("7", "valid-token")), \
+             patch("main.postgres_memory_store.record_feedback", return_value={"stored": True}) as record:
+            response = await self.client.post("/api/v1/python/teacher-style/feedback", json=payload, headers=headers)
+            self.assertEqual(response.status_code, 200)
+            self.assertEqual(record.call_args.args[0]["user_id"], "7")
+            record.return_value = {"stored": False}
+            response = await self.client.post("/api/v1/python/teacher-style/feedback", json=payload, headers=headers)
+            self.assertEqual(response.status_code, 503)
 
     async def test_replaced_token_is_rejected_before_python_route_runs(self):
         async def authenticated(_authorization):
@@ -93,6 +107,32 @@ class DirectApiAuthTests(unittest.IsolatedAsyncioTestCase):
                                               headers={"Authorization": "Bearer valid-token"})
         self.assertEqual(response.status_code, 200)
         self.assertIn("data: 7", response.text)
+
+    async def test_compact_ppt_stream_sends_html_once_and_keeps_validation_metadata(self):
+        async def authenticated(_authorization):
+            return "7", "valid-token", "teacher"
+
+        async def generated(_request):
+            page = {"slide_no": 1, "html": "<html>独立HTML页面</html>", "metadata": {"html_validation": {"valid": True}}}
+            yield {"type": "slide", "slide": page, "completed": 1, "total": 1}
+            yield {"type": "final", "response": {"slide_count": 1, "slides": [page], "html": "", "metadata": {}}}
+
+        @asynccontextmanager
+        async def admitted(*args, **kwargs):
+            yield SimpleNamespace(completed_pages=0, update=AsyncMock())
+
+        with patch("main.authenticate_browser", side_effect=authenticated), \
+             patch("main.limit_job", side_effect=admitted), \
+             patch("main.generator.stream_presentation", side_effect=generated):
+            response = await self.client.post("/api/v1/python/presentations/generate/stream",
+                json={"title":"函数","outline":{},"stream_compact":True}, headers={"Authorization":"Bearer valid-token"})
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.text.count("独立HTML页面"), 1)
+        blocks = response.text.split("\n\n")
+        final = next(json.loads(block.split("data: ",1)[1]) for block in blocks if block.startswith("event: final"))
+        self.assertTrue(final["stream_compact"])
+        self.assertNotIn("html", final["slides"][0])
+        self.assertTrue(final["slides"][0]["metadata"]["html_validation"]["valid"])
 
     async def test_resource_sync_uses_java_signed_url_not_browser_url(self):
         from unittest.mock import AsyncMock

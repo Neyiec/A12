@@ -1,6 +1,7 @@
 import asyncio
 import base64
 import html
+import hashlib
 import json
 import logging
 import re
@@ -9,7 +10,9 @@ import uuid
 from typing import Any, AsyncIterator
 
 from ..config import get_settings
+from ..agent_evolution import current_policy, public_run_metadata, recent_guidance
 from ..ai_runtime import current_runtime
+from ..timing import timed, timing_stage, log_timing
 from .html_utils import auto_close_basic_tags, clean_html_response, validate_html
 from .image_generator import GeneratedImage, ImageGenerationClient
 from .subject_components import embed_subject_component, normalize_subject_components
@@ -27,6 +30,7 @@ from ..models import InteractiveModuleGenerateRequest, OutlineGenerateRequest, O
 from ..resources import build_rag_context
 from ..teaching_policy import teaching_model_guidance, teaching_policy, teaching_style_guidance
 from .template_store import DEFAULT_THEME, get_template
+from .generation_cache import generation_cache, generation_key
 
 logger = logging.getLogger("a12_ppt.presentation.generator")
 
@@ -36,21 +40,25 @@ class PPTGenerator:
         self.settings = get_settings()
         self.llm = LLMClient()
         self.image_generator = ImageGenerationClient()
+        self.generation_cache = generation_cache
 
+    @timed("outline.total")
     async def generate_outline(self, req: OutlineGenerateRequest) -> dict[str, Any]:
-        slide_count = req.slide_count or 8
+        slide_count = self._initial_slide_count(req)
         req = await self._with_reference_and_rag_context(req)
         outline = await self._generate_outline_with_model(req, slide_count) if self.llm.available else self._fallback_outline(req, slide_count)
+        outline = await self._enforce_page_range(outline, req, slide_count)
         outline.setdefault("generation_status", "fallback" if outline.get("_fallback") else "model")
         return self._decorate_outline(outline, req)
 
+    @timed("outline.stream_total")
     async def stream_outline(self, req: OutlineGenerateRequest) -> AsyncIterator[dict[str, Any]]:
         """流式生成大纲：模型边产出边抽取完整 slide 对象并产出 outline_delta，最终产出 final。
 
         - 产出 `{"type": "slide", "slide": {...}, "index": n}`：一页大纲增量（预览用，尚未经规范化）。
         - 产出 `{"type": "final", "response": {...}}`：规范化后的完整结果（与 generate_outline 返回一致）。
         """
-        slide_count = req.slide_count or 8
+        slide_count = self._initial_slide_count(req)
         req = await self._with_reference_and_rag_context(req)
         if not self.llm.available:
             outline = self._fallback_outline(req, slide_count)
@@ -85,19 +93,46 @@ class PPTGenerator:
                 outline = self._fallback_outline(req, slide_count)
         except Exception:
             outline = self._fallback_outline(req, slide_count)
+        outline = await self._enforce_page_range(outline, req, slide_count)
         outline.setdefault("generation_status", "fallback" if outline.get("_fallback") else "model")
         yield {"type": "final", "response": self._decorate_outline(outline, req)}
 
+    @staticmethod
+    def _initial_slide_count(req: OutlineGenerateRequest) -> int:
+        count = req.slide_count or 8
+        if req.slide_count_range:
+            count = max(req.slide_count_range.min_pages, min(count, req.slide_count_range.max_pages))
+        return count
+
+    async def _enforce_page_range(self, outline: dict[str, Any], req: OutlineGenerateRequest,
+                                  fallback_count: int) -> dict[str, Any]:
+        bounds = req.slide_count_range
+        if not bounds:
+            return outline
+        def valid(value):
+            return bounds.min_pages <= len([s for s in value.get("slides", []) if isinstance(s, dict)]) <= bounds.max_pages
+        if not valid(outline) and self.llm.available:
+            repair = req.model_copy(update={"regenerate_instruction":
+                f"{req.regenerate_instruction or ''}\n上次页数超出范围，请重新规划完整大纲，总页数必须为{bounds.min_pages}至{bounds.max_pages}页（含封面和总结），不要只返回补充页。"})
+            outline = await self._generate_outline_with_model(repair, fallback_count)
+        if not valid(outline):
+            raise ValueError(f"AI未按{bounds.min_pages}至{bounds.max_pages}页规划大纲，请重试或调整范围")
+        return outline
+
     def _decorate_outline(self, outline: dict[str, Any], req: OutlineGenerateRequest) -> dict[str, Any]:
-        slide_count = req.slide_count or 8
+        slide_count = (len(outline.get("slides") or []) or self._initial_slide_count(req)) if (
+            req.slide_count_range or req.slide_count is None) else self._initial_slide_count(req)
+        slide_count = min(30, slide_count)
         outline["subject"] = req.subject
         outline["grade"] = req.grade
         outline["requirements"] = req.requirements
+        outline["slide_count_range"] = req.slide_count_range.model_dump() if req.slide_count_range else None
         outline["teaching_model"] = req.teaching_model
         outline["teaching_style"] = req.teaching_style
         outline["teacher_style_summary"] = str(req.teacher_profile.get("style_summary") or "")[:1200]
         outline["subject_policy"] = teaching_policy(req.subject)
         outline["generation_options"] = {
+            "slide_count_range": req.slide_count_range.model_dump() if req.slide_count_range else None,
             "resource_ids": req.resource_ids,
             "enable_web": req.enable_web,
             "enable_rag": req.enable_rag,
@@ -159,13 +194,16 @@ scaffolding, feedback_strategy。
         return self._outline_response(outline)
 
     async def generate_presentation(self, req: PresentationGenerateRequest) -> dict[str, Any]:
+        if getattr(req, "stream_compact", False):
+            req = req.model_copy(update={"stream_compact": False})
         final: dict[str, Any] = {}
         async for item in self.stream_presentation(req):
             if item.get("type") == "final":
                 final = item.get("response") or {}
         return final
 
-    async def stream_presentation(self, req: PresentationGenerateRequest) -> AsyncIterator[dict[str, Any]]:
+    @timed("presentation.total")
+    async def stream_presentation(self, req: PresentationGenerateRequest, *, resume_slides=None) -> AsyncIterator[dict[str, Any]]:
         """并发生成 HTML 页面，并在每页完成时立即产出可渲染的 slide 事件。"""
         started_at = time.perf_counter()
         slides = self._normalize_slides_for_deck(self._extract_slides(req.outline) or self._fallback_outline_from_title(req.title, 6))
@@ -174,17 +212,36 @@ scaffolding, feedback_strategy。
             interactive_assets = await self._materialize_interactive_assets(req, slides, interactive_assets)
             slides = self._attach_interactive_assets(slides, interactive_assets)
         requested_theme = (req.theme or DEFAULT_THEME).strip()
-        template = get_template(requested_theme) or {}
+        with timing_stage("template.load"):
+            bundle = current_policy().get("template_bundle")
+            template = (get_template(requested_theme, bundle) if bundle else get_template(requested_theme)) or {}
+            if bundle and template.get("_missing_template"):
+                # 教师明确选择的新模板仍走原有已发布模板入口。
+                template = get_template(requested_theme) or template
         template_name = str(template.get("_selected_theme") or template.get("template_name") or requested_theme)
         template_html = str(template.get("html_template") or "")
         missing_template = bool(template.get("_missing_template"))
         request_context = self._request_context(req)
+        policy = current_policy()
+        if policy:
+            policy["runtime_run_id"] = current_runtime().run_id
+            policy["template_sha256"] = hashlib.sha256(template_html.encode()).hexdigest()
+        request_context["generation_policy"] = {
+            "instruction": policy.get("instruction", ""),
+            "layout_rule": policy.get("layout_rule", ""),
+            "precedence": "仅为可选建议，当前教师要求和教学事实优先",
+        }
         from ..direct_auth import direct_user_id
-        user_id = direct_user_id.get()
+        user_id = direct_user_id.get() or current_runtime().user_id
         if user_id:
             from ..outline_chat.postgres_store import postgres_memory_store
-            profile = postgres_memory_store.refresh_teacher_profile(user_id)
+            with timing_stage("teacher_profile.load"):
+                profile = postgres_memory_store.refresh_teacher_profile(user_id)
             request_context["teacher_style_summary"] = str(profile.get("style_summary") or "")[:1200] if profile and profile.get("enabled", True) else ""
+            try:
+                request_context["recent_teacher_feedback"] = await asyncio.to_thread(recent_guidance, user_id)
+            except Exception:
+                request_context["recent_teacher_feedback"] = []
         rag_context, asset_decision = await asyncio.gather(
             self._collect_generation_rag_context(req), self._resolve_asset_plan(req, slides)
         )
@@ -196,64 +253,78 @@ scaffolding, feedback_strategy。
             slide["asset_plan"] = asset_plan.get(str(index), {"type": "layout", "reason": "使用可编辑排版表达"})
         generated_image_slides = self._select_generated_image_slides(req, slides, selected_asset_policy, asset_plan)
         image_semaphore = asyncio.Semaphore(2)
-        quality_assets = await self._build_quality_assets(req.title, requested_theme, template_name, template_html, request_context, slides)
+        quality_assets = await self._cached_quality_assets(req.title, requested_theme, template_name, template_html, request_context, slides)
         setup_ms = round((time.perf_counter() - started_at) * 1000)
 
         semaphore = asyncio.Semaphore(max(1, self.settings.max_slide_concurrency))
+        logger.info("PPT生成配置 run_id=%s count=%d concurrency=%d preset=%s html_retries=%d model_profile=%s reasoning=%s image_count=%d",
+                    current_runtime().run_id or "-", len(slides), max(1, self.settings.max_slide_concurrency),
+                    self.settings.quality_preset, self.settings.max_html_retries,
+                    current_runtime().model_profile, current_runtime().reasoning_effort, len(generated_image_slides))
+        async def build_image(slide_no, working_slide):
+            image_client = getattr(self, "image_generator", None)
+            if not image_client or not image_client.available:
+                return None, "图片生成服务未配置，已保留可编辑图片位置"
+            try:
+                queued_at = time.perf_counter()
+                async with image_semaphore:
+                    log_timing("image.queue", (time.perf_counter() - queued_at) * 1000, slide_no=slide_no)
+                    return await image_client.generate(self._image_prompt(req, working_slide), req.aspect_ratio), ""
+            except Exception as exc:
+                return None, str(exc)[:300]
+
+        @timed("slide.total", fields=("index",))
         async def build(index: int, slide: dict[str, Any]) -> dict[str, Any]:
-            async with semaphore:
-                slide_started_at = time.perf_counter()
-                slide_no = index + 1
-                working_slide = dict(slide)
-                generated_image: GeneratedImage | None = None
-                asset_status = "none" if selected_asset_policy == "none" else "placeholder"
-                asset_error = ""
-                if slide_no in generated_image_slides:
-                    image_client = getattr(self, "image_generator", None)
-                    if image_client and image_client.available:
-                        try:
-                            async with image_semaphore:
-                                generated_image = await image_client.generate(
-                                    self._image_prompt(req, working_slide), req.aspect_ratio
-                                )
-                        except Exception as exc:
-                            asset_error = str(exc)[:300]
+            slide_started_at = time.perf_counter()
+            slide_no = index + 1
+            saved = (resume_slides or {}).get(str(slide_no))
+            if saved and saved.get('title') == str(slide.get('title') or f'第 {slide_no} 页') and validate_html(str(saved.get('html') or ''),strict=True)['valid']:
+                return {**saved, 'metadata': {**(saved.get('metadata') or {}), **public_run_metadata(), 'resumed': True}}
+            working_slide = dict(slide)
+            generated_image = None
+            asset_error = ""
+            asset_status = "none" if selected_asset_policy == "none" else "placeholder"
+            image_task = None
+            placeholder = f"a12-generated-image://slot-{slide_no}"
+            if slide_no in generated_image_slides:
+                working_slide["generated_image"] = {"source_url": placeholder,
+                    "placement": "独立可编辑图片区域，图片由系统稍后填充"}
+                image_task = asyncio.create_task(build_image(slide_no, dict(slide)))
+            working_slide["asset_decision"] = "pending" if image_task else asset_status
+            try:
+                queued_at = time.perf_counter()
+                async with semaphore:
+                    log_timing("slide.queue", (time.perf_counter() - queued_at) * 1000, slide_no=slide_no)
+                    slide_markup = await self._generate_slide_html(
+                        title=req.title, slide=working_slide, slide_no=slide_no, total=len(slides),
+                        theme=requested_theme, template_name=template_name, template_html=template_html,
+                        request_context=request_context, all_slides=slides, quality_assets=quality_assets)
+                # 等待图片时已释放 HTML 槽位，其余页面可继续生成。
+                if image_task:
+                    generated_image, asset_error = await image_task
+                    asset_status = "generated" if generated_image else "placeholder"
+                with timing_stage("slide.embed_assets", slide_no=slide_no):
+                    slide_markup = embed_subject_component(slide_markup, working_slide, slide_no,
+                        fallback=not (self.llm.available and self.settings.enable_quality_pipeline))
                     if generated_image:
-                        asset_status = "generated"
-                        working_slide["generated_image"] = {
-                            "source_url": f"a12-generated-image://{generated_image.cache_key}",
-                            "prompt": generated_image.prompt,
-                            "model": generated_image.model,
-                            "placement": "作为独立图片元素放入视觉区，保留文字和基础形状的可编辑性",
-                        }
-                    else:
-                        asset_status = "placeholder"
-                        if not asset_error:
-                            asset_error = "图片生成服务未配置，已自动降级为智能占位"
-                working_slide["asset_decision"] = asset_status
-                slide_markup = await self._generate_slide_html(
-                    title=req.title,
-                    slide=working_slide,
-                    slide_no=slide_no,
-                    total=len(slides),
-                    theme=requested_theme,
-                    template_name=template_name,
-                    template_html=template_html,
-                    request_context=request_context,
-                    all_slides=slides,
-                    quality_assets=quality_assets,
-                )
-                slide_markup = embed_subject_component(slide_markup, working_slide, slide_no,
-                                                      fallback=not (self.llm.available and self.settings.enable_quality_pipeline))
-                if generated_image:
-                    slide_markup = self._embed_generated_image(slide_markup, generated_image)
-                return {
+                        slide_markup = slide_markup.replace(placeholder, f"a12-generated-image://{generated_image.cache_key}")
+                        slide_markup = self._embed_generated_image(slide_markup, generated_image)
+                    elif image_task:
+                        empty_image = 'data:image/svg+xml;base64,' + base64.b64encode(
+                            b'<svg xmlns="http://www.w3.org/2000/svg" width="640" height="360"><rect width="640" height="360" fill="#edf3ff"/></svg>').decode()
+                        slide_markup = slide_markup.replace(placeholder, empty_image)
+            finally:
+                if image_task and not image_task.done():
+                    image_task.cancel()
+                    await asyncio.gather(image_task, return_exceptions=True)
+            return {
                     "slide_no": slide_no,
                     "title": str(working_slide.get("title") or f"第 {slide_no} 页"),
                     "html": slide_markup,
                     "notes": self._speaker_notes(working_slide),
                     "interactive_assets": working_slide.get("interactive_assets", []),
                     "metadata": {
+                        **public_run_metadata(),
                         "theme": requested_theme,
                         "requested_theme": requested_theme,
                         "template_name": template_name,
@@ -292,6 +363,7 @@ scaffolding, feedback_strategy。
                 slide_results.append(item)
                 if first_slide_ms is None:
                     first_slide_ms = round((time.perf_counter() - started_at) * 1000)
+                    log_timing("presentation.first_slide", first_slide_ms, slide_no=item.get("slide_no"))
                 yield {"type": "slide", "slide": item, "completed": len(slide_results), "total": len(slides)}
         finally:
             pending = [task for task in tasks if not task.done()]
@@ -306,9 +378,11 @@ scaffolding, feedback_strategy。
             "title": req.title,
             "slide_count": len(slide_results),
             "slides": slide_results,
-            "html": self._combine_deck(req.title, slide_results),
+            "html": "" if getattr(req, "stream_compact", False) else self._combine_deck(req.title, slide_results),
             "quality_report": self._deck_quality_report(slide_results),
             "metadata": {
+                **public_run_metadata(),
+                "run_id": current_runtime().run_id,
                 "requested_theme": requested_theme,
                 "template_name": template_name,
                 "missing_template": missing_template,
@@ -688,6 +762,23 @@ JSON 格式:
             result.append(item)
         return result
 
+    @timed("design.plan")
+    async def _cached_quality_assets(self, title, theme, template_name, template_html, request_context, slides):
+        from ..direct_auth import require_active_browser_token
+        cache = getattr(self, "generation_cache", None)
+        await require_active_browser_token()
+        key = generation_key("design", self.settings, [title, theme, template_name, template_html,
+            request_context, slides, self.settings.quality_preset]) if cache else None
+        result = cache.get(key) if cache else None
+        if result is not None:
+            log_timing("design.cache_hit", 0)
+            return result
+        result = await self._build_quality_assets(title, theme, template_name, template_html, request_context, slides)
+        if cache and (self.settings.quality_preset == "fast" or result.get("_model_planned")):
+            cache.put(key, result)
+        return result
+
+    @timed("design.plan_model")
     async def _build_quality_assets(
         self,
         title: str,
@@ -731,17 +822,20 @@ JSON 格式:
                 return fallback
 
         try:
-            style_genes = await self.llm.complete("你是模板分析专家。", style_gene_prompt(template_name, template_html), 0.25)
-            constitution = await self.llm.complete(
-                "你是视觉总监。",
-                global_constitution_prompt(title, theme, request_context, style_genes, slides),
-                0.3,
-            )
-            briefs_raw = await self.llm.complete(
-                "你是页面创意总监，只输出 JSON。",
-                page_briefs_prompt(title, theme, request_context, style_genes, constitution, slides),
-                0.35,
-            )
+            with timing_stage("design.style_genes"):
+                style_genes = await self._cached_style_genes(template_name, template_html)
+            with timing_stage("design.constitution"):
+                constitution = await self.llm.complete(
+                    "你是视觉总监。",
+                    global_constitution_prompt(title, theme, request_context, style_genes, slides),
+                    0.3,
+                )
+            with timing_stage("design.page_briefs"):
+                briefs_raw = await self.llm.complete(
+                    "你是页面创意总监，只输出 JSON。",
+                    page_briefs_prompt(title, theme, request_context, style_genes, constitution, slides),
+                    0.35,
+                )
             briefs = json.loads(self._extract_json(briefs_raw))
             return self._normalize_quality_assets({
                 "style_genes": style_genes,
@@ -750,6 +844,20 @@ JSON 格式:
             }, fallback)
         except Exception:
             return fallback
+
+    async def _cached_style_genes(self, template_name, template_html):
+        from ..direct_auth import require_active_browser_token
+        await require_active_browser_token()
+        cache = getattr(self, "generation_cache", None)
+        key = generation_key("template-style", self.settings, [template_name, template_html]) if cache else None
+        cached = cache.get(key) if cache else None
+        if cached is not None:
+            log_timing("template.style_cache_hit", 0)
+            return cached
+        result = await self.llm.complete("你是模板分析专家。", style_gene_prompt(template_name, template_html), 0.25)
+        if cache and result.strip():
+            cache.put(key, result)
+        return result
 
     def _fast_quality_assets(self, template_name: str, theme: str, slides: list[dict[str, Any]]) -> dict[str, Any]:
         return {
@@ -763,11 +871,14 @@ JSON 格式:
             return fallback
         page_briefs = data.get("page_briefs") if isinstance(data.get("page_briefs"), dict) else fallback["page_briefs"]
         return {
+            "_model_planned": bool(data.get("style_genes") and data.get("global_constitution")
+                and isinstance(data.get("page_briefs"), dict) and data.get("page_briefs")),
             "style_genes": str(data.get("style_genes") or fallback["style_genes"]),
             "global_constitution": str(data.get("global_constitution") or fallback["global_constitution"]),
             "page_briefs": {str(k): str(v) for k, v in page_briefs.items()},
         }
 
+    @timed("slide.html", fields=("slide_no",))
     async def _generate_slide_html(
         self,
         title: str,
@@ -797,8 +908,19 @@ JSON 格式:
                 total=total,
                 all_slides=all_slides,
             )
+            from ..direct_auth import require_active_browser_token
+            await require_active_browser_token()
+            cache = getattr(self, "generation_cache", None)
+            key = generation_key("page", self.settings, [prompt, self.settings.quality_preset,
+                self.settings.max_html_retries]) if cache else None
+            cached = cache.get(key) if cache else None
+            if cached is not None:
+                log_timing("slide.cache_hit", 0, slide_no=slide_no)
+                return cached
             slide_markup = await self._complete_html_with_retry(prompt, self._html_system_prompt(), slide, slide_no, total)
             if slide_markup:
+                if cache and validate_html(slide_markup, strict=True)["valid"]:
+                    cache.put(key, slide_markup)
                 return slide_markup
         return self._fallback_slide_html(title, slide, slide_no, total, theme)
 
@@ -809,11 +931,15 @@ JSON 格式:
         retry_count = 0 if current_runtime().model_profile == "fast" and self.settings.quality_preset == "fast" else max(0, self.settings.max_html_retries)
         for attempt in range(1 + retry_count):
             try:
-                raw = await self.llm.complete(system_prompt, current_prompt, 0.5 if attempt == 0 else 0.25)
+                with timing_stage("html.generate" if attempt == 0 else "html.repair", slide_no=slide_no, attempt=attempt + 1):
+                    raw = await self.llm.complete(system_prompt, current_prompt, 0.5 if attempt == 0 else 0.25)
             except Exception:
                 continue
-            slide_markup = auto_close_basic_tags(clean_html_response(raw))
-            validation = validate_html(slide_markup, strict=True)
+            with timing_stage("html.validate", slide_no=slide_no, attempt=attempt + 1):
+                slide_markup = auto_close_basic_tags(clean_html_response(raw))
+                validation = validate_html(slide_markup, strict=True)
+            logger.info("PPT页面校验 run_id=%s slide_no=%d attempt=%d valid=%s error_count=%d",
+                        current_runtime().run_id or "-", slide_no, attempt + 1, validation["valid"], len(validation.get("errors") or []))
             if validation["valid"]:
                 return slide_markup
             last_html = slide_markup
@@ -833,6 +959,8 @@ JSON 格式:
 
     def _outline_prompt(self, req: OutlineGenerateRequest, slide_count: int) -> str:
         policy = teaching_policy(req.subject)
+        page_plan = (f"总页数必须在 {req.slide_count_range.min_pages} 至 {req.slide_count_range.max_pages} 页之间（含封面、目录和总结）；由你根据课程目标、学情和知识技能覆盖自行决定具体页数，不要固定采用下限、上限或中间值"
+                     if req.slide_count_range else ("请根据教学内容自主规划1至30页，不固定为8页" if req.slide_count is None else f"约 {slide_count} 页"))
         return f"""
 生成一份可直接用于课堂教学的 PPT 大纲。只返回严格 JSON，不要 Markdown。
 
@@ -841,7 +969,7 @@ teaching_design_chain 必须包含 teaching_goals、learner_analysis、key_point
 teaching_sequence、activity_design、assessment_design、differentiated_support、engagement_strategy、
 learning_science_strategy、homework。
 
-slides 约 {slide_count} 页，必须覆盖封面、学习路径、内容讲解、活动或练习、总结与出口检测。
+slides {page_plan}，必须覆盖封面、学习路径、内容讲解、活动或练习、总结与出口检测。
 每页必须包含 slide_no、title、slide_type、content_points(list)、teaching_intent、visual_suggestion、
 engagement_hook、student_task、teacher_prompt、understanding_check、estimated_minutes、
 learning_phase、learning_theories(list)、student_action_mode、learner_question、cognitive_load、
@@ -878,7 +1006,7 @@ preferred_format(html5|gif|mp4)、integration(ppt_video|static_link)、descripti
 教学模型：{req.teaching_model}
 年级：{req.grade}
 课时分钟：{req.duration_minutes or ""}
-期望页数：{slide_count}
+页数规划要求：{page_plan}
 教学目标：{req.teaching_goals or ""}
 知识点：{", ".join(req.knowledge_points)}
 额外要求与班级学情：{req.requirements or ""}
@@ -964,9 +1092,11 @@ preferred_format(html5|gif|mp4)、integration(ppt_video|static_link)、descripti
             i += 1
         return results, i
 
+    @timed("outline.references")
     async def _with_reference_and_rag_context(self, req: OutlineGenerateRequest) -> OutlineGenerateRequest:
+        verified_citations = {}
         from ..direct_auth import direct_user_id
-        user_id = direct_user_id.get()
+        user_id = direct_user_id.get() or current_runtime().user_id
         if user_id:
             from ..outline_chat.postgres_store import postgres_memory_store
             profile = postgres_memory_store.refresh_teacher_profile(user_id)
@@ -998,6 +1128,12 @@ preferred_format(html5|gif|mp4)、integration(ppt_video|static_link)、descripti
                 req.reference_text or "",
             ]).strip()
             rag_result = await rag_search(req.resource_ids, query)
+            verified_citations = {
+                str(item.get("citation_id") or (str(item.get("resource_id")) + "#" + str(item.get("chunk_id")))): {
+                    "resource_id": item.get("resource_id"), "chunk_id": item.get("chunk_id"),
+                    "provenance": item.get("provenance"), "page_number": (item.get("metadata") or {}).get("page_number"),
+                } for item in rag_result.get("matches", [])
+            }
             if req.resource_ids:
                 context_parts.append('[Teacher-selected reference material]\n' + selected_material_context(rag_result))
             if rag_result.get("knowledge_context"):
@@ -1007,7 +1143,9 @@ preferred_format(html5|gif|mp4)、integration(ppt_video|static_link)、descripti
             return req
         data = req.model_dump()
         data["reference_text"] = "\n\n".join(part for part in context_parts if part.strip())[:16000]
-        return OutlineGenerateRequest(**data)
+        enriched = OutlineGenerateRequest(**data)
+        enriched._retrieval_citations = verified_citations
+        return enriched
 
     def _html_system_prompt(self) -> str:
         return "你是资深演示文稿视觉设计师和前端工程师。只输出完整、可独立渲染、视觉完成度高的 1280x720 HTML PPT 页面。"
@@ -1040,8 +1178,15 @@ preferred_format(html5|gif|mp4)、integration(ppt_video|static_link)、descripti
             "teaching_style": teaching_style_guidance(req.teaching_style or outline.get("teaching_style")),
             "teacher_style_summary": str(outline.get("teacher_style_summary") or "")[:1200],
             "language": req.language,
+            "course_id": outline.get("course_id"),
+            "course_version": outline.get("course_version"),
+            "resource_ids": list(getattr(req, "resource_ids", []) or []),
+            "resource_versions": (outline.get("generation_options") or {}).get("resource_versions"),
+            "source_material": str(outline.get("source_material") or '')[:16000],
+            "reference_images": outline.get('reference_images') or [],
         }
 
+    @timed("references.rag")
     async def _collect_generation_rag_context(self, req: PresentationGenerateRequest) -> str:
         """功能 2：临时上传/引用资料随 workspace_context 注入页面生成。
 
@@ -1116,6 +1261,7 @@ preferred_format(html5|gif|mp4)、integration(ppt_video|static_link)、descripti
             return "generate", "学科或页面视觉建议适合用情境图、实物图或插画辅助理解"
         return "placeholder", "用户未明确要求生成图片，先保留可编辑的智能视觉占位"
 
+    @timed("assets.plan")
     async def _resolve_asset_plan(self, req: PresentationGenerateRequest, slides: list[dict[str, Any]]) -> tuple[str, str, dict[str, Any]]:
         policy, reason = self._resolve_asset_policy(req, slides)
         fallback = {
@@ -1128,8 +1274,17 @@ preferred_format(html5|gif|mp4)、integration(ppt_video|static_link)、descripti
             for index, slide in enumerate(slides, 1)
         }
         requested = str(getattr(req, "asset_policy", "auto") or "auto").lower()
-        if requested != "auto" or not self.llm.available:
+        if requested != "auto" or reason.startswith("用户输入明确") or not self.llm.available:
             return policy, reason, fallback
+        from ..direct_auth import require_active_browser_token
+        await require_active_browser_token()
+        cache = getattr(self, "generation_cache", None)
+        key = generation_key("asset-plan", self.settings, [req.title, slides, policy, reason,
+            getattr(self.settings, "max_generated_images", 4)]) if cache else None
+        cached = cache.get(key) if cache else None
+        if cached is not None:
+            log_timing("assets.plan_cache_hit", 0)
+            return cached
         prompt = f"""为教学课件逐页选择最有助于理解的素材类型，只输出JSON：
 {{"policy":"none|placeholder|generate","reason":"...","slides":{{"1":{{"type":"layout|image|diagram|chart|formula|timeline|interactive","reason":"...","editable":true}}}}}}
 优先使用可编辑图表、SVG图示、公式和时间轴；只有情境、人物、实物、自然场景才选择image。
@@ -1138,11 +1293,18 @@ preferred_format(html5|gif|mp4)、integration(ppt_video|static_link)、descripti
         try:
             raw = await self.llm.complete("你是教学可视化规划器，只输出严格JSON。", prompt, 0.1)
             data = json.loads(self._extract_json(raw))
+            if not isinstance(data, dict):
+                raise ValueError("素材规划必须是对象")
             plans = data.get("slides") if isinstance(data.get("slides"), dict) else fallback
+            plans = {str(key): value for key, value in plans.items()
+                     if str(key) in fallback and isinstance(value, dict)}
             chosen = str(data.get("policy") or policy)
             if chosen not in {"none", "placeholder", "generate"}:
                 chosen = policy
-            return chosen, str(data.get("reason") or reason), {**fallback, **plans}
+            result = chosen, str(data.get("reason") or reason), {**fallback, **plans}
+            if cache and data.get("policy") in {"none", "placeholder", "generate"} and isinstance(data.get("slides"), dict):
+                cache.put(key, result)
+            return result
         except Exception:
             return policy, reason, fallback
 
@@ -1306,6 +1468,7 @@ preferred_format(html5|gif|mp4)、integration(ppt_video|static_link)、descripti
             enable_web=bool(options.get("enable_web")),
             enable_rag=bool(options.get("enable_rag")),
             slide_count=max(1, len(slides) or 8),
+            slide_count_range=options.get("slide_count_range"),
             interactive_policy=dict(options.get("interactive_policy") or {}),
             teaching_model=str(outline.get("teaching_model") or "boppps"),
             teaching_style=outline.get("teaching_style"),
@@ -1518,13 +1681,17 @@ preferred_format(html5|gif|mp4)、integration(ppt_video|static_link)、descripti
         total_minutes = sum(int(slide.get("estimated_minutes") or 0) for slide in slides if isinstance(slide, dict))
         expected_minutes = int(req.duration_minutes or 0)
         evidence_used = "UNTRUSTED_EVIDENCE" in str(req.reference_text or "")
-        has_citations = any(bool(slide.get("citation_ids")) for slide in slides if isinstance(slide, dict))
+        requested_citations = {str(item) for slide in slides if isinstance(slide, dict) for item in (slide.get("citation_ids") or [])}
+        allowed_citations = set(req._retrieval_citations)
+        invalid_citations = sorted(requested_citations - allowed_citations)
+        has_citations = bool(requested_citations & allowed_citations)
         checks = {
             "has_teaching_design_chain": isinstance(outline.get("teaching_design_chain"), dict),
             "has_cover": "cover" in slide_types,
             "has_agenda": expected_count < 4 or bool(slide_types & {"agenda", "toc", "directory"}),
             "has_summary": "summary" in slide_types,
-            "slide_count_close": abs(len(slides) - expected_count) <= 1,
+            "slide_count_close": (req.slide_count_range.min_pages <= len(slides) <= req.slide_count_range.max_pages)
+                if req.slide_count_range else abs(len(slides) - expected_count) <= 1,
             "all_slides_have_teaching_intent": all(bool(slide.get("teaching_intent")) for slide in slides if isinstance(slide, dict)),
             "all_slides_have_visual_suggestion": all(bool(slide.get("visual_suggestion")) for slide in slides if isinstance(slide, dict)),
             "all_slides_have_student_task": all(bool(slide.get("student_task")) for slide in slides if isinstance(slide, dict)),
@@ -1541,6 +1708,7 @@ preferred_format(html5|gif|mp4)、integration(ppt_video|static_link)、descripti
             "no_exact_duplicate_slides": duplicate_count == 0,
             "duration_is_reasonable": not expected_minutes or abs(total_minutes - expected_minutes) <= max(5, expected_minutes * 0.35),
             "rag_claims_have_citations": not evidence_used or has_citations,
+            "citations_use_retrieved_evidence": not invalid_citations,
         }
         return {
             "passed": all(checks.values()),
@@ -1550,12 +1718,20 @@ preferred_format(html5|gif|mp4)、integration(ppt_video|static_link)、descripti
             "missing_knowledge_points": missing_knowledge_points,
             "duplicate_slide_count": duplicate_count,
             "estimated_total_minutes": total_minutes,
-            "grounding_status": "grounded" if has_citations else ("insufficient_evidence" if evidence_used else "not_required"),
+            "grounding_status": "grounded" if has_citations and not invalid_citations else ("insufficient_evidence" if evidence_used or invalid_citations else "not_required"),
+            "invalid_citation_ids": invalid_citations,
+            "verified_citations": req._retrieval_citations,
             "quality_score": round(sum(1 for value in checks.values() if value) / max(1, len(checks)), 4),
         }
 
+    @timed("deck.validate")
     def _deck_quality_report(self, slides: list[dict[str, Any]]) -> dict[str, Any]:
         validations = [validate_html(str(slide.get("html") or ""), strict=True) for slide in slides]
+        for slide, validation in zip(slides, validations):
+            slide.setdefault("metadata", {})["html_validation"] = {
+                "valid": bool(validation.get("valid")),
+                "sha256": hashlib.sha256(str(slide.get("html") or "").encode("utf-8")).hexdigest(),
+            }
         invalid = [index + 1 for index, result in enumerate(validations) if not result.get("valid")]
         warnings = sum(len(result.get("warnings") or []) for result in validations)
         editable_image_count = sum(str(slide.get("html") or "").count('data-ppt-element="image"') for slide in slides)
@@ -1847,6 +2023,7 @@ preferred_format(html5|gif|mp4)、integration(ppt_video|static_link)、descripti
             })
         return self._normalize_interactive_assets(assets)
 
+    @timed("interactive.generate")
     async def _materialize_interactive_assets(
         self,
         req: PresentationGenerateRequest,
@@ -1974,6 +2151,7 @@ aside{background:__PANEL__;border:1px solid __LINE__;padding:28px;font-size:22px
         marker = f'<div style="position:absolute;right:34px;bottom:34px;padding:10px 14px;background:rgba(0,0,0,.45);color:#fff;font-size:14px;border-radius:6px;z-index:999;">已修改：{html.escape(instruction)}</div>'
         return current_html.replace("</section></body>", marker + "</section></body>") if "</body>" in current_html else current_html
 
+    @timed("deck.combine")
     def _combine_deck(self, title: str, slides: list[dict[str, Any]]) -> str:
         frames = []
         for index, slide in enumerate(slides):

@@ -69,7 +69,7 @@ mybatis:
 
 a12:
   storage:
-    provider: ${A12_STORAGE_PROVIDER:oss}
+    provider: ${A12_STORAGE_PROVIDER:local}
     local:
       directory: ${A12_STORAGE_LOCAL_DIR:./data/uploads}
       base-url: ${A12_STORAGE_LOCAL_BASE_URL:http://localhost:8088}

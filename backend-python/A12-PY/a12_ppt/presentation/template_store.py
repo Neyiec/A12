@@ -77,8 +77,8 @@ def load_templates() -> dict[str, dict[str, Any]]:
     return templates
 
 
-def get_template(theme: str | None) -> dict[str, Any] | None:
-    templates = load_templates()
+def get_template(theme: str | None, templates: dict[str, Any] | None = None) -> dict[str, Any] | None:
+    templates = load_templates() if templates is None else templates
     if not templates:
         return None
 

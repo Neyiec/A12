@@ -8,6 +8,7 @@ import jakarta.servlet.http.HttpServletRequest;
 import jakarta.servlet.http.HttpServletResponse;
 import org.springframework.core.Ordered;
 import org.springframework.core.annotation.Order;
+import org.springframework.dao.DataAccessException;
 import org.springframework.data.redis.core.StringRedisTemplate;
 import org.springframework.stereotype.Component;
 import org.springframework.util.AntPathMatcher;
@@ -48,6 +49,12 @@ public class JwtAuthenticationFilter implements Filter {
 
         HttpServletRequest req = (HttpServletRequest) request;
         HttpServletResponse res = (HttpServletResponse) response;
+        // 浏览器在 WebSocket 建立后首帧认证，JWT 不进入 URL。
+        if ("/ws/export-events".equals(req.getRequestURI()) && "GET".equals(req.getMethod())
+                && "websocket".equalsIgnoreCase(req.getHeader("Upgrade"))) {
+            chain.doFilter(request, response);
+            return;
+        }
 
         // 此唯一文件端点由 Controller 校验绑定方法、对象路径及有效期的签名。
         if ("/api/v1/storage/local-object".equals(req.getRequestURI())) {
@@ -97,7 +104,14 @@ public class JwtAuthenticationFilter implements Filter {
 
         // 按用户 ID 查询存储的令牌，并比对是否一致
         String redisKey = "token:user:" + userId;
-        String storedToken = redisTemplate.opsForValue().get(redisKey);
+        String storedToken;
+        try {
+            storedToken = redisTemplate.opsForValue().get(redisKey);
+        } catch (DataAccessException e) {
+            log.warn("jwt session store unavailable, type={}", e.getClass().getSimpleName());
+            writeError(res, 503, "登录状态暂时无法校验，请稍后重试");
+            return;
+        }
         if (storedToken == null || !storedToken.equals(token)) {
             log.warn("jwt auth token expired or replaced userId={}, path={}, method={}", userId, req.getRequestURI(), req.getMethod());
             writeUnauthorized(res, "令牌已过期或已被替换");
@@ -107,8 +121,11 @@ public class JwtAuthenticationFilter implements Filter {
         CurrentHolder.setCurrentId(userId);
         log.debug("jwt auth success userId={}, path={}, method={}", userId, req.getRequestURI(), req.getMethod());
 
-        chain.doFilter(request, response);
-        CurrentHolder.remove();
+        try {
+            chain.doFilter(request, response);
+        } finally {
+            CurrentHolder.remove();
+        }
     }
 
     private boolean isAuthPath(String uri) {
@@ -121,9 +138,13 @@ public class JwtAuthenticationFilter implements Filter {
     }
 
     private void writeUnauthorized(HttpServletResponse res, String msg) throws IOException {
-        res.setStatus(401);
+        writeError(res, 401, msg);
+    }
+
+    private void writeError(HttpServletResponse res, int status, String msg) throws IOException {
+        res.setStatus(status);
         res.setContentType("application/json;charset=UTF-8");
-        res.getWriter().write("{\"code\":401,\"message\":\"" + msg + "\",\"data\":null}");
+        res.getWriter().write("{\"code\":" + status + ",\"message\":\"" + msg + "\",\"data\":null}");
     }
 }
 

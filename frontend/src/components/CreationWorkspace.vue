@@ -23,6 +23,8 @@ import { INTERACTIVE_MODULE_TYPES, interactiveModuleTypeInfo, normalizeInteracti
 import { useUserStore } from '../storage/user.js'
 import { readOutlineDraft, readPresentationDraft, savePresentationDraft } from '../utils/presentationDraft.js'
 import { readOpenAiTextStream } from '../utils/openAiSse.js'
+import { createGenerationTiming } from '../utils/generationTiming.js'
+import { isServerValidatedHtml, mapLimited } from '../utils/presentationStreamResult.js'
 import { createPresentationFixture } from '../mock/data/presentationFixture.js'
 
 const router = useRouter()
@@ -96,6 +98,7 @@ const runFailureReason = ref('')
 // 因此工作台只记录本次浏览器实际发起并完成的调用，不再创建会永久卡住的服务端任务。
 const activeRunId = ref('')
 const clientRunStartedAt = ref(0)
+let generationTiming = null
 const revisionSubmitting = ref(false)
 const discussionSubmitting = ref(false)
 const workspaceVoiceSubmitting = ref(false)
@@ -1024,6 +1027,12 @@ const applyGeneratedPresentation = (rawResponse, { persist = true, notify = true
   const data = getPresentationPayload(rawResponse)
   const generatedSlides = normalizePresentationSlides(data)
   if (!generatedSlides.length) throw new Error('HTML PPT 生成服务未返回页面')
+  // 页面修改接口可能只返回 HTML；沿用原始生成版本，保证后续编辑与导出仍可归因。
+  const provenance = {}
+  for (const key of ['prompt_run_id', 'prompt_version', 'release_revision', 'cohort']) {
+    const value = data.metadata?.[key] ?? presentationMetadata.value?.[key]
+    if (value != null) provenance[key] = value
+  }
 
   clearGenerationFailureMessages()
   // API-139A 只返回 slide_no/title/html 时，必须把现有项目页的身份合并回来。
@@ -1053,6 +1062,7 @@ const applyGeneratedPresentation = (rawResponse, { persist = true, notify = true
     const pageId = explicitPageId || previous?.pageId || previous?.page_id || null
     return {
       ...generatedSlide,
+      metadata: { ...provenance, ...generatedSlide.metadata },
       ...(pageId ? { pageId, page_id: pageId, componentId: pageId } : {}),
       ...((previous?.pageOrder ?? previous?.page_order) != null
         ? { pageOrder: previous.pageOrder ?? previous.page_order, page_order: previous.pageOrder ?? previous.page_order }
@@ -1071,12 +1081,11 @@ const applyGeneratedPresentation = (rawResponse, { persist = true, notify = true
   htmlSelectedElementId.value = null
   htmlSelectedElement.value = null
   presentationId.value = String(data.presentation_id || '')
-  presentationMetadata.value = data.metadata && typeof data.metadata === 'object'
-    ? {
-      ...data.metadata,
-      ...(data.workspace_context || data.workspaceContext ? { workspace_context: data.workspace_context || data.workspaceContext } : {}),
-    }
-    : ((data.workspace_context || data.workspaceContext) ? { workspace_context: data.workspace_context || data.workspaceContext } : null)
+  presentationMetadata.value = {
+    ...provenance,
+    ...(data.metadata && typeof data.metadata === 'object' ? data.metadata : {}),
+    ...(data.workspace_context || data.workspaceContext ? { workspace_context: data.workspace_context || data.workspaceContext } : {}),
+  }
   const qualityPayload = data.quality_report || data.qualityReport || data.reflection || presentationMetadata.value?.quality_report || presentationMetadata.value?.reflection
   setQualityReport(qualityPayload, 'HTML PPT 生成')
   // 首次生成的完整生命周期由 startRun 负责收尾；这里不能提前宣布完成，
@@ -5049,6 +5058,7 @@ const applyGeneratedPage = (rawResponse) => {
     const nextSlide = {
       ...current.value,
       ...content,
+      metadata: { ...(current.value.metadata || {}), ...(content.metadata || {}) },
       ...(candidate.title ? { title: candidate.title } : {}),
       ...(candidate.description ? { description: candidate.description } : {}),
       html: stripSlideDecorativeCircle(html.trim()),
@@ -5069,6 +5079,7 @@ const applyGeneratedPage = (rawResponse) => {
   const nextContent = {
     ...current.value,
     ...content,
+    metadata: { ...(current.value.metadata || {}), ...(content.metadata || {}) },
     ...(candidate.title ? { title: candidate.title } : {}),
     ...(candidate.description ? { description: candidate.description } : {}),
     elements: elementPayload,
@@ -5557,7 +5568,7 @@ const projectPagePayload = (slide, index, order = index + 1) => ({
   } : {}),
 })
 const batchCreateProjectPages = async (targetProjectId, slideList) => {
-  for (const slide of slideList) await validateSlideComponents(slide)
+  await mapLimited(slideList, 3, slide => validateSlideComponents(slide))
   const result = unwrapResponse(await batchSaveProjectPages(targetProjectId, {
     client_version: workspaceClientVersion,
     autosave: false,
@@ -6072,6 +6083,7 @@ const upsertClientToolCall = ({ id, name, status = 'running', detail = '' } = {}
   if (runToolCalls.value.length > 20) runToolCalls.value.splice(0, runToolCalls.value.length - 20)
 }
 const setClientRunStage = ({ id, label, status = 'running', progress, detail = '' } = {}) => {
+  generationTiming?.stage(id, status)
   if (label) runStage.value = String(label)
   if (Number.isFinite(Number(progress))) runProgress.value = Math.max(0, Math.min(100, Math.round(Number(progress))))
   upsertClientRunStep({ id, label: label || runStage.value, status, detail })
@@ -6114,6 +6126,7 @@ const startTrackedRun = () => {
   })
 }
 const finishTrackedRun = () => {
+  generationTiming?.finish()
   const elapsed = formatRunDuration()
   setClientRunStage({
     id: 'project-save',
@@ -6127,6 +6140,7 @@ const finishTrackedRun = () => {
   clearActiveRun()
 }
 const failTrackedRun = (error) => {
+  generationTiming?.finish('failed')
   const message = generationErrorMessage(error)
   runStatus.value = 'failed'
   runProgress.value = 0
@@ -6170,10 +6184,11 @@ const restoreTrackedRun = () => {
 const validateGeneratedSlides = async (candidateSlides, label = 'AI 返回的课件') => {
   const htmlSlides = candidateSlides.filter((slide) => String(slide?.html || '').trim())
   if (!htmlSlides.length) throw new Error(`${label}未包含可校验的 HTML 页面`)
-  const validations = await Promise.all(htmlSlides.map(async (slide, index) => {
+  const validations = await mapLimited(htmlSlides, 3, async (slide, index) => {
+    if (await isServerValidatedHtml(slide)) return { index, result: { valid: true } }
     const result = unwrapResponse(await validatePresentationHtml({ html: slide.html, strict: false })) || {}
     return { index, result }
-  }))
+  })
   const failed = validations.find(({ result }) => result.valid === false)
   if (failed) {
     const details = Array.isArray(failed.result.errors) ? failed.result.errors.filter(Boolean).join('；') : ''
@@ -6208,12 +6223,14 @@ const startRun = async () => {
   // 无论是恢复浏览器草稿还是发起新的生成，都必须先以服务端确认状态为准。
   // 否则旧草稿可能在“大纲未确认/确认已失效”的情况下被直接写回项目。
   let serverPlan = null
+  generationTiming = createGenerationTiming()
   try {
-    serverPlan = unwrapResponse(await getAiPlan(sessionId.value)) || {}
+    serverPlan = unwrapResponse(await generationTiming.measure('plan.fetch', () => getAiPlan(sessionId.value))) || {}
     if (String(serverPlan?.plan_confirm_status || '').toLowerCase() !== 'confirmed') {
       throw new Error('教学设计大纲尚未在服务端确认，请返回对话确认后再生成课件。')
     }
   } catch (error) {
+    generationTiming.finish('failed')
     runStatus.value = 'failed'
     runProgress.value = 0
     runStage.value = '教学设计大纲未确认'
@@ -6232,14 +6249,16 @@ const startRun = async () => {
       messages.push({ role: 'assistant', text: `已载入 ${cachedDraft.slides.length} 页 HTML PPT 草稿。`, includeInContext: false, kind: 'generation-success' })
       // 恢复本地草稿后立即创建/回写项目，避免只恢复了界面状态，刷新或换设备又丢失内容。
       runStage.value = '正在将本地草稿回写项目'
-      await persistGeneratedPresentationProject()
+      await generationTiming.measure('draft.restore_and_save', () => persistGeneratedPresentationProject())
       autosaveState.value = '已保存 · 草稿已回写'
       runStatus.value = 'completed'
       runProgress.value = 100
       runStage.value = 'HTML PPT 草稿已回写项目'
+      generationTiming.finish()
       void scrollAssistantConversation()
       return
     } catch (error) {
+      generationTiming.finish('failed')
       WorkspaceMessage.warning(error?.message || '本地草稿已载入，但服务器回写失败；请稍后重试保存。')
       void scrollAssistantConversation()
       return
@@ -6292,6 +6311,7 @@ const startRun = async () => {
     const response = await generatePresentationStream(payload, {
       onSlide: ({ slide, completed, total }) => {
         if (!slide) return
+        if (!streamedSlides.length) generationTiming.mark('presentation.first_slide')
         streamedSlides.push(slide)
         const ordered = [...streamedSlides].sort((a, b) => Number(a.slide_no || 0) - Number(b.slide_no || 0))
         // 直接传 presentation 字典（与 final 路径一致）；getPresentationPayload 不会解包 { data } 包装，
@@ -6306,6 +6326,7 @@ const startRun = async () => {
         })
       },
     })
+    generationTiming.mark('python.completed', { backend_run_id: getPresentationPayload(response)?.metadata?.run_id })
     upsertClientToolCall({
       id: 'presentation-generate',
       name: 'HTML PPT 生成服务',
@@ -6326,6 +6347,8 @@ const startRun = async () => {
     setClientRunStage({ id: 'project-save', label: '正在保存课件项目', status: 'running', progress: 95 })
     upsertClientToolCall({ id: 'project-save', name: '项目与页面保存', status: 'running' })
     await persistGeneratedPresentationProject()
+    manualStyleBaseline = deckStyleMetrics(slides)
+    manualContentBaseline = deckContentDigest()
     upsertClientToolCall({ id: 'project-save', name: '项目与页面保存', status: 'completed', detail: '课件已写入项目' })
     finishTrackedRun()
   } catch (error) {
@@ -6590,23 +6613,49 @@ const deckStyleMetrics = (pages) => {
   }
 }
 let manualStyleBaseline = null
+let manualContentBaseline = null
+function feedbackPromptRunId() {
+  return presentationMetadata.value?.prompt_run_id || slides.find(page => page.metadata?.prompt_run_id)?.metadata.prompt_run_id
+}
+async function deckContentDigest() {
+  const text = JSON.stringify(slides.map(page => ({
+    title: page.title, html: page.html, notes: page.notes, elements: page.elements,
+  })))
+  if (!crypto.subtle) return text
+  const digest = await crypto.subtle.digest('SHA-256', new TextEncoder().encode(text))
+  return Array.from(new Uint8Array(digest), value => value.toString(16).padStart(2, '0')).join('')
+}
 watch(hydratingProject, (loading, wasLoading) => {
-  if (!loading && wasLoading) manualStyleBaseline = deckStyleMetrics(slides)
+  if (!loading && wasLoading) {
+    manualStyleBaseline = deckStyleMetrics(slides)
+    manualContentBaseline = deckContentDigest()
+  }
 })
 const recordManualStyleSave = async () => {
   const after = deckStyleMetrics(slides)
   const before = manualStyleBaseline
-  if (!before) { manualStyleBaseline = after; return }
-  if (JSON.stringify(before) === JSON.stringify(after)) return
+  const afterDigest = await deckContentDigest()
+  const beforeDigest = await manualContentBaseline
+  if (!before || beforeDigest == null) {
+    manualStyleBaseline = after
+    manualContentBaseline = Promise.resolve(afterDigest)
+    return
+  }
+  if (beforeDigest === afterDigest) return
   // 只记录成功的显式保存，不把每次自动保存当作独立偏好证据。
   try {
     await recordAiFeedback({ project_id: String(projectId.value), action: 'manual_edit',
+      prompt_run_id: feedbackPromptRunId() || undefined,
+      event_id: await feedbackEventId('manual_edit', beforeDigest, afterDigest),
       target_type: 'presentation', change_summary: '教师手动编辑并保存课件',
       metadata: { style_before: before, style_after: after } })
     manualStyleBaseline = after
+    manualContentBaseline = Promise.resolve(afterDigest)
   } catch { /* 画像服务异常不影响课件保存；保留基线供下次重试。 */ }
 }
 const sendRevisionFeedback = (action, preview, extra = {}) => recordAiFeedback({
+  prompt_run_id: feedbackPromptRunId() || undefined,
+  event_id: revisionFeedbackEventId(preview, action),
   session_id: sessionId.value ? String(sessionId.value) : null,
   project_id: projectId.value ? String(projectId.value) : null,
   action,
@@ -6618,6 +6667,20 @@ const sendRevisionFeedback = (action, preview, extra = {}) => recordAiFeedback({
   metadata: { ...extra, theme: current.value?.theme || '',
     style_before: deckStyleMetrics(preview?.before), style_after: deckStyleMetrics(preview?.after) },
 }).catch(() => null)
+
+function revisionFeedbackEventId(preview, action) {
+  if (!preview) return undefined
+  preview.feedbackEvents ||= {}
+  preview.feedbackEvents[action] ||= crypto.randomUUID()
+  return preview.feedbackEvents[action]
+}
+
+async function feedbackEventId(action, before, after) {
+  if (!crypto.subtle) return crypto.randomUUID()
+  const bytes = new TextEncoder().encode(JSON.stringify({ action, before, after, project: projectId.value }))
+  const digest = await crypto.subtle.digest('SHA-256', bytes)
+  return Array.from(new Uint8Array(digest), (value) => value.toString(16).padStart(2, '0')).join('')
+}
 
 const rejectDeckRevision = () => {
   const preview = pendingDeckRevision.value
@@ -6658,6 +6721,8 @@ const acceptDeckRevision = async () => {
     })
     WorkspaceMessage.success('整套课件修改已确认并保存')
     sendRevisionFeedback('accept', preview)
+    manualStyleBaseline = deckStyleMetrics(slides)
+    manualContentBaseline = deckContentDigest()
     pendingDeckRevision.value = null
   } catch (error) {
     revisionPreviewVisible.value = true
@@ -6690,6 +6755,8 @@ const undoLastAiRevision = async () => {
     messages.push({ role: 'assistant', text: '已撤销最近一次 AI 整套修改，恢复到修改前版本。', includeInContext: false, kind: 'revision-undo' })
     WorkspaceMessage.success('已撤销本次 AI 修改')
     sendRevisionFeedback('undo', { before: snapshot, after: slides, summary: '撤销最近一次AI整套修改' })
+    manualStyleBaseline = deckStyleMetrics(slides)
+    manualContentBaseline = deckContentDigest()
   } catch (error) {
     WorkspaceMessage.error(error?.message || '撤销失败，请稍后重试')
   }
@@ -6751,6 +6818,10 @@ const submitRevision = async ({ operation = 'modify_page' } = {}) => {
   // 修改指令本身不是下一轮讨论的上下文；成功后会连同此前确认方案一起关闭。
   messages.push({ role: 'user', text: instruction, includeInContext: false, kind: 'revision-request' }); prompt.value = ''
   revisionSubmitting.value = true
+  const revisionMetricsBefore = deckStyleMetrics(slides)
+  const revisionDigestBefore = await deckContentDigest()
+  const revisionRunId = feedbackPromptRunId()
+  let revisionFailed = false
   revisionStage.value = '正在理解修改指令…'
   try {
     // Deck revisions are snapshotted separately when the preview is accepted.
@@ -6904,9 +6975,25 @@ const submitRevision = async ({ operation = 'modify_page' } = {}) => {
       kind: 'revision-result',
     }); WorkspaceMessage.success(applied ? '页面内容已更新' : '修改要求已提交')
   } catch (error) {
+    revisionFailed = true
     messages.push({ role: 'assistant', text: '修改请求暂未提交成功，请稍后重试。', includeInContext: false, kind: 'revision-error' })
     WorkspaceMessage.error(error?.message || '修改请求失败')
   } finally {
+    if (!revisionFailed) {
+      const digest = await deckContentDigest()
+      if (digest !== revisionDigestBefore) {
+        void recordAiFeedback({
+          project_id: projectId.value ? String(projectId.value) : null,
+          prompt_run_id: revisionRunId || undefined,
+          event_id: await feedbackEventId('ai_revision', revisionDigestBefore, digest),
+          target_type: 'presentation', action: 'accept', instruction,
+          change_summary: '教师应用 AI 页面修改',
+          metadata: { style_before: revisionMetricsBefore, style_after: deckStyleMetrics(slides) },
+        }).catch(() => {})
+        manualStyleBaseline = deckStyleMetrics(slides)
+        manualContentBaseline = Promise.resolve(digest)
+      }
+    }
     revisionSubmitting.value = false
     revisionStage.value = ''
   }

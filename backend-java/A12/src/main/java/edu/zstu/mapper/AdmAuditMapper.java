@@ -6,6 +6,8 @@ import java.util.List;
 
 @Mapper
 public interface AdmAuditMapper {
+    java.util.Map<String, Object> moderationMetrics();
+    Adm_Audit findLatestSubmissionAudit(@Param("targetId") Integer targetId);
     Adm_Audit findById(@Param("id") Integer id);
     Adm_Audit findByIdForUpdate(@Param("id") Integer id);
     List<Adm_Audit> findByType(@Param("auditType") String auditType);

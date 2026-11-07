@@ -5,6 +5,8 @@ import os
 import tempfile
 import asyncio
 import hashlib
+import uuid
+import psycopg
 import zipfile
 from pathlib import Path
 from urllib.parse import quote
@@ -13,9 +15,15 @@ from fastapi.responses import FileResponse, Response, StreamingResponse
 from fastapi.middleware.cors import CORSMiddleware
 
 from a12_ppt.config import get_settings
+from a12_ppt.job_limits import limit_job
+from a12_ppt import agent_evolution
+from a12_ppt.evolution_router import router as evolution_router
+from a12_ppt.timing import timing_stage
 from a12_ppt.direct_auth import (authenticate_browser, direct_bearer, direct_user_id, direct_user_role,
                                  internal_request_allowed, reject_identity_spoofing,
                                  signed_personal_resource_url, signed_public_resource_url,
+                                 hydrate_public_registration,
+                                 acknowledge_public_index,
                                  verify_active_token, require_active_browser_token)
 from a12_ppt.workspace import WorkspaceChatRequest, stream_workspace_chat
 from a12_ppt.chat_router import ChatRouteRequest, chat_route_workflow
@@ -69,6 +77,9 @@ from a12_ppt.models import (
 )
 from a12_ppt.course_graph import course_graph_store
 from a12_ppt.resources import delete_temp_upload_resources, resource_index_store, save_upload
+from a12_ppt.resources.governance import router as resource_governance_router, start_patrol_worker, stop_patrol_worker
+from a12_ppt.batch_router import router as batch_router
+from a12_ppt.batch_worker import start_batch_workers, stop_batch_workers
 from a12_ppt.resources.upload_store import expired_temp_upload_ids
 from a12_ppt.resources.index_worker import start_resource_index_worker
 from a12_ppt.community_review_worker import start_community_review_worker
@@ -86,7 +97,11 @@ settings = get_settings()
 # 统一日志约定：[%(levelname)s] %(filename)s: %(message)s
 # 服务内模块（index_store 等）的 logger 依赖 root 处理器输出，uvicorn 不配置 root，必须在此 basicConfig
 logging.basicConfig(level=logging.INFO, format="[%(levelname)s] %(filename)s: %(message)s")
+# Signed download URLs contain credentials in their query string. Our summaries
+# log paths and stages; suppress httpx's raw URL output.
+logging.getLogger('httpx').setLevel(logging.WARNING)
 logger = logging.getLogger("a12_ppt.main")
+from a12_ppt.request_logging import log_request
 
 app = FastAPI(title=settings.app_name, version=settings.app_version)
 generator = PPTGenerator()
@@ -98,6 +113,9 @@ from a12_ppt.video_router import router as video_router
 from a12_ppt.learning_video import start_video_worker, stop_video_worker
 app.include_router(create_course_router(generator))
 app.include_router(video_router)
+app.include_router(evolution_router)
+app.include_router(resource_governance_router)
+app.include_router(batch_router)
 
 
 @app.middleware("http")
@@ -146,6 +164,7 @@ app.add_middleware(
     allow_methods=["GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS"],
     allow_headers=["Authorization", "Content-Type"],
 )
+app.middleware('http')(log_request)
 
 
 @app.on_event("startup")
@@ -155,10 +174,14 @@ async def initialize_ai_database() -> None:
     start_resource_index_worker()
     start_community_review_worker()
     start_video_worker()
+    start_patrol_worker()
+    start_batch_workers()
 
 
 @app.on_event("shutdown")
 async def shutdown_learning_video_worker() -> None:
+    await stop_batch_workers()
+    await stop_patrol_worker()
     await stop_video_worker()
 
 
@@ -216,11 +239,17 @@ async def transcribe_audio_input(
     language: str | None = Form(default=None),
 ) -> Result:
     suffix = Path(file.filename or "audio.wav").suffix or ".wav"
+    content=await file.read(10*1024*1024+1)
+    if not content:raise HTTPException(400,'录音为空，请重新录制')
+    if len(content)>10*1024*1024:raise HTTPException(413,'语音文件过大，请分段录音')
     with tempfile.NamedTemporaryFile(delete=False, suffix=suffix) as temp:
         temp_path = Path(temp.name)
-        temp.write(await file.read())
+        temp.write(content)
     try:
         result = await transcribe_audio(temp_path, language)
+        if result.get('status')!='completed':
+            raise HTTPException(503 if result.get('status')=='unavailable' else 502,
+                                result.get('error_message') or '语音识别失败，请重新录制')
         result.update({
             "filename": file.filename,
             "content_type": file.content_type or "",
@@ -247,7 +276,7 @@ async def import_community_courseware(file: UploadFile = File(...)) -> Result:
 
 
 @app.post("/api/v1/python/resources/upload")
-async def upload_resource(file: UploadFile = File(...)) -> Result:
+async def upload_resource(file: UploadFile = File(...), word_conversion: bool = False) -> Result:
     cleanup_expired_temp_uploads()
     # 简单限额：临时上传落盘前拦截超大文件（50MB），防止匿名/误操作写爆磁盘
     file.file.seek(0, 2)
@@ -255,6 +284,26 @@ async def upload_resource(file: UploadFile = File(...)) -> Result:
     file.file.seek(0)
     if upload_size > 50 * 1024 * 1024:
         raise HTTPException(status_code=413, detail="临时资料不能超过 50MB，请转存到个人素材库后引用")
+    if word_conversion:
+        if not (file.filename or "").lower().endswith(".docx"):
+            raise HTTPException(status_code=400, detail="请选择 .docx 教案")
+        digest = await asyncio.to_thread(hash_upload, file.file)
+        async with limit_job("word_parse", {"local_docx": digest}):
+            return await store_temp_resource(file)
+    return await store_temp_resource(file)
+
+
+def hash_upload(file) -> str:
+    digest = hashlib.sha256()
+    try:
+        while chunk := file.read(1024 * 1024):
+            digest.update(chunk)
+    finally:
+        file.seek(0)
+    return digest.hexdigest()
+
+
+async def store_temp_resource(file: UploadFile) -> Result:
     record = await save_upload(file)
     # 功能 2（临时上传）：解析落盘后立即向量化入 temp 分区索引（temp:{res_id}，与 personal/public 隔离）。
     # 向量化失败不阻断上传——降级为 context_only，RAG 侧仍有 content.txt 全文兜底。
@@ -291,7 +340,7 @@ async def upload_resource(file: UploadFile = File(...)) -> Result:
 
 
 @app.post("/api/v1/python/resources/index/sync")
-async def sync_resource_index(request: ResourceIndexSyncRequest) -> Result:
+async def sync_resource_index(request: ResourceIndexSyncRequest, word_conversion: bool = False) -> Result:
     if request.source_type == "community":
         raise HTTPException(status_code=403, detail="社区索引只能由审核业务事件维护")
     if direct_user_id.get():
@@ -299,13 +348,26 @@ async def sync_resource_index(request: ResourceIndexSyncRequest) -> Result:
             if direct_user_role.get() != "admin":
                 raise HTTPException(status_code=403, detail="仅管理员可维护公共资源索引")
             request.file_url = await signed_public_resource_url(request.resource_id)
+            await hydrate_public_registration(request)
         else:
-            request.file_url = await signed_personal_resource_url(request.resource_id)
+            if word_conversion:
+                request.file_url = await signed_personal_resource_url(request.resource_id, require_ai_permission=True)
+            else:
+                request.file_url = await signed_personal_resource_url(request.resource_id)
             request.owner_user_id = direct_user_id.get()
             request.uploaded_by = direct_user_id.get()
             request.metadata["owner_user_id"] = direct_user_id.get()
         request.metadata["file_url"] = request.file_url
-    return Result(data=await resource_index_store.sync_resource(request))
+    if word_conversion:
+        async with limit_job("word_parse", {"personal": request.resource_id}):
+            result = await resource_index_store.sync_resource(request)
+    else:
+        result = await resource_index_store.sync_resource(request)
+    if request.source_type == "public" and direct_user_id.get() and result.get("status") != "processing":
+        result["business_status_saved"] = await acknowledge_public_index(request.resource_id, result, request.metadata)
+        if not result["business_status_saved"]:
+            logger.warning("公共索引已返回，但业务状态回写未完成 resource_id=%s", request.resource_id)
+    return Result(data=result)
 
 
 @app.post("/api/v1/python/resources/index/bootstrap")
@@ -318,6 +380,7 @@ async def bootstrap_resource_index(request: ResourceIndexBootstrapRequest) -> Re
                 if direct_user_role.get() != "admin":
                     raise HTTPException(status_code=403, detail="仅管理员可维护公共资源索引")
                 resource.file_url = await signed_public_resource_url(resource.resource_id)
+                await hydrate_public_registration(resource)
             else:
                 resource.file_url = await signed_personal_resource_url(resource.resource_id)
                 resource.owner_user_id = direct_user_id.get()
@@ -336,6 +399,7 @@ async def update_resource_index_metadata(request: ResourceIndexMetadataRequest) 
             if direct_user_role.get() != "admin":
                 raise HTTPException(status_code=403, detail="仅管理员可维护公共资源索引")
             await signed_public_resource_url(request.resource_id)
+            await hydrate_public_registration(request)
         else:
             if not resource_index_store.get_resource(request.source_type, request.resource_id, 0):
                 raise HTTPException(status_code=403, detail="无权修改该资源索引")
@@ -510,11 +574,15 @@ async def recognize_intent(request: IntentRecognizeRequest) -> Result:
 @app.post("/api/v1/python/outlines/chat/stream")
 async def stream_outline_chat(request: OutlineChatStreamRequest):
     async def event_source():
-        with use_runtime_options(request.user_id, "outline_chat", request.model_profile, request.reasoning_effort):
-            async for item in outline_chat_workflow.stream(request):
-                event = item.get("event", "message")
-                data = json.dumps(item.get("data", {}), ensure_ascii=False)
-                yield f"event: {event}\ndata: {data}\n\n"
+        try:
+            async with limit_job("outline", request.model_dump(mode="json"), user_id=request.user_id):
+                with use_runtime_options(request.user_id, "outline_chat", request.model_profile, request.reasoning_effort):
+                    async for item in outline_chat_workflow.stream(request):
+                        event = item.get("event", "message")
+                        data = json.dumps(item.get("data", {}), ensure_ascii=False)
+                        yield f"event: {event}\ndata: {data}\n\n"
+        except HTTPException as exc:
+            yield job_stream_error(exc)
 
     return StreamingResponse(event_source(), media_type="text/event-stream")
 
@@ -746,7 +814,26 @@ async def get_course_graph(course_id: str, user_id: str | None = Query(default=N
 
 @app.post("/api/v1/python/teacher-style/feedback")
 async def record_teacher_feedback(request: TeacherFeedbackRequest) -> Result:
-    return Result(data=postgres_memory_store.record_feedback(request.model_dump()))
+    user_id = direct_user_id.get() or request.user_id
+    if not user_id:
+        raise HTTPException(status_code=401, detail="请先登录")
+    result = await asyncio.to_thread(postgres_memory_store.record_feedback,
+                                     request.model_dump() | {"user_id": user_id})
+    if not result["stored"]:
+        raise HTTPException(status_code=503, detail="教师反馈暂时无法保存")
+    return Result(data=result)
+
+
+@app.get("/api/v1/python/teacher-style/strategy-effects")
+async def teacher_strategy_effects() -> Result:
+    user_id = direct_user_id.get()
+    if not user_id:
+        raise HTTPException(status_code=401, detail="请先登录")
+    try:
+        rows = await asyncio.to_thread(course_graph_store.strategy_effects, user_id)
+    except Exception as exc:
+        raise HTTPException(status_code=503, detail="策略效果暂时无法读取") from exc
+    return Result(data={"strategies": rows})
 
 
 @app.get("/api/v1/python/ai/metrics")
@@ -771,8 +858,9 @@ async def update_outline(request: OutlineUpdateRequest) -> Result:
 
 @app.post("/api/v1/python/presentations/generate")
 async def generate_presentation(request: PresentationGenerateRequest) -> Result:
-    with use_runtime_options(direct_user_id.get(), "presentation_generate", request.model_profile, request.reasoning_effort):
-        return Result(data=await generator.generate_presentation(request))
+    async with limit_job("presentation", request.model_dump(mode="json", exclude={"stream_compact"})), agent_evolution.prompt_session(direct_user_id.get(), request.theme):
+        with use_runtime_options(direct_user_id.get(), "presentation_generate", request.model_profile, request.reasoning_effort):
+            return Result(data=await generator.generate_presentation(request))
 
 
 @app.post("/api/v1/python/presentations/images/generate")
@@ -796,17 +884,34 @@ async def generate_slide_image(request: SlideImageGenerateRequest) -> Result:
 async def stream_presentation(request: PresentationGenerateRequest):
     async def event_source():
         try:
-            with use_runtime_options(direct_user_id.get(), "presentation_stream", request.model_profile, request.reasoning_effort):
-                async for item in generator.stream_presentation(request):
-                    event = "presentation_slide" if item.get("type") == "slide" else "final"
-                    payload = item.get("response") if event == "final" else item
-                    yield f"event: {event}\ndata: {json.dumps(payload or {}, ensure_ascii=False)}\n\n"
+            async with limit_job("presentation", request.model_dump(mode="json", exclude={"stream_compact"})) as job, agent_evolution.prompt_session(direct_user_id.get(), request.theme):
+                with use_runtime_options(direct_user_id.get(), "presentation_stream", request.model_profile, request.reasoning_effort):
+                    async for item in generator.stream_presentation(request):
+                        event = "presentation_slide" if item.get("type") == "slide" else "final"
+                        payload = item.get("response") if event == "final" else item
+                        if event == "presentation_slide":
+                            job.completed_pages += 1
+                            await job.update()
+                        if event == "final" and request.stream_compact:
+                            payload = {**(payload or {}), "stream_compact": True,
+                                "slides": [{key: value for key, value in slide.items() if key != "html"}
+                                           for slide in (payload or {}).get("slides", [])]}
+                        with timing_stage("api.sse.serialize", slide_no=(item.get("slide") or {}).get("slide_no")):
+                            serialized = json.dumps(payload or {}, ensure_ascii=False)
+                        yield f"event: {event}\ndata: {serialized}\n\n"
             yield "event: done\ndata: {\"status\":\"completed\"}\n\n"
+        except HTTPException as exc:
+            yield job_stream_error(exc)
         except Exception as exc:
             payload = json.dumps({"message": str(exc)}, ensure_ascii=False)
             yield f"event: error\ndata: {payload}\n\n"
 
     return StreamingResponse(event_source(), media_type="text/event-stream")
+
+
+def job_stream_error(exc: HTTPException) -> str:
+    detail = exc.detail if isinstance(exc.detail, dict) else {"message": str(exc.detail)}
+    return f"event: error\ndata: {json.dumps({**detail, 'code': exc.status_code}, ensure_ascii=False)}\n\n"
 
 
 @app.post("/api/v1/python/presentations/slides/modify")
@@ -826,13 +931,39 @@ async def validate_ppt_html(request: HtmlValidateRequest) -> Result:
 
 @app.post("/api/v1/python/presentations/export/pptx")
 async def export_pptx(request: PresentationExportRequest):
-    output = await export_html_slides_to_pptx(request.title, request.slides, request.filename, request.fidelity, request.package_static_assets)
+    run_ids = {slide.get("metadata", {}).get("prompt_run_id") for slide in request.slides
+               if isinstance(slide.get("metadata"), dict) and slide["metadata"].get("prompt_run_id")}
+    outcome_key = "export:" + uuid.uuid4().hex
+    admitted = False
+    try:
+        async with limit_job("export", request.model_dump(mode="json")):
+            admitted = True
+            output = await export_html_slides_to_pptx(request.title, request.slides, request.filename, request.fidelity, request.package_static_assets)
+    except HTTPException:
+        if admitted:
+            await record_export_outcome(run_ids, "export_failed", outcome_key)
+        raise
+    except Exception:
+        await record_export_outcome(run_ids, "export_failed", outcome_key)
+        raise
+    await record_export_outcome(run_ids, "export_success", outcome_key)
     media_type = "application/zip" if output.suffix.lower() == ".zip" else "application/vnd.openxmlformats-officedocument.presentationml.presentation"
     return FileResponse(
         path=str(output),
         filename=output.name,
         media_type=media_type,
     )
+
+
+async def record_export_outcome(run_ids, action, event_key):
+    user_id = direct_user_id.get()
+    if not user_id:
+        return
+    for run_id in run_ids:
+        try:
+            await asyncio.to_thread(agent_evolution.record_outcome, user_id, run_id, action, event_key)
+        except psycopg.Error:
+            logger.warning("Export evaluation could not be recorded")
 
 
 @app.post("/api/v1/python/interactive-modules/generate")
@@ -862,7 +993,8 @@ async def synthesize_speech(request: TextToSpeechRequest):
 
 @app.post("/api/v1/python/lesson-plans/export/docx")
 async def export_lesson_plan_docx(request: LessonPlanExportRequest):
-    output = export_lesson_plan_to_docx(request.title, request.lesson_plan, request.filename)
+    async with limit_job("export", request.model_dump(mode="json")):
+        output = await asyncio.to_thread(export_lesson_plan_to_docx, request.title, request.lesson_plan, request.filename)
     return FileResponse(
         path=str(output),
         filename=output.name,

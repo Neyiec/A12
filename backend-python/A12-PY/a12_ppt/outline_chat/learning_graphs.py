@@ -7,6 +7,7 @@ import re
 from typing import Any
 
 from ..llm import LLMClient
+from ..timing import timed
 from ..presentation.json_utils import extract_json
 
 MAX_NODES = 12
@@ -225,6 +226,7 @@ def _validate_model_graphs(parsed: Any) -> dict[str, Any]:
     return result
 
 
+@timed("graphs.generate")
 async def build_learning_graphs(intent: dict[str, Any], course_graph: dict[str, Any],
                                 tool_context: dict[str, Any], llm: LLMClient) -> dict[str, Any]:
     """Always generate with AI; course graphs are evidence, never a fixed answer."""
@@ -239,19 +241,30 @@ async def build_learning_graphs(intent: dict[str, Any], course_graph: dict[str, 
         "recent_conversation": tool_context.get("teacher_conversation") or [],
         "course_requirements": {key: intent.get(key) for key in (
             "title", "subject", "grade", "stage", "teaching_goals", "knowledge_points",
-            "requirements", "teaching_model", "teaching_style", "slide_count")},
+            "requirements", "teaching_model", "teaching_style", "slide_count", "slide_count_range")},
         "course_evidence": {"course_id": course_graph.get("course_id"), "version": course_graph.get("version"),
                             "nodes": course_graph.get("nodes", [])[:40], "edges": course_graph.get("edges", [])[:80]},
         "reference_excerpt": str(rag.get("context") or "")[:12000],
     }
     feedback = ""
+    from ..ai_runtime import use_graph_generation_budget
+    from openai import APITimeoutError
+    progress = tool_context.get("_progress")
+    def report(message: str):
+        if callable(progress):
+            progress({"event": "stage", "data": {"name": "generate_learning_graphs", "message": message}})
+
     for attempt in range(2):
         request = {**context}
         if feedback:
             request["correction"] = feedback
         try:
-            raw = await asyncio.wait_for(llm.complete(
-                GRAPH_PROMPT, json.dumps(request, ensure_ascii=False, default=str), 0.2), timeout=60)
+            timeout = 45 if attempt == 0 else 30
+            report("正在由 AI 生成知识图谱与技能图谱…" if attempt == 0 else
+                   "正在使用快速模式重新生成双图谱（最后一次尝试）…")
+            with use_graph_generation_budget(timeout, fast=attempt > 0):
+                raw = await asyncio.wait_for(llm.complete(
+                    GRAPH_PROMPT, json.dumps(request, ensure_ascii=False, default=str), 0.2), timeout=timeout)
             parsed = json.loads(extract_json(raw[:50000]))
             result = _validate_model_graphs(parsed)
             result["knowledge"]["title"] = f"{title} · 知识图谱"
@@ -262,9 +275,11 @@ async def build_learning_graphs(intent: dict[str, Any], course_graph: dict[str, 
         except (ValueError, TypeError, AttributeError) as exc:
             logger.warning("AI双图谱校验失败 attempt=%s reason=%s", attempt + 1, str(exc)[:400])
             feedback = f"上次输出未通过校验：{str(exc)[:400]}。请依据原始需求重新生成完整双图谱，不要输出模板或解释。"
-        except asyncio.TimeoutError:
+        except (asyncio.TimeoutError, APITimeoutError):
             logger.warning("AI双图谱生成超时 attempt=%s", attempt + 1)
-            feedback = "上次生成超时。请按要求返回完整、简洁的双图谱JSON。"
+            if attempt == 1:
+                raise LearningGraphGenerationError("双图谱模型请求超时，快速模式重试仍未完成。请稍后重试或检查模型服务；本轮未生成大纲")
+            feedback = "上次生成超时。请按要求返回完整、简洁的双图谱JSON，各图优先保留4至8个核心节点。"
         except Exception as exc:
             logger.warning("双图谱AI请求失败 error_type=%s", type(exc).__name__)
             raise LearningGraphGenerationError("双图谱AI请求失败，请检查模型服务后重试；本轮未生成图谱或大纲") from exc

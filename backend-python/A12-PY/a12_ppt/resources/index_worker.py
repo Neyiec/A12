@@ -75,6 +75,8 @@ async def process_event(event: dict[str, str]) -> None:
                 raise ValueError("资源缺少下载地址")
             payload["force_reparse"] = event.get("force_reparse") == "true"
             result = await resource_index_store.sync_resource(ResourceIndexSyncRequest.model_validate(payload))
+            if result.get("status") == "processing":
+                raise RuntimeError("该资源正在另一条直连请求中建立索引，保留事件等待重试")
             status = "failed" if result.get("status") == "failed" else "completed"
             error = str(result.get("error") or result.get("error_message") or "") if status == "failed" else ""
         elif action == "metadata":

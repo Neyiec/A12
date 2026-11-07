@@ -9,6 +9,7 @@ from langchain_core.messages import HumanMessage, SystemMessage
 
 from ..config import get_settings
 from ..llm import LLMClient
+from ..ai_runtime import use_auxiliary_reasoning
 from ..tools import diagram_tool, rag_search, should_call_diagram_tool, web_search
 from .mcp_client import MCPClient, MCPToolSpec
 
@@ -38,25 +39,27 @@ class OutlineToolNode:
 
         rule_plans = self._rule_plans(intent, query)
         cached_context = dict(state.get('tool_context') or {})
+        if not intent.get("enable_web"):
+            cached_context.pop("web", None)
         if cached_context.get('rag'):
             rule_plans = [plan for plan in rule_plans if plan.name != 'rag_search']
-        autonomous_plans = await self._autonomous_plans(
-            intent,
-            query,
-            state,
-            mcp_specs,
-            excluded_names={plan.name for plan in rule_plans} | ({'rag_search'} if cached_context.get('rag') else set()),
+        mcp_by_name = {spec.qualified_name: spec for spec in mcp_specs}
+        # 已确定的检索立即执行，无需等模型选完可选工具。gather 负责传播取消，
+        # 不启动脱离本次请求的后台任务；可选工具仍按原来的去重和权限规则执行。
+        rule_plans = self._dedupe_and_filter(rule_plans, intent, mcp_specs)
+        autonomous_plans, rule_results = await asyncio.gather(
+            self._autonomous_plans(
+                intent, query, state, mcp_specs,
+                excluded_names={plan.name for plan in rule_plans}
+                    | ({'rag_search'} if cached_context.get('rag') else set()),
+            ),
+            asyncio.gather(*(self._execute_timed(plan, mcp_by_name) for plan in rule_plans)),
         )
         plans = self._dedupe_and_filter([*rule_plans, *autonomous_plans], intent, mcp_specs)
-
-        if not plans:
-            return {"tool_context": cached_context, "tool_trace": discovery_trace}
-
-        mcp_by_name = {spec.qualified_name: spec for spec in mcp_specs}
-        results = await asyncio.gather(
-            *(self._execute_timed(plan, mcp_by_name) for plan in plans),
-            return_exceptions=False,
-        )
+        optional_plans = plans[len(rule_plans):]
+        optional_results = await asyncio.gather(
+            *(self._execute_timed(plan, mcp_by_name) for plan in optional_plans))
+        results = [*rule_results, *optional_results]
 
         tool_context: dict[str, Any] = cached_context
         tool_trace: list[dict[str, Any]] = list(discovery_trace)
@@ -76,9 +79,11 @@ class OutlineToolNode:
                 "RAG is enabled for this request.",
             ))
         if intent.get("enable_web"):
+            # 公网查询仅使用课程标识，不把聊天记录、上传资料或个性化要求发给搜索服务。
+            web_query = " ".join(str(intent.get(key) or "").strip() for key in ("title", "subject", "grade")).strip()[:240]
             plans.append(ToolPlan(
                 "web_search",
-                {"query": query, "max_results": 5},
+                {"query": web_query, "max_results": 5},
                 "rule",
                 "Web search is enabled for this request.",
             ))
@@ -121,7 +126,8 @@ class OutlineToolNode:
             HumanMessage(content=json.dumps(planner_context, ensure_ascii=False, default=str)),
         ]
         try:
-            response = await self.llm.invoke_tools(messages, tools, temperature=0.1)
+            with use_auxiliary_reasoning():
+                response = await self.llm.invoke_tools(messages, tools, temperature=0.1)
         except Exception:
             return []
 

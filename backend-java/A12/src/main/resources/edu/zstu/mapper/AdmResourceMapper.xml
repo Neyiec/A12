@@ -6,7 +6,7 @@
         <result column="title" property="title"/><result column="subject" property="subject"/>
         <result column="grade" property="grade"/><result column="file_url" property="file_url"/>
         <result column="template_data" property="template_data"/><result column="thumbnail" property="thumbnail"/>
-        <result column="description" property="description"/><result column="file_size" property="file_size"/>
+        <result column="source_metadata" property="source_metadata"/><result column="description" property="description"/><result column="file_size" property="file_size"/>
         <result column="status" property="status"/>
         <result column="uploaded_by" property="uploaded_by"/>
         <result column="ai_index_status" property="ai_index_status"/>
@@ -14,7 +14,7 @@
         <result column="ai_index_error" property="ai_index_error"/>
         <result column="created_at" property="created_at"/><result column="updated_at" property="updated_at"/>
     </resultMap>
-    <sql id="Base_Columns">id, resource_type, title, subject, grade, file_url, template_data, thumbnail, description, file_size, status, uploaded_by, ai_index_status, ai_indexed_at, ai_index_error, created_at, updated_at</sql>
+    <sql id="Base_Columns">id, resource_type, title, subject, grade, file_url, template_data, thumbnail, description, source_metadata, file_size, status, uploaded_by, ai_index_status, ai_indexed_at, ai_index_error, created_at, updated_at</sql>
     <select id="findById" resultMap="BaseResultMap">SELECT <include refid="Base_Columns"/> FROM adm_resource WHERE id = #{id}</select>
     <select id="findByIds" resultMap="BaseResultMap">
         SELECT <include refid="Base_Columns"/> FROM adm_resource WHERE id IN
@@ -31,8 +31,8 @@
     </select>
     <select id="findByType" resultMap="BaseResultMap">SELECT <include refid="Base_Columns"/> FROM adm_resource WHERE resource_type = #{resourceType} AND status = 1</select>
     <insert id="insert" useGeneratedKeys="true" keyProperty="id">
-        INSERT INTO adm_resource(resource_type, title, subject, grade, file_url, template_data, thumbnail, description, file_size, status, uploaded_by, ai_index_status, created_at, updated_at)
-        VALUES(#{resource_type}, #{title}, #{subject}, #{grade}, #{file_url}, #{template_data}, #{thumbnail}, #{description}, #{file_size}, #{status}, #{uploaded_by}, #{ai_index_status}, NOW(), NOW())
+        INSERT INTO adm_resource(resource_type, title, subject, grade, file_url, template_data, thumbnail, description, source_metadata, file_size, status, uploaded_by, ai_index_status, created_at, updated_at)
+        VALUES(#{resource_type}, #{title}, #{subject}, #{grade}, #{file_url}, #{template_data}, #{thumbnail}, #{description}, #{source_metadata}, #{file_size}, #{status}, #{uploaded_by}, #{ai_index_status}, NOW(), NOW())
     </insert>
     <update id="update">
         UPDATE adm_resource <set>
@@ -42,6 +42,7 @@
         <if test="file_size != null">file_size = #{file_size},</if>
         <if test="template_data != null">template_data = #{template_data},</if>
         <if test="thumbnail != null">thumbnail = #{thumbnail},</if>
+        <if test="source_metadata != null">source_metadata = #{source_metadata},</if>
         <if test="description != null">description = #{description},</if><if test="status != null">status = #{status},</if>
         <if test="ai_index_status != null">ai_index_status = #{ai_index_status},</if>
         <if test="ai_indexed_at != null">ai_indexed_at = #{ai_indexed_at},</if>

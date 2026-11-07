@@ -912,3 +912,70 @@ ALTER TABLE ONLY public.a12_teacher_style_memory
 --
 
 \unrestrict sVEgxekkbAppusePYEz1sXDjeh1xJkpxZ21soWdwRASB5a85pXWbNN7gEXfdGlo
+
+-- Agent prompt release schema 20261105
+CREATE TABLE IF NOT EXISTS a12_prompt_version (
+          id BIGSERIAL PRIMARY KEY,name TEXT NOT NULL,instruction TEXT NOT NULL DEFAULT '',
+          layout_rule TEXT NOT NULL DEFAULT '',evidence JSONB NOT NULL DEFAULT '{}',
+          parent_version BIGINT,created_by VARCHAR(64) NOT NULL,fingerprint TEXT UNIQUE,
+          approved_by VARCHAR(64),approved_at TIMESTAMPTZ,created_at TIMESTAMPTZ NOT NULL DEFAULT NOW());
+
+INSERT INTO a12_prompt_version(name,created_by,approved_by,approved_at,fingerprint)
+           VALUES ('内置基线','system','system',NOW(),'builtin-v1') ON CONFLICT(fingerprint) DO NOTHING;
+
+ALTER TABLE a12_prompt_version ADD COLUMN IF NOT EXISTS template_bundle JSONB NOT NULL DEFAULT '{}';
+
+CREATE TABLE IF NOT EXISTS a12_prompt_release (
+          id INT PRIMARY KEY CHECK(id=1),active_version BIGINT NOT NULL REFERENCES a12_prompt_version(id),
+          canary_version BIGINT REFERENCES a12_prompt_version(id),canary_percent INT NOT NULL DEFAULT 0
+          CHECK(canary_percent BETWEEN 0 AND 20),revision INT NOT NULL DEFAULT 1,
+          updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW());
+
+INSERT INTO a12_prompt_release(id,active_version)
+           SELECT 1,id FROM a12_prompt_version WHERE fingerprint='builtin-v1' ON CONFLICT(id) DO NOTHING;
+
+CREATE TABLE IF NOT EXISTS a12_prompt_run (
+          id VARCHAR(32) PRIMARY KEY,user_id VARCHAR(64) NOT NULL,version_id BIGINT NOT NULL REFERENCES a12_prompt_version(id),
+          release_revision INT NOT NULL,cohort VARCHAR(16) NOT NULL,runtime_run_id VARCHAR(64),theme TEXT,
+          status VARCHAR(20) NOT NULL DEFAULT 'running',created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),completed_at TIMESTAMPTZ);
+
+CREATE INDEX IF NOT EXISTS idx_prompt_run_user ON a12_prompt_run(user_id,created_at DESC);
+
+ALTER TABLE a12_prompt_run ADD COLUMN IF NOT EXISTS template_sha256 TEXT;
+
+CREATE TABLE IF NOT EXISTS a12_prompt_outcome (
+          id BIGSERIAL PRIMARY KEY,run_id VARCHAR(32) NOT NULL REFERENCES a12_prompt_run(id),
+          action VARCHAR(32) NOT NULL,event_key VARCHAR(100) NOT NULL,project_id VARCHAR(80),
+          created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),UNIQUE(run_id,event_key));
+
+CREATE TABLE IF NOT EXISTS a12_prompt_release_history (
+          id BIGSERIAL PRIMARY KEY,actor VARCHAR(64) NOT NULL,action VARCHAR(20) NOT NULL,reason TEXT NOT NULL,
+          before_state JSONB NOT NULL,after_state JSONB NOT NULL,created_at TIMESTAMPTZ NOT NULL DEFAULT NOW());
+
+-- Public source patrol history (20261105)
+CREATE TABLE IF NOT EXISTS a12_public_source_patrol (
+ id BIGSERIAL PRIMARY KEY,actor VARCHAR(64) NOT NULL,checked_count INT NOT NULL,
+ warning_count INT NOT NULL,created_at TIMESTAMPTZ NOT NULL DEFAULT NOW());
+
+-- Batch planning and generation (20261105)
+CREATE TABLE IF NOT EXISTS a12_batch_plan (
+            id VARCHAR(32) PRIMARY KEY,user_id VARCHAR(64) NOT NULL,session_id VARCHAR(80),
+            revision INT NOT NULL DEFAULT 1,status VARCHAR(20) NOT NULL DEFAULT 'draft',payload JSONB NOT NULL,
+            created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW());
+
+CREATE TABLE IF NOT EXISTS a12_batch_job (
+            id VARCHAR(32) PRIMARY KEY REFERENCES a12_batch_plan(id),user_id VARCHAR(64) NOT NULL,title TEXT NOT NULL,
+            theme TEXT NOT NULL,status VARCHAR(24) NOT NULL DEFAULT 'queued',zip_status VARCHAR(24) NOT NULL DEFAULT 'idle',
+            zip_error TEXT NOT NULL DEFAULT '',zip_lease VARCHAR(32),zip_updated_at TIMESTAMPTZ,
+            include_partial BOOLEAN NOT NULL DEFAULT FALSE,created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW());
+
+CREATE TABLE IF NOT EXISTS a12_batch_item (
+            id VARCHAR(32) PRIMARY KEY,batch_id VARCHAR(32) NOT NULL REFERENCES a12_batch_job(id),user_id VARCHAR(64) NOT NULL,
+            item_order INT NOT NULL,title TEXT NOT NULL,payload JSONB NOT NULL,output JSONB NOT NULL DEFAULT '{}',
+            status VARCHAR(24) NOT NULL DEFAULT 'queued',stage TEXT NOT NULL DEFAULT '等待生成',progress INT NOT NULL DEFAULT 0,
+            attempts INT NOT NULL DEFAULT 0,error TEXT NOT NULL DEFAULT '',project_id INT,lease_id VARCHAR(32),
+            next_attempt_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW());
+
+CREATE INDEX IF NOT EXISTS idx_batch_owner ON a12_batch_job(user_id,created_at DESC);
+
+CREATE INDEX IF NOT EXISTS idx_batch_queue ON a12_batch_item(status,next_attempt_at,created_at);

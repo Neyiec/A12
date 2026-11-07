@@ -264,6 +264,8 @@ watch(latestSessionPush, (session) => {
           v-for="item in TEACHER_HOME.navigation"
           :key="item.index"
           type="button"
+          :aria-label="item.label"
+          :title="item.label"
           :class="['top-nav-item', { 'is-active': activeMenu === item.index }]"
           :aria-current="activeMenu === item.index ? 'page' : undefined"
           @click="handleMenuSelect(item.index)"

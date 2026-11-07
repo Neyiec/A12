@@ -4,7 +4,7 @@ import time
 import uuid
 from contextlib import contextmanager
 from contextvars import ContextVar
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from typing import Any
 
 from .config import get_settings
@@ -17,6 +17,8 @@ class RuntimeOptions:
     model_profile: str = "standard"
     reasoning_effort: str = "medium"
     run_id: str = ""
+    request_timeout_seconds: float | None = None
+    max_retries: int | None = None
 
 
 _runtime: ContextVar[RuntimeOptions] = ContextVar("a12_ai_runtime", default=RuntimeOptions())
@@ -35,6 +37,29 @@ def use_runtime_options(user_id: str | None = None, operation: str = "unknown",
 
 def current_runtime() -> RuntimeOptions:
     return _runtime.get()
+
+
+@contextmanager
+def use_auxiliary_reasoning():
+    """轻量规划不消耗深度思考；保留教师所选模型、身份和同一次运行标识。"""
+    token = _runtime.set(replace(current_runtime(), reasoning_effort="low"))
+    try:
+        yield
+    finally:
+        _runtime.reset(token)
+
+
+@contextmanager
+def use_graph_generation_budget(timeout_seconds: float, *, fast: bool = False):
+    """双图谱返回结构化草案，关闭长思考及 SDK 隐式重试，超时由工作流管理。"""
+    options = current_runtime()
+    token = _runtime.set(replace(options, reasoning_effort="low",
+        model_profile="fast" if fast else options.model_profile,
+        request_timeout_seconds=timeout_seconds, max_retries=0))
+    try:
+        yield
+    finally:
+        _runtime.reset(token)
 
 
 def routed_model(profile: str | None = None) -> str:
