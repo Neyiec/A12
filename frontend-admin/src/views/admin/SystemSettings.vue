@@ -44,6 +44,7 @@ import { ElMessage, ElMessageBox } from 'element-plus'
 import { getExportTemplates, createExportTemplate, replaceExportTemplate, deleteExportTemplate, downloadExportTemplate } from '@/apis/export'
 import { getAiConfigs, createAiConfig, publishAiConfig, getSystemLogs } from '@/apis/config'
 import FileDropUpload from '@/components/admin/FileDropUpload.vue'
+import AgentEvolution from './AgentEvolution.vue'
 import { formatFileSize } from '@/utils/file'
 
 // ===================================================================
@@ -1449,6 +1450,7 @@ onBeforeUnmount(() => {
             <el-button type="primary" :loading="isTeachingSaving" @click="saveTeachingPolicy">发布本学科策略</el-button>
           </div>
         </el-card>
+        <AgentEvolution />
         <el-card shadow="never" class="settings-card mb-4">
           <template #header>AI 配图额度</template>
           <div class="flex flex-wrap items-center gap-3">

@@ -10,6 +10,7 @@ import java.util.List;
 public interface WsProjectMapper {
     List<Ws_Project> findByQuery(ProjectQueryDTO dto);
     Ws_Project findById(@Param("id") Integer id);
+    Ws_Project findByIdForUpdate(@Param("id") Integer id);
     Ws_Project findByIdIncludingDeleted(@Param("id") Integer id);
     List<Ws_Project> findByUserId(@Param("userId") Integer userId);
     List<Ws_Project> findAll();

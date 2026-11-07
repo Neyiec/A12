@@ -1,8 +1,11 @@
 package edu.zstu.service.impl;
 
 import cn.hutool.core.bean.BeanUtil;
+import cn.hutool.json.JSONUtil;
 import com.fasterxml.jackson.core.type.TypeReference;
 import com.fasterxml.jackson.databind.ObjectMapper;
+import com.github.pagehelper.PageHelper;
+import com.github.pagehelper.PageInfo;
 import edu.zstu.dto.ExportPrecheckDTO;
 import edu.zstu.dto.ExportTaskDTO;
 import edu.zstu.dto.TaskQueryDTO;
@@ -15,8 +18,10 @@ import edu.zstu.mapper.WsProjectMapper;
 import edu.zstu.mapper.WsVersionMapper;
 import edu.zstu.service.BusinessLogService;
 import edu.zstu.service.ExportService;
+import edu.zstu.service.ExportTaskEvents;
 import edu.zstu.utils.CurrentHolder;
 import edu.zstu.utils.PageResult;
+import edu.zstu.utils.RedisCacheUtil;
 import edu.zstu.vo.ExportTaskVO;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.beans.factory.annotation.Value;
@@ -28,6 +33,7 @@ import java.io.IOException;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.time.LocalDateTime;
+import java.time.Duration;
 import java.util.ArrayList;
 import java.util.LinkedHashMap;
 import java.util.List;
@@ -43,6 +49,8 @@ public class ExportServiceImpl implements ExportService {
     private final WsVersionMapper versionMapper;
     private final BusinessLogService businessLogService;
     private final ObjectMapper objectMapper;
+    private final RedisCacheUtil cache;
+    private final ExportTaskEvents events;
     private final Path exportDir;
     private final String publicPrefix;
 
@@ -52,6 +60,8 @@ public class ExportServiceImpl implements ExportService {
                              WsVersionMapper versionMapper,
                              BusinessLogService businessLogService,
                              ObjectMapper objectMapper,
+                             RedisCacheUtil cache,
+                             ExportTaskEvents events,
                              @Value("${a12.export.local-dir:data/exports}") String exportDir,
                              @Value("${a12.export.public-prefix:/exports}") String publicPrefix) {
         this.taskMapper = taskMapper;
@@ -60,6 +70,8 @@ public class ExportServiceImpl implements ExportService {
         this.versionMapper = versionMapper;
         this.businessLogService = businessLogService;
         this.objectMapper = objectMapper;
+        this.cache = cache;
+        this.events = events;
         this.exportDir = Path.of(exportDir).toAbsolutePath().normalize();
         this.publicPrefix = publicPrefix == null || publicPrefix.isBlank() ? "/exports" : publicPrefix.replaceAll("/+$", "");
     }
@@ -92,11 +104,22 @@ public class ExportServiceImpl implements ExportService {
     @Transactional
     public ExportTaskVO createExportTask(ExportTaskDTO dto) {
         Integer userId = requireLogin();
-        Ws_Project project = requireProject(dto.getProject_id());
+        Ws_Project project = projectMapper.findByIdForUpdate(dto.getProject_id());
+        if (project == null) throw new IllegalArgumentException("项目不存在");
         assertProjectReadable(project);
         String exportType = normalizeType(dto.getExport_type());
         if (!List.of("pptx", "word", "docx", "package").contains(exportType)) {
             throw new RuntimeException("Unsupported export_type: " + dto.getExport_type());
+        }
+        Integer version = dto.getSnapshot_version() == null ? project.getCurrent_version() : dto.getSnapshot_version();
+        String config = dto.getConfig() == null ? "{}" : dto.getConfig();
+        Map<String, Object> parsedConfig = parseConfig(config);
+        for (Exp_Task existing : taskMapper.findActiveDuplicates(userId, dto.getProject_id(), version, exportType)) {
+            if (parsedConfig.equals(parseConfig(existing.getConfig()))) {
+                ExportTaskVO reused = toVO(existing);
+                reused.setReused(true);
+                return reused;
+            }
         }
         if (dto.getSnapshot_version() != null && dto.getSnapshot_version() > 0) {
             exportPages(project, dto.getSnapshot_version());
@@ -105,10 +128,10 @@ public class ExportServiceImpl implements ExportService {
         Exp_Task task = new Exp_Task();
         task.setUser_id(userId);
         task.setProject_id(dto.getProject_id());
-        task.setSnapshot_version(dto.getSnapshot_version() == null ? project.getCurrent_version() : dto.getSnapshot_version());
+        task.setSnapshot_version(version);
         task.setExport_type(exportType);
         task.setStatus("generating");
-        task.setConfig(dto.getConfig() == null ? "{}" : dto.getConfig());
+        task.setConfig(config);
         task.setProgress(10);
         task.setRetry_count(0);
         task.setWorker_id("browser-python-direct");
@@ -116,6 +139,7 @@ public class ExportServiceImpl implements ExportService {
         task.setFile_status("generating");
         task.setQuality_report("{}");
         taskMapper.insert(task);
+        events.changed(task.getUser_id(), task.getId());
 
         businessLogService.record("operation", "export", "create_task", "export_task", task.getId(),
                 Map.of("project_id", dto.getProject_id(), "export_type", exportType, "status", task.getStatus()));
@@ -148,7 +172,7 @@ public class ExportServiceImpl implements ExportService {
     @Override
     @Transactional
     public ExportTaskVO completeExportTask(String id, MultipartFile file) {
-        Exp_Task task = requireOwnedTask(id);
+        Exp_Task task = requireOwnedTask(id, true);
         if (!"generating".equals(task.getStatus())) throw new RuntimeException("导出任务当前不可提交成果");
         if (file == null || file.isEmpty()) throw new RuntimeException("导出文件不能为空");
         if (file.getSize() > 100L * 1024 * 1024) throw new RuntimeException("导出文件不能超过 100 MB");
@@ -182,6 +206,7 @@ public class ExportServiceImpl implements ExportService {
             task.setError_msg("");
             task.setCompleted_at(LocalDateTime.now());
             taskMapper.update(task);
+            events.changed(task.getUser_id(), task.getId());
             return toVO(taskMapper.findById(task.getId()));
         } catch (IOException e) {
             throw new RuntimeException("保存导出文件失败", e);
@@ -191,7 +216,7 @@ public class ExportServiceImpl implements ExportService {
     @Override
     @Transactional
     public ExportTaskVO failExportTask(String id, String error) {
-        Exp_Task task = requireOwnedTask(id);
+        Exp_Task task = requireOwnedTask(id, true);
         if (!"generating".equals(task.getStatus())) throw new RuntimeException("导出任务当前不可标记失败");
         task.setStatus("failed");
         task.setProgress(100);
@@ -200,6 +225,7 @@ public class ExportServiceImpl implements ExportService {
         task.setQuality_report(buildFailureReport(new RuntimeException(task.getError_msg())));
         task.setCompleted_at(LocalDateTime.now());
         taskMapper.update(task);
+        events.changed(task.getUser_id(), task.getId());
         return toVO(taskMapper.findById(task.getId()));
     }
 
@@ -207,14 +233,11 @@ public class ExportServiceImpl implements ExportService {
     public PageResult<ExportTaskVO> listExportTasks(TaskQueryDTO dto) {
         Integer userId = requireLogin();
         int page = dto.getPage() <= 0 ? 1 : dto.getPage();
-        int size = dto.getSize() <= 0 ? 10 : dto.getSize();
-        List<ExportTaskVO> all = taskMapper.findByUserId(userId).stream()
-                .filter(t -> dto.getStatus() == null || dto.getStatus().isBlank() || dto.getStatus().equals(t.getStatus()))
-                .map(this::toVO)
-                .toList();
-        int from = Math.min((page - 1) * size, all.size());
-        int to = Math.min(from + size, all.size());
-        return new PageResult<>(all.size(), page, size, all.subList(from, to));
+        int size = dto.getSize() <= 0 ? 10 : Math.min(100, dto.getSize());
+        String status = dto.getStatus() == null ? "" : dto.getStatus().trim();
+        PageHelper.startPage(page, size);
+        PageInfo<Exp_Task> result = new PageInfo<>(taskMapper.findPageByUser(userId, status));
+        return new PageResult<>(result.getTotal(), page, size, result.getList().stream().map(this::toVO).toList());
     }
 
     @Override
@@ -223,9 +246,21 @@ public class ExportServiceImpl implements ExportService {
     }
 
     @Override
+    public ExportTaskVO getExportProgress(String id) {
+        int taskId = parseId(id);
+        String key = "export:progress:" + requireLogin() + ":" + taskId;
+        return cache.getOrLoad(key, ExportTaskVO.class, Duration.ofSeconds(3), () -> {
+            ExportTaskVO result = toVO(requireOwnedTask(String.valueOf(taskId)));
+            result.setConfig(null);
+            result.setQuality_report(null);
+            return result;
+        });
+    }
+
+    @Override
     @Transactional
     public ExportTaskVO cancelExport(String id) {
-        Exp_Task task = requireOwnedTask(id);
+        Exp_Task task = requireOwnedTask(id, true);
         if (!List.of("queued", "generating", "checking").contains(task.getStatus())) {
             throw new RuntimeException("Current export task cannot be cancelled");
         }
@@ -234,6 +269,7 @@ public class ExportServiceImpl implements ExportService {
         task.setFile_status("unavailable");
         task.setCompleted_at(LocalDateTime.now());
         taskMapper.update(task);
+        events.changed(task.getUser_id(), task.getId());
         businessLogService.record("operation", "export", "cancel_task", "export_task", task.getId());
         return toVO(taskMapper.findById(task.getId()));
     }
@@ -435,9 +471,14 @@ public class ExportServiceImpl implements ExportService {
     }
 
     private Exp_Task requireOwnedTask(String id) {
-        Exp_Task task = taskMapper.findById(parseId(id));
+        return requireOwnedTask(id, false);
+    }
+
+    private Exp_Task requireOwnedTask(String id, boolean lock) {
+        int taskId = parseId(id);
+        Exp_Task task = lock ? taskMapper.findByIdForUpdate(taskId) : taskMapper.findById(taskId);
         if (task == null) throw new RuntimeException("Export task not found");
-        if (task.getUser_id() != requireLogin()) throw new RuntimeException("No permission to access this export task");
+        if (!java.util.Objects.equals(task.getUser_id(), requireLogin())) throw new RuntimeException("No permission to access this export task");
         return task;
     }
 
@@ -451,7 +492,7 @@ public class ExportServiceImpl implements ExportService {
         Integer userId = requireLogin();
         if (project.getUser_id() == userId) return;
         String permissions = project.getPermissions();
-        if (permissions != null && permissions.contains(String.valueOf(userId))) return;
+        if (permissions != null && !permissions.isBlank() && JSONUtil.parseArray(permissions).contains(userId)) return;
         throw new RuntimeException("No permission to access this project");
     }
 

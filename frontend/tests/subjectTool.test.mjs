@@ -1,9 +1,13 @@
 import assert from 'node:assert/strict'
 import { test } from 'node:test'
 import { createServer } from 'vite'
+import { mkdtemp, rm } from 'node:fs/promises'
+import { tmpdir } from 'node:os'
+import { join } from 'node:path'
 
 test('学科组件离线渲染：公式、化学式、流程图和完整函数坐标图', async () => {
-  const server = await createServer({ configFile: false, server: { middlewareMode: true }, appType: 'custom', optimizeDeps: { noDiscovery: true } })
+  const cacheDir = await mkdtemp(join(tmpdir(), 'a12-subject-render-'))
+  const server = await createServer({ configFile: false, cacheDir, server: { middlewareMode: true }, appType: 'custom', optimizeDeps: { noDiscovery: true } })
   try {
     const { subjectToolMarkup } = await server.ssrLoadModule('/src/utils/subjectTool.js')
     const formula = subjectToolMarkup({ subjectType: 'math_formula', data: { latex: 'y=x^2', display_mode: true } })
@@ -22,5 +26,6 @@ test('学科组件离线渲染：公式、化学式、流程图和完整函数�
     assert.match(graph, />0<\/text>/)
   } finally {
     await server.close()
+    await rm(cacheDir, { recursive: true, force: true })
   }
 })

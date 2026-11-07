@@ -443,14 +443,20 @@ public class CommunityServiceImpl implements CommunityService {
         Com_Content c = contentMapper.findById(id);
         if (c == null) throw new RuntimeException("投稿不存在");
         if (!Objects.equals(c.getAuthor_id(), userId)) throw new RuntimeException("无权查看");
-        return toContentVO(c);
+        ContentVO vo = toContentVO(c);
+        Adm_Audit audit = auditMapper.findLatestSubmissionAudit(id);
+        if (audit != null) {
+            vo.setSubmission_review(new ContentVO.SubmissionReview(
+                    audit.getStatus(), audit.getAction(), audit.getComment(), audit.getProcessed_at()));
+        }
+        return vo;
     }
 
     @Override
     @Transactional
     public ContentVO updateSubmission(Integer id, ContentDTO dto, Integer userId) {
         log.info("updateSubmission userId={}, contentId={}", userId, id);
-        Com_Content c = contentMapper.findById(id);
+        Com_Content c = contentMapper.findByIdForUpdate(id);
         if (c == null) throw new RuntimeException("Submission not found");
         if (!Objects.equals(c.getAuthor_id(), userId)) throw new RuntimeException("No permission to edit this submission");
         if (!"draft".equals(c.getStatus())) throw new RuntimeException("Only draft submissions can be edited");
@@ -476,9 +482,10 @@ public class CommunityServiceImpl implements CommunityService {
     @Transactional
     public Map<String, Object> saveSubmissionVersion(Integer id, String description, Integer userId) {
         log.info("saveSubmissionVersion userId={}, contentId={}, hasDescription={}", userId, id, description != null && !description.isBlank());
-        Com_Content c = contentMapper.findById(id);
+        Com_Content c = contentMapper.findByIdForUpdate(id);
         if (c == null) throw new RuntimeException("Submission not found");
         if (!Objects.equals(c.getAuthor_id(), userId)) throw new RuntimeException("No permission to save this submission version");
+        if ("reviewing".equals(c.getStatus())) throw new RuntimeException("审核期间无法修改投稿版本");
         int newVersion = c.getVersion() + 1;
         c.setVersion_history(appendVersionHistory(c, c.getVersion(), description));
         c.setVersion(newVersion);
@@ -496,7 +503,7 @@ public class CommunityServiceImpl implements CommunityService {
     @Transactional
     public void submitForReview(Integer id, ReviewSubmissionDTO dto, Integer userId) {
         log.info("submitForReview userId={}, contentId={}", userId, id);
-        Com_Content c = contentMapper.findById(id);
+        Com_Content c = contentMapper.findByIdForUpdate(id);
         if (c == null) throw new RuntimeException("Submission not found");
         if (!Objects.equals(c.getAuthor_id(), userId)) throw new RuntimeException("No permission to submit this content");
         if (!"draft".equals(c.getStatus())) throw new RuntimeException("Only draft submissions can be submitted for review");
@@ -522,8 +529,9 @@ public class CommunityServiceImpl implements CommunityService {
         audit.setReporter_id(userId);
         audit.setReason(dto == null ? null : dto.getNotes());
         audit.setStatus("pending");
+        audit.setAi_report("{\"content_version\":" + c.getVersion() + "}");
         auditMapper.insert(audit);
-        if ("ppt".equals(c.getContent_type())) reviewEvents.publish(audit.getId(), c.getVersion());
+        reviewEvents.publish(audit.getId(), c.getVersion());
         businessLogService.record("audit", "community", "submit_for_review", "content", id,
                 Map.of("audit_id", audit.getId()));
     }

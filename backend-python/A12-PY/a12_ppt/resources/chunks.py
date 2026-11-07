@@ -27,6 +27,14 @@ def chunk_records(
     """返回可独立入库的内容块；视频块额外携带自己的时间范围。"""
     source_metadata = metadata or {}
     parse_metadata = source_metadata.get("parse") if isinstance(source_metadata.get("parse"), dict) else {}
+    spans = parse_metadata.get("page_spans")
+    if isinstance(spans, list) and spans:
+        records = []
+        for span in spans:
+            page_text = text[int(span["start"]):int(span["end"])]
+            for content in chunk_text(page_text, chunk_size, overlap, source_metadata):
+                records.append({"content": content, "metadata": {"page_number": span["page_number"]}})
+        return records
     timeline = parse_metadata.get("timeline") if isinstance(parse_metadata.get("timeline"), list) else []
     if parse_metadata.get("modality") != "video" or not timeline:
         return [

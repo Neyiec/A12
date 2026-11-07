@@ -10,6 +10,7 @@ import java.util.Map;
 @Mapper
 public interface ComContentMapper {
     Com_Content findById(@Param("id") Integer id);
+    Com_Content findByIdForUpdate(@Param("id") Integer id);
     List<Com_Content> findByAuthorId(@Param("authorId") Integer authorId);
     List<Com_Content> findPublic();
     List<Com_Content> findByType(@Param("contentType") String contentType);

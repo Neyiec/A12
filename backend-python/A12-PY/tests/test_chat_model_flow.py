@@ -28,7 +28,7 @@ class ChatModelFlowTests(unittest.IsolatedAsyncioTestCase):
             available = True
 
             async def complete(self, system, transcript, temperature):
-                self_test.assertIn('"route":"chat|planning"', system)
+                self_test.assertIn('"route":"chat|planning|batch"', system)
                 self_test.assertEqual(temperature, 0.15)
                 return '{"route":"planning","confidence":0.94,"reason":"明确制作课件"}'
 

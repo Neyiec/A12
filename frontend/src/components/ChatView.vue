@@ -17,10 +17,10 @@ import { readOutlineDraft, saveOutlineDraft } from '../utils/presentationDraft.j
 import { readOpenAiTextStream } from '../utils/openAiSse.js'
 import { upsertLearningGraphMessage } from '../utils/learningGraphMessage.js'
 import { normalizeModelProfile, normalizeReasoningEffort } from '../utils/aiOptions.js'
-import { beginGeneralChatTurn, completeGeneralChatTurn, confirmAiPlan, getAiPlan, getAiSession, getTeacherPreferences, listPptTemplates, routeTeachingChat, saveDirectOutlineResult, streamGeneralChat, streamOutlineChat, transcribeAudio, uploadTempResource } from '../apis/teacher.js'
+import { beginGeneralChatTurn, completeGeneralChatTurn, confirmAiPlan, getAiPlan, getAiSession, getTeacherPreferences, listPptTemplates, recordAiFeedback, routeTeachingChat, saveDirectOutlineResult, streamGeneralChat, streamOutlineChat, transcribeAudio, uploadTempResource } from '../apis/teacher.js'
 import {
   CHAT_COMPOSER, CLASS_LEVEL_OPTIONS, CLARIFICATION_LABELS,
-  extractPlanningContext, GRADE_OPTIONS, CHAT_RESUME, DESIGN_ACTION_BAR, GEN_RESOURCE_DEFAULTS, INFO_FORM_DEFAULTS,
+  extractPlanningContext, gradesForStage, normalizePlanningGrade, slideRangeError, CHAT_RESUME, DESIGN_ACTION_BAR, GEN_RESOURCE_DEFAULTS, INFO_FORM_DEFAULTS,
   STAGE_OPTIONS, SUBJECT_OPTIONS,
   latestSessionPush, RESOURCE_CARD_LABELS, SYSTEM_MESSAGES,
 } from '../config/teacherChat.config.js'
@@ -28,6 +28,9 @@ import IntentClarificationDialog from './IntentClarificationDialog.vue'
 import PptTemplatePicker from './PptTemplatePicker.vue'
 import VoiceRecorderButton from './VoiceRecorderButton.vue'
 import LearningGraphPanel from './LearningGraphPanel.vue'
+import BatchPlanCard from './BatchPlanCard.vue'
+import BatchTaskPanel from './BatchTaskPanel.vue'
+import { createBatchPlan, reviseBatchPlan, listBatchPlans } from '../apis/batchPresentations'
 import { updateOutlineLearningGraphs, aiEditOutlineLearningGraphs } from '../apis/teacher.js'
 
 const props = defineProps({
@@ -49,6 +52,7 @@ const emit = defineEmits(['back', 'open-workspace', 'planning-request', 'session
 
 const userStore = useUserStore()
 const isGeneralChat = computed(() => props.mode === 'general')
+const activeBatchPlan = ref(null)
 const attachedResources = ref([])
 const resourceFileInput = ref(null)
 const resourceUploading = ref(false)
@@ -155,6 +159,16 @@ const messageListRef = ref(null)
 /** 完整大纲数据（Markdown + 元数据），由真实 Python SSE 或兼容 API-14 填充 */
 const outlineData = ref(null)
 const retrievalMatches = computed(() => outlineData.value?.planJson?.retrieval_matches || [])
+const webSearchStatus = computed(() => outlineData.value?.planJson?.web_search_status)
+const webReferences = computed(() => {
+  const references = outlineData.value?.planJson?.web_references
+  return Array.isArray(references) ? references.filter((item) => {
+    try {
+      const url = new URL(item?.url)
+      return ['http:', 'https:'].includes(url.protocol) && !url.username && !url.password
+    } catch { return false }
+  }) : []
+})
 const citeRetrievalMatch = (match) => {
   const id = String(match?.resource_id || '')
   if (!id || activeResourceIds.value.includes(id)) return
@@ -167,6 +181,15 @@ const planVersion = ref(1)
 // ========== 补充信息表单 ==========
 /** 使用配置模块的默认值初始化补充信息表单 */
 const infoForm = reactive({ ...INFO_FORM_DEFAULTS })
+function getSlideCountRange() {
+  if (slideRangeError(infoForm.minPages, infoForm.maxPages)) return null
+  if (infoForm.minPages == null || infoForm.minPages === '') return null
+  return { min_pages: Number(infoForm.minPages), max_pages: Number(infoForm.maxPages) }
+}
+const gradeOptions = computed(() => gradesForStage(infoForm.stage))
+function handleStageChange() {
+  if (!gradeOptions.value.includes(infoForm.grade)) infoForm.grade = ''
+}
 const selectedTeachingModel = ref('boppps')
 const selectedTeachingStyle = ref('')
 
@@ -352,10 +375,15 @@ function applyPlanningContext(context = {}) {
   if (stage) infoForm.stage = stage
   if (subject) infoForm.subject = subject
   if (grade) infoForm.grade = grade
+  infoForm.grade = normalizePlanningGrade(infoForm.stage, infoForm.grade)
   if (textbook) infoForm.textbook = textbook
   if (courseName) infoForm.courseName = courseName
   if (requirements) infoForm.requirements = requirements
   if (classLevel) infoForm.classLevel = classLevel
+  if (context.slide_count_range) {
+    infoForm.minPages = context.slide_count_range.min_pages
+    infoForm.maxPages = context.slide_count_range.max_pages
+  }
 }
 
 /** 新建备课会话时只保留真正的默认偏好，不把示例学科/年级伪装成 AI 识别结果。 */
@@ -615,7 +643,7 @@ function normalizeRealOutlineResponse(response = {}) {
     slide_count: Number(nestedOutline.slide_count) || Number(response.slide_count) || slides.length,
     slides,
   }
-  ;['teaching_design_chain', 'interactive_assets', 'diagram_assets', 'learning_graphs', 'quality_report', 'generation_options', 'retrieval_matches']
+  ;['teaching_design_chain', 'interactive_assets', 'diagram_assets', 'learning_graphs', 'quality_report', 'generation_options', 'retrieval_matches', 'enable_web', 'web_references', 'web_search_status']
     .forEach((key) => {
       if (planJson[key] === undefined && response[key] !== undefined) planJson[key] = response[key]
     })
@@ -681,14 +709,16 @@ async function requestRealOutlineChat(message) {
       textbook: infoForm.textbook,
       class_level: infoForm.classLevel,
       requirements: infoForm.requirements,
+      slide_count_range: getSlideCountRange(),
       teaching_model: selectedTeachingModel.value,
       teaching_style: selectedTeachingStyle.value,
       workspace_context: activeWorkspaceContext.value,
     },
     resource_ids: resourceIds,
     enable_rag: resourceIds.length > 0,
-    enable_web: false,
-    slide_count: Number(genResource.slideCount) || 8,
+    enable_web: infoForm.enableWeb,
+    slide_count: null,
+    slide_count_range: getSlideCountRange(),
     language: 'zh-CN',
     teaching_model: selectedTeachingModel.value,
     teaching_style: selectedTeachingStyle.value,
@@ -721,6 +751,7 @@ async function requestRealOutlineChat(message) {
         ...(readOutlineDraft(props.sessionId) || {}),
         python_session_id: outlinePythonSessionId.value || String(props.sessionId || ''),
         clarification: question,
+        enable_web: infoForm.enableWeb,
         plan_confirm_status: 'pending',
       })
       lastClarification.value = question.text
@@ -751,6 +782,8 @@ function buildContextMessage(extra = '') {
     `班级学情：${infoForm.classLevel}`,
     `个性化需求：${infoForm.requirements}`,
   ]
+  const pageRange = getSlideCountRange()
+  if (pageRange) parts.push(`PPT 总页数：${pageRange.min_pages}至${pageRange.max_pages}页（含封面和总结），由 AI 在范围内自主规划`)
   if (extra) parts.push(`补充要求：${extra}`)
   return parts.join('，')
 }
@@ -879,21 +912,23 @@ function hasCompleteLearningGraphs(graphs) {
  * @param {string} message - 本轮自然语言输入
  * @param {Object} options - 是否把切换前的普通对话作为首次备课背景注入
  */
-async function sendMessageToBackend(message, { includeContinuation = false, clarificationContext = {}, confirmLearningGraphs = false } = {}) {
+async function sendMessageToBackend(message, { includeContinuation = false, clarificationContext = {}, confirmLearningGraphs = false, inputKind = '' } = {}) {
   phase.value = 'generating_outline'
   isRequesterLoading.value = true
+  outlineGenerationStage.value = confirmLearningGraphs ? '正在根据已确认的双图谱生成大纲…' : '正在分析课程信息并生成双图谱…'
   if (!confirmLearningGraphs) activeLearningGraphMessageId = null
   const payload = {
     message,
     resource_ids: JSON.stringify(activeResourceIds.value),
     enable_rag: activeResourceIds.value.length > 0,
-    enable_web: false,
+    enable_web: infoForm.enableWeb,
     model_profile: selectedModelProfile.value,
     reasoning_effort: selectedReasoningEffort.value,
     known_context: JSON.stringify({
       title: infoForm.courseName.trim(),
       subject: infoForm.subject,
       grade: infoForm.grade,
+      slide_count_range: getSlideCountRange(),
       teaching_model: selectedTeachingModel.value,
       teaching_style: selectedTeachingStyle.value,
       workspace_context: activeWorkspaceContext.value,
@@ -907,6 +942,7 @@ async function sendMessageToBackend(message, { includeContinuation = false, clar
   let awaitingGraphConfirmation = false
   let streamError = ''
   try {
+    saveOutlineDraft(props.sessionId, { ...(readOutlineDraft(props.sessionId) || {}), enable_web: payload.enable_web })
     const res = await streamOutlineChat({
       user_id: String(userStore.userInfo?.user_id || ''),
       session_id: outlinePythonSessionId.value || undefined,
@@ -914,17 +950,22 @@ async function sendMessageToBackend(message, { includeContinuation = false, clar
       history: includeContinuation ? normalizeConversationHistory(props.continuationHistory) : [],
       resource_ids: activeResourceIds.value,
       enable_rag: payload.enable_rag,
-      enable_web: false,
+      enable_web: payload.enable_web,
       model_profile: payload.model_profile,
       reasoning_effort: payload.reasoning_effort,
       known_context: JSON.parse(payload.known_context),
-      slide_count: Number(genResource.slideCount) || 8,
+      slide_count: null,
+      slide_count_range: getSlideCountRange(),
       language: 'zh-CN',
       teaching_model: selectedTeachingModel.value,
       teaching_style: selectedTeachingStyle.value,
       confirm_learning_graphs: confirmLearningGraphs,
     })
     await consumeSseStream(res, (event, data) => {
+      if (event === 'stage') {
+        outlineGenerationStage.value = String(data?.message || data?.name || '正在处理课程信息…')
+        return
+      }
       if (event === 'session' && data.session_id) outlinePythonSessionId.value = String(data.session_id)
       if (event === 'learning_graphs') {
         if (!hasCompleteLearningGraphs(data)) {
@@ -968,11 +1009,12 @@ async function sendMessageToBackend(message, { includeContinuation = false, clar
     if (confirmLearningGraphs && status === 'failed') throw new Error(streamError || '大纲生成失败，请重试确认')
     const saved = await saveDirectOutlineResult(props.sessionId, {
       message,
+      input_kind: inputKind,
       status,
       python_session_id: outlinePythonSessionId.value,
       question: normalizePlanningClarification(questionResult?.question)?.text || '',
       final_data: finalResult,
-      graph_data: awaitingGraphConfirmation ? { learning_graphs: graphResult, status } : undefined,
+      graph_data: awaitingGraphConfirmation ? { learning_graphs: graphResult, status, enable_web: payload.enable_web } : undefined,
       error_message: streamError,
     })
     if (!isOk(saved)) throw new Error(saved?.message || '备课结果保存失败')
@@ -1032,7 +1074,7 @@ async function saveLearningGraphs(editedGraphs) {
     const saved = await saveDirectOutlineResult(props.sessionId, {
       message: '教师确认保存了双图谱修改', status: 'awaiting_graph_confirmation',
       python_session_id: outlinePythonSessionId.value,
-      graph_data: { learning_graphs: graphs, status: 'awaiting_graph_confirmation' },
+      graph_data: { learning_graphs: graphs, status: 'awaiting_graph_confirmation', enable_web: infoForm.enableWeb },
     })
     if (!isOk(saved)) throw new Error(saved?.message || '会话记录同步失败，请再次保存')
     ElMessage.success('双图谱已保存，确认后将据此生成大纲')
@@ -1158,7 +1200,9 @@ async function loadPlan() {
 // ========== 补充信息确认 ==========
 
 /** 确认补充信息，发起教学大纲生成（真实模式：Python SSE；兼容模式：API-13 → API-14） */
-async function confirmInfo({ summary = '' } = {}) {
+async function confirmInfo() {
+  if (isRequesterLoading.value) return
+  infoForm.grade = normalizePlanningGrade(infoForm.stage, infoForm.grade)
   if (!infoForm.stage || !infoForm.subject || !infoForm.grade) {
     ElMessage.warning('请先补充学段、学科和年级')
     return
@@ -1168,8 +1212,12 @@ async function confirmInfo({ summary = '' } = {}) {
     ElMessage.warning('请输入课程名称')
     return
   }
-  addMessage('user', 'text', summary || infoForm.courseName.trim())
-  await sendMessageToBackend(buildContextMessage(), { includeContinuation: true })
+  const pageError = slideRangeError(infoForm.minPages, infoForm.maxPages)
+  if (pageError) {
+    ElMessage.warning(pageError)
+    return
+  }
+  await sendMessageToBackend(buildContextMessage(), { includeContinuation: true, inputKind: 'course_info_confirmation' })
 }
 
 /** 澄清回复：把教师针对问题的回复作为下一轮输入继续生成 */
@@ -1371,8 +1419,19 @@ async function requestGeneralChatReply() {
     if (!isOk(routeResult)) throw new Error(routeResult?.message || '意图分流失败')
     const route = routeResult.data || {}
     routedToPlanning = route.next_stage === 'outline_graph' || route.route === 'planning'
+    const routedToBatch = route.next_stage === 'batch_plan' || route.route === 'batch'
     let response
-    if (routedToPlanning) {
+    if (routedToBatch) {
+      const current = activeBatchPlan.value
+      const planned = current?.status === 'draft'
+        ? await reviseBatchPlan(current.id, { revision: current.revision, message: latestUserMessage.content,
+            resource_ids: activeResourceIds.value.filter(id => !(current.resource_ids || []).includes(id)) })
+        : await createBatchPlan({ message: latestUserMessage.content, resource_ids: [...activeResourceIds.value],
+            session_id: String(generalSessionId.value), single: Boolean(activeWorkspaceContext.value.single) })
+      activeBatchPlan.value = planned.data
+      assistantMessage.type = 'batch_plan'; assistantMessage.plan = planned.data
+      assistantMessage.content = planned.data.needs_input ? '已进入批量备课，请补充教学计划或目录，或明确选择先使用 AI 建议目录。' : `已整理“${planned.data.title}”的生成计划，共 ${planned.data.items.length} 份候选课件，请核对范围与页数后确认。`
+    } else if (routedToPlanning) {
       assistantMessage.content = '已进入备课流程，请补充课程信息。'
     } else {
       response = await streamGeneralChat({
@@ -1401,7 +1460,7 @@ async function requestGeneralChatReply() {
     if (!assistantMessage.content.trim()) throw new Error('模型未返回有效内容')
     const completed = await completeGeneralChatTurn(turn.conversation_id, {
       turn_id: turn.turn_id,
-      route: routedToPlanning ? 'planning' : 'chat',
+      route: routedToBatch ? 'batch' : routedToPlanning ? 'planning' : 'chat',
       reason: route.reason || '',
       content: assistantMessage.content,
       status: 'completed',
@@ -1510,6 +1569,10 @@ async function confirmOutline() {
     await loadPptTemplates()
     fillGenResource(data)
     phase.value = 'resource_ready'
+    const feedbackSession = confirmedPlan.python_session_id || outlinePythonSessionId.value
+    if (feedbackSession) {
+      void recordAiFeedback({ session_id: String(feedbackSession), action: 'accept', target_type: 'outline' }).catch(() => {})
+    }
     return true
   } catch (error) {
     // 不允许把浏览器草稿标记为已确认；生成入口只认可服务端确认状态。
@@ -1551,6 +1614,12 @@ async function submitModifyRequirement() {
   const requirement = planComment.value.trim()
   planComment.value = ''
   planSubmitting.value = false
+  if (outlinePythonSessionId.value) {
+    void recordAiFeedback({
+      session_id: String(outlinePythonSessionId.value), action: 'regenerate', target_type: 'outline',
+      instruction: requirement,
+    }).catch(() => {})
+  }
   await sendMessageToBackend(buildContextMessage(requirement))
 }
 
@@ -1697,13 +1766,20 @@ async function restoreSession() {
       const session = sessionRes.data
       generalSessionId.value = session.id
       parseStoredMessages(session.messages)
-        .filter((item) => (item.role === 'user' || item.role === 'assistant') && String(item.content || '').trim())
+        .filter((item) => item.type !== 'course_info_confirmation' && (item.role === 'user' || item.role === 'assistant') && String(item.content || '').trim())
         .forEach((item) => addMessage(item.role, 'text', item.content, {
           message_id: item.message_id,
           turn_id: item.turn_id,
           created_at: item.created_at,
           status: item.status,
         }))
+      const restoredPlans = await listBatchPlans(String(generalSessionId.value))
+      for (const plan of (restoredPlans.data || []).reverse()) {
+        const message = addMessage('assistant', 'batch_plan', '批量备课计划')
+        message.plan = plan
+        activeBatchPlan.value = plan
+        if (plan.status === 'confirmed') addMessage('assistant', 'batch_task', '', { batchId: plan.id })
+      }
       phase.value = 'general_chat'
       return
     }
@@ -1727,6 +1803,7 @@ async function restoreSession() {
     // Java mock 会话并不知道真实 Python 流生成的 plan_json，因此优先使用本地真实大纲快照。
     const backendPlanJson = parsePlanJson(task?.plan_json)
     const localPlanJson = parsePlanJson(localOutlineDraft?.plan_json ?? localOutlineDraft?.outline)
+    infoForm.enableWeb = (backendPlanJson?.enable_web ?? localPlanJson?.enable_web ?? localOutlineDraft?.enable_web) === true
     let planJson = backendPlanJson?.status === 'awaiting_graph_confirmation'
       ? null
       : hasGeneratedOutline(backendPlanJson)
@@ -1769,7 +1846,7 @@ async function restoreSession() {
         (msg.type === 'question' && session?.last_question)
         || (planJson && msg.outline_id)
       )
-      if (!isCurrentStructuredReply && msg.type !== 'graph_review') {
+      if (!isCurrentStructuredReply && msg.type !== 'graph_review' && msg.type !== 'course_info_confirmation') {
         addMessage(msg.role, 'text', String(msg.content).trim())
       }
     })
@@ -1831,7 +1908,9 @@ async function restoreSession() {
     } else {
       phase.value = 'info'
       const latestUser = [...storedMessages].reverse().find((item) => item.role === 'user')
+      const enableWeb = infoForm.enableWeb
       prepareInitialInfoForm(latestUser?.content || session?.title || '')
+      infoForm.enableWeb = enableWeb
       addMessage('assistant', 'info_form', '补充信息')
     }
     await scrollToBottom()
@@ -1871,14 +1950,14 @@ async function restoreSession() {
                   <span class="info-label">基础信息</span>
                   <span class="info-desc">学段/学科/年级/教材</span>
                   <span class="info-value-cell info-basic-fields">
-                    <el-select v-model="infoForm.stage" size="small" placeholder="学段" :disabled="phase !== 'info'" clearable>
+                    <el-select v-model="infoForm.stage" size="small" placeholder="学段" :disabled="phase !== 'info'" clearable @change="handleStageChange">
                       <el-option v-for="stage in STAGE_OPTIONS" :key="stage" :label="stage" :value="stage" />
                     </el-select>
                     <el-select v-model="infoForm.subject" size="small" placeholder="学科" :disabled="phase !== 'info'" filterable allow-create default-first-option clearable>
                       <el-option v-for="subject in SUBJECT_OPTIONS" :key="subject" :label="subject" :value="subject" />
                     </el-select>
-                    <el-select v-model="infoForm.grade" size="small" placeholder="年级" :disabled="phase !== 'info'" filterable allow-create default-first-option clearable>
-                      <el-option v-for="grade in GRADE_OPTIONS" :key="grade" :label="grade" :value="grade" />
+                    <el-select v-model="infoForm.grade" size="small" :placeholder="infoForm.stage ? '年级' : '请先选择学段'" :disabled="phase !== 'info' || !infoForm.stage" filterable clearable>
+                      <el-option v-for="grade in gradeOptions" :key="grade" :label="grade" :value="grade" />
                     </el-select>
                     <el-input v-model="infoForm.textbook" size="small" placeholder="教材版本（可选）" :disabled="phase !== 'info'" />
                   </span>
@@ -1915,6 +1994,19 @@ async function restoreSession() {
                     />
                   </span>
                 </div>
+                <div class="info-row">
+                  <span class="info-label">PPT 页数范围</span>
+                  <span class="info-desc">选填，AI 在范围内规划，含封面与总结</span>
+                  <span class="info-value-cell">
+                    <div class="page-range-fields">
+                      <el-input-number v-model="infoForm.minPages" :min="1" :max="30" :precision="0" :controls="false" size="small" placeholder="最少页数" aria-label="PPT 最少页数" :disabled="phase !== 'info'" />
+                      <span>至</span>
+                      <el-input-number v-model="infoForm.maxPages" :min="1" :max="30" :precision="0" :controls="false" size="small" placeholder="最多页数" aria-label="PPT 最多页数" :disabled="phase !== 'info'" />
+                      <span>页</span>
+                    </div>
+                    <span class="page-range-hint">支持 1–30 页，留空由 AI 自动规划</span>
+                  </span>
+                </div>
                 <!-- 个性化需求行 -->
                 <div class="info-row">
                   <span class="info-label">教学模型</span>
@@ -1949,14 +2041,14 @@ async function restoreSession() {
                     <span class="info-stack-desc">学段/学科/年级/教材</span>
                   </div>
                   <div class="info-basic-fields">
-                    <el-select v-model="infoForm.stage" size="small" placeholder="学段" :disabled="phase !== 'info'" clearable>
+                    <el-select v-model="infoForm.stage" size="small" placeholder="学段" :disabled="phase !== 'info'" clearable @change="handleStageChange">
                       <el-option v-for="stage in STAGE_OPTIONS" :key="stage" :label="stage" :value="stage" />
                     </el-select>
                     <el-select v-model="infoForm.subject" size="small" placeholder="学科" :disabled="phase !== 'info'" filterable allow-create default-first-option clearable>
                       <el-option v-for="subject in SUBJECT_OPTIONS" :key="subject" :label="subject" :value="subject" />
                     </el-select>
-                    <el-select v-model="infoForm.grade" size="small" placeholder="年级" :disabled="phase !== 'info'" filterable allow-create default-first-option clearable>
-                      <el-option v-for="grade in GRADE_OPTIONS" :key="grade" :label="grade" :value="grade" />
+                    <el-select v-model="infoForm.grade" size="small" :placeholder="infoForm.stage ? '年级' : '请先选择学段'" :disabled="phase !== 'info' || !infoForm.stage" filterable clearable>
+                      <el-option v-for="grade in gradeOptions" :key="grade" :label="grade" :value="grade" />
                     </el-select>
                     <el-input v-model="infoForm.textbook" size="small" placeholder="教材版本（可选）" :disabled="phase !== 'info'" />
                   </div>
@@ -1976,6 +2068,16 @@ async function restoreSession() {
                     <span class="info-stack-desc">教学内容主题</span>
                   </div>
                   <el-input v-model="infoForm.courseName" size="small" placeholder="请输入课程名称" :disabled="phase !== 'info'" />
+                </div>
+                <div class="info-stack-field">
+                  <div class="info-stack-head"><span class="info-stack-label">PPT 页数范围（选填）</span></div>
+                  <div class="page-range-fields">
+                    <el-input-number v-model="infoForm.minPages" :min="1" :max="30" :precision="0" :controls="false" size="small" placeholder="最少页数" aria-label="PPT 最少页数" :disabled="phase !== 'info'" />
+                    <span>至</span>
+                    <el-input-number v-model="infoForm.maxPages" :min="1" :max="30" :precision="0" :controls="false" size="small" placeholder="最多页数" aria-label="PPT 最多页数" :disabled="phase !== 'info'" />
+                    <span>页</span>
+                  </div>
+                  <span class="page-range-hint">含封面与总结，支持 1–30 页；留空由 AI 自动规划</span>
                 </div>
                 <div class="info-stack-field">
                   <div class="info-stack-head"><span class="info-stack-label">教学模型</span></div>
@@ -1999,6 +2101,11 @@ async function restoreSession() {
                 </div>
               </div>
 
+              <div class="info-web-search">
+                <el-switch v-model="infoForm.enableWeb" aria-label="联网查找参考资料" :disabled="phase !== 'info'" />
+                <span>联网查找参考资料</span>
+                <small>使用课程名、学科和年级搜索公开网页。</small>
+              </div>
               <!-- 确认按钮 -->
               <div class="info-actions">
                 <el-button
@@ -2026,6 +2133,10 @@ async function restoreSession() {
                                 :confirmable="phase === 'graph_review' && hasCompleteLearningGraphs(msg.data) && msg.id === activeLearningGraphMessageId"
                                 :confirming="isRequesterLoading" :graph-saver="saveLearningGraphs" :graph-ai-editor="aiEditLearningGraphs" @confirm="confirmLearningGraphs" />
 
+            <BatchPlanCard v-else-if="msg.type === 'batch_plan'" :plan="msg.plan"
+              @updated="value => { msg.plan = value; activeBatchPlan = value }"
+              @confirmed="id => addMessage('assistant','batch_task','',{batchId:id})" />
+            <BatchTaskPanel v-else-if="msg.type === 'batch_task'" :batch-id="msg.data.batchId" />
             <!-- AI Markdown 大纲消息：使用 markstream-vue 渲染，占满全宽 -->
             <div v-else-if="msg.type === 'markdown'" class="ai-bubble">
               <div class="ai-markdown-body">
@@ -2065,6 +2176,16 @@ async function restoreSession() {
                   {{ activeResourceIds.includes(match.resource_id) ? '已引用' : '引用' }} {{ match.title }}
                 </el-button>
               </div>
+              <div v-if="webReferences.length" class="retrieval-suggestions">
+                <span>联网参考资料：</span>
+                <el-link v-for="source in webReferences" :key="source.url" :href="source.url"
+                  target="_blank" rel="noopener noreferrer" :title="source.snippet" type="primary">
+                  {{ source.title || '查看来源' }}
+                </el-link>
+              </div>
+              <small v-else-if="['failed', 'empty'].includes(webSearchStatus)">
+                {{ webSearchStatus === 'failed' ? '联网搜索暂时不可用，本次大纲使用现有资料生成。' : '本次联网搜索未找到可用的参考资料。' }}
+              </small>
             </div>
 
             <!-- 普通 AI 文本消息（同样使用 MarkdownRender 渲染以支持 MD 格式，占满全宽） -->
@@ -2142,7 +2263,7 @@ async function restoreSession() {
         <el-select v-model="selectedRoutePreference" size="small" aria-label="任务分流方式" style="width: 126px">
           <el-option label="自动判断" value="auto" />
           <el-option label="仅对话" value="chat" />
-          <el-option label="直接备课" value="planning" />
+          <el-option label="直接备课" value="planning" /><el-option label="批量备课" value="batch" />
         </el-select>
       </div>
       <div class="composer-input-row" :class="{ 'is-editable': isGeneralChat || phase === 'info' || phase === 'clarifying' }">
@@ -2246,6 +2367,9 @@ async function restoreSession() {
 }
 
 /* ===== 消息滚动区 ===== */
+.info-web-search { display: flex; flex-wrap: wrap; align-items: center; gap: 8px 12px; padding: 8px 0; }
+.info-web-search small { color: var(--el-text-color-secondary); }
+
 .route-preference-row {
   display: flex;
   align-items: center;
@@ -2377,6 +2501,23 @@ async function restoreSession() {
   flex-wrap: wrap;
   align-items: center;
   gap: 8px;
+}
+.page-range-fields {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  color: #344563;
+}
+.page-range-fields :deep(.el-input-number) {
+  width: 120px;
+  min-width: 0;
+  flex: 0 1 120px;
+}
+.page-range-hint {
+  display: block;
+  margin-top: 6px;
+  color: #64748b;
+  font-size: 12px;
 }
 .info-basic-fields :deep(.el-select) {
   width: 128px;

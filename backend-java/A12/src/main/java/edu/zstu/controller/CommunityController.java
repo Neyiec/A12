@@ -10,6 +10,7 @@ import edu.zstu.vo.ContentVO;
 import edu.zstu.vo.ProjectVO;
 import edu.zstu.vo.RankItemVO;
 import edu.zstu.vo.RecentViewVO;
+import org.springframework.dao.DataAccessException;
 import org.springframework.web.bind.annotation.*;
 
 import java.util.List;
@@ -38,7 +39,7 @@ public class CommunityController {
     public Result<PageResult<ContentVO>> listItems(ContentQueryDTO dto) {
         try {
             return Result.success(communityService.listItems(dto, CurrentHolder.getCurrentId()));
-        } catch (RuntimeException e) { return Result.error(400, e.getMessage()); }
+        } catch (RuntimeException e) { if (e instanceof DataAccessException) throw e; return Result.error(400, e.getMessage()); }
     }
 
     /**
@@ -48,7 +49,7 @@ public class CommunityController {
     public Result<ContentVO> getItem(@PathVariable Integer id) {
         try {
             return Result.success(communityService.getItem(id, CurrentHolder.getCurrentId()));
-        } catch (RuntimeException e) { return Result.error(400, e.getMessage()); }
+        } catch (RuntimeException e) { if (e instanceof DataAccessException) throw e; return Result.error(400, e.getMessage()); }
     }
 
     /**
@@ -61,7 +62,7 @@ public class CommunityController {
             if (userId == null) return Result.error(401, "未登录");
             communityService.like(id, userId);
             return Result.success();
-        } catch (RuntimeException e) { return Result.error(400, e.getMessage()); }
+        } catch (RuntimeException e) { if (e instanceof DataAccessException) throw e; return Result.error(400, e.getMessage()); }
     }
 
     /**
@@ -74,7 +75,7 @@ public class CommunityController {
             if (userId == null) return Result.error(401, "未登录");
             communityService.unlike(id, userId);
             return Result.success();
-        } catch (RuntimeException e) { return Result.error(400, e.getMessage()); }
+        } catch (RuntimeException e) { if (e instanceof DataAccessException) throw e; return Result.error(400, e.getMessage()); }
     }
 
     /**
@@ -87,7 +88,7 @@ public class CommunityController {
             @RequestParam(defaultValue = "10") int limit) {
         try {
             return Result.success(communityService.listRankings(content_type, period, limit, CurrentHolder.getCurrentId()));
-        } catch (RuntimeException e) { return Result.error(400, e.getMessage()); }
+        } catch (RuntimeException e) { if (e instanceof DataAccessException) throw e; return Result.error(400, e.getMessage()); }
     }
 
     /**
@@ -100,7 +101,7 @@ public class CommunityController {
             if (userId == null) return Result.error(401, "未登录");
             communityService.favorite(id, userId);
             return Result.success();
-        } catch (RuntimeException e) { return Result.error(400, e.getMessage()); }
+        } catch (RuntimeException e) { if (e instanceof DataAccessException) throw e; return Result.error(400, e.getMessage()); }
     }
 
     /**
@@ -113,7 +114,7 @@ public class CommunityController {
             if (userId == null) return Result.error(401, "未登录");
             communityService.unfavorite(id, userId);
             return Result.success();
-        } catch (RuntimeException e) { return Result.error(400, e.getMessage()); }
+        } catch (RuntimeException e) { if (e instanceof DataAccessException) throw e; return Result.error(400, e.getMessage()); }
     }
 
     /**
@@ -126,7 +127,7 @@ public class CommunityController {
             if (userId == null) return Result.error(401, "未登录");
             communityService.recordView(id, userId);
             return Result.success();
-        } catch (RuntimeException e) { return Result.error(400, e.getMessage()); }
+        } catch (RuntimeException e) { if (e instanceof DataAccessException) throw e; return Result.error(400, e.getMessage()); }
     }
 
     /**
@@ -140,7 +141,7 @@ public class CommunityController {
             Integer userId = CurrentHolder.getCurrentId();
             if (userId == null) return Result.error(401, "未登录");
             return Result.success(communityService.listFavorites(page, size, userId));
-        } catch (RuntimeException e) { return Result.error(400, e.getMessage()); }
+        } catch (RuntimeException e) { if (e instanceof DataAccessException) throw e; return Result.error(400, e.getMessage()); }
     }
 
     /**
@@ -154,7 +155,7 @@ public class CommunityController {
             Integer userId = CurrentHolder.getCurrentId();
             if (userId == null) return Result.error(401, "未登录");
             return Result.success(communityService.listRecentViews(page, size, userId));
-        } catch (RuntimeException e) { return Result.error(400, e.getMessage()); }
+        } catch (RuntimeException e) { if (e instanceof DataAccessException) throw e; return Result.error(400, e.getMessage()); }
     }
 
     /**
@@ -167,7 +168,7 @@ public class CommunityController {
             if (userId == null) return Result.error(401, "未登录");
             communityService.removeRecentView(itemId, userId);
             return Result.success();
-        } catch (RuntimeException e) { return Result.error(400, e.getMessage()); }
+        } catch (RuntimeException e) { if (e instanceof DataAccessException) throw e; return Result.error(400, e.getMessage()); }
     }
 
     /**
@@ -179,7 +180,7 @@ public class CommunityController {
             Integer userId = CurrentHolder.getCurrentId();
             if (userId == null) return Result.error(401, "未登录");
             return Result.success(communityService.reuseItem(id, dto, userId));
-        } catch (RuntimeException e) { return Result.error(400, e.getMessage()); }
+        } catch (RuntimeException e) { if (e instanceof DataAccessException) throw e; return Result.error(400, e.getMessage()); }
     }
 
     /**
@@ -191,7 +192,7 @@ public class CommunityController {
             Integer userId = CurrentHolder.getCurrentId();
             if (userId == null) return Result.error(401, "未登录");
             return Result.success(communityService.createSubmission(dto, userId));
-        } catch (RuntimeException e) { return Result.error(400, e.getMessage()); }
+        } catch (RuntimeException e) { if (e instanceof DataAccessException) throw e; return Result.error(400, e.getMessage()); }
     }
 
     /**
@@ -203,7 +204,7 @@ public class CommunityController {
             Integer userId = CurrentHolder.getCurrentId();
             if (userId == null) return Result.error(401, "未登录");
             return Result.success(communityService.listSubmissions(dto, userId));
-        } catch (RuntimeException e) { return Result.error(400, e.getMessage()); }
+        } catch (RuntimeException e) { if (e instanceof DataAccessException) throw e; return Result.error(400, e.getMessage()); }
     }
 
     /**
@@ -215,7 +216,7 @@ public class CommunityController {
             Integer userId = CurrentHolder.getCurrentId();
             if (userId == null) return Result.error(401, "未登录");
             return Result.success(communityService.getSubmission(id, userId));
-        } catch (RuntimeException e) { return Result.error(400, e.getMessage()); }
+        } catch (RuntimeException e) { if (e instanceof DataAccessException) throw e; return Result.error(400, e.getMessage()); }
     }
 
     /**
@@ -227,7 +228,7 @@ public class CommunityController {
             Integer userId = CurrentHolder.getCurrentId();
             if (userId == null) return Result.error(401, "未登录");
             return Result.success(communityService.updateSubmission(id, dto, userId));
-        } catch (RuntimeException e) { return Result.error(400, e.getMessage()); }
+        } catch (RuntimeException e) { if (e instanceof DataAccessException) throw e; return Result.error(400, e.getMessage()); }
     }
 
     /**
@@ -242,7 +243,7 @@ public class CommunityController {
             if (userId == null) return Result.error(401, "未登录");
             String desc = (body != null) ? body.get("description") : null;
             return Result.success(communityService.saveSubmissionVersion(id, desc, userId));
-        } catch (RuntimeException e) { return Result.error(400, e.getMessage()); }
+        } catch (RuntimeException e) { if (e instanceof DataAccessException) throw e; return Result.error(400, e.getMessage()); }
     }
 
     /**
@@ -255,7 +256,7 @@ public class CommunityController {
             if (userId == null) return Result.error(401, "未登录");
             communityService.submitForReview(id, dto, userId);
             return Result.success();
-        } catch (RuntimeException e) { return Result.error(400, e.getMessage()); }
+        } catch (RuntimeException e) { if (e instanceof DataAccessException) throw e; return Result.error(400, e.getMessage()); }
     }
 
     /**
@@ -268,7 +269,7 @@ public class CommunityController {
             if (userId == null) return Result.error(401, "未登录");
             int reportId = communityService.createReport(dto, userId);
             return Result.success(Map.of("report_id", reportId));
-        } catch (RuntimeException e) { return Result.error(400, e.getMessage()); }
+        } catch (RuntimeException e) { if (e instanceof DataAccessException) throw e; return Result.error(400, e.getMessage()); }
     }
 
     /**
@@ -283,7 +284,7 @@ public class CommunityController {
             Integer userId = CurrentHolder.getCurrentId();
             if (userId == null) return Result.error(401, "未登录");
             return Result.success(communityService.listReports(status, page, size, userId));
-        } catch (RuntimeException e) { return Result.error(400, e.getMessage()); }
+        } catch (RuntimeException e) { if (e instanceof DataAccessException) throw e; return Result.error(400, e.getMessage()); }
     }
 
     /**
@@ -295,6 +296,6 @@ public class CommunityController {
             Integer userId = CurrentHolder.getCurrentId();
             if (userId == null) return Result.error(401, "未登录");
             return Result.success(communityService.getReport(id, userId));
-        } catch (RuntimeException e) { return Result.error(400, e.getMessage()); }
+        } catch (RuntimeException e) { if (e instanceof DataAccessException) throw e; return Result.error(400, e.getMessage()); }
     }
 }

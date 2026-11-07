@@ -2,6 +2,7 @@ import { apiRequest, del, get, post, put } from '../utils/api'
 import axios from 'axios'
 import { useUserStore } from '../storage/user.js'
 import { resourceUploadError } from '../utils/resourceUploadError.js'
+import { restoreStreamedPresentation } from '../utils/presentationStreamResult.js'
 
 export const listResources = (params) => get('/api/v1/resources', params)
 export const updateOutlineSkillGraph = (sessionId, skill) => apiRequest({
@@ -60,6 +61,9 @@ export const deleteResource = (id) => del(`/api/v1/resources/${id}`)
  * timeout 放宽：大文件（PPT/视频）解析+向量化耗时远超默认 10s，超时会产生服务端已建索引但前端未登记的孤儿。
  */
 export const uploadTempResource = (file) => apiRequest({ url: '/api/v1/python/resources/upload', method: 'post', data: file, timeout: 120000 })
+export const uploadWordConversionSource = (file) => apiRequest({
+  url: '/api/v1/python/resources/upload', method: 'post', params: { word_conversion: true }, data: file, timeout: 120000,
+})
 /** 清理临时上传：删除 temp 向量索引与 Python 磁盘目录（resource_ids 为 res_xxx 数组）。 */
 export const cleanupTempResources = (resourceIds) => apiRequest({
   url: `/api/v1/python/resources/temp?resource_ids=${encodeURIComponent((resourceIds || []).join(','))}`,
@@ -109,6 +113,10 @@ export const updateResourceCategory = (id, data) => apiRequest({ url: `/api/v1/r
 export const deleteResourceCategory = (id) => del(`/api/v1/resources/categories/${id}`)
 
 export const syncResourceIndex = (data) => post('/api/v1/python/resources/index/sync', data)
+export const syncWordConversionSource = (data) => apiRequest({
+  url: '/api/v1/python/resources/index/sync',
+  method: 'post', params: { word_conversion: true }, data, timeout: 120000,
+})
 // 资源索引 bootstrap 需要处理全量素材，后端耗时较长，单独放宽超时，避免被默认 10 秒超时误判失败。
 const RESOURCE_INDEX_BOOTSTRAP_TIMEOUT = 210000
 export const bootstrapResourceIndex = (data) => apiRequest({
@@ -155,17 +163,18 @@ export const getCommunityReport = (id) => get(`/api/v1/community/reports/${id}`)
 
 export const listExportTasks = (params) => get('/api/v1/export-tasks', params)
 export const getExportTask = (id) => get(`/api/v1/export-tasks/${id}`)
+export const getExportProgress = (id) => get(`/api/v1/export-tasks/${id}/progress`)
 // 导出接口会等待文件生成服务返回成果，单独放宽超时，避免大课件被默认 10 秒超时误判失败。
 const EXPORT_TASK_TIMEOUT = 210000
 export const retryExportTask = async (id) => {
   const created = await post(`/api/v1/export-tasks/${id}/retry`)
-  if (created?.code !== 200 && created?.code !== 0) return created
+  if ((created?.code !== 200 && created?.code !== 0) || created?.data?.reused) return created
   return runClientExport(created.data)
 }
 export const downloadExportArtifact = (id) => post(`/api/v1/export-artifacts/${id}/download-url`)
 export const createExportTask = async (data) => {
   const created = await post('/api/v1/export-tasks', data)
-  if (created?.code !== 200 && created?.code !== 0) return created
+  if ((created?.code !== 200 && created?.code !== 0) || created?.data?.reused) return created
   return runClientExport(created.data)
 }
 
@@ -211,9 +220,14 @@ async function runClientExport(task) {
     if (saved?.code !== 200 && saved?.code !== 0) throw new Error(saved?.message || '登记导出文件失败')
     return saved
   } catch (error) {
+    const response = error?.response
+    let detail = response?.data?.detail
+    if ([409, 429, 503].includes(response?.status) && response?.data instanceof Blob) {
+      try { detail = JSON.parse(await response.data.text()).detail } catch { /* use default message */ }
+    }
     const message = error?.response?.status === 413
       ? '导出文件回传超过服务端大小限制，请重启更新后的 Java 服务；若仍失败，请检查代理上传限制（文件上限 100MB）'
-      : String(error?.message || '导出失败')
+      : String((typeof detail === 'string' ? detail : detail?.message) || error?.message || '导出失败')
     await post(`/api/v1/export-tasks/${task.id}/failure`, { error: message }).catch(() => {})
     throw new Error(message, { cause: error })
   }
@@ -478,6 +492,7 @@ export const generatePresentation = (data) => apiRequest({
 
 /** 直连 FastAPI 流式生成 HTML PPT；每完成一页即调用 onSlide，最终返回完整 presentation。 */
 export async function generatePresentationStream(data, options = {}) {
+  const received = new Map()
   const userStore = useUserStore()
   const response = await fetch(`${import.meta.env.VITE_PYTHON_API_BASE_URL || ''}/api/v1/python/presentations/generate/stream`, {
     method: 'POST',
@@ -486,7 +501,7 @@ export async function generatePresentationStream(data, options = {}) {
       Accept: 'text/event-stream',
       ...(userStore.token ? { Authorization: `Bearer ${userStore.token}` } : {}),
     },
-    body: JSON.stringify(data),
+    body: JSON.stringify({ ...data, stream_compact: true }),
     signal: options.signal,
   })
   if (!response.ok) throw new Error(`HTML PPT 生成失败 (${response.status})`)
@@ -504,26 +519,35 @@ export async function generatePresentationStream(data, options = {}) {
     }
     if (!dataLines.length) return
     const payload = JSON.parse(dataLines.join('\n'))
-    if (event === 'presentation_slide') options.onSlide?.(payload)
+    if (event === 'presentation_slide') {
+      if (payload.slide?.slide_no) received.set(Number(payload.slide.slide_no), payload.slide)
+      options.onSlide?.(payload)
+    }
     else if (event === 'final') final = payload
     else if (event === 'error') throw new Error(payload.message || 'HTML PPT 流式生成失败')
   }
 
-  while (true) {
-    const { value, done } = await reader.read()
-    buffer += decoder.decode(value || new Uint8Array(), { stream: !done })
-    const blocks = buffer.split(/\r?\n\r?\n/)
-    buffer = blocks.pop() || ''
-    blocks.filter(Boolean).forEach(consume)
-    if (done) break
+  try {
+    while (true) {
+      const { value, done } = await reader.read()
+      buffer += decoder.decode(value || new Uint8Array(), { stream: !done })
+      const blocks = buffer.split(/\r?\n\r?\n/)
+      buffer = blocks.pop() || ''
+      blocks.filter(Boolean).forEach(consume)
+      if (done) break
+    }
+    if (buffer.trim()) consume(buffer)
+    if (!final) throw new Error('HTML PPT 生成流结束，但未收到最终结果')
+    return restoreStreamedPresentation(final, received)
+  } finally {
+    await reader.cancel().catch(() => {})
+    reader.releaseLock()
   }
-  if (buffer.trim()) consume(buffer)
-  if (!final) throw new Error('HTML PPT 生成流结束，但未收到最终结果')
-  return final
 }
 
 /** 记录教师对 AI 生成结果的接受、拒绝、撤销和手工修改，供个性化学习使用。 */
 export const recordAiFeedback = (data) => post('/api/v1/python/teacher-style/feedback', data)
+export const getTeacherStrategyEffects = () => get('/api/v1/python/teacher-style/strategy-effects')
 
 /** 获取 AI 运行质量、耗时、Token 与反馈指标。 */
 export const getAiMetrics = (params) => get('/api/v1/python/ai/metrics', params)

@@ -95,7 +95,7 @@ def reject_identity_spoofing(body: bytes, query: dict[str, str], user_id: str) -
     inspect(payload)
 
 
-async def signed_personal_resource_url(resource_id: str) -> str:
+async def signed_personal_resource_url(resource_id: str, *, require_ai_permission: bool = False) -> str:
     """从 Java 资源服务校验所有权并获取签名 URL，不信任浏览器给的 file_url。"""
     token = direct_bearer.get()
     if not token or not resource_id.isdecimal():
@@ -103,6 +103,18 @@ async def signed_personal_resource_url(resource_id: str) -> str:
     java_url = os.getenv("JAVA_AUTH_BASE_URL", "http://127.0.0.1:8088").rstrip("/")
     try:
         async with httpx.AsyncClient(timeout=8) as client:
+            if require_ai_permission:
+                details = await client.get(f"{java_url}/api/v1/resources/{resource_id}",
+                                           headers={"Authorization": f"Bearer {token}"})
+                if details.status_code in (401, 403):
+                    raise HTTPException(status_code=details.status_code, detail="无法读取该教案的授权状态")
+                details.raise_for_status()
+                envelope = details.json()
+                material = envelope.get("data") or {}
+                if envelope.get("code") not in (0, 200) or material.get("allow_ai") != 1:
+                    raise HTTPException(status_code=403, detail="请先在资源库允许 AI 使用该教案")
+                if not str(material.get("file_name") or "").lower().endswith(".docx"):
+                    raise HTTPException(status_code=400, detail="格式转换目前支持 .docx 教案")
             response = await client.post(f"{java_url}/api/v1/resources/{resource_id}/download-url",
                                          headers={"Authorization": f"Bearer {token}"})
         if response.status_code == 401:
@@ -141,3 +153,51 @@ async def signed_public_resource_url(resource_id: str) -> str:
         raise
     except (httpx.HTTPError, ValueError):
         raise HTTPException(status_code=503, detail="公共资源服务暂时不可用") from None
+
+
+async def hydrate_public_registration(request) -> None:
+    """Business registration is authoritative; browser metadata cannot invent a source."""
+    token = direct_bearer.get()
+    if not token or not request.resource_id.isdecimal():
+        raise HTTPException(403, '无权访问该资源')
+    java_url = os.getenv('JAVA_AUTH_BASE_URL', 'http://127.0.0.1:8088').rstrip('/')
+    try:
+        async with httpx.AsyncClient(timeout=8) as client:
+            response = await client.get(f'{java_url}/api/v1/admin/public-resources/{request.resource_id}',
+                                        headers={'Authorization': f'Bearer {token}'})
+        response.raise_for_status()
+        envelope = response.json()
+        if envelope.get('code') not in (0, 200):
+            raise HTTPException(403, '无法读取公共来源登记')
+        record = envelope.get('data') or {}
+        if hasattr(request, 'title'):
+            request.title = record.get('title') or request.title
+        if hasattr(request, 'file_size'):
+            request.file_size = record.get('file_size')
+        provenance = json.loads(record.get('source_metadata') or '{}')
+        request.metadata.update({'provenance': provenance, 'ingested_at': record.get('created_at'),
+                                 'subject': record.get('subject'), 'grade': record.get('grade'),
+                                 '_business_registration': {'source_metadata': record.get('source_metadata'), 'file_url': record.get('file_url')}})
+        request.metadata.pop('source_check', None)
+        request.metadata.pop('superseded', None)
+        request.available = record.get('status') == 1
+        request.allow_ai = record.get('status') == 1
+    except (httpx.HTTPError, ValueError):
+        raise HTTPException(503, '公共来源登记服务暂时不可用') from None
+
+
+async def acknowledge_public_index(resource_id, result, metadata):
+    """Persist only business status after direct AI calls; failures stay visible to the caller."""
+    status = {'indexed': 'completed', 'skipped': 'completed', 'failed': 'failed', 'disabled': 'disabled'}.get(result.get('status'))
+    if not status:
+        return False
+    snapshot = metadata.get('_business_registration') or {}
+    java_url = os.getenv('JAVA_AUTH_BASE_URL', 'http://127.0.0.1:8088').rstrip('/')
+    try:
+        async with httpx.AsyncClient(timeout=8) as client:
+            response = await client.post(f'{java_url}/api/v1/admin/public-resources/{resource_id}/index-result',
+                headers={'Authorization': 'Bearer ' + (direct_bearer.get() or '')},
+                json={'status': status, 'expected_source_metadata': snapshot.get('source_metadata'), 'expected_file_url': snapshot.get('file_url')})
+        return response.is_success and response.json().get('code') in (0, 200)
+    except (httpx.HTTPError, ValueError):
+        return False

@@ -10,6 +10,7 @@ import edu.zstu.vo.ContentVO;
 import java.util.Map;
 
 public interface AdminModerationService {
+    Map<String, Object> getModerationMetrics();
     PageResult<AuditVO> listModerationTasks(String status, String targetType, Integer handlerId, String aiVerdict, String aiDomain, int page, int size);
     AuditVO getModerationTask(Integer id);
     ContentVO getModerationContent(Integer id);

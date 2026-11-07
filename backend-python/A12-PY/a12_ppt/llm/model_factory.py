@@ -5,16 +5,19 @@ from langchain_openai import ChatOpenAI, OpenAIEmbeddings
 from ..config import Settings
 
 
-@lru_cache(maxsize=32)
-def create_chat_model(
+def _build_chat_model(
     model: str,
     api_key: str,
     base_url: str,
     timeout_seconds: float,
     temperature: float,
     reasoning_effort: str = "medium",
+    max_retries: int = 2,
+    http_async_client=None,
 ) -> ChatOpenAI:
     kwargs = {}
+    if http_async_client is not None:
+        kwargs['http_async_client'] = http_async_client
     if "dashscope.aliyuncs.com" in (base_url or "").lower():
         kwargs["extra_body"] = {"enable_thinking": reasoning_effort in {"medium", "high"}}
     return ChatOpenAI(
@@ -23,8 +26,28 @@ def create_chat_model(
         base_url=base_url.rstrip("/") if base_url else None,
         timeout=timeout_seconds,
         temperature=temperature,
+        max_retries=max_retries,
         **kwargs,
     )
+
+
+@lru_cache(maxsize=32)
+def _cached_chat_model(model, api_key, base_url, timeout_seconds, temperature, reasoning_effort, max_retries):
+    return _build_chat_model(model, api_key, base_url, timeout_seconds, temperature, reasoning_effort, max_retries)
+
+
+def create_chat_model(model: str, api_key: str, base_url: str, timeout_seconds: float,
+                      temperature: float, reasoning_effort: str = 'medium', max_retries: int = 2,
+                      *, http_async_client=None) -> ChatOpenAI:
+    # A worker-owned transport must not enter the shared model/client cache:
+    # it is closed on its own event loop at the end of the review.
+    if http_async_client is not None:
+        return _build_chat_model(model, api_key, base_url, timeout_seconds, temperature,
+                                 reasoning_effort, max_retries, http_async_client)
+    return _cached_chat_model(model, api_key, base_url, timeout_seconds, temperature, reasoning_effort, max_retries)
+
+
+create_chat_model.cache_clear = _cached_chat_model.cache_clear
 
 
 def create_chat_model_from_settings(settings: Settings, temperature: float = 0.45) -> ChatOpenAI:

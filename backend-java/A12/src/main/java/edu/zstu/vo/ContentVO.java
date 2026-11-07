@@ -38,4 +38,8 @@ public class ContentVO {
     private LocalDateTime created_at;
     private LocalDateTime updated_at;
     private LocalDateTime favorited_at; // 当前用户收藏时间，不是内容发布时间
+    @com.fasterxml.jackson.annotation.JsonInclude(com.fasterxml.jackson.annotation.JsonInclude.Include.NON_NULL)
+    private SubmissionReview submission_review;
+
+    public record SubmissionReview(String status, String action, String comment, LocalDateTime processed_at) {}
 }

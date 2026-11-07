@@ -1,16 +1,22 @@
 package edu.zstu.utils;
 
 import com.fasterxml.jackson.core.type.TypeReference;
+import com.fasterxml.jackson.core.JsonProcessingException;
+import com.fasterxml.jackson.databind.JavaType;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import org.springframework.data.redis.core.Cursor;
 import org.springframework.data.redis.core.ScanOptions;
 import org.springframework.data.redis.core.StringRedisTemplate;
+import org.springframework.dao.DataAccessException;
 import org.springframework.stereotype.Component;
 import lombok.extern.slf4j.Slf4j;
 
 import java.time.Duration;
 import java.util.HashSet;
 import java.util.Set;
+import java.util.concurrent.ThreadLocalRandom;
+import java.util.concurrent.TimeUnit;
+import java.util.concurrent.locks.ReentrantLock;
 import java.util.function.Supplier;
 
 @Slf4j
@@ -18,40 +24,65 @@ import java.util.function.Supplier;
 public class RedisCacheUtil {
     private final StringRedisTemplate redisTemplate;
     private final ObjectMapper objectMapper;
+    private final ReentrantLock[] loadLocks = new ReentrantLock[128];
 
     public RedisCacheUtil(StringRedisTemplate redisTemplate, ObjectMapper objectMapper) {
         this.redisTemplate = redisTemplate;
         this.objectMapper = objectMapper;
+        for (int i = 0; i < loadLocks.length; i++) loadLocks[i] = new ReentrantLock();
     }
 
     public <T> T getOrLoad(String key, TypeReference<T> type, Duration ttl, Supplier<T> loader) {
-        String cached = redisTemplate.opsForValue().get(key);
-        if (cached != null) {
-            try {
-                return objectMapper.readValue(cached, type);
-            } catch (Exception ignored) {
-                log.warn("redis cache deserialize failed, key={}", key, ignored);
-                redisTemplate.delete(key);
-            }
-        }
-        T value = loader.get();
-        put(key, value, ttl);
-        return value;
+        return loadCached(key, objectMapper.constructType(type), ttl, loader);
     }
 
     public <T> T getOrLoad(String key, Class<T> type, Duration ttl, Supplier<T> loader) {
-        String cached = redisTemplate.opsForValue().get(key);
-        if (cached != null) {
-            try {
-                return objectMapper.readValue(cached, type);
-            } catch (Exception ignored) {
-                log.warn("redis cache deserialize failed, key={}", key, ignored);
-                redisTemplate.delete(key);
-            }
+        return loadCached(key, objectMapper.constructType(type), ttl, loader);
+    }
+
+    private <T> T loadCached(String key, JavaType type, Duration ttl, Supplier<T> loader) {
+        T cached;
+        try {
+            cached = read(key, type);
+        } catch (DataAccessException e) {
+            log.debug("redis cache read unavailable, type={}", e.getClass().getSimpleName());
+            return loader.get();
         }
-        T value = loader.get();
-        put(key, value, ttl);
-        return value;
+        if (cached != null) return cached;
+
+        ReentrantLock lock = loadLocks[Math.floorMod(key.hashCode(), loadLocks.length)];
+        try {
+            if (!lock.tryLock(250, TimeUnit.MILLISECONDS)) return loader.get();
+        } catch (InterruptedException e) {
+            Thread.currentThread().interrupt();
+            throw new IllegalStateException("缓存回源等待已中断", e);
+        }
+        try {
+            try {
+                cached = read(key, type);
+            } catch (DataAccessException e) {
+                log.debug("redis cache recheck unavailable, type={}", e.getClass().getSimpleName());
+                return loader.get();
+            }
+            if (cached != null) return cached;
+            T loaded = loader.get();
+            long jitterMs = Math.max(0, ttl.toMillis() / 10);
+            if (loaded != null) put(key, loaded, ttl.minusMillis(ThreadLocalRandom.current().nextLong(jitterMs + 1)));
+            return loaded;
+        } finally {
+            lock.unlock();
+        }
+    }
+
+    private <T> T read(String key, JavaType type) {
+        String cached = redisTemplate.opsForValue().get(key);
+        if (cached == null) return null;
+        try {
+            return objectMapper.readValue(cached, type);
+        } catch (JsonProcessingException e) {
+            log.debug("redis cache entry cannot be decoded, type={}", e.getClass().getSimpleName());
+            return null;
+        }
     }
 
     public void put(String key, Object value, Duration ttl) {

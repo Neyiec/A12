@@ -1,12 +1,26 @@
 <script setup>
-import { computed, defineAsyncComponent, reactive, ref, watch } from 'vue'
+import { computed, defineAsyncComponent, onErrorCaptured, reactive, ref, watch } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { ElMessage } from 'element-plus'
 import { createProject, createProjectPage, listProjects, saveProjectVersion } from '../apis/teacher'
 import { hasWorkspaceTarget, unwrapWorkspaceResult } from '../utils/workspaceEntry'
 import '../workspace-theme.css'
+import WorkspaceEditorState from './WorkspaceEditorState.vue'
+import { createGenerationTiming } from '../utils/generationTiming.js'
 
-const Editor = defineAsyncComponent(() => import('./CreationWorkspace.vue'))
+const editorFailure = ref(null)
+const Editor = defineAsyncComponent({
+  loader: () => createGenerationTiming().measure('workspace.editor_import', () => import('./CreationWorkspace.vue')),
+  loadingComponent: WorkspaceEditorState,
+  errorComponent: WorkspaceEditorState,
+  delay: 0,
+  timeout: 30000,
+})
+onErrorCaptured((failure) => {
+  console.error('[workspace] 编辑器加载或初始化失败', failure)
+  editorFailure.value = failure
+  return false
+})
 const route = useRoute()
 const router = useRouter()
 const hasTarget = computed(() => hasWorkspaceTarget(route.query))
@@ -79,7 +93,8 @@ watch(hasTarget, target => {
 
 <template>
   <div class="workspace-blue-white">
-  <Editor v-if="hasTarget" />
+  <WorkspaceEditorState v-if="hasTarget && editorFailure" :error="editorFailure" />
+  <Editor v-else-if="hasTarget" />
   <main v-else class="workspace-entry">
     <header><div><small>个人工作台</small><h1>选择项目，开始备课</h1><p>打开已有项目，或主动创建一份空白课件。不选择不会创建项目。</p></div><el-button type="primary" @click="beginCreate">＋ 新建项目</el-button></header>
     <div class="entry-search"><el-input v-model="filters.keyword" clearable placeholder="搜索项目名称" @keyup.enter="search" @clear="search" /><el-button :loading="loading" @click="search">搜索</el-button><el-button @click="router.push('/main')">返回教学助手</el-button></div>

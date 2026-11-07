@@ -185,6 +185,7 @@ public class AIServiceImpl implements AIService {
         Object rawFinal = data.get("final_data");
         if ("completed".equals(status) && !(rawFinal instanceof Map<?, ?>)) throw new RuntimeException("大纲结果不能为空");
         OutlineResult pythonResult = new OutlineResult();
+        if ("course_info_confirmation".equals(data.get("input_kind"))) pythonResult.inputKind = "course_info_confirmation";
         pythonResult.status = status;
         pythonResult.pythonSessionId = String.valueOf(data.getOrDefault("python_session_id", ""));
         pythonResult.question = String.valueOf(data.getOrDefault("question", ""));
@@ -577,7 +578,11 @@ public class AIServiceImpl implements AIService {
     private String appendMessageJson(String oldMessages, String userMessage, OutlineResult result) {
         try {
             List<Object> messages = objectMapper.readValue(defaultJson(oldMessages, "[]"), new TypeReference<>() {});
-            messages.add(Map.of("role", "user", "content", userMessage));
+            Map<String, Object> userEntry = new LinkedHashMap<>();
+            userEntry.put("role", "user");
+            userEntry.put("content", userMessage);
+            if (result.inputKind != null) userEntry.put("type", result.inputKind);
+            messages.add(userEntry);
             if (!isBlank(result.question)) {
                 messages.add(Map.of("role", "assistant", "content", result.question, "type", "question"));
             } else if ("awaiting_graph_confirmation".equals(result.status)) {
@@ -652,6 +657,7 @@ public class AIServiceImpl implements AIService {
     }
 
     private static class OutlineResult {
+        String inputKind;
         String status;
         String pythonSessionId;
         String outlineId;

@@ -15,6 +15,7 @@ from ..direct_auth import direct_user_id
 from ..llm import EmbeddingClient
 from ..models import ResourceIndexMetadataRequest, ResourceIndexSyncRequest
 from .chunks import chunk_records
+from .provenance import assess, public_sql_filter
 from .downloader import download_and_parse_resource
 from .identity import resource_fingerprint, resource_key
 from .records import IndexedChunk
@@ -162,6 +163,21 @@ class ResourceIndexStore:
             logger.warning("创建 HNSW 向量索引失败（不影响写入，仅影响检索性能）", exc_info=True)
 
     async def sync_resource(self, request: ResourceIndexSyncRequest) -> dict[str, Any]:
+        if request.source_type != "public" or not self.available:
+            return await self._sync_resource(request)
+        # Browser direct calls and committed business events can arrive together.
+        # Keep one indexer per public resource across Python workers.
+        conn = await asyncio.to_thread(self._connect)
+        try:
+            lock_id = int(hashlib.sha256(("public-index:" + request.resource_id).encode()).hexdigest()[:15], 16)
+            locked = (await asyncio.to_thread(conn.execute, "SELECT pg_try_advisory_lock(%s)", (lock_id,))).fetchone()[0]
+            if not locked:
+                return {"resource_key": resource_key("public", request.resource_id), "status": "processing"}
+            return await self._sync_resource(request)
+        finally:
+            await asyncio.to_thread(conn.close)
+
+    async def _sync_resource(self, request: ResourceIndexSyncRequest) -> dict[str, Any]:
         if request.source_type == "community":
             raise ValueError("社区内容必须通过可信审核事件同步")
         started_at = time.perf_counter()
@@ -171,6 +187,19 @@ class ResourceIndexStore:
         # SHA-256 覆盖它，避免签名 URL 变化或同尺寸文件替换造成误判。
         fingerprint = resource_fingerprint(request)
         existing = self._load_resource_meta(key)
+        if request.source_type == "public" and (not request.available or not request.allow_ai):
+            self.update_metadata(ResourceIndexMetadataRequest(source_type="public", resource_id=request.resource_id,
+                available=request.available, allow_ai=request.allow_ai, metadata=metadata))
+            return {"resource_key": key, "status": "disabled"}
+        if request.source_type == "public" and existing:
+            previous_metadata = existing.get("metadata") or {}
+            if previous_metadata.get("provenance") == metadata.get("provenance") and previous_metadata.get("source_check"):
+                metadata["source_check"] = previous_metadata["source_check"]
+                metadata["provenance_valid"] = assess(metadata)["eligible"]
+        if request.source_type == "public" and not metadata.get("provenance_valid"):
+            message = "来源登记不合规: " + "；".join(assess(metadata)["reasons"])
+            self._record_failure(request, metadata, fingerprint, message)
+            return {"resource_key": key, "status": "failed", "error_message": message}
         if not self.available:
             logger.warning("sync_resource 于降级模式执行（PG 不可用，仅写本地文件） resource_key=%s", key)
         try:
@@ -366,10 +395,14 @@ class ResourceIndexStore:
             return {"resource_key": key, "status": "missing"}
         metadata = dict(existing.get("metadata") or {})
         metadata.update(request.metadata or {})
+        if request.source_type == "public" and metadata.get("provenance") != (existing.get("metadata") or {}).get("provenance"):
+            metadata.pop("source_check", None)
         if request.available is not None:
             metadata["available"] = request.available
         if request.allow_ai is not None:
             metadata["allow_ai"] = request.allow_ai
+        if request.source_type == "public":
+            metadata["provenance_valid"] = assess(metadata)["eligible"]
 
         available = bool(metadata.get("available", existing.get("available", True)))
         allow_ai = bool(metadata.get("allow_ai", existing.get("allow_ai", True)))
@@ -475,6 +508,7 @@ class ResourceIndexStore:
             })
             return {"query": query, "context": "", "matches": [], "search_mode": "no_match", "latency_ms": latency_ms}
 
+        chunks = [chunk for chunk in chunks if chunk.source_type != "public" or assess(chunk.metadata)["eligible"]]
         scored: list[tuple[float, str, IndexedChunk]] = []
         for chunk in chunks:
             if query_embedding and chunk.embedding:
@@ -553,6 +587,7 @@ class ResourceIndexStore:
                       {key_filter}
                       {source_filter}
                       {owner_filter}
+                      {public_sql_filter()}
                       AND COALESCE((metadata->>'available')::boolean, TRUE) IS TRUE
                       AND COALESCE((metadata->>'allow_ai')::boolean, TRUE) IS TRUE
                     ORDER BY embedding_vector <=> %s::vector
@@ -591,6 +626,7 @@ class ResourceIndexStore:
             return []
         filters = ["embedding_vector IS NOT NULL", "COALESCE((metadata->>'available')::boolean, TRUE) IS TRUE",
                    "COALESCE((metadata->>'allow_ai')::boolean, TRUE) IS TRUE"]
+        filters.append(public_sql_filter().removeprefix("AND "))
         params: list[Any] = []
         if keys:
             filters.append("resource_key = ANY(%s)")
@@ -853,12 +889,21 @@ class ResourceIndexStore:
     def _rerank_matches(self, matches: list[dict[str, Any]], query: str, top_k: int) -> list[dict[str, Any]]:
         reranked: list[dict[str, Any]] = []
         for item in matches:
+            evidence = None
+            if str(item.get("resource_id", "")).startswith("public:"):
+                evidence = assess(item.get("metadata") or {})
+                if not evidence["eligible"]:
+                    continue
             base_score = float(item.get("score") or 0.0)
             lexical_score = keyword_score(str(item.get("content") or ""), query)
             metadata_score = self._metadata_score(item.get("metadata") or {}, query)
             exact_boost = 0.08 if query and query.strip() in str(item.get("content") or "") else 0.0
             rerank_score = (0.68 * base_score) + (0.24 * lexical_score) + metadata_score + exact_boost
+            if evidence:
+                rerank_score *= evidence["weight"]
             current = dict(item)
+            if evidence:
+                current["provenance"] = evidence
             current["base_score"] = round(base_score, 6)
             current["rerank_score"] = round(rerank_score, 6)
             current["match_type"] = f"{current.get('match_type', 'unknown')}+hybrid_rerank"
@@ -885,6 +930,8 @@ class ResourceIndexStore:
             (
                 f"[UNTRUSTED_EVIDENCE citation={item.get('citation_id') or (str(item['resource_id']) + '#' + str(item['chunk_id']))} score={item.get('score', 0)}"
                 + (f" time={item.get('start_timestamp')}-{item.get('end_timestamp')}" if item.get("start_timestamp") else "")
+                + (" source=" + json.dumps(item.get("provenance"), ensure_ascii=False) if item.get("provenance") else "")
+                + (f" page={(item.get('metadata') or {}).get('page_number')}" if (item.get("metadata") or {}).get("page_number") else "")
                 + f"]\n{item['content']}\n[/UNTRUSTED_EVIDENCE]"
             )
             for item in matches
@@ -897,6 +944,7 @@ class ResourceIndexStore:
             "citations": [
                 {"citation_id": item.get("citation_id"), "resource_id": item.get("resource_id"),
                  "chunk_id": item.get("chunk_id"), "score": item.get("score"),
+                 "provenance": item.get("provenance"), "page_number": (item.get("metadata") or {}).get("page_number"),
                  "start_timestamp": item.get("start_timestamp"), "end_timestamp": item.get("end_timestamp")}
                 for item in matches
             ],
@@ -982,6 +1030,9 @@ class ResourceIndexStore:
             "file_size": request.file_size,
             "title": request.title,
         })
+        if request.source_type == "public":
+            metadata.setdefault("ingested_at", datetime.now(timezone.utc).isoformat())
+            metadata["provenance_valid"] = assess(metadata)["eligible"]
         return metadata
 
     def _replace_index(
@@ -1096,6 +1147,10 @@ class ResourceIndexStore:
                             error_message[:2000],
                         ),
                     )
+                    if request.source_type == "public":
+                        patch = {**self._compact_chunk_metadata(metadata, {}), "provenance_valid": False}
+                        cur.execute("UPDATE a12_resource_index_chunk SET metadata=metadata || %s::jsonb WHERE resource_key=%s",
+                                    (json.dumps(patch, ensure_ascii=False), key))
         else:
             data = self._read_fallback()
             previous = data.get("resources", {}).get(key, {})
@@ -1123,13 +1178,13 @@ class ResourceIndexStore:
         keys = (
             "source", "source_type", "resource_id", "resource_key", "uploaded_by", "owner_user_id",
             "available", "allow_ai", "file_type", "file_size", "title", "description", "subject", "grade",
-            "categories", "tags", "access_type",
+            "categories", "tags", "access_type", "provenance", "provenance_valid", "ingested_at", "source_check", "superseded",
         )
         compact = {key: metadata.get(key) for key in keys if key in metadata}
         parse_metadata = metadata.get("parse") if isinstance(metadata.get("parse"), dict) else {}
         compact["parse"] = {
             key: value for key, value in parse_metadata.items()
-            if key not in {"timeline", "keyframes"}
+            if key not in {"timeline", "keyframes", "page_spans"}
         }
         compact.update(specific)
         return compact
@@ -1181,6 +1236,7 @@ class ResourceIndexStore:
                         WHERE COALESCE((metadata->>'available')::boolean, TRUE) IS TRUE
                           {key_filter}
                           {owner_filter}
+                          {public_sql_filter()}
                           AND COALESCE((metadata->>'allow_ai')::boolean, TRUE) IS TRUE
                         ORDER BY resource_key, chunk_index
                         """,
@@ -1203,6 +1259,8 @@ class ResourceIndexStore:
         target_keys = keys or list(data.get("chunks", {}).keys())
         for key in target_keys:
             meta = data.get("resources", {}).get(key, {})
+            if meta.get("source_type") == "public" and meta.get("parse_status") != "completed":
+                continue
             if not meta.get("available", True) or not meta.get("allow_ai", True):
                 continue
             if not self._visible(meta.get("source_type", ""), meta.get("metadata") or {}):

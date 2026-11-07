@@ -31,7 +31,8 @@ public class CorsConfig {
             "capacitor://localhost",
             "http://localhost:5173",
             "http://127.0.0.1:5173",
-            "http://localhost:8888"
+            "http://localhost:8888",
+            "http://127.0.0.1:8888"
     );
 
     @Bean

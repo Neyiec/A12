@@ -49,6 +49,7 @@ import { pollStatus } from '@/utils/statusPoller'
 import {
   getPublicResources,
   createUploadSession,
+  syncPublicAiResource,
   completeUpload,
   updateResource,
   deleteResource,
@@ -64,6 +65,8 @@ import {
   rebuildCommunityIndex,
 } from '@/apis/resource'
 import FileDropUpload from '@/components/admin/FileDropUpload.vue'
+import SourceRegistrationFields from '@/components/admin/SourceRegistrationFields.vue'
+import PublicSourceGovernance from '@/components/admin/PublicSourceGovernance.vue'
 import { apiRequest } from '@/utils/api'
 import { buildFileKey, formatFileSize, getFileExtension } from '@/utils/file'
 
@@ -332,6 +335,52 @@ const currentResource = ref(null)
 
 /** 上传对话框可见性 */
 const uploadDialogVisible = ref(false)
+
+const blankSource = () => ({ source_kind: '', source_type: '', source_url: '', source_note: '', version_label: '', version_year: '', authority_level: 'general', valid_until: '' })
+const uploadSource = ref(blankSource())
+const editingSource = ref(blankSource())
+const sourceEditorVisible = ref(false), sourceSaving = ref(false), sourceResourceId = ref(null), sourceImporting = ref(false)
+const governanceRef = ref(null)
+function parseSource(value) { try { return { ...blankSource(), ...JSON.parse(value || '{}') } } catch { return blankSource() } }
+async function openSourceEditor(id) {
+  try {
+    const response = await apiRequest({ url: '/api/v1/admin/public-resources/' + id })
+    sourceResourceId.value = id
+    editingSource.value = parseSource(response.data.source_metadata)
+    sourceEditorVisible.value = true
+  } catch (error) { ElMessage.error(error.message || '读取来源失败') }
+}
+async function saveSource() {
+  if (sourceSaving.value) return
+  sourceSaving.value = true
+  try {
+    await updateResource(sourceResourceId.value, { source_metadata: JSON.stringify(editingSource.value) })
+    const synced = await syncPublicAiResource(sourceResourceId.value)
+    if (synced.data?.status === 'failed') throw new Error(synced.data.error_message || '来源已保存，但索引失败，请检查资料')
+    sourceEditorVisible.value = false
+    ElMessage.success('来源已保存，后台将重新同步索引')
+    await fetchResources()
+    const row = resourceList.value.find(item => String(item.id) === String(sourceResourceId.value))
+    if (row && ['pending','processing','indexing'].includes(row.status)) pollAiIndexStatus(row)
+    await governanceRef.value?.load()
+  } catch (error) { ElMessage.error(error.message || '保存来源失败') }
+  finally { sourceSaving.value = false }
+}
+async function importAuthoritativeSource() {
+  if (sourceImporting.value || isUploading.value) return
+  if (uploadFileList.value.length >= 20) { ElMessage.warning('单次最多 20 个文件，请先上传当前队列'); return }
+  sourceImporting.value = true
+  try {
+    const result = await apiRequest({ url: '/api/v1/python/resources/index/governance/fetch', method: 'post',
+      data: { source_url: uploadSource.value.source_url }, timeout: 45000 })
+    const value = result.data
+    const bytes = Uint8Array.from(atob(value.content_base64), letter => letter.charCodeAt(0))
+    onUploadFilesAccepted([new File([bytes], value.filename, { type: value.content_type })])
+    ElMessage.success('已加入上传队列，请核对来源和版本后上传发布')
+  } catch (error) { ElMessage.error(error.message || '导入来源失败') }
+  finally { sourceImporting.value = false }
+}
+
 
 /** 上传文件列表 */
 const uploadFileList = ref([])
@@ -882,6 +931,7 @@ const handleRenameResource = (row) => {
  */
 const openUploadDialog = () => {
   uploadFileList.value = []
+  uploadSource.value = blankSource()
   uploadCategory.subject = ''
   uploadCategory.type = ''
   uploadCategory.grade = ''
@@ -1004,6 +1054,7 @@ const uploadSingleFile = async (queueFile) => {
       file_name: queueFile.name,
       file_type: queueFile.mimeType || 'application/octet-stream',
       file_size: queueFile.size || 0,
+      source_metadata: JSON.stringify(uploadSource.value),
     })
     const payload = unwrapResult(sessionRes, '创建上传会话失败')
     await uploadToOss(queueFile, payload.upload_url, (percent) => {
@@ -1011,6 +1062,14 @@ const uploadSingleFile = async (queueFile) => {
     })
     queueFile.progress = 99
     await unwrapResult(await completeUpload(payload.upload_id), '确认上传失败')
+    // Upload is already durable: a parser failure must not cause a duplicate file upload.
+    try {
+      const synced = await syncPublicAiResource(payload.upload_id, { title: queueFile.name })
+      if (synced.data?.status === 'failed') throw new Error(synced.data.error_message || '索引解析失败')
+      if (synced.data?.business_status_saved === false) ElMessage.warning('索引已返回，业务状态未同步，请刷新后核对')
+    } catch (error) {
+      ElMessage.warning(`${queueFile.name} 已上传，索引未完成：${error.message || '请在资源列表重试解析'}`)
+    }
     queueFile.progress = 100
     queueFile.status = 'success'
     return payload.upload_id
@@ -1025,7 +1084,7 @@ const uploadSingleFile = async (queueFile) => {
  * 执行上传：顺序走三段式（会话 → OSS 直传 → complete），全部结束后刷新列表并对新资源启动索引状态轮询
  */
 const handleUpload = () => {
-  if (isUploading.value) return
+  if (isUploading.value || sourceImporting.value) return
   const filesToUpload = uploadFileList.value.filter((file) => file.status === 'ready' || file.status === 'error')
   if (filesToUpload.length === 0) {
     if (uploadAllComplete.value) uploadDialogVisible.value = false
@@ -1100,7 +1159,8 @@ const handleReparse = async (row) => {
   reparseRequests.add(requestKey)
   const name = row.resourceName || row.name
   try {
-    await unwrapResult(await reparseResource(resourceId), '重新解析失败')
+    const synced = await syncPublicAiResource(resourceId, { title: name, force: true })
+    if (synced.data?.status === 'failed') throw new Error(synced.data.error_message || '重新解析失败')
     const resource = resourceList.value.find((r) => r.id === resourceId)
     if (resource) {
       resource.status = 'indexing'
@@ -1125,7 +1185,10 @@ const handleKnowledgeReparse = async (row) => {
   if (reparseRequests.has(requestKey)) return
   reparseRequests.add(requestKey)
   try {
-    await unwrapResult(await reparseAiIndex(row.sourceType, row.resourceId), '重新解析失败')
+    if (row.sourceType === 'public') {
+      const synced = await syncPublicAiResource(row.resourceId, { title: row.resourceName, force: true })
+      if (synced.data?.status === 'failed') throw new Error(synced.data.error_message || '重新解析失败')
+    } else await unwrapResult(await reparseAiIndex(row.sourceType, row.resourceId), '重新解析失败')
     row.status = 'indexing'
     ElMessage.success(`已发起「${row.resourceName}」的重新解析`)
     pollKnowledgeTaskStatus(row)
@@ -1470,6 +1533,8 @@ onBeforeUnmount(() => {
         </div>
       </div>
 
+      <PublicSourceGovernance ref="governanceRef" @register="openSourceEditor" />
+
       <!-- 3.2 资源数据表格 -->
       <el-card
         shadow="never"
@@ -1622,7 +1687,7 @@ onBeforeUnmount(() => {
             </el-table-column>
 
             <!-- 列：操作 -->
-            <el-table-column label="操作" width="240" align="center" fixed="right">
+            <el-table-column label="操作" width="310" align="center" fixed="right">
               <template #default="{ row }">
                 <div class="flex items-center justify-center gap-1">
                   <el-button
@@ -1633,6 +1698,7 @@ onBeforeUnmount(() => {
                     <el-icon class="mr-0.5"><View /></el-icon>
                     详情
                   </el-button>
+                  <el-button type="primary" link size="small" @click="openSourceEditor(row.id)">来源登记</el-button>
                   <el-button
                     type="primary" link size="small"
                     :style="{ fontSize: 'var(--zh-font-size12)' }"
@@ -2279,14 +2345,19 @@ onBeforeUnmount(() => {
     <!-- ===================================================================
          5. 批量上传对话框
          =================================================================== -->
+    <el-dialog v-model="sourceEditorVisible" title="公共资源来源登记" width="min(760px, 94vw)">
+      <SourceRegistrationFields v-model="editingSource" :disabled="sourceSaving" />
+      <template #footer><el-button @click="sourceEditorVisible = false">取消</el-button><el-button type="primary" :loading="sourceSaving" @click="saveSource">保存并同步</el-button></template>
+    </el-dialog>
+
     <el-dialog
       v-model="uploadDialogVisible"
       title="上传公共资源"
       width="640px"
       destroy-on-close
-      :close-on-click-modal="!isUploading"
-      :close-on-press-escape="!isUploading"
-      :show-close="!isUploading"
+      :close-on-click-modal="!isUploading && !sourceImporting"
+      :close-on-press-escape="!isUploading && !sourceImporting"
+      :show-close="!isUploading && !sourceImporting"
       :style="{
         '--el-dialog-bg-color': 'var(--zh-background-pop)',
         '--el-dialog-border-radius': 'var(--zh-radius16)',
@@ -2451,14 +2522,17 @@ onBeforeUnmount(() => {
         </div>
       </div>
 
+      <SourceRegistrationFields v-model="uploadSource" :disabled="isUploading || sourceImporting" />
+      <el-button :loading="sourceImporting" :disabled="isUploading || !uploadSource.source_url" @click="importAuthoritativeSource">从白名单来源链接获取资料</el-button>
+      <p>获取后只加入文件队列，核对内容、来源与版本后再点击上传；可重命名为明确的资料标题。</p>
       <!-- 底部按钮 -->
       <template #footer>
         <div class="flex justify-end gap-3">
-          <el-button :disabled="isUploading" @click="uploadDialogVisible = false">取消</el-button>
+          <el-button :disabled="isUploading || sourceImporting" @click="uploadDialogVisible = false">取消</el-button>
           <el-button
             type="primary"
             :loading="isUploading"
-            :disabled="uploadFileList.length === 0"
+            :disabled="uploadFileList.length === 0 || sourceImporting"
             @click="handleUpload"
           >
             {{

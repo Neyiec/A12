@@ -10,6 +10,7 @@ import edu.zstu.mapper.AdmAuditMapper;
 import edu.zstu.mapper.ComContentMapper;
 import edu.zstu.mapper.SysUserMapper;
 import edu.zstu.service.BusinessLogService;
+import edu.zstu.service.CommunityReviewSampling;
 import edu.zstu.service.ResourceIndexEventPublisher;
 import edu.zstu.service.impl.AdminModerationServiceImpl;
 import edu.zstu.utils.RedisCacheUtil;
@@ -28,9 +29,15 @@ import static org.mockito.Mockito.*;
 class CommunityAiReviewTest {
     private final AdmAuditMapper audits = mock(AdmAuditMapper.class);
     private final ComContentMapper contents = mock(ComContentMapper.class);
+    private final CommunityReviewSampling sampling = mock(CommunityReviewSampling.class);
     private final AdminModerationServiceImpl service = new AdminModerationServiceImpl(
             audits, contents, mock(SysUserMapper.class), mock(BusinessLogService.class),
-            mock(RedisCacheUtil.class), new ObjectMapper(), mock(ResourceIndexEventPublisher.class));
+            mock(RedisCacheUtil.class), new ObjectMapper(), mock(ResourceIndexEventPublisher.class), sampling);
+
+    private List<Map<String, Object>> completeChecks() {
+        return List.of("政治敏感", "广告导流", "侵权嫌疑", "内容质量").stream()
+                .map(name -> Map.<String, Object>of("name", name, "status", "pass", "evidence", "原稿可核验")).toList();
+    }
 
     private Adm_Audit pendingAudit() {
         Adm_Audit audit = new Adm_Audit();
@@ -57,7 +64,7 @@ class CommunityAiReviewTest {
         Com_Content content = reviewingPpt();
         when(audits.findByIdForUpdate(12)).thenReturn(audit);
         when(audits.saveAiReview(any())).thenReturn(1);
-        when(contents.findById(34)).thenReturn(content);
+        when(contents.findByIdForUpdate(34)).thenReturn(content);
         service.acceptAiReview(12, new AiReviewResultDTO(2, "science", "fail", 20,
                 "公式错误", "test-model", List.of(), List.of(Map.of("evidence", "公式错误"))));
         assertEquals("pending", audit.getStatus());
@@ -68,7 +75,7 @@ class CommunityAiReviewTest {
     @Test
     void staleVersionCannotOverwriteHumanQueue() {
         when(audits.findByIdForUpdate(12)).thenReturn(pendingAudit());
-        when(contents.findById(34)).thenReturn(reviewingPpt());
+        when(contents.findByIdForUpdate(34)).thenReturn(reviewingPpt());
         assertThrows(RuntimeException.class, () -> service.acceptAiReview(12,
                 new AiReviewResultDTO(1, "science", "pass", 100, "", "test", List.of(), List.of())));
         verify(audits, never()).saveAiReview(any());
@@ -82,7 +89,7 @@ class CommunityAiReviewTest {
         Com_Content content = reviewingPpt();
         content.setStatus("public");
         when(audits.findByIdForUpdate(12)).thenReturn(audit);
-        when(contents.findById(34)).thenReturn(content);
+        when(contents.findByIdForUpdate(34)).thenReturn(content);
         AuditDTO decision = new AuditDTO();
         decision.setAction("reject");
         decision.setComment("人工抽查发现内容错误");
@@ -91,6 +98,101 @@ class CommunityAiReviewTest {
         assertEquals("reject", audit.getAction());
         assertEquals(7, audit.getHandler_id());
         verify(audits).process(audit);
+    }
+
+    @Test
+    void passingAtSixtyCanBeSelectedForSpotCheck() {
+        Adm_Audit audit = pendingAudit();
+        when(audits.findByIdForUpdate(12)).thenReturn(audit);
+        when(audits.saveAiReview(any())).thenReturn(1);
+        when(contents.findByIdForUpdate(34)).thenReturn(reviewingPpt());
+        when(sampling.selected()).thenReturn(true);
+        service.acceptAiReview(12, new AiReviewResultDTO(2, "science", "pass", 60,
+                "通过", "test", completeChecks(), List.of()));
+        assertEquals("pending", audit.getStatus());
+        assertTrue(audit.getAi_report().contains("\"spot_check\":true"));
+        verify(contents, never()).update(any());
+    }
+
+    @Test
+    void completedLowScoreReviewIsRejectedAndCanBeOverturned() throws Exception {
+        Adm_Audit audit = pendingAudit();
+        Com_Content content = reviewingPpt();
+        when(audits.findByIdForUpdate(12)).thenReturn(audit);
+        when(audits.saveAiReview(any())).thenReturn(1);
+        when(contents.findByIdForUpdate(34)).thenReturn(content);
+        service.acceptAiReview(12, new AiReviewResultDTO(2, "science", "pass", 59,
+                "内容质量不足", "test", completeChecks(), List.of()));
+        assertEquals("ai_reject", audit.getAction());
+        assertEquals("processed", audit.getStatus());
+        assertEquals("offline", content.getStatus());
+        verifyNoInteractions(sampling);
+        AuditDTO decision = new AuditDTO();
+        decision.setAction("approve");
+        service.makeDecision(12, decision, 7);
+        assertEquals("public", content.getStatus());
+        assertFalse(new ObjectMapper().readTree(audit.getAi_report()).path("human_review").path("agrees_with_ai").asBoolean());
+    }
+
+    @Test
+    void unsampledSkillCanPublishAtSixty() {
+        Adm_Audit audit = pendingAudit();
+        audit.setTarget_type("skill");
+        Com_Content content = reviewingPpt();
+        content.setContent_type("skill");
+        when(audits.findByIdForUpdate(12)).thenReturn(audit);
+        when(audits.saveAiReview(any())).thenReturn(1);
+        when(contents.findByIdForUpdate(34)).thenReturn(content);
+        when(sampling.selected()).thenReturn(false);
+        service.acceptAiReview(12, new AiReviewResultDTO(2, "arts", "pass", 60,
+                "通过", "test", completeChecks(), List.of()));
+        assertEquals("ai_approve", audit.getAction());
+        assertEquals("public", content.getStatus());
+    }
+
+    @Test
+    void modelErrorNeverTriggersScoreBasedRejection() {
+        Adm_Audit audit = pendingAudit();
+        when(audits.findByIdForUpdate(12)).thenReturn(audit);
+        when(audits.saveAiReview(any())).thenReturn(1);
+        when(contents.findByIdForUpdate(34)).thenReturn(reviewingPpt());
+        service.acceptAiReview(12, new AiReviewResultDTO(2, "science", "error", 0,
+                "服务异常", "test", completeChecks(), List.of()));
+        assertEquals("pending", audit.getStatus());
+        assertNull(audit.getAction());
+        verify(contents, never()).update(any());
+    }
+
+    @Test
+    void humanCannotDecideForAnOlderVersion() {
+        Adm_Audit audit = pendingAudit();
+        audit.setAi_report("{\"content_version\":1}");
+        when(audits.findByIdForUpdate(12)).thenReturn(audit);
+        when(contents.findByIdForUpdate(34)).thenReturn(reviewingPpt());
+        AuditDTO decision = new AuditDTO();
+        decision.setAction("approve");
+        assertThrows(IllegalStateException.class, () -> service.makeDecision(12, decision, 7));
+        verify(contents, never()).update(any());
+    }
+
+    @Test
+    void oldAutoApprovalCannotRetractNewSubmissionWithSameVersionNumber() {
+        Adm_Audit old = pendingAudit();
+        old.setStatus("processed");
+        old.setAction("ai_approve");
+        old.setAi_report("{\"content_version\":2}");
+        Adm_Audit latest = pendingAudit();
+        latest.setId(13);
+        Com_Content content = reviewingPpt();
+        content.setStatus("public");
+        when(audits.findByIdForUpdate(12)).thenReturn(old);
+        when(audits.findLatestSubmissionAudit(34)).thenReturn(latest);
+        when(contents.findByIdForUpdate(34)).thenReturn(content);
+        AuditDTO decision = new AuditDTO();
+        decision.setAction("reject");
+        decision.setComment("旧稿问题");
+        assertThrows(IllegalStateException.class, () -> service.makeDecision(12, decision, 7));
+        verify(contents, never()).update(any());
     }
 
     @Test

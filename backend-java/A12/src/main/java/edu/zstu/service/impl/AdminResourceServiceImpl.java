@@ -13,6 +13,7 @@ import edu.zstu.service.AdminResourceService;
 import edu.zstu.service.BusinessLogService;
 import edu.zstu.service.ResourceIndexEventPublisher;
 import edu.zstu.utils.OssUtil;
+import edu.zstu.utils.ResourceProvenance;
 import edu.zstu.utils.PageResult;
 import edu.zstu.vo.ResourceVO;
 import org.springframework.stereotype.Service;
@@ -26,6 +27,21 @@ import lombok.extern.slf4j.Slf4j;
 @Slf4j
 @Service
 public class AdminResourceServiceImpl implements AdminResourceService {
+    @Override
+    @Transactional
+    public ResourceVO recordIndexResult(Integer id, Map<String, String> result, Integer adminId) {
+        Adm_Resource resource = resourceMapper.findById(id);
+        if (resource == null) throw new IllegalArgumentException("资源不存在");
+        if (!Objects.equals(resource.getSource_metadata(), result.get("expected_source_metadata"))
+                || !Objects.equals(resource.getFile_url(), result.get("expected_file_url"))) throw new IllegalArgumentException("资源已变更，忽略旧索引结果");
+        String status = result.get("status");
+        if (!Set.of("completed", "failed", "disabled").contains(status == null ? "" : status)) throw new IllegalArgumentException("无效的索引状态");
+        if (resource.getStatus() != 1 && "completed".equals(status)) status = "disabled";
+        String error = "failed".equals(status) ? "索引失败，请在知识库维护中查看解析详情" : null;
+        resourceMapper.updateAiIndexStatus(id, status, error);
+        businessLogService.record("operation", "admin_resource", "index_result", "resource", id, Map.of("status", status));
+        return toResourceVO(resourceMapper.findById(id));
+    }
 
     private final AdmResourceMapper resourceMapper;
     private final ResMaterialMapper materialMapper;
@@ -70,6 +86,7 @@ public class AdminResourceServiceImpl implements AdminResourceService {
             throw new RuntimeException("缺少必填字段: resource_type, title");
         }
 
+        dto.setSource_metadata(ResourceProvenance.validate(dto.getSource_metadata(), true));
         // 创建待上传记录 (status=0)
         Adm_Resource resource = new Adm_Resource();
         BeanUtil.copyProperties(dto, resource);
@@ -113,6 +130,7 @@ public class AdminResourceServiceImpl implements AdminResourceService {
             throw new RuntimeException("文件上传尚未完成或文件不存在于OSS");
         }
 
+        ResourceProvenance.validate(resource.getSource_metadata(), true);
         resource.setStatus(1);
         resourceMapper.updateStatus(id, 1);
         log.info("completeUpload success resourceId={}, objectKey={}", id, objectKey);
@@ -146,6 +164,8 @@ public class AdminResourceServiceImpl implements AdminResourceService {
         if (dto.getFile_url() != null) r.setFile_url(dto.getFile_url());
         if (dto.getTemplate_data() != null) r.setTemplate_data(dto.getTemplate_data());
         if (dto.getThumbnail() != null) r.setThumbnail(dto.getThumbnail());
+        if (dto.getSource_metadata() != null) r.setSource_metadata(ResourceProvenance.validate(dto.getSource_metadata(), r.getStatus() == 1));
+        if (r.getStatus() == 1) ResourceProvenance.validate(r.getSource_metadata(), true);
         resourceMapper.update(r);
         log.info("updateResource success resourceId={}, status={}", id, r.getStatus());
         businessLogService.record("operation", "admin_resource", "update", "resource", id);
@@ -163,6 +183,7 @@ public class AdminResourceServiceImpl implements AdminResourceService {
         log.info("updateStatus resourceId={}, adminId={}, status={}", id, adminId, dto.getStatus());
         Adm_Resource r = resourceMapper.findById(id);
         if (r == null) throw new RuntimeException("资源不存在");
+        if (dto.getStatus() == 1) ResourceProvenance.validate(r.getSource_metadata(), true);
         resourceMapper.updateStatus(id, dto.getStatus());
         r.setStatus(dto.getStatus());
         log.info("updateStatus success resourceId={}, status={}", id, dto.getStatus());
@@ -303,6 +324,8 @@ public class AdminResourceServiceImpl implements AdminResourceService {
         metadata.put("grade", resource.getGrade());
         metadata.put("resource_type", resource.getResource_type());
         metadata.put("description", resource.getDescription());
+        metadata.put("provenance", ResourceProvenance.read(resource.getSource_metadata()));
+        metadata.put("ingested_at", resource.getCreated_at());
         String fileType = detectFileType(resource.getFile_url(), resource.getTitle(), resource.getResource_type());
         metadata.put("detected_file_type", fileType);
 

@@ -17,7 +17,30 @@ test('ordinary workspace navigation stays on the project chooser', () => {
   assert.equal(hasWorkspaceTarget({}), false)
   assert.equal(hasWorkspaceTarget({manage:'1',preview:'1'}), false)
   for (const key of ['projectId','sessionId','localDraftId','testCase','pptGeneration']) assert.equal(hasWorkspaceTarget({[key]:'17'}), true)
-  assert.match(file, /<Editor v-if="hasTarget"/)
+  assert.match(file, /<Editor v-else-if="hasTarget"/)
+  assert.match(file, /<WorkspaceEditorState v-if="hasTarget && editorFailure"/)
+})
+
+test('editor loading has immediate feedback and a bounded error state', () => {
+  const state = { defineAsyncComponent: options => options, WorkspaceEditorState: {} }
+  const options = handler('Editor', state)
+  assert.equal(options.delay, 0)
+  assert.equal(options.timeout, 30000)
+  assert.equal(options.loadingComponent, state.WorkspaceEditorState)
+  assert.equal(options.errorComponent, state.WorkspaceEditorState)
+})
+
+test('editor setup and dependency errors are captured for recovery instead of a blank page', () => {
+  let capture
+  const state = { onErrorCaptured: fn => { capture = fn }, editorFailure: ref(null), console: {error(){}} }
+  const node = declarations.find(n => n.type === 'ExpressionStatement' && n.expression.callee?.name === 'onErrorCaptured')
+  vm.runInNewContext(source.slice(node.start,node.end),state)
+  const failure = Error('Failed to fetch dynamically imported module')
+  assert.equal(capture(failure), false)
+  assert.equal(state.editorFailure.value,failure)
+  const ui = readFileSync(new URL('../src/components/WorkspaceEditorState.vue', import.meta.url),'utf8')
+  assert.match(ui,/window\.location\.reload\(\)/)
+  assert.match(ui,/刷新并重试/)
 })
 test('opening or dismissing the new-project dialog does not create data', () => {
   const state = { pendingProjectId:ref(null), name:ref('old'), createVisible:ref(false) }

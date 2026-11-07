@@ -11,6 +11,7 @@
  * - 输出: 返回 Promise，resolve 时为 `Result<...>`
  */
 import { get, post } from '../utils/api'
+export const getModerationMetrics = () => get('/api/v1/admin/moderation/metrics')
 
 /**
  * 分页查询内容审核任务（API-90）

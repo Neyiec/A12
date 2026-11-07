@@ -5,13 +5,25 @@ import { listLearningVideos, downloadLearningVideo, retryLearningVideo, cancelLe
 const jobs = ref([]), error = ref(''), busy = ref('')
 const labels = { queued: '排队中', running: '生成中', ready: '已完成', failed: '失败', cancelled: '已取消' }
 let timer = null, disposed = false
+let requestSeq = 0, failures = 0
 async function refresh() {
-  try { const result = await listLearningVideos(); jobs.value = result?.data || result || []; error.value = '' }
-  catch (e) { error.value = e?.response?.data?.detail || '学习视频任务加载失败' }
-  finally { if (!disposed) timer = setTimeout(refresh, 5000) }
+  if (disposed) return
+  clearTimeout(timer)
+  const sequence = ++requestSeq
+  let stop = false
+  try {
+    const result = await listLearningVideos()
+    if (disposed || sequence !== requestSeq) return
+    jobs.value = result?.data || result || []; error.value = ''; failures = 0
+  } catch (e) {
+    if (disposed || sequence !== requestSeq) return
+    failures += 1
+    stop = [401,403].includes(e?.response?.status ?? e?.code) || failures >= 3
+    error.value = e?.message || '学习视频任务加载失败'
+  } finally { if (!disposed && sequence === requestSeq && !stop) timer = setTimeout(refresh, 5000) }
 }
 onMounted(refresh)
-onBeforeUnmount(() => { disposed = true; clearTimeout(timer) })
+onBeforeUnmount(() => { disposed = true; requestSeq += 1; clearTimeout(timer) })
 async function action(job, type) {
   if (busy.value) return
   busy.value = job.job_id
@@ -23,7 +35,7 @@ async function action(job, type) {
       const blob = response instanceof Blob ? response : response.data
       if (type === 'save') {
         await uploadResource(new File([blob], `${job.title}.mp4`, { type: 'video/mp4' }))
-        ElMessage.success('已保存视频到个人资源库（OSS）')
+        ElMessage.success('已保存视频到个人资源库')
       } else {
         const url = URL.createObjectURL(blob), a = document.createElement('a')
         a.href = url; a.download = `${job.title}.mp4`; a.click(); setTimeout(() => URL.revokeObjectURL(url), 1000)

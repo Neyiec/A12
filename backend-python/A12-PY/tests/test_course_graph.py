@@ -119,7 +119,7 @@ class GraphWorkflowTests(unittest.IsolatedAsyncioTestCase):
     async def test_timeout_retry_is_bounded_and_explicit(self):
         from a12_ppt.outline_chat.learning_graphs import LearningGraphGenerationError
         model = type("Model", (), {"available": True, "complete": AsyncMock(side_effect=TimeoutError())})()
-        with self.assertRaisesRegex(LearningGraphGenerationError, "未通过校验"):
+        with self.assertRaisesRegex(LearningGraphGenerationError, "模型请求超时"):
             await build_learning_graphs({"title": "光的折射"}, {}, {}, model)
         self.assertEqual(model.complete.await_count, 2)
 

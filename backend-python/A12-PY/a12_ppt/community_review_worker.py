@@ -1,4 +1,4 @@
-"""消费社区 PPT 审核事件；失败最多重试三次，之后进入死信并保留人工待审。"""
+"""消费社区投稿审核事件；最多处理三次，耗尽后保留人工待审。"""
 
 import asyncio
 import logging
@@ -20,6 +20,7 @@ _worker_started = False
 
 
 async def process_event(event: dict[str, str]) -> None:
+    started=time.perf_counter()
     audit_id = str(event.get("audit_id") or "")
     version = str(event.get("content_version") or "")
     if not audit_id.isdecimal() or not version.isdecimal():
@@ -46,6 +47,8 @@ async def process_event(event: dict[str, str]) -> None:
             return  # 已人工处理或相同 AI 结果先到达。
         if envelope.get("code") not in (0, 200):
             raise RuntimeError(f"回写 AI 审核失败：{envelope.get('message')}")
+    logger.info('社区 AI 审核完成 audit_id=%s version=%s verdict=%s score=%s elapsed_ms=%d',
+        audit_id,version,result.get('verdict'),result.get('score'),round((time.perf_counter()-started)*1000))
 
 
 def _consume_forever(worker_index: int) -> None:
@@ -61,9 +64,11 @@ def _consume_forever(worker_index: int) -> None:
             except redis.exceptions.ResponseError as exc:
                 if "BUSYGROUP" not in str(exc):
                     raise
-            claimed = client.xautoclaim(STREAM, GROUP, consumer, min_idle_time=180_000,
-                                        start_id="0-0", count=1)
-            entries = claimed[1] if claimed else []
+            pending = client.xpending_range(STREAM, GROUP, "-", "+", 100)
+            overdue = [item["message_id"] for item in pending
+                       if item["time_since_delivered"] >= 180_000]
+            entries = client.xclaim(STREAM, GROUP, consumer, min_idle_time=180_000,
+                                    message_ids=overdue[:1]) if overdue else []
             if not entries:
                 streams = client.xreadgroup(GROUP, consumer, {STREAM: ">"}, count=1, block=5000)
                 entries = streams[0][1] if streams else []

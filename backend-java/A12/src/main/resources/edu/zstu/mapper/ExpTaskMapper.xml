@@ -17,6 +17,21 @@
     </resultMap>
     <sql id="Base_Columns">id, user_id, project_id, snapshot_version, export_type, status, config, file_name, file_url, file_size, download_url, url_expire_at, file_status, quality_report, error_msg, progress, retry_count, worker_id, started_at, created_at, updated_at, completed_at</sql>
     <select id="findById" resultMap="BaseResultMap">SELECT <include refid="Base_Columns"/> FROM exp_task WHERE id = #{id}</select>
+    <select id="findByIdForUpdate" resultMap="BaseResultMap">
+        SELECT <include refid="Base_Columns"/> FROM exp_task WHERE id = #{id} FOR UPDATE
+    </select>
+    <select id="findActiveDuplicates" resultMap="BaseResultMap">
+        SELECT <include refid="Base_Columns"/> FROM exp_task
+        WHERE user_id = #{userId} AND project_id = #{projectId} AND snapshot_version &lt;=&gt; #{version}
+          AND export_type = #{type} AND status IN ('queued', 'generating', 'checking')
+          AND started_at &gt;= DATE_SUB(NOW(), INTERVAL 10 MINUTE)
+        ORDER BY id DESC FOR UPDATE
+    </select>
+    <select id="findPageByUser" resultMap="BaseResultMap">
+        SELECT <include refid="Base_Columns"/> FROM exp_task WHERE user_id = #{userId}
+        <if test="status != null and status != ''">AND status = #{status}</if>
+        ORDER BY created_at DESC, id DESC
+    </select>
     <select id="findByUserId" resultMap="BaseResultMap">SELECT <include refid="Base_Columns"/> FROM exp_task WHERE user_id = #{userId} ORDER BY created_at DESC</select>
     <select id="findByProjectId" resultMap="BaseResultMap">SELECT <include refid="Base_Columns"/> FROM exp_task WHERE project_id = #{projectId} ORDER BY created_at DESC</select>
     <select id="findAll" resultMap="BaseResultMap">SELECT <include refid="Base_Columns"/> FROM exp_task ORDER BY created_at DESC</select>

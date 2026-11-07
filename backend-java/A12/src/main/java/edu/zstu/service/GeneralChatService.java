@@ -78,7 +78,7 @@ public class GeneralChatService {
                 return trace(item, turnId);
             }
         }
-        String route = "planning".equals(result.get("route")) ? "planning" : "chat";
+        String route = "planning".equals(result.get("route")) ? "planning" : "batch".equals(result.get("route")) ? "batch" : "chat";
         String content = String.valueOf(result.getOrDefault("content", "")).trim();
         if (content.isEmpty() || content.length() > 200000) throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "回复长度不合法");
         String status = "failed".equals(result.get("status")) ? "failed" : "completed";

@@ -10,6 +10,8 @@ export default defineConfig(({ mode }) => {
   const pythonApiProxyTarget = env.VITE_PYTHON_API_PROXY_TARGET || 'http://127.0.0.1:8001'
 
   return {
+    // 浏览器开发服务独占缓存，避免测试中的 SSR Vite 清理其依赖预构建文件。
+    cacheDir: 'node_modules/.vite-teacher',
     resolve: {
       alias: {
         '@': fileURLToPath(new URL('./src', import.meta.url)),
@@ -23,6 +25,11 @@ export default defineConfig(({ mode }) => {
     server: {
       port: 5173,
       proxy: {
+        '/ws/export-events': {
+          target: javaApiProxyTarget,
+          changeOrigin: true,
+          ws: true,
+        },
         '/api/v1/python': {
           target: pythonApiProxyTarget,
           changeOrigin: true,

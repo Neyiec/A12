@@ -136,10 +136,31 @@ export const SUBJECT_OPTIONS = [
   '语文', '数学', '英语', '物理', '化学', '生物', '历史', '地理',
   '道德与法治', '政治', '科学', '信息技术', '音乐', '美术', '体育',
 ]
-export const GRADE_OPTIONS = [
-  '一年级', '二年级', '三年级', '四年级', '五年级', '六年级',
-  '七年级', '八年级', '九年级', '高一', '高二', '高三',
-]
+export const GRADES_BY_STAGE = {
+  小学: ['一年级', '二年级', '三年级', '四年级', '五年级', '六年级'],
+  初中: ['七年级', '八年级', '九年级'],
+  高中: ['高一', '高二', '高三'],
+  大学: ['大一', '大二', '大三', '大四', '大五'],
+}
+export const gradesForStage = stage => [...(GRADES_BY_STAGE[stage] || [])]
+export const GRADE_OPTIONS = Object.values(GRADES_BY_STAGE).flat()
+
+/** 兼容模型与历史会话中的年级别名，但不允许跨学段选项。 */
+export function normalizePlanningGrade(stage, grade) {
+  const value = String(grade || '').replace(/\s/g, '')
+  const options = gradesForStage(stage)
+  if (options.includes(value)) return value
+  const patterns = {
+    小学: /^(?:小学|小)?([一二三四五六1-6])(?:年级|年)?$/,
+    初中: /^(?:初中|初)?([一二三1-3])(?:年级|年)?(?:[（(][七八九]年级[）)])?$/,
+    高中: /^(?:高中|高)?([一二三1-3])(?:年级|年)?$/,
+    大学: /^(?:大学|本科|大)?([一二三四五1-5])(?:年级|年)?$/,
+  }
+  const match = value.match(patterns[stage] || /$^/)
+  if (!match) return ''
+  const number = '一二三四五六'.indexOf(match[1]) + 1 || Number(match[1])
+  return options[number - 1] || ''
+}
 
 /**
  * 从教师首句中提取已经明确的备课上下文。
@@ -163,6 +184,11 @@ export const extractPlanningContext = (text) => {
     .find((subject) => value.includes(subject)) || ''
 
   const gradeMatchers = [
+    ['大一', /(?:大一|(?:大学|本科)一年级)/],
+    ['大二', /(?:大二|(?:大学|本科)二年级)/],
+    ['大三', /(?:大三|(?:大学|本科)三年级)/],
+    ['大四', /(?:大四|(?:大学|本科)四年级)/],
+    ['大五', /(?:大五|(?:大学|本科)五年级)/],
     ['高一', /(?:高一|高中一年级)/],
     ['高二', /(?:高二|高中二年级)/],
     ['高三', /(?:高三|高中三年级)/],
@@ -178,15 +204,16 @@ export const extractPlanningContext = (text) => {
   ]
   context.grade = gradeMatchers.find(([, matcher]) => matcher.test(value))?.[0] || ''
 
-  if (/(?:小学|小一|小二|小三|小四|小五|小六)/.test(value) || /^[一二三四五六]年级/.test(context.grade)) {
+  if (/大学|本科|大[一二三四五]/.test(value)) {
+    context.stage = '大学'
+  } else if (/(?:小学|小一|小二|小三|小四|小五|小六)/.test(value) || /^[一二三四五六]年级/.test(context.grade)) {
     context.stage = '小学'
   } else if (/(?:初中|初一|初二|初三|七年级|八年级|九年级)/.test(value)) {
     context.stage = '初中'
   } else if (/(?:高中|高一|高二|高三)/.test(value)) {
     context.stage = '高中'
-  } else if (/大学|大一|大二|大三|大四/.test(value)) {
-    context.stage = '大学'
   }
+  context.grade = normalizePlanningGrade(context.stage, context.grade)
 
   const quotedTitle = value.match(/《([^》]{2,40})》/)
   const labeledTitle = value.match(/(?:课题|主题|课程名称)\s*(?:是|为|：|:)?\s*[“"「]?([^，。！？；;\n”"」]{2,40})/)
@@ -266,6 +293,9 @@ export const TEXTBOOK_OPTIONS = [
 
 /** 补充信息卡片表单默认值 */
 export const INFO_FORM_DEFAULTS = {
+  enableWeb: false,
+  minPages: undefined,
+  maxPages: undefined,
   stage: '初中',
   subject: '语文',
   grade: '八年级',
@@ -273,6 +303,14 @@ export const INFO_FORM_DEFAULTS = {
   classLevel: '良好',
   courseName: '',
   requirements: '符合新课标教学要求；课件风格为自动匹配',
+}
+
+export function slideRangeError(min, max) {
+  const empty = value => value === undefined || value === null || value === ''
+  if (empty(min) && empty(max)) return ''
+  if (empty(min) || empty(max)) return '请同时填写最少和最多页数，或全部留空让 AI 自动规划'
+  if (![min, max].every(value => Number.isInteger(Number(value)) && Number(value) >= 1 && Number(value) <= 30)) return '页数范围须为 1–30 的整数'
+  return Number(min) > Number(max) ? '最少页数不能大于最多页数' : ''
 }
 
 /** 资源生成卡片默认值 */

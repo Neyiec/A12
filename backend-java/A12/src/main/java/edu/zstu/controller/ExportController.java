@@ -113,6 +113,17 @@ public class ExportController {
         } catch (RuntimeException e) { return Result.error(400, e.getMessage()); }
     }
 
+    @GetMapping("/export-tasks/{id}/progress")
+    public Result<ExportTaskVO> getExportProgress(@PathVariable String id) {
+        try {
+            return Result.success(exportService.getExportProgress(id));
+        } catch (org.springframework.dao.DataAccessException e) {
+            throw e;
+        } catch (RuntimeException e) {
+            return Result.error(400, e.getMessage());
+        }
+    }
+
     /**
      * API-47 取消导出任务
      *

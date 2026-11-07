@@ -67,3 +67,43 @@ def test_incomplete_model_checklist_never_passes():
          patch("a12_ppt.community_review.create_chat_model", return_value=model):
         result = asyncio.run(review_content(payload()))
     assert result["verdict"] == "error"
+
+
+@pytest.mark.parametrize("content_type", ["skill", "lesson_case"])
+def test_non_ppt_review_reads_teaching_steps(content_type):
+    model = SimpleNamespace(ainvoke=AsyncMock(return_value=SimpleNamespace(content=model_reply())))
+    settings = SimpleNamespace(openai_api_key="test", openai_model_standard="test-model",
+                               openai_model="fallback", openai_base_url="http://example.test/v1",
+                               request_timeout_seconds=10)
+    submission = {**payload(), "content_type": content_type,
+                  "content_data": {"steps": ["让学生测量三角形各边长度"]}}
+    with patch("a12_ppt.community_review.get_settings", return_value=settings), \
+         patch("a12_ppt.community_review.create_chat_model", return_value=model):
+        result = asyncio.run(review_content(submission))
+    assert result["verdict"] == "pass"
+    request = json.loads(model.ainvoke.await_args.args[0][1].content)
+    assert "让学生测量三角形各边长度" in request["submission_text"]
+
+
+def test_review_transport_is_closed_on_each_worker_loop_and_math_scope_is_explicit():
+    """Real SDK + local HTTP transport: repeated worker loops cannot share sockets."""
+    import httpx
+    transports=[]
+    prompts=[]
+    def handle(request):
+        prompts.append(json.loads(request.content)['messages'][0]['content'])
+        return httpx.Response(200,json={'id':'test-review','object':'chat.completion','created':0,
+            'model':'test-model','choices':[{'index':0,'finish_reason':'stop','message':{'role':'assistant','content':model_reply()}}]})
+    def transport_factory(**kwargs):
+        client=httpx.AsyncClient(transport=httpx.MockTransport(handle),**kwargs)
+        transports.append(client)
+        return client
+    settings=SimpleNamespace(openai_api_key='test',openai_model_standard='test-model',openai_model='test-model',
+        openai_base_url='https://model.example.invalid/v1',request_timeout_seconds=12)
+    with patch('a12_ppt.community_review.get_settings',return_value=settings), \
+         patch('a12_ppt.community_review.DefaultAsyncHttpxClient',side_effect=transport_factory):
+        for _ in range(2):
+            assert asyncio.run(review_content(payload()))['verdict']=='pass'
+            assert transports[-1].is_closed
+    assert transports[0] is not transports[1]
+    assert all('理科（包括数学）' in p and '不要求纯数学稿件包含实验' in p for p in prompts)
