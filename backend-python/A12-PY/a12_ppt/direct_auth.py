@@ -96,24 +96,32 @@ def reject_identity_spoofing(body: bytes, query: dict[str, str], user_id: str) -
 
 
 async def signed_personal_resource_url(resource_id: str, *, require_ai_permission: bool = False) -> str:
+    url, _ = await personal_resource_download(
+        resource_id, require_ai_permission=require_ai_permission, require_docx=require_ai_permission)
+    return url
+
+
+async def personal_resource_download(resource_id: str, *, require_ai_permission: bool = True,
+                                     require_docx: bool = False) -> tuple[str, dict]:
     """从 Java 资源服务校验所有权并获取签名 URL，不信任浏览器给的 file_url。"""
     token = direct_bearer.get()
     if not token or not resource_id.isdecimal():
         raise HTTPException(status_code=403, detail="无权访问该资源")
     java_url = os.getenv("JAVA_AUTH_BASE_URL", "http://127.0.0.1:8088").rstrip("/")
+    material = {}
     try:
         async with httpx.AsyncClient(timeout=8) as client:
             if require_ai_permission:
                 details = await client.get(f"{java_url}/api/v1/resources/{resource_id}",
                                            headers={"Authorization": f"Bearer {token}"})
                 if details.status_code in (401, 403):
-                    raise HTTPException(status_code=details.status_code, detail="无法读取该教案的授权状态")
+                    raise HTTPException(status_code=details.status_code, detail="无法读取该资料的授权状态")
                 details.raise_for_status()
                 envelope = details.json()
                 material = envelope.get("data") or {}
                 if envelope.get("code") not in (0, 200) or material.get("allow_ai") != 1:
-                    raise HTTPException(status_code=403, detail="请先在资源库允许 AI 使用该教案")
-                if not str(material.get("file_name") or "").lower().endswith(".docx"):
+                    raise HTTPException(status_code=403, detail="请先在资源库允许 AI 使用该资料")
+                if require_docx and not str(material.get("file_name") or "").lower().endswith(".docx"):
                     raise HTTPException(status_code=400, detail="格式转换目前支持 .docx 教案")
             response = await client.post(f"{java_url}/api/v1/resources/{resource_id}/download-url",
                                          headers={"Authorization": f"Bearer {token}"})
@@ -124,7 +132,7 @@ async def signed_personal_resource_url(resource_id: str, *, require_ai_permissio
         url = (result.get("data") or {}).get("download_url") if result.get("code") in (0, 200) else None
         if not isinstance(url, str) or not url:
             raise HTTPException(status_code=403, detail="无权访问该资源")
-        return url
+        return url, material
     except HTTPException:
         raise
     except (httpx.HTTPError, ValueError):

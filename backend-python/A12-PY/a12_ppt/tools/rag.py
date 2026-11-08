@@ -8,6 +8,88 @@ from ..resources.similarity import keyword_score
 logger = logging.getLogger("a12_ppt.tools.rag")
 
 
+async def search_public_context(query: str, limit: int = 12000) -> dict:
+    if query.strip():
+        try:
+            result = await resource_index_store.search_context([], query, limit=limit, source_type="public")
+            if result.get("context"):
+                result = {**result, "context": "[公共资源库参考证据]\n" + result["context"]}
+            return {**result, "search_scope": "public", "query": query}
+        except Exception:
+            logger.warning("公共资源库检索失败，继续处理当前请求", exc_info=True)
+    return {"context": "", "matches": [], "search_scope": "public", "query": query}
+
+
+async def load_personal_material(resource_id: str) -> tuple[str, str]:
+    from fastapi import HTTPException
+    from ..direct_auth import personal_resource_download
+
+    try:
+        url, metadata = await personal_resource_download(resource_id)
+        return await parse_personal_material(resource_id, url, metadata)
+    except HTTPException as exc:
+        raise ValueError(str(exc.detail)) from exc
+    except Exception as exc:
+        logger.warning("个人资料读取或解析失败 resource_id=%s error_type=%s", resource_id, type(exc).__name__)
+        raise ValueError("所选个人资料解析失败，请检查文件或重新上传") from exc
+
+
+async def parse_personal_material(resource_id: str, url: str, metadata: dict) -> tuple[str, str]:
+    from ..models import ResourceIndexSyncRequest
+    from ..resources.downloader import download_and_parse_resource
+
+    title = str(metadata.get("file_name") or f"个人资料 {resource_id}")
+    parsed = await download_and_parse_resource(ResourceIndexSyncRequest(
+        source_type="personal", resource_id=resource_id, title=title, file_url=url,
+        file_type=metadata.get("file_type"), metadata={"original_filename": title},
+    ))
+    return title, parsed.text
+
+
+async def read_reference_material(resource_ids: list[str], limit: int = 12000) -> str:
+    """读取教师明确选择的资料，按长度截取解析文本，无需向量索引。"""
+    from ..resources.upload_store import load_resource_text
+
+    ids = list(dict.fromkeys(
+        f"personal:{item}" if item.isdecimal() else item for item in resource_ids
+    ))
+    if not ids:
+        return ""
+    parts = []
+    per_file = max(1, limit // len(ids))
+    for key in ids:
+        if key.startswith("personal:"):
+            title, content = await load_personal_material(key.removeprefix("personal:"))
+        else:
+            title = key.removeprefix("temp:")
+            content = await asyncio.to_thread(load_resource_text, title)
+        content = content.strip()
+        if not content:
+            raise ValueError("所选资料未读取到可用文本，请重新上传；扫描版 PDF 请确认 OCR 解析成功")
+        header = f"[教师引用资料 · {title}]\n"
+        budget = max(1, per_file - len(header) - 2)
+        if len(content) > budget:
+            marker = "\n…（已压缩）…\n"
+            available = max(0, budget - len(marker))
+            head = available * 2 // 3
+            tail = available - head
+            content = content[:head] + marker + (content[-tail:] if tail else "")
+        parts.append(header + content)
+    return "\n\n".join(parts)[:limit]
+
+
+async def conversation_material_context(resource_ids: list[str], query: str, *,
+                                        enable_rag: bool, limit: int = 12000) -> dict:
+    public_limit = limit // 3 if resource_ids else limit
+    reference_limit = limit - public_limit - 2 if resource_ids and enable_rag else limit
+    references = await read_reference_material(resource_ids, reference_limit)
+    public = await search_public_context(query, public_limit) if enable_rag else {}
+    return {
+        "context": "\n\n".join(part for part in (references, public.get("context")) if part)[:limit],
+        "matches": public.get("matches", []),
+    }
+
+
 async def rag_search(resource_ids: list[str], query: str, limit: int = 12000) -> dict:
     resource_ids = [f'personal:{item}' if item.isdecimal() else item for item in resource_ids]
     # Uploaded references enrich the retrieval query; they are additionally vector-searched

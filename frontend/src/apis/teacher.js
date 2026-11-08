@@ -248,7 +248,8 @@ export async function sendDirectOutlineSessionMessage(id, message, knownContext 
     user_id: userId, session_id: pythonSessionId || undefined, message,
     known_context: knownContext,
     resource_ids: (knownContext?.workspace_context?.resource_ids || []).map((id) => String(id)),
-    enable_rag: false, enable_web: false, slide_count: 8, language: 'zh-CN',
+    enable_rag: knownContext?.workspace_context?.enable_rag === true,
+    enable_web: false, slide_count: 8, language: 'zh-CN',
   })
   if (!response.ok) throw new Error(`大纲请求失败（HTTP ${response.status}）`)
   const reader = response.body?.getReader()

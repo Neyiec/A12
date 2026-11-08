@@ -5849,7 +5849,7 @@ const requestAssistantIntent = async (text) => {
     history: JSON.stringify(workspaceDiscussionHistory()),
     known_context: JSON.stringify(knownContext),
     resource_ids: JSON.stringify(context.resource_ids || []),
-    enable_rag: Boolean(context.resource_ids?.length),
+    enable_rag: context.enable_rag === true,
     enable_web: false,
     slide_count: slides.length,
     language: 'zh-CN',
@@ -5964,8 +5964,11 @@ const submitDiscussion = async () => {
   void scrollAssistantConversation()
   try {
     await withWorkspaceChatTimeout(async (signal) => {
+      const materials = workspaceContextPayload()
       const response = await streamGeneralChat({
         user_id: String(userStore.userInfo?.user_id || '10001'),
+        resource_ids: materials.resource_ids,
+        enable_rag: materials.enable_rag === true,
         messages: [
           ...history,
           ...(context ? [{ role: 'user', content: context }] : []),
@@ -6297,6 +6300,7 @@ const startRun = async () => {
       title: String(outline.title || planData.title || 'A12 教学课件'),
       outline,
       resource_ids: generationResourceIds,
+      enable_rag: outline.workspace_context?.enable_rag === true,
       teaching_model: outline.teaching_model || 'boppps',
       teaching_style: outline.teaching_style || null,
       model_profile: outline.generation_options?.model_profile || 'standard',

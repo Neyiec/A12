@@ -10,7 +10,8 @@ from langchain_core.messages import HumanMessage, SystemMessage
 from ..config import get_settings
 from ..llm import LLMClient
 from ..ai_runtime import use_auxiliary_reasoning
-from ..tools import diagram_tool, rag_search, should_call_diagram_tool, web_search
+from ..tools import diagram_tool, should_call_diagram_tool, web_search
+from ..tools.rag import search_public_context
 from .mcp_client import MCPClient, MCPToolSpec
 
 
@@ -41,6 +42,8 @@ class OutlineToolNode:
         cached_context = dict(state.get('tool_context') or {})
         if not intent.get("enable_web"):
             cached_context.pop("web", None)
+        if not intent.get("enable_rag") or (cached_context.get("rag") or {}).get("search_scope") != "public":
+            cached_context.pop("rag", None)
         if cached_context.get('rag'):
             rule_plans = [plan for plan in rule_plans if plan.name != 'rag_search']
         mcp_by_name = {spec.qualified_name: spec for spec in mcp_specs}
@@ -74,7 +77,7 @@ class OutlineToolNode:
         if intent.get("enable_rag"):
             plans.append(ToolPlan(
                 "rag_search",
-                {"resource_ids": list(intent.get("resource_ids") or []), "query": query},
+                {"query": query},
                 "rule",
                 "RAG is enabled for this request.",
             ))
@@ -137,7 +140,6 @@ class OutlineToolNode:
             args = tool_call.get("args") if isinstance(tool_call.get("args"), dict) else {}
             if name == "rag_search":
                 args = {
-                    "resource_ids": list(intent.get("resource_ids") or []),
                     "query": str(args.get("query") or query),
                     "limit": int(args.get("limit") or 12000),
                 }
@@ -187,10 +189,9 @@ class OutlineToolNode:
         mcp_by_name: dict[str, MCPToolSpec],
     ) -> dict[str, Any]:
         if plan.name == "rag_search":
-            return await rag_search(
-                list(plan.args.get("resource_ids") or []),
+            return await search_public_context(
                 str(plan.args.get("query") or ""),
-                int(plan.args.get("limit") or 12000),
+                min(int(plan.args.get("limit") or 3900), 3900),
             )
         if plan.name == "web_search":
             return await web_search(
@@ -219,7 +220,7 @@ class OutlineToolNode:
     ) -> list[dict[str, Any]]:
         schemas = self._built_in_schemas()
         descriptions = {
-            "rag_search": "Search the local/global teaching knowledge base.",
+            "rag_search": "Search the public teaching resource library.",
             "web_search": "Search web pages for supplementary teaching materials.",
             "diagram_tool": "Generate a Mermaid flowchart, timeline, concept map, or comparison diagram.",
         }
@@ -303,7 +304,6 @@ class OutlineToolNode:
             "rag_search": {
                 "type": "object",
                 "properties": {
-                    "resource_ids": {"type": "array", "items": {"type": "string"}},
                     "query": {"type": "string", "minLength": 1},
                     "limit": {"type": "integer", "minimum": 100, "maximum": 50000},
                 },

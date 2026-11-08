@@ -1,19 +1,15 @@
-const DEFAULT_TARGET = '/main'
-
-/** Accept only an in-app absolute route; reject external and malformed redirect targets. */
-export function safeLoginTarget(target) {
-  if (typeof target !== 'string') return DEFAULT_TARGET
-  const value = target.trim()
-  if (!value.startsWith('/') || value.startsWith('//') || /[\\\u0000-\u001f]/.test(value)) {
-    return DEFAULT_TARGET
-  }
-  return value
+/** Only return to local teacher workspace routes; never honor an external redirect. */
+export function safeLoginTarget(value) {
+  if (typeof value !== 'string') return '/main'
+  value = value.trim()
+  if (!value.startsWith('/main') || /[\\\u0000-\u001f]/.test(value)) return '/main'
+  try {
+    const url = new URL(value, 'http://a12.local')
+    if (url.origin !== 'http://a12.local' || (url.pathname !== '/main' && !url.pathname.startsWith('/main/'))) return '/main'
+    return url.pathname + url.search + url.hash
+  } catch { return '/main' }
 }
-
-/** Build the login route while preserving a safe destination after authentication. */
-export function loginLocation(target) {
-  const safeTarget = safeLoginTarget(target)
-  return safeTarget === DEFAULT_TARGET
-    ? { path: '/login' }
-    : { path: '/login', query: { redirect: safeTarget } }
+export function loginLocation(fullPath) {
+  const target = safeLoginTarget(fullPath)
+  return target === '/main' ? { path: '/login' } : { path: '/login', query: { redirect: target } }
 }
