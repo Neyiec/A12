@@ -7,7 +7,7 @@ from pydantic import BaseModel, Field
 
 from .llm import LLMClient
 from .outline_chat.postgres_store import postgres_memory_store
-from .tools.rag import rag_search, selected_material_context
+from .tools.rag import conversation_material_context
 
 logger = logging.getLogger("a12_ppt.workspace")
 
@@ -24,16 +24,13 @@ class WorkspaceChatRequest(BaseModel):
     model_profile: Literal["fast", "standard", "deep"] = "standard"
     reasoning_effort: Literal["low", "medium", "high"] = "medium"
     resource_ids: list[str] = Field(default_factory=list, max_length=20)
+    enable_rag: bool = False
 
 
 async def reference_context(request: WorkspaceChatRequest) -> str:
-    if not request.resource_ids:
-        return ''
     query = next((message.content for message in reversed(request.messages) if message.role == 'user'), '')
-    resource_ids = [f'personal:{resource_id}' if resource_id.isdecimal() else resource_id for resource_id in request.resource_ids]
-    result = await rag_search(resource_ids, query)
-    # 不用全局知识库命中冒充教师上传的文件；索引失败时保留已解析全文兜底。
-    return selected_material_context(result)
+    return (await conversation_material_context(
+        request.resource_ids, query, enable_rag=request.enable_rag))["context"]
 
 
 async def stream_workspace_chat(request: WorkspaceChatRequest):

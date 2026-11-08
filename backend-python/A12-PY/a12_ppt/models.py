@@ -35,6 +35,7 @@ class TemplateMutationRequest(BaseModel):
 
 
 class OutlineGenerateRequest(BaseModel):
+    _references_prepared: bool = PrivateAttr(default=False)
     _retrieval_citations: dict[str, Any] = PrivateAttr(default_factory=dict)
     slide_count_range: SlideCountRange | None = None
     session_id: int | None = None
@@ -68,6 +69,7 @@ class PresentationGenerateRequest(BaseModel):
     title: str
     outline: dict[str, Any]
     resource_ids: list[str] = Field(default_factory=list)
+    enable_rag: bool = False
     theme: str | None = None
     aspect_ratio: Literal["16:9", "4:3"] = "16:9"
     language: str = "zh-CN"

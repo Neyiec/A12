@@ -27,7 +27,7 @@ from .prompts import (
 )
 from ..llm import LLMClient
 from ..models import InteractiveModuleGenerateRequest, OutlineGenerateRequest, OutlineUpdateRequest, PresentationGenerateRequest, PresentationModifyRequest, SlideModifyRequest
-from ..resources import build_rag_context
+from ..tools.rag import conversation_material_context
 from ..teaching_policy import teaching_model_guidance, teaching_policy, teaching_style_guidance
 from .template_store import DEFAULT_THEME, get_template
 from .generation_cache import generation_cache, generation_key
@@ -152,14 +152,11 @@ class PPTGenerator:
 
         rag_context = ""
         if req.enable_rag or req.resource_ids:
-            from ..tools.rag import rag_search, selected_material_context
             query = "\n".join([
                 req.instruction or "",
                 json.dumps(req.outline, ensure_ascii=False)[:4000],
             ]).strip()
-            rag_result = await rag_search(req.resource_ids, query)
-            if req.resource_ids:
-                selected_material_context(rag_result)
+            rag_result = await conversation_material_context(req.resource_ids, query, enable_rag=req.enable_rag)
             rag_context = rag_result.get("context", "")
         prompt = f"""
 请根据用户要求修订或重生成 PPT 大纲。只输出严格 JSON，不要 Markdown。
@@ -1108,16 +1105,7 @@ preferred_format(html5|gif|mp4)、integration(ppt_video|static_link)、descripti
         if req.reference_text:
             context_parts.append(req.reference_text)
 
-        # Uploaded resources are reference material. They enrich style, tone, cases,
-        # and the RAG query, but they are not the vector-store search scope.
-        if req.resource_ids:
-            local_ids = [resource_id for resource_id in req.resource_ids if ":" not in resource_id]
-            reference_context = build_rag_context(local_ids, limit=5000)
-            if reference_context:
-                context_parts.append("[Uploaded reference material]\n" + reference_context)
-
-        if req.enable_rag or req.resource_ids:
-            from ..tools.rag import rag_search, selected_material_context
+        if not req._references_prepared and (req.enable_rag or req.resource_ids):
             query = "\n".join([
                 req.title,
                 req.subject,
@@ -1125,19 +1113,16 @@ preferred_format(html5|gif|mp4)、integration(ppt_video|static_link)、descripti
                 req.teaching_goals or "",
                 " ".join(req.knowledge_points or []),
                 req.requirements or "",
-                req.reference_text or "",
             ]).strip()
-            rag_result = await rag_search(req.resource_ids, query)
+            rag_result = await conversation_material_context(req.resource_ids, query, enable_rag=req.enable_rag)
             verified_citations = {
                 str(item.get("citation_id") or (str(item.get("resource_id")) + "#" + str(item.get("chunk_id")))): {
                     "resource_id": item.get("resource_id"), "chunk_id": item.get("chunk_id"),
                     "provenance": item.get("provenance"), "page_number": (item.get("metadata") or {}).get("page_number"),
                 } for item in rag_result.get("matches", [])
             }
-            if req.resource_ids:
-                context_parts.append('[Teacher-selected reference material]\n' + selected_material_context(rag_result))
-            if rag_result.get("knowledge_context"):
-                context_parts.append("[RAG knowledge base matches]\n" + rag_result["knowledge_context"])
+            if rag_result["context"]:
+                context_parts.insert(0, rag_result["context"])
 
         if not context_parts:
             return req
@@ -1188,12 +1173,7 @@ preferred_format(html5|gif|mp4)、integration(ppt_video|static_link)、descripti
 
     @timed("references.rag")
     async def _collect_generation_rag_context(self, req: PresentationGenerateRequest) -> str:
-        """功能 2：临时上传/引用资料随 workspace_context 注入页面生成。
-
-        资料来源 = 显式 req.resource_ids + outline.workspace_context（resource_ids/resourceIds）；
-        res_xxx 临时资料命中 temp 分区，素材库 id 命中全局知识库（rag_search 内部分流）。
-        检索失败不阻断生成——仅返回空串。
-        """
+        """注入教师引用资料，并按本次设置检索公共资源库。"""
         outline = req.outline if isinstance(req.outline, dict) else {}
         workspace_context = outline.get("workspace_context")
         if not isinstance(workspace_context, dict):
@@ -1207,18 +1187,17 @@ preferred_format(html5|gif|mp4)、integration(ppt_video|static_link)、descripti
         resource_ids = list(dict.fromkeys(
             str(item).strip() for item in raw_ids if str(item or "").strip()
         ))
-        if not resource_ids or not self.llm.available:
+        enable_rag = req.enable_rag
+        if not (resource_ids or enable_rag) or not self.llm.available:
             return ""
         try:
-            from ..tools.rag import rag_search, selected_material_context
             query = "\n".join([
                 req.title or "",
                 str(outline.get("summary") or ""),
                 str(outline.get("subject") or ""),
                 str(outline.get("requirements") or ""),
             ]).strip()
-            rag_result = await rag_search(resource_ids, query, limit=6000)
-            selected_material_context(rag_result)
+            rag_result = await conversation_material_context(resource_ids, query, enable_rag=enable_rag, limit=6000)
             return str(rag_result.get("context") or "")
         except ValueError:
             raise

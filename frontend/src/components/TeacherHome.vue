@@ -60,6 +60,7 @@ const projectsError = ref('')
 const resourcesLoading = ref(false)
 const availableResources = ref([])
 const selectedResourceIds = ref([])
+const publicResourceEnabled = ref(false)
 const knowledgeDialogVisible = ref(false)
 const resourceSearch = ref('')
 const voiceDialogVisible = ref(false)
@@ -789,7 +790,7 @@ watch(viewMode, (value) => {
           </el-select>
           <el-tooltip content="上传本地资料：本次生成直接引用，可一键转存到素材库"><span><el-button text :icon="Paperclip" aria-label="添加资料" @click="triggerTempUpload"><span class="composer-tool-label">{{ TEACHER_HOME.composer.attach }}</span></el-button></span></el-tooltip>
           <input ref="tempFileInput" class="resource-file-input" type="file" multiple accept=".pdf,.doc,.docx,.ppt,.pptx,.txt,.md,.jpg,.jpeg,.png,.gif,.webp,.svg,.mp3,.wav,.m4a,.ogg,.mp4,.avi,.mov,.mkv,.webm" @change="handleTempFilesPicked" />
-          <el-tooltip content="从个人知识库中检索并引用已有资料"><span><el-button text :icon="Collection" aria-label="引用知识库" @click="openKnowledgeDialog"><span class="composer-tool-label">{{ TEACHER_HOME.composer.knowledge }}</span></el-button></span></el-tooltip>
+          <el-tooltip content="选择个人知识库资料，解析后直接供 AI 使用"><span><el-button text :icon="Collection" aria-label="引用知识库" @click="openKnowledgeDialog"><span class="composer-tool-label">{{ TEACHER_HOME.composer.knowledge }}</span></el-button></span></el-tooltip>
           <el-tooltip content="打开语音输入"><span><el-button text circle aria-label="语音输入" @click="voiceDialogVisible = true"><el-icon><Microphone /></el-icon></el-button></span></el-tooltip>
         </div>
         <el-button
@@ -804,6 +805,9 @@ watch(viewMode, (value) => {
       </div>
     </section>
 
+    <div class="public-resource-option">
+      <el-switch v-model="publicResourceEnabled" size="small" active-text="启用公共资源库（RAG）" aria-label="启用公共资源库（RAG）" />
+    </div>
     <p class="composer-hint motion-stage motion-stage-4">
       <span>{{ TEACHER_HOME.composer.hint }}</span>
       <span class="composer-shortcut-hint"> · Enter 发送 · Shift + Enter 换行</span>
@@ -822,6 +826,7 @@ watch(viewMode, (value) => {
       :continuation-history="chatContinuationHistory"
       :mode="chatMode"
       :route-preference="routePreference"
+      v-model:public-resource-enabled="publicResourceEnabled"
       :resume="chatResume"
       @back="closeChatView"
       @open-workspace="openWorkspaceFromChat"
@@ -832,7 +837,7 @@ watch(viewMode, (value) => {
     <!-- 知识库 / 语音对话框（欢迎视图和聊天视图共用）-->
 
     <el-dialog v-model="knowledgeDialogVisible" title="引用知识库" width="min(640px, 92vw)">
-      <div class="knowledge-picker-header"><p>从已经上传并入库的资料中选择，AI 将结合这些内容生成大纲。</p><el-input v-model="resourceSearch" placeholder="搜索知识库资料" clearable /></div>
+      <div class="knowledge-picker-header"><p>选择已上传的个人资料，AI 会读取资料内容用于当前对话或备课。</p><el-input v-model="resourceSearch" placeholder="搜索知识库资料" clearable /></div>
       <el-checkbox-group v-model="selectedResourceIds" v-loading="resourcesLoading" class="resource-picker resource-picker-dialog"><el-checkbox v-for="item in filteredAvailableResources" :key="item.id" :value="item.id">{{ item.file_name }}</el-checkbox><el-empty v-if="!resourcesLoading && !filteredAvailableResources.length" description="没有找到可引用的知识资料" /></el-checkbox-group>
       <template #footer><span class="selected-resource-count">已选择 {{ selectedResourceIds.length }} 项</span><el-button type="primary" @click="knowledgeDialogVisible = false">完成引用</el-button></template>
     </el-dialog>
@@ -947,6 +952,8 @@ h1 { margin: 0; font-size: clamp(36px, 4vw, 48px); line-height: 1.15; letter-spa
 .composer-tools { display: flex; align-items: center; }
 .composer-tools :deep(.el-button) { color: var(--zh-text-secondary); }
 .composer-toolbar :deep(.el-button.is-ready) { animation: pulse 200ms cubic-bezier(0.4, 0, 0.2, 1); }
+.public-resource-option { margin: 6px 0; text-align: center; }
+
 .composer-hint { margin: 10px 0 0; color: var(--zh-text-caption); font-size: 11px; text-align: center; }
 
 /* 功能 2：临时上传芯片（横向单行 + 固定宽度卡片 + 超宽横向滚动），见 doc/pending-specs/TempResourceChip.md */

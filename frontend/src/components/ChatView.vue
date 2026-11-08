@@ -50,6 +50,7 @@ const props = defineProps({
 
 const emit = defineEmits(['back', 'open-workspace', 'planning-request', 'session-created', 'general-session'])
 
+const publicResourceEnabled = defineModel('publicResourceEnabled', { type: Boolean, default: false })
 const userStore = useUserStore()
 const isGeneralChat = computed(() => props.mode === 'general')
 const activeBatchPlan = ref(null)
@@ -62,6 +63,7 @@ const activeResourceIds = computed(() => [...new Set([
 ])])
 const activeWorkspaceContext = computed(() => ({
   ...(props.workspaceContext || {}),
+  enable_rag: publicResourceEnabled.value,
   resourceIds: activeResourceIds.value,
   resource_ids: activeResourceIds.value,
   uploadedResources: [...(props.workspaceContext?.uploadedResources || []), ...attachedResources.value],
@@ -715,7 +717,7 @@ async function requestRealOutlineChat(message) {
       workspace_context: activeWorkspaceContext.value,
     },
     resource_ids: resourceIds,
-    enable_rag: resourceIds.length > 0,
+    enable_rag: publicResourceEnabled.value,
     enable_web: infoForm.enableWeb,
     slide_count: null,
     slide_count_range: getSlideCountRange(),
@@ -920,7 +922,7 @@ async function sendMessageToBackend(message, { includeContinuation = false, clar
   const payload = {
     message,
     resource_ids: JSON.stringify(activeResourceIds.value),
-    enable_rag: activeResourceIds.value.length > 0,
+    enable_rag: publicResourceEnabled.value,
     enable_web: infoForm.enableWeb,
     model_profile: selectedModelProfile.value,
     reasoning_effort: selectedReasoningEffort.value,
@@ -1425,9 +1427,11 @@ async function requestGeneralChatReply() {
       const current = activeBatchPlan.value
       const planned = current?.status === 'draft'
         ? await reviseBatchPlan(current.id, { revision: current.revision, message: latestUserMessage.content,
-            resource_ids: activeResourceIds.value.filter(id => !(current.resource_ids || []).includes(id)) })
+            resource_ids: activeResourceIds.value.filter(id => !(current.resource_ids || []).includes(id)),
+            enable_rag: publicResourceEnabled.value })
         : await createBatchPlan({ message: latestUserMessage.content, resource_ids: [...activeResourceIds.value],
-            session_id: String(generalSessionId.value), single: Boolean(activeWorkspaceContext.value.single) })
+            session_id: String(generalSessionId.value), single: Boolean(activeWorkspaceContext.value.single),
+            enable_rag: publicResourceEnabled.value })
       activeBatchPlan.value = planned.data
       assistantMessage.type = 'batch_plan'; assistantMessage.plan = planned.data
       assistantMessage.content = planned.data.needs_input ? '已进入批量备课，请补充教学计划或目录，或明确选择先使用 AI 建议目录。' : `已整理“${planned.data.title}”的生成计划，共 ${planned.data.items.length} 份候选课件，请核对范围与页数后确认。`
@@ -1439,6 +1443,7 @@ async function requestGeneralChatReply() {
         mode: 'chat',
         messages: turn.messages,
         resource_ids: [...activeResourceIds.value],
+        enable_rag: publicResourceEnabled.value,
         model_profile: selectedModelProfile.value,
         reasoning_effort: selectedReasoningEffort.value,
       })
@@ -2133,7 +2138,7 @@ async function restoreSession() {
                                 :confirmable="phase === 'graph_review' && hasCompleteLearningGraphs(msg.data) && msg.id === activeLearningGraphMessageId"
                                 :confirming="isRequesterLoading" :graph-saver="saveLearningGraphs" :graph-ai-editor="aiEditLearningGraphs" @confirm="confirmLearningGraphs" />
 
-            <BatchPlanCard v-else-if="msg.type === 'batch_plan'" :plan="msg.plan"
+            <BatchPlanCard v-else-if="msg.type === 'batch_plan'" :plan="msg.plan" :public-resource-enabled="publicResourceEnabled"
               @updated="value => { msg.plan = value; activeBatchPlan = value }"
               @confirmed="id => addMessage('assistant','batch_task','',{batchId:id})" />
             <BatchTaskPanel v-else-if="msg.type === 'batch_task'" :batch-id="msg.data.batchId" />
@@ -2294,6 +2299,9 @@ async function restoreSession() {
             @click="handleComposerSubmit"
           />
         </span>
+      </div>
+      <div class="public-resource-option">
+        <el-switch v-model="publicResourceEnabled" size="small" active-text="启用公共资源库（RAG）" aria-label="启用公共资源库（RAG）" :disabled="isRequesterLoading" />
       </div>
       <p class="composer-hint">{{ CHAT_COMPOSER.hint }}{{ isTouchDevice ? ' · 点击右侧按钮发送' : ' · Enter 发送 · Shift + Enter 换行' }}</p>
     </footer>
@@ -2761,6 +2769,8 @@ async function restoreSession() {
   font-size: var(--zh-font-size14);
   line-height: 1.6;
 }
+.public-resource-option { margin: 4px 0; }
+
 .composer-hint {
   margin: 8px 0 0;
   color: var(--zh-text-caption);

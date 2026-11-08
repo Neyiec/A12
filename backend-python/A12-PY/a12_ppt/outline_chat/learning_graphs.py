@@ -244,7 +244,8 @@ async def build_learning_graphs(intent: dict[str, Any], course_graph: dict[str, 
             "requirements", "teaching_model", "teaching_style", "slide_count", "slide_count_range")},
         "course_evidence": {"course_id": course_graph.get("course_id"), "version": course_graph.get("version"),
                             "nodes": course_graph.get("nodes", [])[:40], "edges": course_graph.get("edges", [])[:80]},
-        "reference_excerpt": str(rag.get("context") or "")[:12000],
+        "reference_excerpt": str((tool_context.get("references") or {}).get("context") or "")[:12000],
+        "public_evidence": str(rag.get("context") or "")[:12000],
     }
     feedback = ""
     from ..ai_runtime import use_graph_generation_budget
