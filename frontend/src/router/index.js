@@ -9,6 +9,7 @@ import {isSessionExpired} from '../utils/JWTParser.js'
 import { useUserStore } from '../storage/user.js'
 import { ElMessage } from 'element-plus'
 import { loginLocation } from '../utils/sessionRedirect.js'
+import { isMobileViewport } from '../composables/useMobileViewport.js'
 
 // 所有页面保持按需加载。之前既静态导入页面、又用变量 import 扫描整个
 // components 目录，会把创作工作台及其编辑器依赖一并放入首屏包。
@@ -28,6 +29,7 @@ const CommunityHub = getComponentLoader('CommunityHub')
 const ExportCenter = getComponentLoader('ExportCenter')
 const CreationWorkspace = getComponentLoader('WorkspaceEntry')
 const AccountSettings = getComponentLoader('AccountSettings')
+const MyProfile = getComponentLoader('MyProfile')
 const CourseGraphWorkspace = getComponentLoader('CourseGraphWorkspace')
 
 const routes = [
@@ -52,8 +54,9 @@ const routes = [
       { path: 'exports', component: ExportCenter, meta: { menu: 'exports', title: '成果导出中心', staticTeacherPage: true } },
       { path: 'workspace', component: CreationWorkspace, meta: { menu: 'workspace', title: '创作工作台', staticTeacherPage: true } },
       { path: 'settings', component: AccountSettings, meta: { menu: 'settings', title: '账号与安全', staticTeacherPage: true } },
+      { path: 'me', component: MyProfile, meta: { menu: 'me', title: '我的', staticTeacherPage: true } },
       { path: 'courses', component: CourseGraphWorkspace, meta: { menu: 'courses', title: '课程双图谱', staticTeacherPage: true } },
-      { path: 'questions', component: getComponentLoader('QuestionBank'), meta: { menu: 'questions', title: '题库与组卷', staticTeacherPage: true } },
+      { path: 'questions', component: getComponentLoader('QuestionBank') || getComponentLoader('QuestionBankPending'), meta: { menu: 'questions', title: '题库与组卷', staticTeacherPage: true } },
     ],
   },
 ]
@@ -132,6 +135,9 @@ router.beforeEach(async (to) => {
   if (sessionExpired) {
     userStore.clearUser()
     menusLoaded = false
+  }
+  if (to.path === '/' && (window.Capacitor?.isNativePlatform?.() || isMobileViewport())) {
+    return { path: sessionExpired ? '/login' : '/main', replace: true }
   }
 
   // 动态路由加载：非静态教师页面且菜单未加载时，请求后端获取菜单

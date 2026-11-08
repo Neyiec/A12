@@ -23,6 +23,7 @@ import {
 import { changeContact, changePassword, getCurrentUser, logout, sendVerificationCode } from '../apis/login.js'
 import { getTeacherPreferences, getTeacherStrategyEffects, getTeacherStyleProfile, relearnTeacherStyleProfile, learnTeacherMaterialStyle, saveTeacherPreferences, updateTeacherStyleProfile, updateTeacherStyleTags } from '../apis/teacher.js'
 import { useUserStore } from '../storage/user.js'
+import MobileSection from './MobileSection.vue'
 import { TEACHING_STYLES, TEMPLATES, INTERACTION_FORMS, PREFERENCES_DEFAULTS } from '../config/preferences.config.js'
 
 const router = useRouter()
@@ -375,7 +376,7 @@ onBeforeUnmount(() => clearInterval(contactTimer))
   <section class="settings-page">
     <div class="settings-heading"><span class="eyebrow">ACCOUNT CENTER</span><h1>账号与安全</h1><p>管理个人资料、登录密码和当前会话。</p></div>
     <div class="settings-grid">
-      <el-card class="settings-card profile-card" shadow="never">
+      <el-card class="settings-card profile-card" shadow="never"><MobileSection title="个人资料">
         <div class="card-title card-title-with-action">
           <el-icon><User /></el-icon>
           <div><h2>个人资料</h2><p>信息由账号中心统一维护</p></div>
@@ -383,18 +384,18 @@ onBeforeUnmount(() => clearInterval(contactTimer))
         </div>
         <div class="profile-summary"><el-avatar :size="64" :src="avatarUrl">{{ avatarText }}</el-avatar><div><strong>{{ user.real_name || user.username }}</strong><span>{{ user.user_type === 'admin' ? '管理员' : '教师' }}</span></div></div>
         <dl><div><dt>登录账号</dt><dd>{{ user.username || '—' }}</dd></div><div><dt>真实姓名</dt><dd>{{ user.real_name || '未填写' }}</dd></div><div><dt>邮箱</dt><dd>{{ maskedEmail }}</dd></div><div><dt>手机号码</dt><dd>{{ maskedPhone }}</dd></div></dl>
-      </el-card>
-      <el-card class="settings-card password-card" shadow="never">
+      </MobileSection></el-card>
+      <el-card class="settings-card password-card" shadow="never"><MobileSection title="登录密码">
         <div class="card-title"><el-icon><CircleCheck /></el-icon><div><h2>登录密码</h2><p>定期更新密码可以提高账号安全性</p></div></div>
         <div class="security-action-row">
           <div><strong>当前密码</strong><span>已设置，可用于账号密码登录</span></div>
           <el-button type="primary" @click="openPasswordDialog">修改密码</el-button>
         </div>
-      </el-card>
+      </MobileSection></el-card>
     </div>
 
     <!-- 个人偏好设置 -->
-    <el-card class="settings-card preferences-card" shadow="never">
+    <el-card class="settings-card preferences-card" shadow="never"><MobileSection title="教学偏好">
       <div class="card-title">
         <el-icon><component :is="iconMap.Setting" /></el-icon>
         <div>
@@ -430,7 +431,7 @@ onBeforeUnmount(() => clearInterval(contactTimer))
           </div>
         </fieldset>
 
-        <fieldset class="pref-section">
+        <MobileSection title="AI 教学画像与历史学习"><fieldset class="pref-section">
           <legend class="pref-section-title">AI 学习到的教学画像</legend>
           <div v-loading="learnedProfileLoading" class="learned-profile-row">
             <p>{{ learnedProfile?.style_summary || '尚无稳定的历史教学偏好。您可先使用上方的显式风格设置；后续修改与反馈会逐步形成画像。' }}</p>
@@ -458,7 +459,7 @@ onBeforeUnmount(() => clearInterval(contactTimer))
               </li>
             </ul>
           </details>
-        </fieldset>
+        </fieldset></MobileSection>
 
         <fieldset class="pref-section">
           <legend class="pref-section-title">大纲策略效果</legend>
@@ -532,7 +533,7 @@ onBeforeUnmount(() => clearInterval(contactTimer))
           <el-button type="primary" link @click="resetPreferences">恢复默认</el-button>
         </div>
       </div>
-    </el-card>
+    </MobileSection></el-card>
 
     <el-card class="settings-card danger-zone" shadow="never"><div><h2>退出登录</h2><p>立即结束本浏览器中的服务端会话。</p></div><el-button plain type="danger" @click="signOut">退出当前账号</el-button></el-card>
 

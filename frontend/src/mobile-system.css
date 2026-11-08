@@ -1,0 +1,216 @@
+/* Shared phone UI: readable lists, one primary action, and details on demand. */
+@media (max-width:767.98px) and (hover:none) and (pointer:coarse), (max-width:1023.98px) and (max-height:600px) and (hover:none) and (pointer:coarse) {
+  :root{--zh-tabbar-h:68px;--el-font-size-base:16px;--el-font-size-small:14px;--el-component-size:48px;--el-component-size-small:44px;--el-component-size-large:50px;--el-text-color-placeholder:var(--zh-text-secondary)}
+  :root .teacher-shell{font-size:16px;line-height:1.6}
+  html{scroll-padding-top:calc(72px + var(--zh-safe-top));scroll-padding-bottom:calc(var(--zh-tabbar-h) + var(--zh-safe-bottom) + 24px)}
+  :root .teacher-shell .teacher-main{background:var(--zh-background-light)}
+  :root .teacher-shell.assistant-mode .teacher-main{background:var(--zh-background-primary)}
+  :root .teacher-shell .mobile-page-title{margin:0;font-size:20px;line-height:1.4}
+  :root .teacher-shell .teacher-topbar .avatar-dropdown{display:none}
+  :root .teacher-shell .teacher-topbar .notification-button{display:none}
+  :root .teacher-shell.personal-tool-mode .teacher-topbar{grid-template-columns:minmax(0,1fr)}
+  :root .teacher-shell.personal-tool-mode .teacher-topbar .topbar-actions{display:none}
+  :root .teacher-shell.personal-tool-mode .workspace-entry{min-height:calc(100dvh - 56px - var(--zh-safe-top));padding-top:16px}
+  :root .teacher-shell .el-button,:root .el-dialog .el-button{min-height:48px!important;font-size:16px}
+  :root .teacher-shell .el-input__wrapper,:root .teacher-shell .el-select__wrapper,:root .el-dialog .el-input__wrapper,:root .el-dialog .el-select__wrapper{min-height:48px}
+  :root .teacher-shell .el-input__inner,:root .teacher-shell .el-select__wrapper,:root .teacher-shell .el-textarea__inner,:root .el-dialog .el-input__inner,:root .el-dialog .el-select__wrapper,:root .el-dialog .el-textarea__inner{font-size:16px}
+  :root .el-form-item__label{font-size:16px;line-height:1.6}
+  :root .el-dialog .el-form-item__label{font-size:16px!important;line-height:1.6}
+  :root .el-form-item__error{position:static;width:100%;padding-top:6px;font-size:14px;line-height:1.5;white-space:normal}
+  :root .el-message{max-width:calc(100vw - 32px);padding:12px 16px}
+  :root .el-message__content{font-size:15px;line-height:1.6;overflow-wrap:anywhere}
+  :root .el-dialog{--el-dialog-padding:18px;align-self:start;max-height:calc(100dvh - 24px - var(--zh-safe-top) - var(--zh-safe-bottom));overflow-y:auto;overscroll-behavior:contain}
+  :root .el-dialog .el-dialog__close{color:var(--zh-text-secondary)}
+  :root .el-dialog .el-dialog__title{font-size:20px;font-weight:600;line-height:1.4}
+  :root .el-dialog .el-dialog__header{padding-right:36px}
+  :root .el-dialog .el-dialog__headerbtn{width:48px;height:48px;top:6px;right:4px;font-size:24px}
+  :root .el-dialog .el-dialog__body{font-size:16px;line-height:1.7;min-width:0}
+  :root .el-dialog .el-dialog__body p{font-size:16px;line-height:1.7;overflow-wrap:anywhere}
+  :root .el-dialog .el-dialog__body small{font-size:14px;line-height:1.6}
+  :root .el-dialog .el-dialog__footer{position:sticky;bottom:0;z-index:2;display:flex;flex-wrap:wrap;justify-content:flex-end;gap:8px;padding-top:14px;padding-bottom:max(12px,var(--zh-safe-bottom));background:var(--zh-background-pop)}
+  :root .el-dialog .el-dialog__footer .el-button{margin:0;flex:1;min-width:100px}
+  :root .el-dialog .el-tabs__item{min-height:48px;font-size:16px}
+  :root .el-dialog .el-checkbox,:root .el-dialog .el-radio{min-height:44px;white-space:normal;height:auto}
+  :root .el-dialog .el-checkbox__label,:root .el-dialog .el-radio__label{font-size:15px;line-height:1.6;white-space:normal;overflow-wrap:anywhere}
+  :root .el-dropdown-menu__item{min-height:48px;font-size:16px}
+  :root .el-select-dropdown__item{min-height:44px;height:auto;line-height:1.5;display:flex;align-items:center;white-space:normal;font-size:16px;padding-block:10px}
+  :root .el-message-box{width:calc(100vw - 32px);padding:20px;border-radius:16px}
+  :root .el-message-box__title{font-size:20px}:root .el-message-box__message{font-size:16px;line-height:1.7}
+  :root .el-message-box__btns .el-button{min-height:48px;font-size:16px}
+  :root .teacher-shell .mobile-icon-button{width:48px;min-width:48px;height:48px;padding:0;margin:0;font-size:23px}
+  :root .teacher-shell .el-input-group__append:has(.mobile-search-action){flex:0 0 80px;width:80px;padding:0;overflow:hidden;background:var(--zh-theme-primary)}
+  :root .teacher-shell .el-input-group__append .mobile-search-action{display:flex;align-items:center;justify-content:center;width:80px;min-width:80px;height:48px;margin:0;padding:0;border:0;border-radius:0;background:var(--zh-theme-primary);color:#fff;font-size:18px;font-weight:600;line-height:1}
+  .mobile-info-list{margin:0}.mobile-info-list>div{display:grid;grid-template-columns:90px minmax(0,1fr);gap:14px;padding:14px 0;border-bottom:1px solid var(--zh-line-parting);font-size:16px}.mobile-info-list dt{color:var(--zh-text-secondary)}.mobile-info-list dd{margin:0;text-align:right;overflow-wrap:anywhere}.mobile-detail-title{margin:0 0 16px;font-size:22px;line-height:1.5;overflow-wrap:anywhere}.mobile-inline-error{color:var(--el-color-danger)}
+  /* Resources */
+  :root .teacher-shell .mobile-resource-page{width:calc(100% - 32px);padding:16px 0 28px}
+  :root .teacher-shell .mobile-resource-page .page-heading{display:block}
+  :root .teacher-shell .mobile-resource-page .heading-actions{display:grid;grid-template-columns:minmax(0,1fr) 48px;gap:10px}
+  :root .teacher-shell .mobile-resource-page .heading-actions>.el-button{width:100%}
+  :root .teacher-shell .mobile-resource-page .resource-layout{margin-top:14px}
+  :root .teacher-shell .mobile-resource-page .resource-toolbar{display:grid;grid-template-columns:minmax(0,1fr) 48px;gap:10px}
+  :root .teacher-shell .mobile-resource-page .resource-toolbar>.el-input{grid-column:auto}
+  :root .teacher-shell .mobile-resource-page .resource-toolbar>.el-select{grid-column:1/-1;width:100%}
+  :root .teacher-shell .mobile-resource-page .resource-toolbar-actions:empty{display:none}
+  :root .teacher-shell .mobile-resource-page .mobile-list-heading{margin-top:20px;padding-bottom:12px}
+  :root .teacher-shell .mobile-resource-page .mobile-list-heading>span{font-size:14px}
+  :root .teacher-shell .resource-card{border:0;border-radius:14px;padding:18px;align-items:center}
+  :root .teacher-shell .resource-card-open{display:block;flex:1;min-width:0;padding:0;border:0;background:transparent;color:inherit;text-align:left;font:inherit;cursor:pointer}
+  :root .teacher-shell .resource-card-info{gap:8px}
+  :root .teacher-shell .resource-card-info strong{font-size:20px;font-weight:600;line-height:1.5}
+  :root .teacher-shell .resource-card-info small{font-size:14px;line-height:1.6}
+  :root .teacher-shell .resource-card-meta .el-tag{font-size:14px}
+  /* Exports */
+  :root .teacher-shell .mobile-export-page{width:calc(100% - 32px);padding:16px 0 28px;display:flex;flex-direction:column;gap:14px}
+  :root .teacher-shell .mobile-export-page .export-heading{order:0;margin:0}
+  :root .teacher-shell .mobile-export-page .export-heading>div:first-child{display:none}
+  :root .teacher-shell .mobile-export-page .heading-actions .el-button{width:100%}
+  :root .teacher-shell .mobile-export-page .active-task{order:1;margin:0;padding:16px;border:0;border-radius:14px}
+  :root .teacher-shell .mobile-export-page .active-task-copy h2{font-size:20px;line-height:1.5}
+  :root .teacher-shell .mobile-export-page .active-task-copy>p{display:none}
+  :root .teacher-shell .mobile-export-page .active-task-copy>span{font-size:14px}
+  :root .teacher-shell .mobile-export-page .flow-console{order:2;margin:0}
+  :root .teacher-shell .mobile-export-page .flow-context,:root .teacher-shell .mobile-export-page .flow-footnote{display:none}
+  :root .teacher-shell .mobile-export-page .history-section{order:3;margin:0}
+  :root .teacher-shell .mobile-export-page .history-header>div:first-child{display:none}
+  :root .teacher-shell .mobile-export-page .history-controls{display:grid;grid-template-columns:minmax(0,1fr) auto;gap:8px}
+  :root .teacher-shell .mobile-export-page .history-controls .el-input{width:100%}
+  :root .teacher-shell .mobile-export-page .history-tabs{margin:12px 0 0}
+  :root .teacher-shell .mobile-export-page .el-tabs__item{font-size:16px;min-height:48px;padding-inline:12px}
+  :root .teacher-shell .mobile-export-page .task-cards{display:grid;gap:12px}
+  :root .teacher-shell .mobile-export-page .task-card{border:0;border-radius:14px;padding:18px;background:var(--zh-background-primary)}
+  :root .teacher-shell .mobile-export-page .task-title-button{display:block;width:100%;min-height:0;padding:0;border:0;background:transparent;color:inherit;text-align:left;font:600 20px/1.5 var(--zh-font-family);overflow-wrap:anywhere}
+  :root .teacher-shell .mobile-export-page .task-card-title>span{font-size:14px;line-height:1.6;white-space:normal;margin-top:8px}
+  :root .teacher-shell .mobile-export-page .task-card-top{align-items:flex-start;gap:10px}
+  :root .teacher-shell .mobile-export-page .task-card-actions{display:flex;justify-content:flex-end;gap:10px;margin-top:12px;padding-top:8px;border-top:1px solid var(--zh-line-parting)}
+  :root .teacher-shell .mobile-export-page .task-card-actions>.el-button{padding:0 12px}
+  :root .teacher-shell .mobile-export-page .export-stats-section{order:7}
+  :root .teacher-shell .mobile-export-page .export-quality-section{order:8}
+  :root .teacher-shell .mobile-export-page .export-video-section{order:9}
+  :root .teacher-shell .mobile-export-page .quality-card,:root .teacher-shell .mobile-export-page .export-stats,:root .teacher-shell .mobile-export-page .video-tasks{margin:0;border:0;box-shadow:none;padding:0;background:transparent}
+  /* Accounts and preference subpages */
+  :root .teacher-shell .settings-page{width:calc(100% - 32px);padding:16px 0 28px;margin:auto}
+  :root .teacher-shell .settings-heading{display:none}
+  :root .teacher-shell .settings-grid{display:grid;grid-template-columns:1fr;gap:12px}
+  :root .teacher-shell .settings-card{border:0;border-radius:14px;box-shadow:none}
+  :root .teacher-shell .settings-card>.el-card__body{padding:0}
+  :root .teacher-shell .preferences-card{margin-top:12px}
+  :root .teacher-shell .settings-card .card-title p,:root .teacher-shell .settings-card .profile-summary{display:none}
+  :root .teacher-shell .settings-card .card-title>div,:root .teacher-shell .settings-card .card-title>.el-icon{display:none}
+  :root .teacher-shell .settings-card .card-title{margin:0 0 12px;padding:0}
+  :root .teacher-shell .password-card .card-title,:root .teacher-shell .preferences-card .card-title{display:none}
+  :root .teacher-shell .settings-card dl{font-size:16px}
+  :root .teacher-shell .security-action-row{padding:0;border:0;background:transparent;min-height:48px;gap:12px}
+  :root .teacher-shell .security-action-row > div > span{display:none}
+  :root .teacher-shell .security-action-row strong{font-size:16px}
+  :root .teacher-shell .pref-section-title{font-size:18px;line-height:1.6}
+  :root .teacher-shell .pref-option-grid{grid-template-columns:repeat(2,minmax(0,1fr))}
+  :root .teacher-shell .pref-card{display:flex;flex-direction:column;justify-content:center;align-items:center;min-height:100px;padding:14px 8px;gap:8px;text-align:center}
+  :root .teacher-shell .pref-card-copy strong{font-size:17px;line-height:1.6}
+  :root .teacher-shell .pref-card-copy small{display:none}
+  :root .teacher-shell .pref-chip{min-height:48px;font-size:16px}
+  :root .teacher-shell .pref-footer{position:sticky;bottom:0;background:var(--zh-background-primary);padding:12px 0;display:grid;gap:8px;grid-template-columns:1fr}
+  :root .teacher-shell .pref-footer .el-button{margin:0;white-space:normal}
+  :root .teacher-shell .danger-zone{margin-top:12px}
+  :root .teacher-shell .danger-zone>.el-card__body{padding:16px;gap:12px}
+  :root .teacher-shell .danger-zone h2{font-size:18px;margin:0}
+  :root .teacher-shell .danger-zone p{display:none}
+  /* Course and presentation lists */
+  :root .teacher-shell .workspace-entry{padding:calc(16px + var(--zh-safe-top)) 16px calc(92px + var(--zh-safe-bottom));background:var(--zh-background-light)}
+  :root .teacher-shell .workspace-entry header{margin-bottom:16px}
+  :root .teacher-shell .workspace-entry header h1{font-size:24px}
+  :root .teacher-shell .workspace-entry .entry-projects{display:grid;grid-template-columns:1fr;gap:12px;margin-top:16px}
+  .mobile-project-item{display:flex;align-items:center;justify-content:space-between;gap:14px;min-height:108px;padding:18px;border:0;border-radius:14px;background:var(--zh-background-primary);color:var(--zh-text-primary);text-align:left;font:inherit;cursor:pointer}
+  .mobile-project-item>span{display:flex;flex-direction:column;gap:8px;min-width:0}.mobile-project-item strong{font-size:20px;font-weight:600;line-height:1.5;overflow-wrap:anywhere}.mobile-project-item small{font-size:14px;color:var(--zh-text-secondary)}.mobile-project-item>.el-icon{flex:none;font-size:20px;color:var(--zh-text-caption)}
+  :root .teacher-shell .entry-search>.el-button{min-width:80px}
+  :root .teacher-shell .course-workspace{padding:16px;background:var(--zh-background-light)}
+  :root .teacher-shell .course-workspace header{margin-bottom:16px}
+  :root .teacher-shell .course-workspace header>div{display:none}
+  :root .teacher-shell .course-workspace header>.el-button{width:100%}
+  :root .teacher-shell .course-workspace .mobile-course-select{margin-bottom:12px}
+  :root .teacher-shell .course-workspace .mobile-course-select .el-select{width:100%}
+  :root .teacher-shell .course-workspace .card{padding:0;margin:12px 0;border:0;border-radius:14px}
+  :root .teacher-shell .course-workspace .card>.mobile-section>.mobile-section-content>h2{display:none}
+  :root .teacher-shell .course-workspace .course-controls{grid-template-columns:1fr;padding-top:8px}
+  :root .teacher-shell .course-workspace .actions{display:flex;flex-wrap:wrap;gap:10px}
+  :root .teacher-shell .course-workspace .actions>.el-button{white-space:normal;margin:0;flex:1 1 140px;height:auto;min-height:48px;line-height:1.6;padding:10px}
+  :root .teacher-shell .course-workspace .actions>.el-select{width:100%;flex:1 1 100%}
+  :root .teacher-shell .course-workspace .actions>h2{font-size:20px;width:100%}
+  .mobile-course-nodes{display:grid;gap:12px}.mobile-node{padding:14px;border-radius:12px;background:var(--zh-background-light)}.mobile-node>summary{display:flex;align-items:center;justify-content:space-between;gap:12px;min-height:44px;font-size:18px;font-weight:600;cursor:pointer}.mobile-node>summary small{font-size:14px;font-weight:400;flex:none}.mobile-node[open]>summary{margin-bottom:16px}.mobile-node .el-form-item{margin-bottom:16px}
+  /* Chat, previews, and editor dialogs */
+  :root .teacher-shell .chat-container{padding:0 16px}
+  :root .teacher-shell .chat-message,:root .teacher-shell .user-bubble,:root .teacher-shell .ai-bubble,:root .teacher-shell .markdown-body{font-size:17px;line-height:1.8}
+  :root .teacher-shell .chat-message p{font-size:17px;line-height:1.8}
+  :root .teacher-shell .chat-composer{flex:none;padding-bottom:10px}
+  :root .teacher-shell .chat-composer .chat-resource-section,:root .teacher-shell .chat-composer .chat-preference-section{background:transparent;border-bottom:1px solid var(--zh-line-parting);border-radius:0}
+  :root .teacher-shell .chat-composer .mobile-section>summary{min-height:44px;padding:8px 0;font-size:15px;font-weight:500}
+  :root .teacher-shell .chat-composer .mobile-section-content{padding:0 0 12px}
+  :root .teacher-shell .chat-composer .composer-hint,:root .teacher-shell .info-stack-desc{display:none}
+  :root .teacher-shell .info-stack-label{font-size:16px}
+  :root .teacher-shell .composer-resource-row{display:flex;flex-wrap:wrap;gap:8px}
+  :root .teacher-shell .outline-card h3,:root .teacher-shell .resource-info strong{font-size:20px}
+  :root .teacher-shell .outline-actions-bar{display:grid;grid-template-columns:1fr;gap:8px}
+  :root .teacher-shell .outline-actions-bar .el-button{margin:0;white-space:normal;height:auto;padding-block:12px}
+  :root .community-detail-dialog .detail-aside .detail-aside-card{margin:0;padding:0;border:0;box-shadow:none}
+  :root .community-detail-dialog .detail-aside .detail-aside-label{display:none}
+  :root .community-detail-dialog .detail-content-section{padding:16px}
+  :root .community-detail-dialog .detail-content-section .detail-section-note,:root .community-detail-dialog .detail-section-eyebrow{display:none}
+  :root .community-detail-dialog .detail-stat-list,:root .community-detail-dialog .detail-attribute-card{font-size:16px}
+  :root .community-submission-dialog .submission-meta-grid{grid-template-columns:1fr}
+  :root .community-submission-dialog .submission-section{padding:16px}
+  :root .community-submission-dialog .submission-section-heading h3{font-size:20px}
+  :root .community-submission-dialog .submission-header p{display:none}
+  :root .resource-dialog .index-mobile-top strong,:root .resource-dialog .taxonomy-mobile-summary strong{font-size:17px}
+  :root .resource-dialog .index-mobile-meta,:root .resource-dialog .taxonomy-mobile-bottom>span{font-size:14px}
+  :root .resource-dialog .upload-dropzone strong{font-size:18px}
+  :root .resource-dialog .upload-dropzone>span{font-size:14px;line-height:1.7}
+  :root .resource-dialog .upload-file-title-row strong{font-size:16px}
+  :root .resource-dialog .upload-file-size,:root .resource-dialog .upload-file-status,:root .resource-dialog .upload-summary{font-size:14px}
+  :root .resource-dialog .index-overview-grid span{font-size:14px}
+  :root .resource-dialog .index-overview-grid strong{font-size:24px}
+  :root .resource-dialog .el-select__selected-item .el-tag{font-size:14px;max-width:100%}
+  :root .detail-dialog .detail-grid>div>span,:root .quality-dialog .report-item span{font-size:14px}
+  :root .detail-dialog .detail-grid strong,:root .quality-dialog .report-item strong{font-size:17px}
+  :root .preview-header h1{font-size:20px}
+  :root .preview-detail h2{font-size:20px}
+  /* Public entry and authentication */
+  :root .mobile-auth-main{padding:24px 20px calc(24px + var(--zh-safe-bottom));align-items:flex-start}
+  :root .mobile-auth-main .login-brand-logo-wrap{height:110px;margin:0 auto 20px}
+  :root .mobile-auth-main .login-brand-logo{height:110px;width:auto;margin:auto;object-fit:contain}
+  :root .mobile-auth-main h2{font-size:26px}
+  :root .mobile-auth-main h2+p{display:none}
+  :root .mobile-auth-main .el-form-item__label{font-size:17px}
+  :root .mobile-auth-main .el-input__wrapper{min-height:52px}
+  :root .mobile-auth-main .el-input__inner{font-size:17px}
+  :root .mobile-auth-main .el-button{min-height:50px;font-size:18px}
+  :root .mobile-auth-main .el-checkbox__label{font-size:14px;line-height:1.7;white-space:normal}
+  :root .mobile-auth-main .el-checkbox{height:auto;align-items:flex-start}
+  :root .mobile-auth-main .el-checkbox .el-checkbox__label,:root .mobile-auth-main .el-checkbox .el-checkbox__label *{font-size:14px!important;line-height:1.7;white-space:normal!important}
+  :root .mobile-auth-main .el-checkbox__inner{width:20px;height:20px}
+  :root .mobile-auth-main .el-checkbox__input{padding-top:2px}
+  :root .template-picker-dialog .template-panel-heading{font-size:18px}
+  :root .template-picker-dialog .template-panel-heading small{display:none}
+  :root .template-picker-dialog .template-outline-panel{padding:0;max-height:none}
+  :root .template-picker-dialog .template-outline-panel .template-panel-heading{display:none}
+  :root .template-picker-dialog .template-card{padding:12px;gap:10px}
+  :root .template-picker-dialog .template-card strong{font-size:17px;line-height:1.5;white-space:normal;overflow-wrap:anywhere}
+  :root .template-picker-dialog .template-card small{display:none}
+  :root .template-picker-dialog .template-card-selected{font-size:13px}
+  :root .template-picker-dialog .template-outline-item-title{font-size:16px}
+  :root .template-picker-dialog .template-outline-copy{font-size:15px}
+  :root .lesson-plan-preview p,:root .lesson-plan-preview li,:root .lesson-plan-preview dd{font-size:16px!important;line-height:1.8}
+  :root .lesson-plan-preview h1{font-size:24px;line-height:1.5}
+  :root .lesson-plan-preview h2{font-size:20px;line-height:1.5}
+  :root .lesson-plan-preview h3{font-size:18px;line-height:1.5}
+  :root .lesson-plan-preview dt,:root .lesson-plan-preview header>span{font-size:14px;line-height:1.6}
+  :root .lesson-plan-preview .lesson-plan-preview-step-number{width:32px;height:32px;font-size:14px}
+  :root .community-content-preview p,:root .community-content-preview dd,:root .community-content-preview li{font-size:16px;line-height:1.8}
+  :root .community-content-preview dt,:root .community-content-preview small{font-size:14px;line-height:1.6}
+  :root .community-content-preview button{min-height:44px;font-size:16px}
+  :root .intent-clarification-dialog .clarification-option{min-height:64px;padding:16px;gap:12px}
+  :root .intent-clarification-dialog .option-copy strong{font-size:18px;line-height:1.5}
+  :root .intent-clarification-dialog .option-copy small{font-size:14px;line-height:1.6}
+  :root .intent-clarification-dialog .item-question{font-size:17px;line-height:1.7}
+  :root .learning-graph-panel .learning-graph-header h3{font-size:20px}
+  :root .learning-graph-panel .learning-support,:root .learning-graph-panel .learning-graph-note,:root .learning-graph-panel .learning-graph-confirm span{font-size:14px;line-height:1.7}
+  :root .learning-graph-panel button{min-height:44px;font-size:16px}
+}

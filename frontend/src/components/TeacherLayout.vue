@@ -8,10 +8,13 @@ import { computed, onMounted, ref, watch } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { ElMessageBox } from 'element-plus'
 import {
-  Bell, ChatDotRound, Delete, Download, EditPen, Expand, Fold,
-  FolderOpened, Grid, Moon, MoreFilled, Plus, Setting, Sunny,
+  ArrowLeft, Bell, ChatDotRound, Delete, Document, Download, EditPen, Expand, Files,
+  Fold, Grid, House, Monitor, Moon, MoreFilled, Plus, Setting, Sunny,
 } from '@element-plus/icons-vue'
 import BottomTabBar from './BottomTabBar.vue'
+import { useMobileViewport } from '../composables/useMobileViewport'
+import { useTeacherTheme } from '../composables/useTeacherTheme'
+import { hasWorkspaceTarget } from '../utils/workspaceEntry'
 import { TEACHER_HOME } from '../config/teacherHome.config.js'
 import { requestNewChat, latestSessionPush, openChatSession } from '../config/teacherChat.config.js'
 import { getCurrentUser } from '../apis/login.js'
@@ -20,14 +23,14 @@ import { useUserStore } from '../storage/user.js'
 
 const route = useRoute()
 const router = useRouter()
-const isDark = ref(document.documentElement.dataset.theme === 'dark')
+const { isDark, toggleTheme } = useTeacherTheme()
 const settingsReturnTarget = ref('/main')
 const userStore = useUserStore()
 /** 侧栏最近对话历史，数据来自 GET /api/v1/ai/sessions */
 const history = ref([])
 /** 当前打开的历史会话 id（用于侧栏高亮） */
 const activeHistoryId = ref(null)
-const iconMap = { ChatDotRound, FolderOpened, Grid, Download }
+const iconMap = { House, Monitor, Files, ChatDotRound, Grid, Document, Download }
 const routeMap = {
   home: '/main',
   workspace: '/main/workspace',
@@ -39,10 +42,19 @@ const routeMap = {
 }
 const activeMenu = computed(() => route.meta.menu || 'home')
 const isWorkspace = computed(() => route.path === '/main/workspace')
+const isMobile = useMobileViewport()
+const isPersonalTool = computed(() => ['workspace', 'exports', 'resources'].includes(route.meta.menu))
+const mobilePageTitle = computed(() => ({ workspace: '课件', exports: '导出', resources: '资源' }[route.meta.menu] || route.meta.title))
+const isMyProfile = computed(() => route.path === '/main/me')
 const isTeachingAssistant = computed(() => route.path === '/main')
 const avatarText = computed(() => (userStore.userInfo?.real_name || userStore.userInfo?.username || TEACHER_HOME.teacher.name).slice(0, 1))
 const avatarUrl = computed(() => userStore.userInfo?.avatar || undefined)
 const isSettings = computed(() => route.path === '/main/settings')
+watch(() => route.fullPath, (target, previous) => {
+  if (isMobile.value && route.path === '/main/settings' && previous && !previous.startsWith('/main/settings')) {
+    settingsReturnTarget.value = previous
+  }
+})
 const settingsActionLabel = computed(() => isSettings.value ? '返回之前页面' : '打开账号设置')
 const viewTransitionName = computed(() => route.path === '/main' ? 'teacher-home-view' : 'teacher-view')
 /** 手机档（<768px）会话历史抽屉开关：侧栏移除后由顶栏标题呼出 */
@@ -97,12 +109,6 @@ const handleMobileHistoryCommand = (command) => {
   }
   const item = history.value.find((entry) => String(entry.id) === String(command))
   if (item) openHistorySession(item)
-}
-
-/** 切换全局亮暗主题。 */
-const toggleTheme = () => {
-  isDark.value = !isDark.value
-  document.documentElement.dataset.theme = isDark.value ? 'dark' : 'light'
 }
 
 /** 设置与头像共用入口：首次进入设置，再次点击返回来源页面。 */
@@ -235,10 +241,10 @@ watch(latestSessionPush, (session) => {
 </script>
 
 <template>
-  <div :class="['teacher-shell', { 'workspace-mode': isWorkspace, 'assistant-mode': isTeachingAssistant, 'sidebar-collapsed': isTeachingAssistant && sidebarCollapsed }]">
+  <div :class="['teacher-shell', { 'workspace-mode': isWorkspace, 'personal-tool-mode': isPersonalTool, 'profile-mode': isMyProfile, 'assistant-mode': isTeachingAssistant, 'sidebar-collapsed': isTeachingAssistant && sidebarCollapsed }]">
     <a class="skip-link" href="#main-content">跳到主要内容</a>
 
-    <header v-if="!isWorkspace" class="teacher-topbar">
+    <header v-if="!isWorkspace || (isMobile && !hasWorkspaceTarget(route.query))" class="teacher-topbar">
       <el-button
         v-if="isTeachingAssistant"
         text
@@ -257,7 +263,7 @@ watch(latestSessionPush, (session) => {
         <strong class="app-brand-name">智核</strong>
       </button>
 
-      <strong v-if="!isTeachingAssistant" class="mobile-page-title is-plain">{{ route.meta.title }}</strong>
+      <div v-if="!isTeachingAssistant" class="mobile-title-row"><el-button v-if="['workspace','resources','exports','settings','courses'].includes(route.meta.menu)" text circle class="mobile-back-button" aria-label="返回我的" @click="router.push({ path: '/main/me', query: route.query.preview ? { preview: '1' } : {} })"><el-icon><ArrowLeft /></el-icon></el-button><h1 class="mobile-page-title is-plain">{{ mobilePageTitle }}</h1></div>
 
       <nav class="top-navigation" aria-label="教师端主导航">
         <button
@@ -282,6 +288,8 @@ watch(latestSessionPush, (session) => {
           class="mobile-history-menu"
           trigger="click"
           placement="bottom-end"
+          popper-class="recent-history-popper"
+          max-height="min(60dvh, 420px)"
           @command="handleMobileHistoryCommand"
         >
           <el-button text circle class="icon-action" aria-label="打开最近对话"><el-icon><ChatDotRound /></el-icon></el-button>
@@ -293,8 +301,10 @@ watch(latestSessionPush, (session) => {
                 :key="item.id"
                 :command="String(item.id)"
                 :divided="index > 0"
+                class="recent-history-entry"
               >
-                {{ item.title }} · {{ item.time }}
+                <span class="recent-history-title" :title="item.title">{{ item.title }}</span>
+                <small class="recent-history-time">{{ item.time }}</small>
               </el-dropdown-item>
               <el-dropdown-item v-if="history.length" command="all" divided>查看全部历史</el-dropdown-item>
             </el-dropdown-menu>
@@ -424,7 +434,7 @@ watch(latestSessionPush, (session) => {
     </main>
 
     <!-- 手机档（<768px）底部导航：桌面档由样式隐藏，工作台沉浸式隐藏 -->
-    <BottomTabBar v-if="!isWorkspace" class="mobile-tabbar" />
+    <BottomTabBar v-if="!isWorkspace || !hasWorkspaceTarget(route.query)" class="mobile-tabbar" />
 
     <!-- 手机档会话历史抽屉：侧栏移除后由顶栏标题呼出 -->
     <el-drawer
@@ -509,7 +519,7 @@ watch(latestSessionPush, (session) => {
 .new-chat-button:hover :deep(.el-icon) { transform: rotate(90deg); }
 .new-chat-button:active :deep(.el-icon) { transform: rotate(90deg) scale(.92); transition-duration: 150ms; }
 .history { min-height: 0; margin-top: 18px; display: flex; flex: 1; flex-direction: column; }
-.history-scroll { min-height: 0; flex: 1; overflow-y: auto; }
+.history-scroll { min-height: 0; min-width: 0; flex: 1; overflow: hidden auto; }
 .section-label-row { display: flex; align-items: center; justify-content: space-between; flex-shrink: 0; padding: 0 8px 5px; color: var(--zh-text-caption); font-size: 12px; }
 .history-item { width: 100%; display: flex; align-items: center; gap: 4px; padding: 4px 6px 4px 8px; border-radius: var(--zh-radius8); transition: background-color 200ms cubic-bezier(0.4, 0, 0.2, 1); }
 .history-item:hover, .history-item:focus-within { background: var(--zh-background-option); }
@@ -517,7 +527,7 @@ watch(latestSessionPush, (session) => {
 .history-item-main { min-width: 0; flex: 1; display: flex; flex-direction: column; gap: 3px; padding: 6px 2px; border: 0; background: transparent; color: var(--zh-text-secondary); text-align: left; cursor: pointer; transition: color 200ms cubic-bezier(0.4, 0, 0.2, 1); }
 .history-item:hover .history-item-main { color: var(--zh-text-primary); }
 .history-item.is-active .history-item-main { color: var(--zh-text-theme); font-weight: 600; }
-.history-item-main span { overflow: hidden; font-size: 13px; text-overflow: ellipsis; white-space: nowrap; }
+.history-item-main span { max-width: 100%; overflow: hidden; font-size: 13px; text-overflow: ellipsis; white-space: nowrap; }
 .history-item-main small { color: var(--zh-text-caption); font-size: 11px; }
 .history-item-actions { flex: 0 0 auto; opacity: 0; pointer-events: none; transition: opacity 200ms cubic-bezier(0.4, 0, 0.2, 1); }
 .history-item:hover .history-item-actions, .history-item:focus-within .history-item-actions { opacity: 1; pointer-events: auto; }
@@ -530,11 +540,11 @@ watch(latestSessionPush, (session) => {
 .avatar-button:active { transform: scale(.96); transition-duration: 150ms; }
 .profile-copy strong { overflow: hidden; font-size: 13px; text-overflow: ellipsis; white-space: nowrap; }
 .teacher-main { grid-area: main; min-width: 0; min-height: calc(100dvh - 68px); background: radial-gradient(circle at 50% 18%, rgb(37 99 235 / 5%), transparent 32%), var(--zh-background-primary); }
-.teacher-topbar { grid-area: topbar; position: sticky; z-index: 100; top: 0; height: 68px; display: grid; grid-template-columns: auto minmax(0, 1fr) auto; align-items: center; gap: 20px; padding: 0 24px; border-bottom: 1px solid var(--zh-line-parting); background: color-mix(in srgb, var(--zh-background-primary) 90%, transparent); backdrop-filter: blur(14px); }
+.teacher-topbar { grid-area: topbar; position: sticky; z-index: 100; top: 0; height: 68px; display: grid; grid-template-columns: auto minmax(0, 1fr) 256px; align-items: center; gap: 20px; padding: 0 24px; border-bottom: 1px solid var(--zh-line-parting); background: color-mix(in srgb, var(--zh-background-primary) 90%, transparent); backdrop-filter: blur(14px); }
 .top-navigation { display: flex; align-items: center; justify-content: flex-start; justify-self: center; min-width: 0; max-width: 100%; overflow-x: auto; gap: 4px; padding: 4px; border: 1px solid var(--zh-line-parting); border-radius: 14px; background: var(--zh-background-light); }
-.top-nav-item { min-height: 40px; display: inline-flex; align-items: center; gap: 7px; padding: 0 16px; border: 0; border-radius: 10px; color: var(--zh-text-secondary); background: transparent; font: inherit; font-size: 14px; white-space: nowrap; cursor: pointer; transition: color 180ms ease, background-color 180ms ease, box-shadow 180ms ease, transform 180ms ease; }
-.top-nav-item:hover, .top-nav-item:focus-visible { color: var(--zh-text-primary); background: var(--zh-background-primary); transform: translateY(-1px); }
-.top-nav-item.is-active { color: var(--zh-text-theme); background: var(--zh-background-primary); box-shadow: var(--zh-shadow1); font-weight: 650; }
+.top-nav-item { min-height: 40px; display: inline-flex; align-items: center; gap: 7px; padding: 0 16px; border: 0; border-radius: 10px; color: var(--zh-text-secondary); background: transparent; font: inherit; font-size: 14px; font-weight: 550; white-space: nowrap; cursor: pointer; transition: color 180ms ease, background-color 180ms ease, box-shadow 180ms ease; }
+.top-nav-item:hover, .top-nav-item:focus-visible { color: var(--zh-text-primary); background: var(--zh-background-primary); }
+.top-nav-item.is-active { color: var(--zh-text-theme); background: var(--zh-background-primary); box-shadow: var(--zh-shadow1); }
 .top-nav-item .el-icon { font-size: 16px; }
 .status-dot { margin-right: 4px; color: var(--zh-text-caption); font-size: 12px; white-space: nowrap; }
 .status-dot i { width: 7px; height: 7px; display: inline-block; margin-right: 5px; border-radius: 50%; background: var(--zh-green); animation: pulse 200ms cubic-bezier(0.4, 0, 0.2, 1) both; }
@@ -546,10 +556,15 @@ watch(latestSessionPush, (session) => {
 /* 手机档专属元素：桌面档默认隐藏 */
 .avatar-dropdown { display: none; }
 .mobile-page-title { display: none; }
+.mobile-title-row { display: none; }
 .mobile-new-chat-button { display: none; }
 .teacher-shell .mobile-tabbar { display: none; }
-.mobile-drawer-body { height: 100%; display: flex; flex-direction: column; }
+.mobile-drawer-body { height: 100%; min-width: 0; display: flex; flex-direction: column; }
 .mobile-drawer-body .history { margin-top: 0; }
+:global(.recent-history-popper) { width: min(340px, calc(100vw - 24px)); }
+.recent-history-entry { min-width: 0; gap: 10px; }
+.recent-history-title { min-width: 0; flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.recent-history-time { flex: none; color: var(--zh-text-secondary); white-space: nowrap; }
 .icon-action { transition: background-color 200ms cubic-bezier(0.4, 0, 0.2, 1), transform 200ms cubic-bezier(0.4, 0, 0.2, 1); }
 .icon-action:hover, .icon-action:focus-visible { transform: translateY(-1px); }
 .icon-action:active { transform: scale(.96); }
@@ -571,9 +586,12 @@ watch(latestSessionPush, (session) => {
 .teacher-view-enter-from { opacity: 0; transform: translateY(8px); }
 .teacher-view-enter-to { opacity: 1; transform: translateY(0); }
 
+@media (hover: hover) and (pointer: fine) {
+  :global(body:has(.teacher-shell:not(.workspace-mode))) { scrollbar-gutter: stable; }
+}
 @media (max-width: 1023.98px) {
   /* 中间态不再强制收窄侧栏：折叠宽度由 .sidebar-collapsed 控制，展开后可查看完整历史对话 */
-  .teacher-topbar { grid-template-columns: auto 1fr auto; gap: 12px; padding-inline: 16px; }
+  .teacher-topbar { grid-template-columns: auto minmax(0, 1fr) 168px; gap: 12px; padding-inline: 16px; }
   /* 仅限侧栏内隐藏，避免波及手机档会话历史抽屉中的同 class 元素 */
   .brand-copy span, .status-dot { display: none; }
   .app-brand-icon { width: 38px; height: 38px; }
@@ -582,7 +600,7 @@ watch(latestSessionPush, (session) => {
   .top-nav-item { padding: 0 11px; }
   .top-nav-item span { display: none; }
 }
-@media (max-width: 767.98px) and (hover: none) and (pointer: coarse) {
+@media (max-width: 767.98px) and (hover: none) and (pointer: coarse), (max-width: 1023.98px) and (max-height: 600px) and (hover: none) and (pointer: coarse) {
   .teacher-shell,
   .teacher-shell.assistant-mode,
   .teacher-shell.assistant-mode.sidebar-collapsed {
@@ -591,21 +609,28 @@ watch(latestSessionPush, (session) => {
     grid-template-rows: auto minmax(0, 1fr);
     grid-template-areas: "topbar" "main";
   }
+  .teacher-shell.assistant-mode,
+  .teacher-shell.assistant-mode.sidebar-collapsed {
+    height: 100dvh;
+    min-height: 0;
+    grid-template-rows: auto minmax(0, 1fr) auto;
+    grid-template-areas: "topbar" "main" "tabbar";
+  }
   /* 侧栏整体移除，导航由 BottomTabBar 接管 */
   .teacher-sidebar { display: none; }
   /* 助手页仅保留新建对话与右侧操作，其他页面仍显示标题 */
   .teacher-topbar {
-    height: calc(48px + var(--zh-safe-top));
+    height: calc(56px + var(--zh-safe-top));
     grid-template-columns: minmax(0, 1fr) auto;
     gap: 8px;
     padding: var(--zh-safe-top) calc(14px + var(--zh-safe-right)) 0 calc(14px + var(--zh-safe-left));
   }
-  .teacher-shell.assistant-mode .teacher-topbar { grid-template-columns: 40px minmax(0, 1fr); }
+  .teacher-shell.assistant-mode .teacher-topbar { grid-template-columns: 44px minmax(0, 1fr); }
   .brand, .top-navigation, .topbar-actions .theme-toggle { display: none; }
   .mobile-new-chat-button {
     position: relative;
-    width: 40px;
-    height: 40px;
+    width: 44px;
+    height: 44px;
     display: inline-flex;
     justify-self: start;
     margin: 0;
@@ -619,14 +644,23 @@ watch(latestSessionPush, (session) => {
   .mobile-page-title .el-icon { flex: 0 0 auto; color: var(--zh-text-secondary); font-size: var(--zh-font-size14); }
   .mobile-page-title.is-plain { cursor: default; }
   .topbar-actions { gap: 4px; }
-  .topbar-actions .icon-action, .topbar-actions .avatar-button { width: 40px; height: 40px; flex-basis: 40px; }
-  .topbar-actions :deep(.el-button .el-icon) { font-size: 22px; }
+  .topbar-actions .icon-action, .topbar-actions .avatar-button { width: 44px; height: 44px; flex-basis: 44px; }
+  .topbar-actions :deep(.el-button .el-icon) { font-size: 24px; }
   .topbar-actions > .avatar-button { display: none; }
   .avatar-dropdown { display: inline-flex; }
   /* 主内容为唯一滚动区：底部为 TabBar 预留高度（含安全区） */
-  .teacher-main { width: 100%; min-width: 0; min-height: calc(100dvh - 48px - var(--zh-safe-top)); padding-bottom: calc(var(--zh-tabbar-h) + var(--zh-safe-bottom)); }
+  .teacher-main { width: 100%; min-width: 0; min-height: calc(100dvh - 56px - var(--zh-safe-top)); padding-bottom: calc(var(--zh-tabbar-h) + var(--zh-safe-bottom)); }
+  .teacher-shell.assistant-mode .teacher-main { min-height: 0; padding-bottom: 0; overflow: hidden; }
+  .teacher-shell.assistant-mode .teacher-view-frame { height: 100%; }
+  .teacher-shell.assistant-mode .mobile-tabbar { position: static; grid-area: tabbar; }
   .teacher-shell.workspace-mode .teacher-main { min-height: 0; padding-bottom: 0; }
   .teacher-shell .mobile-tabbar { display: flex; }
+  .mobile-title-row{display:flex;align-items:center;gap:4px;min-width:0}
+  .mobile-title-row .mobile-back-button{flex:none;margin:0;padding:0;width:44px;height:44px}
+  .mobile-title-row .mobile-back-button :deep(.el-icon){font-size:24px}
+  .teacher-shell.profile-mode{grid-template-rows:minmax(0,1fr);grid-template-areas:"main"}
+  .teacher-shell.profile-mode .teacher-topbar{display:none}
+  .teacher-shell.profile-mode .teacher-main{min-height:100dvh;background:var(--zh-background-light)}
 }
 
 @keyframes pulse {

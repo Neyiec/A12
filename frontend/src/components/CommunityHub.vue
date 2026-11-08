@@ -7,17 +7,21 @@
 import { computed, onBeforeUnmount, onMounted, ref, watch } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { ElMessage } from 'element-plus'
-import { CollectionTag, Search, Star, Trophy, User } from '@element-plus/icons-vue'
+import { ArrowRight, CollectionTag, Filter, MoreFilled, Search, Star, Trophy, User } from '@element-plus/icons-vue'
 import { COMMUNITY_PAGE } from '../config/teacherPages.config.js'
 import { createCommunityReport, createCommunitySubmission, favoriteCommunityItem, getCommunityItem, getCommunityReport, getCommunitySubmission, likeCommunityItem, listCommunityFavorites, listCommunityItems, listCommunityRankings, listCommunityRecentViews, listCommunityReports, listCommunitySubmissions, listResources, patchProject, recordCommunityView, removeCommunityRecentView, reuseCommunityItem, saveCommunitySubmissionVersion, submitCommunitySubmission, unlikeCommunityItem, unfavoriteCommunityItem, updateCommunitySubmission } from '../apis/teacher'
 import { useUserStore } from '../storage/user.js'
 import CommunityContentPreview from './CommunityContentPreview.vue'
+import MobileSection from './MobileSection.vue'
 import { communityLoadError } from '../utils/communityLoadError.js'
-import { importCommunityPptx } from '../apis/teacher'
+import { getProject, importCommunityPptx } from '../apis/teacher'
+import { useMobileViewport } from '../composables/useMobileViewport'
+import { normalizePreviewPages, parsePresentationValue } from '../utils/mobilePresentation'
 
 const router = useRouter()
 const route = useRoute()
 const userStore = useUserStore()
+const isMobile = useMobileViewport()
 const keyword = ref('')
 const searchQuery = ref('')
 const activeTab = ref('精选')
@@ -25,6 +29,8 @@ const selectedStage = ref('全部学段')
 const selectedSubject = ref('全部学科')
 const tabs = ['精选', 'PPT 课件', '最新', 'Skill', '教学案例']
 const showMobileFilters = ref(false)
+const showMobileRankings = ref(false)
+const mobileTabLabel = tab => ({ 'PPT 课件': 'PPT', '教学案例': '案例' }[tab] || tab)
 const communityCards = ref([])
 const communityTotal = ref(0)
 const communityPage = ref(1)
@@ -35,6 +41,7 @@ const favoriteIds = ref(new Set())
 // 功能11：列表排序维度（sort_by × period）与点赞态
 const sortBy = ref('')
 const sortPeriod = ref('all')
+const hasActiveFilters = computed(() => selectedStage.value !== '全部学段' || selectedSubject.value !== '全部学科' || Boolean(sortBy.value))
 const sortOptions = [
   { value: 'like', label: '点赞最多' },
   { value: 'favorite', label: '收藏最多' },
@@ -954,9 +961,9 @@ const removeView = async (row) => {
   } catch (error) { ElMessage.error(error?.message || '浏览记录删除失败') }
 }
 
-const openSubmission = async () => {
+const openSubmission = async (initial = {}) => {
   coursewareWarnings.value = []
-  submission.value = emptySubmission()
+  submission.value = { ...emptySubmission(), ...initial }
   hydrateSubmissionEditors()
   submissionError.value = ''
   submissionVisible.value = true
@@ -1053,33 +1060,101 @@ watch([sortBy, sortPeriod], () => {
   loadCommunity()
 })
 watch([rankType, rankPeriod], loadRankings)
+const handleMobileMenu = command => {
+  if (command === 'submission') openSubmission()
+  if (command === 'collections') openCollections()
+  if (command === 'reports') openReports()
+  if (command === 'rankings') {
+    showMobileRankings.value = !showMobileRankings.value
+    if (showMobileRankings.value) loadRankings()
+  }
+}
+const resetFilters = () => {
+  selectedStage.value = '全部学段'
+  selectedSubject.value = '全部学科'
+  sortBy.value = ''
+  sortPeriod.value = 'all'
+}
+watch(() => route.query.publishProject, async (id, _, onCleanup) => {
+  if (!isMobile.value || route.path !== '/main/community' || typeof id !== 'string' || !/^\d+$/.test(id)) return
+  let active = true
+  onCleanup(() => { active = false })
+  try {
+    const project = unwrap(assertApiSuccess(await getProject(id)))
+    if (!active) return
+    const slides = normalizePreviewPages(project?.pages).map((slide, index) => ({
+      slide_no: index + 1,
+      title: slide.title,
+      html: slide.html,
+      notes: slide.notes,
+      layout: slide.layout,
+      theme: slide.theme,
+      elements: Array.isArray(slide.elements) ? slide.elements : [],
+      metadata: slide.metadata,
+    }))
+    if (!slides.length) throw new Error('当前项目没有可发布的 PPT 页面')
+    const history = parsePresentationValue(project.edit_history)
+    await openSubmission({
+      content_type: 'ppt',
+      title: String(project.project_name || '未命名课件').slice(0, 120),
+      lesson_type: '多媒体课件',
+      content_data: JSON.stringify({
+        source: 'a12-html-ppt-workspace',
+        project_id: Number(id),
+        slides,
+        lesson_plan: history?.lesson_plan || history?.lessonPlan || null,
+      }),
+      input_variables: JSON.stringify({ project_id: Number(id) }),
+    })
+  } catch (error) {
+    if (active) ElMessage.error(error?.message || '课件载入失败')
+  } finally {
+    if (active) {
+      const query = { ...route.query }
+      delete query.publishProject
+      void router.replace({ path: route.path, query })
+    }
+  }
+}, { immediate: true })
 onMounted(() => {
   loadCommunity()
   loadFavoriteState()
-  loadRankings()
+  if (!isMobile.value) loadRankings()
 })
 </script>
 
 <template>
-  <div class="community-page">
+  <div class="community-page" :class="{ 'is-mobile-community': isMobile }">
     <header class="community-hero">
+      <template v-if="!isMobile">
       <p>教师共创社区 / Community</p>
       <h1><span>把好课的经验，</span><span>变成下一堂课的起点</span></h1>
       <span>按主题寻找可复用的 PPT 课件、Skill 与教学案例；复用后生成独立草稿，不会修改社区原件。</span>
+      </template>
+      <h1 v-else class="sr-only">教学社区</h1>
       <div class="community-search-row">
-        <el-input v-model="keyword" :prefix-icon="Search" placeholder="搜索 PPT 主题、知识点、学科或课型" clearable size="large" @keyup.enter="submitSearch">
+        <el-input v-model="keyword" :prefix-icon="Search" :placeholder="isMobile ? '搜索课件、案例' : '搜索 PPT 主题、知识点、学科或课型'" aria-label="搜索社区内容" clearable size="large" @keyup.enter="submitSearch">
           <template #append><el-button type="primary" class="community-search-button" @click="submitSearch">搜索</el-button></template>
         </el-input>
-        <el-button type="primary" class="submission-button" @click="openSubmission">我要投稿</el-button>
+        <el-button v-if="!isMobile" type="primary" class="submission-button" @click="openSubmission()">我要投稿</el-button>
+        <el-dropdown v-else trigger="click" @command="handleMobileMenu">
+          <button type="button" class="community-more-button" aria-label="社区更多功能"><el-icon><MoreFilled /></el-icon></button>
+          <template #dropdown><el-dropdown-menu>
+            <el-dropdown-item command="submission">我要投稿</el-dropdown-item>
+            <el-dropdown-item command="collections">收藏与浏览</el-dropdown-item>
+            <el-dropdown-item command="rankings">{{ showMobileRankings ? '收起热门榜单' : '热门榜单' }}</el-dropdown-item>
+            <el-dropdown-item command="reports" divided>举报进度</el-dropdown-item>
+          </el-dropdown-menu></template>
+        </el-dropdown>
       </div>
     </header>
 
     <div class="community-toolbar">
-      <div class="tab-list"><button v-for="tab in tabs" :key="tab" :class="{ active: activeTab === tab }" @click="activeTab = tab">{{ tab }}</button></div>
-      <div class="toolbar-controls">
-        <button type="button" class="mobile-filter-toggle" :aria-expanded="showMobileFilters" aria-controls="community-filters" @click="showMobileFilters = !showMobileFilters">筛选与排序 <span aria-hidden="true">{{ showMobileFilters ? '−' : '＋' }}</span></button>
-        <el-button text @click="openCollections">收藏与浏览</el-button>
-        <el-button text @click="openReports">举报进度</el-button>
+      <div class="tab-list"><button v-for="tab in tabs" :key="tab" :class="{ active: activeTab === tab }" :aria-pressed="activeTab === tab" @click="activeTab = tab">{{ isMobile ? mobileTabLabel(tab) : tab }}</button></div>
+      <button v-if="isMobile" type="button" class="mobile-filter-toggle" :class="{ 'is-active': hasActiveFilters || showMobileFilters }" aria-label="筛选与排序" :aria-expanded="showMobileFilters" aria-controls="community-filters" @click="showMobileFilters = !showMobileFilters"><el-icon><Filter /></el-icon></button>
+      <div v-show="!isMobile || showMobileFilters" class="toolbar-controls">
+        <el-button v-if="!isMobile" text @click="openCollections">收藏与浏览</el-button>
+        <el-button v-if="!isMobile" text @click="openReports">举报进度</el-button>
         <div id="community-filters" class="filters" :class="{ 'mobile-open': showMobileFilters }">
           <el-select v-model="selectedStage" aria-label="筛选学段"><el-option label="全部学段" value="全部学段" /><el-option label="初中" value="初中" /><el-option label="高中" value="高中" /></el-select>
           <el-select v-model="selectedSubject" aria-label="筛选学科"><el-option label="全部学科" value="全部学科" /><el-option label="数学" value="数学" /><el-option label="物理" value="物理" /><el-option label="语文" value="语文" /><el-option label="生物" value="生物" /></el-select>
@@ -1093,13 +1168,14 @@ onMounted(() => {
             <el-option label="近 7 天" value="week" />
             <el-option label="近 30 天" value="month" />
           </el-select>
+          <div v-if="isMobile" class="mobile-filter-actions"><el-button text @click="resetFilters">重置</el-button><el-button type="primary" @click="showMobileFilters = false">收起筛选</el-button></div>
         </div>
       </div>
     </div>
 
-    <div class="community-status-row" aria-live="polite">
+    <div v-if="!isMobile || usingDemoCards || loading" class="community-status-row" aria-live="polite">
       <span v-if="usingDemoCards">演示内容</span>
-      <span v-else-if="!communityError">{{ communityTotal }} 项公开内容</span>
+      <span v-else-if="!isMobile && !communityError">{{ communityTotal }} 项公开内容</span>
       <el-tag v-if="usingDemoCards" size="small" effect="plain">预览数据</el-tag>
       <span v-if="loading" class="status-muted">正在同步社区目录…</span>
     </div>
@@ -1108,7 +1184,7 @@ onMounted(() => {
       <el-button text type="primary" @click="loadCommunity">重试</el-button>
     </div>
 
-    <section class="rank-section" aria-label="热门榜单">
+    <section v-if="!isMobile || showMobileRankings" class="rank-section" aria-label="热门榜单">
       <header class="rank-header">
         <div class="rank-title"><el-icon><Trophy /></el-icon><h2>{{ rankTitle }}</h2></div>
         <div class="rank-controls">
@@ -1130,7 +1206,7 @@ onMounted(() => {
       </div>
     </section>
 
-    <section v-if="showFeatured" class="featured-case">
+    <section v-if="!isMobile && showFeatured" class="featured-case">
       <div class="feature-visual">
         <span>3² + 4² = 5²</span>
         <i></i><i></i><i></i>
@@ -1144,8 +1220,13 @@ onMounted(() => {
       </div>
     </section>
 
-    <section v-loading="loading" class="community-grid" aria-label="社区内容">
+    <section v-loading="loading" class="community-grid" aria-label="社区内容" :aria-busy="loading">
       <article v-for="card in filteredCards" :key="card.id || card.testCaseId || card.title" class="community-card" data-hover-lift role="button" tabindex="0" @click="openDetail(card)" @keydown.enter.prevent="openDetail(card)" @keydown.space.prevent="openDetail(card)">
+        <template v-if="isMobile">
+          <div class="mobile-card-body"><h3>{{ card.title }}</h3><div class="mobile-card-meta"><span class="mobile-card-type">{{ card.type }}</span><span>{{ card.subject }}</span></div></div>
+          <el-icon class="mobile-card-chevron" aria-hidden="true"><ArrowRight /></el-icon>
+        </template>
+        <template v-else>
         <div class="card-top"><span>{{ card.type }}</span><div class="card-top-actions"><button class="card-like" :class="{ active: likedIds.has(String(card.id)) }" :aria-pressed="likedIds.has(String(card.id))" aria-label="点赞" @click.stop="toggleLike(card)"><svg viewBox="0 0 24 24" aria-hidden="true"><path :d="LIKE_ICON_PATH" /></svg><span>{{ card.likes }}</span></button><el-button text circle :type="favoriteIds.has(String(card.id ?? card.testCaseId)) ? 'warning' : undefined" aria-label="收藏" @click.stop="toggleFavorite(card)"><el-icon><Star /></el-icon></el-button></div></div>
         <div class="card-icon"><el-icon><CollectionTag /></el-icon></div>
         <h3>{{ card.title }}</h3>
@@ -1153,11 +1234,12 @@ onMounted(() => {
         <p v-if="card.description" class="card-description">{{ card.description }}</p>
         <div class="card-metrics"><span>收藏 {{ card.favorites }}</span><span>复用 {{ card.uses }}</span></div>
         <footer><span><el-icon><User /></el-icon>{{ card.author }}</span><div class="card-actions"><button class="card-detail" @click.stop="openDetail(card)">查看详情</button><button @click.stop="reuse(card)">{{ card.testCaseId ? '进入工作台 →' : `${card.uses} 次使用 →` }}</button></div></footer>
+        </template>
       </article>
-      <el-empty v-if="!loading && !communityError && filteredCards.length === 0" class="community-empty" description="暂无符合条件的公开内容。Skill 可通过“我要投稿”提交，PPT 请从课件工作台发布；审核通过后才会展示。" />
+      <el-empty v-if="!loading && !communityError && filteredCards.length === 0" class="community-empty" :description="isMobile ? '暂无相关内容，试试调整搜索或筛选。' : '暂无符合条件的公开内容。Skill 可通过“我要投稿”提交，PPT 请从课件工作台发布；审核通过后才会展示。'" />
     </section>
     <el-pagination v-if="communityTotal > communityPageSize" class="community-pagination" :current-page="communityPage" :page-size="communityPageSize" :total="communityTotal" layout="prev, pager, next" background @current-change="changeCommunityPage" />
-    <p class="source-note">所有内容均标记来源、版本与授权信息；个人私有素材不会写回社区或进入公共索引。</p>
+    <p v-if="!isMobile" class="source-note">所有内容均标记来源、版本与授权信息；个人私有素材不会写回社区或进入公共索引。</p>
   </div>
     <el-dialog v-model="submissionVisible" class="community-submission-dialog" modal-class="community-submission-backdrop" width="min(1080px, calc(100vw - 32px))" :show-close="false" :close-on-click-modal="false">
       <div v-loading="submissionSaving || submissionLoading" class="submission-dialog">
@@ -1331,20 +1413,20 @@ onMounted(() => {
               </main>
 
               <aside class="detail-aside">
-                <section class="detail-aside-card detail-author-card">
+                <MobileSection title="发布者"><section class="detail-aside-card detail-author-card">
                   <div class="detail-aside-label">发布者</div>
                   <div class="detail-author"><el-avatar class="detail-author-avatar" :size="38" :src="detailAuthorAvatarUrl">{{ detailAuthorAvatarText }}</el-avatar><div><strong>{{ detailAuthorName }}</strong><span>教师共创社区</span></div></div>
-                </section>
+                </section></MobileSection>
 
-                <section class="detail-aside-card">
+                <MobileSection title="使用数据"><section class="detail-aside-card">
                   <div class="detail-aside-label">使用数据</div>
                   <div class="detail-stat-list"><div><span>使用次数</span><strong>{{ detail.use_count ?? detail.useCount ?? 0 }}</strong></div><div><span>浏览次数</span><strong>{{ detail.view_count ?? detail.viewCount ?? 0 }}</strong></div><div><span>点赞</span><strong>{{ detail.like_count ?? 0 }}</strong></div><div><span>收藏</span><strong>{{ detail.favorite_count ?? 0 }}</strong></div></div>
-                </section>
+                </section></MobileSection>
 
-                <section class="detail-aside-card detail-attribute-card">
+                <MobileSection title="内容属性"><section class="detail-aside-card detail-attribute-card">
                   <div class="detail-aside-label">案例属性</div>
                   <dl><div><dt>授权许可</dt><dd>{{ detail.license || '未说明' }}</dd></div><div><dt>内容版本</dt><dd>v{{ detail.version || 1 }}</dd></div><div v-if="detail.created_at"><dt>发布时间</dt><dd>{{ detail.created_at }}</dd></div></dl>
-                </section>
+                </section></MobileSection>
 
                 <section v-if="detailInputVariables.length" class="detail-aside-card detail-variable-card">
                   <div class="detail-aside-label">复用前填写</div>
@@ -1607,4 +1689,28 @@ onMounted(() => {
   .submission-section{padding:15px;}
   .submission-aside-card{padding:14px;}
 }
+/* Phone browsing stays concise; secondary actions remain available on demand. */
+.is-mobile-community.community-page{width:calc(100% - 32px);padding:16px 0 28px}
+.is-mobile-community .community-hero{padding:0 0 12px}
+.is-mobile-community .community-search-row{display:grid;grid-template-columns:minmax(0,1fr) 44px;gap:8px;margin:0}
+.is-mobile-community .community-search-row>.el-dropdown{display:block}
+.is-mobile-community .community-hero :deep(.el-input__inner){font-size:16px}
+.is-mobile-community .community-hero :deep(.el-input__wrapper){min-height:48px}
+.is-mobile-community .community-hero :deep(.el-input-group__append){display:flex;align-items:stretch;justify-content:center;flex:0 0 80px;width:80px;padding:0;overflow:hidden;border-radius:0 10px 10px 0}
+.is-mobile-community .community-hero :deep(.el-input-group__append .community-search-button){display:flex;align-items:center;justify-content:center;width:80px;min-width:80px;height:48px;margin:0;padding:0;border:0;border-radius:0;font-size:18px;font-weight:600;line-height:1;letter-spacing:normal}
+.is-mobile-community .community-hero :deep(.community-search-button>span){display:flex;align-items:center;justify-content:center;margin:0;line-height:1}
+.community-more-button{display:grid;place-items:center;width:44px;height:48px;padding:0;border:1px solid var(--zh-line-border);border-radius:10px;background:var(--zh-background-primary);color:var(--zh-text-primary);font-size:24px;cursor:pointer}
+.is-mobile-community .community-toolbar{display:grid;grid-template-columns:minmax(0,1fr) 44px;align-items:center;gap:8px;margin:0;border-bottom:0}
+.is-mobile-community .tab-list{display:flex;justify-content:space-between;min-width:0;width:100%;gap:10px;overflow-x:auto}
+.is-mobile-community .tab-list button{min-width:0;min-height:48px;flex:none;padding:10px 0;font-size:17px}
+.is-mobile-community .mobile-filter-toggle{display:grid;place-items:center;width:44px;min-height:44px;padding:0;border:0;border-radius:10px;color:var(--zh-text-secondary);background:transparent;font-size:23px}
+.is-mobile-community .mobile-filter-toggle.is-active{background:var(--zh-background-weaken);color:var(--zh-text-theme)}
+.is-mobile-community .toolbar-controls{grid-column:1/-1;width:100%;margin:0;padding:0}
+.is-mobile-community .filters.mobile-open{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:12px;margin:0 0 8px;padding:14px}
+.mobile-filter-actions{grid-column:1/-1;display:flex;justify-content:space-between;gap:12px}.mobile-filter-actions :deep(.el-button){min-height:44px;font-size:15px}
+.is-mobile-community .community-grid{grid-template-columns:minmax(0,1fr);gap:12px;margin-top:14px}
+.is-mobile-community .community-card{display:grid;grid-template-columns:minmax(0,1fr) 18px;align-items:center;gap:12px;min-height:108px;padding:18px;border-color:var(--zh-line-parting);border-radius:14px;background:var(--zh-background-primary);box-shadow:none}
+.mobile-card-body{min-width:0}.is-mobile-community .mobile-card-body h3{display:-webkit-box;min-height:0;margin:0;overflow:hidden;overflow-wrap:anywhere;font-size:20px;font-weight:600;line-height:1.5;-webkit-box-orient:vertical;-webkit-line-clamp:2}
+.mobile-card-meta{display:flex;align-items:center;flex-wrap:wrap;gap:10px;margin-top:10px;font-size:15px;line-height:1.5;color:var(--zh-text-secondary)}.mobile-card-type{padding:2px 8px;border-radius:6px;background:var(--zh-background-weaken);color:var(--zh-text-theme);font-size:14px}
+.mobile-card-chevron{color:var(--zh-text-caption);font-size:19px}.is-mobile-community .rank-section{order:3;margin:12px 0 0;padding:16px}.is-mobile-community .community-error{font-size:16px;line-height:1.6}.is-mobile-community .community-status-row{font-size:14px}
 </style>
