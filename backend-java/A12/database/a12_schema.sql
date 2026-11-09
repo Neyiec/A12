@@ -14,9 +14,6 @@ CREATE TABLE sys_user (
   phone VARCHAR(20) DEFAULT NULL COMMENT '手机号',
   email VARCHAR(100) DEFAULT NULL COMMENT '邮箱',
   avatar VARCHAR(500) DEFAULT NULL COMMENT '头像URL',
-  user_type VARCHAR(20) NOT NULL COMMENT '用户类型: teacher/admin/auditor',
-  roles JSON DEFAULT NULL COMMENT '角色列表',
-  permissions JSON DEFAULT NULL COMMENT '权限列表',
   is_active TINYINT NOT NULL DEFAULT 1 COMMENT '是否启用: 1启用/0停用',
   email_verified TINYINT NOT NULL DEFAULT 0 COMMENT '邮箱是否验证',
   phone_verified TINYINT NOT NULL DEFAULT 0 COMMENT '手机号是否验证',
@@ -29,8 +26,6 @@ CREATE TABLE sys_user (
   PRIMARY KEY (id),
   UNIQUE KEY uk_username (username),
   UNIQUE KEY uk_email (email),
-  KEY idx_user_type (user_type),
-  KEY idx_active_type (is_active, user_type),
   KEY idx_deleted_at (deleted_at)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci COMMENT='用户表';
 
@@ -348,6 +343,8 @@ CREATE TABLE com_content (
   KEY idx_grade (grade),
   KEY idx_status (status),
   KEY idx_public_sort (status, is_top, updated_at),
+  KEY idx_public_subject_sort (status, subject, is_top, updated_at),
+  KEY idx_public_type_sort (status, content_type, is_top, updated_at),
   KEY idx_author_status (author_id, status)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci COMMENT='社区内容表';
 

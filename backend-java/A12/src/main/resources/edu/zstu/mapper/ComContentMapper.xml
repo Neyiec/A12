@@ -59,8 +59,12 @@
     <!-- GREATEST 下限保护：并发取消点赞时计数不减为负 -->
     <update id="incrementLikeCountBy">UPDATE com_content SET like_count = GREATEST(like_count + #{delta}, 0) WHERE id = #{id}</update>
     <update id="incrementFavoriteCountBy">UPDATE com_content SET favorite_count = GREATEST(favorite_count + #{delta}, 0) WHERE id = #{id}</update>
+    <!-- 列表列：刻意排除 content_data / input_variables / example_effect / version_history。
+         列表与详情是分开的接口（详情走 findById），这些大字段一旦参与 ORDER BY 的 filesort，
+         行宽会顶到 sort_buffer 上限并报 "Out of sort memory"（MySQL 1038）。 -->
+    <sql id="List_Columns">c.id, c.content_type, c.author_id, c.title, c.description, c.subject, c.grade, c.lesson_type, c.keywords, c.version, c.license, c.status, c.is_top, c.view_count, c.use_count, c.like_count, c.favorite_count, c.created_at, c.updated_at</sql>
     <select id="searchPublic" resultMap="BaseResultMap">
-        SELECT c.* FROM com_content c
+        SELECT <include refid="List_Columns"/> FROM com_content c
         <if test="window">
             LEFT JOIN (
                 SELECT target_id,
