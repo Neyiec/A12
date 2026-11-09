@@ -33,9 +33,23 @@ import lombok.extern.slf4j.Slf4j;
 @Service
 public class ProjectServiceImpl implements ProjectService {
 
+    /** 与前端 subjectToolOptions / Python subject_tools.SUBJECT_TOOL_TYPES 保持一致的 10 种学科工具类型。 */
     private static final Set<String> SUBJECT_COMPONENT_TYPES = Set.of(
-            "math_formula", "chemical_formula", "mermaid_diagram", "chart", "table", "geometry"
+            "math_formula",
+            "geometry",
+            "coordinate_system",
+            "solid_geometry",
+            "chinese_tianzige",
+            "english_four_line",
+            "chemical_formula",
+            "mermaid_diagram",
+            "chart",
+            "table"
     );
+
+    private static final Set<String> SOLID_SHAPES = Set.of("cube", "cuboid", "pyramid", "cylinder", "cone", "sphere");
+    private static final List<String> SOLID_DIMENSION_KEYS = List.of("length", "width", "height", "radius");
+    private static final Map<String, Object> SOLID_DEFAULT_DIMENSIONS = Map.of("length", 4, "width", 3, "height", 5, "radius", 2);
 
     private final WsProjectMapper projectMapper;
     private final WsPageMapper pageMapper;
@@ -612,6 +626,10 @@ public class ProjectServiceImpl implements ProjectService {
             case "chart" -> validateChart(data, renderHint, errors, warnings);
             case "table" -> validateTable(data, renderHint, errors, warnings);
             case "geometry" -> validateGeometry(data, renderHint, errors, warnings);
+            case "coordinate_system" -> validateCoordinateSystem(data, renderHint, errors, warnings);
+            case "solid_geometry" -> validateSolidGeometry(data, renderHint, errors, warnings);
+            case "chinese_tianzige" -> validateChineseTianzige(data, renderHint, errors, warnings);
+            case "english_four_line" -> validateEnglishFourLine(data, renderHint, errors, warnings);
             default -> errors.add("unsupported component type: " + type);
         }
 
@@ -725,6 +743,105 @@ public class ProjectServiceImpl implements ProjectService {
         renderHint.put("output", List.of("svg", "html"));
     }
 
+    private void validateCoordinateSystem(Map<String, Object> data, Map<String, Object> renderHint,
+                                          List<String> errors, List<String> warnings) {
+        Object points = data.get("points");
+        if (points != null && !(points instanceof List)) {
+            errors.add("data.points must be an array for coordinate_system");
+        }
+        int xRange = intValue(data.get("xRange"), 5);
+        int yRange = intValue(data.get("yRange"), 4);
+        if (xRange < 2 || xRange > 10) {
+            warnings.add("data.xRange is clamped to the 2-10 range");
+        }
+        if (yRange < 2 || yRange > 10) {
+            warnings.add("data.yRange is clamped to the 2-10 range");
+        }
+        data.put("xRange", Math.max(2, Math.min(10, xRange)));
+        data.put("yRange", Math.max(2, Math.min(10, yRange)));
+        data.putIfAbsent("showGrid", true);
+        data.putIfAbsent("connectPoints", false);
+        data.putIfAbsent("segments", List.of());
+        if (!data.containsKey("points")) {
+            Map<String, Object> first = new LinkedHashMap<>();
+            first.put("label", "A");
+            first.put("x", 2);
+            first.put("y", 3);
+            Map<String, Object> second = new LinkedHashMap<>();
+            second.put("label", "B");
+            second.put("x", -2);
+            second.put("y", -1);
+            data.put("points", new ArrayList<>(List.of(first, second)));
+        }
+        renderHint.put("engine", "svg");
+        renderHint.put("input", List.of("xRange", "yRange", "showGrid", "connectPoints", "points", "segments"));
+        renderHint.put("output", List.of("svg"));
+    }
+
+    private void validateSolidGeometry(Map<String, Object> data, Map<String, Object> renderHint,
+                                       List<String> errors, List<String> warnings) {
+        String solid = stringValue(data.get("solid")).toLowerCase(Locale.ROOT);
+        if (!solid.isBlank() && !SOLID_SHAPES.contains(solid)) {
+            warnings.add("data.solid should be one of cube/cuboid/pyramid/cylinder/cone/sphere; fallback to cube");
+            solid = "";
+        }
+        data.put("solid", solid.isBlank() ? "cube" : solid);
+
+        Object dimensions = data.get("dimensions");
+        if (dimensions != null && !(dimensions instanceof Map) && !(dimensions instanceof JSONObject)) {
+            errors.add("data.dimensions must be an object for solid_geometry");
+        }
+        Map<String, Object> sourceDimensions = new LinkedHashMap<>();
+        if (dimensions instanceof Map<?, ?> map) {
+            map.forEach((key, value) -> sourceDimensions.put(String.valueOf(key), value));
+        } else if (dimensions instanceof JSONObject object) {
+            sourceDimensions.putAll(jsonObjectToMap(object));
+        }
+        Map<String, Object> normalizedDimensions = new LinkedHashMap<>();
+        for (String key : SOLID_DIMENSION_KEYS) {
+            double fallback = doubleValue(SOLID_DEFAULT_DIMENSIONS.get(key), 1);
+            double value = doubleValue(sourceDimensions.get(key), fallback);
+            if (value <= 0) {
+                value = fallback;
+            }
+            normalizedDimensions.put(key, Math.round(Math.min(20, Math.max(1, value)) * 10) / 10d);
+        }
+        data.put("dimensions", normalizedDimensions);
+        data.putIfAbsent("show_hidden_edges", true);
+        data.putIfAbsent("show_dimensions", true);
+        renderHint.put("engine", "svg");
+        renderHint.put("input", List.of("solid", "dimensions", "show_hidden_edges", "show_dimensions"));
+        renderHint.put("output", List.of("svg"));
+    }
+
+    private void validateChineseTianzige(Map<String, Object> data, Map<String, Object> renderHint,
+                                         List<String> errors, List<String> warnings) {
+        Object entries = data.get("entries");
+        if (entries != null && !(entries instanceof List)) {
+            errors.add("data.entries must be an array for chinese_tianzige");
+        }
+        if (entries == null && stringValue(data.get("text")).isBlank()) {
+            errors.add("data.entries or data.text is required for chinese_tianzige");
+        }
+        data.putIfAbsent("show_pinyin", true);
+        renderHint.put("engine", "html_grid");
+        renderHint.put("input", List.of("entries", "show_pinyin"));
+        renderHint.put("output", List.of("html"));
+    }
+
+    private void validateEnglishFourLine(Map<String, Object> data, Map<String, Object> renderHint,
+                                         List<String> errors, List<String> warnings) {
+        String text = stringValue(data.get("text"));
+        if (text.isBlank()) {
+            errors.add("data.text is required for english_four_line");
+        } else if (text.length() > 1000) {
+            warnings.add("data.text is very long; the four-line grid may overflow");
+        }
+        renderHint.put("engine", "html_grid");
+        renderHint.put("input", "text");
+        renderHint.put("output", List.of("html"));
+    }
+
     private Map<String, Object> jsonObjectToMap(JSONObject object) {
         Map<String, Object> map = new LinkedHashMap<>();
         if (object == null) return map;
@@ -734,6 +851,28 @@ public class ProjectServiceImpl implements ProjectService {
 
     private String stringValue(Object value) {
         return value == null ? "" : String.valueOf(value).trim();
+    }
+
+    private int intValue(Object value, int fallback) {
+        if (value instanceof Number number) {
+            return (int) Math.round(number.doubleValue());
+        }
+        try {
+            return (int) Math.round(Double.parseDouble(stringValue(value)));
+        } catch (NumberFormatException e) {
+            return fallback;
+        }
+    }
+
+    private double doubleValue(Object value, double fallback) {
+        if (value instanceof Number number) {
+            return number.doubleValue();
+        }
+        try {
+            return Double.parseDouble(stringValue(value));
+        } catch (NumberFormatException e) {
+            return fallback;
+        }
     }
 
     private String defaultString(String value, String fallback) {

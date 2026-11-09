@@ -305,7 +305,9 @@ public class AdminConfigServiceImpl implements AdminConfigService {
                     long pendingModerationCount = audits.stream().filter(a -> "pending".equals(a.getStatus())).count();
                     long pendingReviewCount = audits.stream().filter(a -> "audit".equals(a.getAudit_type()) && "pending".equals(a.getStatus())).count();
                     long pendingReportCount = audits.stream().filter(a -> "report".equals(a.getAudit_type()) && "pending".equals(a.getStatus())).count();
-                    long aiCompletedCount = aiTasks.stream().filter(t -> "completed".equals(t.getStatus())).count();
+                    // 成功率口径：仅以终态任务（completed/failed）计算，planning/confirmed/executing 在途任务不进分母
+                    long aiSuccessCount = aiTasks.stream().filter(t -> "completed".equals(t.getStatus())).count();
+                    long aiFailedCount = aiTasks.stream().filter(t -> "failed".equals(t.getStatus())).count();
                     long exportSuccessCount = exportTasks.stream().filter(t -> "success".equals(t.getStatus())).count();
 
                     LocalDateTime todayStart = LocalDate.now().atStartOfDay();
@@ -348,10 +350,10 @@ public class AdminConfigServiceImpl implements AdminConfigService {
                     distribution.put("logs_by_type", groupCount(logs, Sys_Log::getLog_type));
 
                     Map<String, Object> quality = new LinkedHashMap<>();
-                    quality.put("ai_task_success_rate", rate(aiCompletedCount, aiTasks.size()));
+                    quality.put("ai_task_success_rate", rate(aiSuccessCount, aiSuccessCount + aiFailedCount));
                     quality.put("export_success_rate", rate(exportSuccessCount, exportTasks.size()));
                     quality.put("export_failed_count", exportTasks.stream().filter(t -> "failed".equals(t.getStatus())).count());
-                    quality.put("ai_task_failed_count", aiTasks.stream().filter(t -> "failed".equals(t.getStatus())).count());
+                    quality.put("ai_task_failed_count", aiFailedCount);
                     quality.put("avg_export_duration_ms", averageExportDurationMs(exportTasks));
 
                     Map<String, Object> result = new LinkedHashMap<>();

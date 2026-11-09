@@ -287,6 +287,19 @@ public class AIServiceImpl implements AIService {
         return toTaskVO(task);
     }
 
+    @Override
+    public TaskVO completeRun(String conversationId, String presentationId) {
+        log.info("completeRun conversationId={}, presentationId={}", conversationId, presentationId);
+        AI_Task task = requireTaskByConversation(conversationId);
+        assertTaskOwner(task);
+        // 生成全链路成功后由前端回写：任务状态机此前在 executing 后无终态，导致看板成功率恒为 0
+        task.setStatus("completed");
+        if (!isBlank(presentationId)) task.setPython_presentation_id(presentationId);
+        task.setError_message("");
+        taskMapper.update(task);
+        return toTaskVO(taskMapper.findById(task.getId()));
+    }
+
     private Map<String, Object> buildOutlinePayload(Integer userId, AI_Conversation conversation,
                                                     AI_Task task, ConversationDTO dto, String userMessage) {
         Map<String, Object> payload = new LinkedHashMap<>();

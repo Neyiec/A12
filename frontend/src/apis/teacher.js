@@ -326,6 +326,8 @@ export const getAiPlan = (id) => get(`/api/v1/ai/sessions/${id}/plan`)
 export const confirmAiPlan = (id, data) => post(`/api/v1/ai/sessions/${id}/plan-confirmations`, data)
 export const createAiRun = (id) => post(`/api/v1/ai/sessions/${id}/runs`)
 export const getAiRun = (runId) => get(`/api/v1/ai/runs/${runId}`)
+export const completeAiRun = (id, presentationId) =>
+  post(`/api/v1/ai/sessions/${id}/run-completions`, presentationId ? { presentation_id: presentationId } : {})
 /**
  * 工作台教学意图识别由 FastAPI 处理；Java 仍保存正式会话与项目状态。
  */
@@ -456,12 +458,12 @@ export const transcribeAudio = (formData) => apiRequest({ url: '/api/v1/python/a
 
 /**
  * 生成可独立运行或嵌入课件页面的互动模块。
- * 服务端最多尝试模型生成 35 秒，超时后会返回可运行的降级模板；客户端
- * 保留少量网络余量，避免“生成中”无限等待。
+ * 服务端最多尝试模型生成 6 分钟，超时后会返回可运行的降级模板；客户端
+ * 保留少量网络余量（6.5 分钟），避免请求先被中断成「已取消」。
  * @param {Object} data - API-144 InteractiveModuleGenerateRequest
  * @returns {Promise} 后端返回 { module_id, html, usage_suggestions, metadata, ... }
  */
-const INTERACTIVE_MODULE_GENERATION_TIMEOUT = 50000
+const INTERACTIVE_MODULE_GENERATION_TIMEOUT = 390000
 
 export const generateInteractiveModule = (data) => apiRequest({
   url: '/api/v1/python/interactive-modules/generate',

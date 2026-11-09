@@ -307,8 +307,9 @@ const openPptTemplateDialog = async () => {
   pptTemplateDraftTheme.value = selectedPptTemplateTheme.value
 }
 
-const confirmPptTemplate = (template) => {
-  const theme = template?.theme || pptTemplateDraftTheme.value
+const confirmPptTemplate = (themeOrTemplate) => {
+  // PptTemplatePicker 的 apply 事件参数为 theme 字符串；兼容对象形态与弹窗草稿回退
+  const theme = themeOrTemplate?.theme || themeOrTemplate || pptTemplateDraftTheme.value
   const selected = pptTemplates.value.find((item) => item.theme === theme)
   if (!selected) return ElMessage.warning('请先选择一个 PPT 模板')
   selectedPptTemplateTheme.value = selected.theme
@@ -2336,14 +2337,13 @@ async function restoreSession() {
 
   <PptTemplatePicker
     v-model="pptTemplateDialogVisible"
-    :selected-theme="pptTemplateDraftTheme"
+    :current-theme="pptTemplateDraftTheme"
     :templates="pptTemplates"
     :loading="pptTemplateLoading"
-      :error="pptTemplateLoadError"
-      @update:selected-theme="pptTemplateDraftTheme = $event"
-      @retry="loadPptTemplates(true)"
-      @confirm="confirmPptTemplate"
-    />
+    :outline="outlineData"
+    @load="loadPptTemplates()"
+    @apply="confirmPptTemplate"
+  />
 
   <!-- Agent 意图澄清：仅承载后端返回的复杂澄清问题；首次备课信息直接填写上方卡片。 -->
   <IntentClarificationDialog

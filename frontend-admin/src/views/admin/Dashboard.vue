@@ -188,7 +188,8 @@ const buildResourceCard = (totals, trend) => {
 }
 
 /**
- * 卡 4 系统健康度：主值 = AI 任务成功率，状态灯由 AI/导出失败数推导
+ * 卡 4 系统健康度：主值 = AI 任务成功率与导出成功率的等权平均（单项为 0 时也能反映另一侧的健康度），
+ * 状态灯由 AI/导出失败数推导（任一存在失败即红）
  * mock 的 CPU/内存/磁盘无采集端点，已按设计移除
  */
 const buildHealthCard = (quality) => {
@@ -197,11 +198,12 @@ const buildHealthCard = (quality) => {
   const aiFailed = Number(quality.ai_task_failed_count ?? 0)
   const exportFailed = Number(quality.export_failed_count ?? 0)
   const healthy = aiFailed === 0 && exportFailed === 0
+  const healthRate = Math.round((aiRate + exportRate) / 2)
   return {
     id: 4,
     title: '系统健康度',
     icon: Monitor,
-    mainValue: `${aiRate}%`,
+    mainValue: `${healthRate}%`,
     showArrow: false,
     trendLabel: healthy ? '正常' : '存在失败',
     trendColor: healthy ? 'var(--zh-green)' : 'var(--zh-red)',

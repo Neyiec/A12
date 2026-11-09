@@ -4,7 +4,7 @@ import { onBeforeRouteLeave, onBeforeRouteUpdate, useRoute, useRouter } from 'vu
 import { ElMessage, ElMessageBox } from 'element-plus'
 import { Aim, ArrowDown, ArrowUp, Plus, Promotion } from '@element-plus/icons-vue'
 import MarkdownRender from 'markstream-vue'
-import { addProjectPermission, archiveProject, batchSaveProjectPages, copyProject, createCommunitySubmission, createProject, createProjectPage, deleteProject, deleteProjectPage, downloadResource, exportLessonPlanDocx, exportPresentationPptx, findUserByEmail, findUserByUsername, generateInteractiveModule, generateLessonPlan, generatePresentationStream, generateSlideImage, getAiPlan, getProject, getProjectPage, getProjectVersionDiff, listProjectPages, listProjectVersions, listProjects, listResources, modifyPresentation, modifyPresentationSlide, patchProject, recognizeIntent, recordAiFeedback, restoreProject, restoreProjectVersion, reviseProjectWithAi, saveCommunitySubmissionVersion, saveProjectPage, saveProjectVersion, sendDirectOutlineSessionMessage, streamGeneralChat, submitCommunitySubmission, transcribeAudio, uploadResource, validatePresentationHtml, validateProjectComponent } from '../apis/teacher'
+import { addProjectPermission, archiveProject, batchSaveProjectPages, completeAiRun, copyProject, createCommunitySubmission, createProject, createProjectPage, deleteProject, deleteProjectPage, downloadResource, exportLessonPlanDocx, exportPresentationPptx, findUserByEmail, findUserByUsername, generateInteractiveModule, generateLessonPlan, generatePresentationStream, generateSlideImage, getAiPlan, getProject, getProjectPage, getProjectVersionDiff, listProjectPages, listProjectVersions, listProjects, listResources, modifyPresentation, modifyPresentationSlide, patchProject, recognizeIntent, recordAiFeedback, restoreProject, restoreProjectVersion, reviseProjectWithAi, saveCommunitySubmissionVersion, saveProjectPage, saveProjectVersion, sendDirectOutlineSessionMessage, streamGeneralChat, submitCommunitySubmission, transcribeAudio, uploadResource, validatePresentationHtml, validateProjectComponent } from '../apis/teacher'
 import { secureHtmlForSandbox } from '../utils/htmlSecurity'
 import { persistedPageTitle } from '../utils/pageTitle'
 import { bindSubjectInteractions } from '../utils/subjectInteraction'
@@ -2964,7 +2964,11 @@ const fitPreviewHtmlFrame = (event) => {
     const width = container.clientWidth
     const height = container.clientHeight
     if (!width || !height) return
-    iframe.style.transform = `scale(${Math.min(width / 1280, height / 720)})`
+    const scale = Math.min(width / 1280, height / 720)
+    iframe.style.transform = `scale(${scale})`
+    // 容器比 16:9 更宽/更高时，把缩放后的幻灯片居中，避免贴左上角
+    iframe.style.left = `${Math.round((width - 1280 * scale) / 2)}px`
+    iframe.style.top = `${Math.round((height - 720 * scale) / 2)}px`
   }
 
   resize()
@@ -3051,6 +3055,8 @@ const closePreview = () => {
 const scrollPreviewTo = (index) => {
   const nextIndex = Math.min(Math.max(0, Number(index) || 0), Math.max(0, slides.length - 1))
   previewSlideIndex.value = nextIndex
+  // 放映模式只切换当前页展示，不需要滚动（其余页面已隐藏）
+  if (presentationMode.value) return
   window.setTimeout(() => {
     previewDeckRef.value?.querySelector(`[data-preview-index="${nextIndex}"]`)?.scrollIntoView({ behavior: 'smooth', block: 'start' })
   }, 0)
@@ -3737,11 +3743,11 @@ const assistantTargetLabel = computed(() => {
 })
 const assistantTargetDescription = computed(() => {
   if (assistantTargetScope.value === 'auto') return 'AI 将结合请求、当前页面与已选元素，自行判断最合适的处理范围。'
-  if (assistantTargetScope.value === 'deck') return 'AI 将按整套课件的结构、页面与教学节奏理解本次请求。'
+  if (assistantTargetScope.value === 'deck') return 'AI 将对整套课件执行本次请求；修改前先给出预览，确认后统一应用。'
   if (assistantTargetScope.value === 'component') return workspaceSelectedElement.value
     ? 'AI 将优先围绕当前选中的元素提出建议或执行修改。'
     : '请选择一个页面元素，或改为“当前页”后再发送。'
-  return 'AI 将围绕当前页面的内容和教学活动响应本次请求。'
+  return 'AI 将只修改当前页面，不会改动其它页面。'
 })
 const clampNumber = (value, min, max) => Math.min(max, Math.max(min, value))
 const dragState = ref(null)
@@ -4646,8 +4652,13 @@ const regenerateSelectedH5 = () => {
   openInteractiveDialog(element)
 }
 const interactiveGenerationErrorMessage = (error) => {
-  const detail = String(error?.response?.data?.message || error?.message || '')
-  if (error?.code === 'ECONNABORTED' || /timeout|超时/i.test(detail)) {
+  const detail = String(error?.response?.data?.message || error?.response?.data?.detail || error?.message || '')
+  // 等待超过 50 秒时 axios 会中断请求，抛出的可能是 CanceledError（ERR_CANCELED / canceled / Request aborted）。
+  // 直接把英文原文透出会变成「已取消」，这里统一换成可执行的中文提示。
+  if (error?.code === 'ERR_CANCELED' || /cancel|aborted/i.test(`${error?.code || ''} ${detail}`)) {
+    return '生成等待超时已被中断，请重试；服务端会优先返回可直接使用的课堂互动模板。'
+  }
+  if (error?.code === 'ECONNABORTED' || error?.code === 'ETIMEDOUT' || /timeout|超时/i.test(detail)) {
     return 'H5 组件生成超时，请重试；系统会优先返回可直接使用的课堂互动模板。'
   }
   return detail || 'H5 组件生成失败'
@@ -5683,6 +5694,15 @@ const isAddPageInstruction = (text = '') => {
   if (!value || isDiscussionQuestion(value)) return false
   return /(?:添加|增加|新增|插入|补充|新建|追加|加(?:上)?)(?:一个|个|一张|一页)?\s*.{0,16}(?:一页|\d+页|页面|幻灯片|界面|封面|开场页|首页|结束页|尾页)/i.test(value)
 }
+// “把第 N 页拆成两页”既不是普通新增页，也不是整套修改：必须单独识别，
+// 否则会被单页修改接口整段替换当前页，出现“一页 HTML 里并列两页 PPT”。
+const isSplitPageInstruction = (text = '') => {
+  const value = String(text).trim().replace(/\s+/g, '')
+  if (!value || isDiscussionQuestion(value)) return false
+  if (!/(?:拆(?:分|成|开|为)|切成|切为|分成|分为|一分为[二两])/.test(value)) return false
+  if (!/(?:页|幻灯片|界面|PPT|屏)/i.test(value)) return false
+  return /(?:两|2|二)(?:页|屏|半|个页面|个幻灯片)/i.test(value)
+}
 const isExplicitPageOperation = (text = '') => {
   const value = String(text).trim().replace(/\s+/g, '')
   if (!value || isDiscussionQuestion(value)) return false
@@ -5813,7 +5833,10 @@ const workspaceOperationFromIntent = (formalData, text = '') => {
   if (/(generate|create|content|compose|生成|创作|新增内容)/.test(raw) || /生成内容|创作内容|补充内容|写一段|生成一段/.test(text)) return 'generate_content'
   if (/(modify|edit|update|revise|page|slide|页面|幻灯片|修改|编辑)/.test(raw) || isExplicitPageOperation(text) || isRevisionConfirmation(text)) return 'modify_page'
   if (isDiscussionQuestion(text)) return 'discussion'
-  return (isAddPageInstruction(text) || isExplicitPageOperation(text) || isRevisionConfirmation(text) || inferAssistantMode(text) === 'revision') ? 'modify_page' : 'discussion'
+  // 编辑范围已显式选“整套课件”时，口语化短指令（“换成科技风”）不再交给意图模型猜：
+  // 它可能把这类句子误判成讨论，导致请求根本不进入修改流程。
+  if (assistantTargetScope.value === 'deck') return 'modify_page'
+  return (isSplitPageInstruction(text) || isAddPageInstruction(text) || isExplicitPageOperation(text) || isRevisionConfirmation(text) || inferAssistantMode(text) === 'revision') ? 'modify_page' : 'discussion'
 }
 const requestAssistantIntent = async (text) => {
   const context = workspaceContextPayload()
@@ -5873,8 +5896,13 @@ const resolveAssistantIntent = async (text) => {
   // 的双重等待；同时保证“添加一页/结束页/感谢观看界面”等指令直接进入执行链路。
   if (isDiscussionQuestion(text)) return { operation: 'discussion', data: { source: 'local-rule' }, local: true }
   if (isExplicitComponentOperation(text)) return { operation: 'modify_component', data: { source: 'local-rule' }, local: true }
-  if (isAddPageInstruction(text) || isExplicitPageOperation(text) || isRevisionConfirmation(text)) {
+  if (isSplitPageInstruction(text) || isAddPageInstruction(text) || isExplicitPageOperation(text) || isRevisionConfirmation(text)) {
     return { operation: 'modify_page', data: { source: 'local-rule' }, local: true }
+  }
+  // 显式“整套课件”范围下不再请求意图模型：短指令（“换成科技风”）直接进入整册修改链路，
+  // 既省一次等待，也避免分类器把它误判成讨论。
+  if (assistantTargetScope.value === 'deck') {
+    return { operation: 'modify_page', data: { source: 'local-rule', scope: 'deck' }, local: true }
   }
   try {
     // 对无法由快速路径确定的自然表达，使用工作台专用分类器。
@@ -5888,7 +5916,7 @@ const resolveAssistantIntent = async (text) => {
     intentFallbackShown.value = false
     // 明确的页面命令和上一轮方案确认优先执行，避免正式接口把“执行”误报成普通咨询。
     if (isExplicitComponentOperation(text)) return { ...result, operation: 'modify_component' }
-    if (isExplicitPageOperation(text) || isRevisionConfirmation(text)) return { ...result, operation: 'modify_page' }
+    if (isSplitPageInstruction(text) || isExplicitPageOperation(text) || isRevisionConfirmation(text)) return { ...result, operation: 'modify_page' }
     if (isDiscussionQuestion(text)) return { ...result, operation: 'discussion' }
     return result
   } catch (error) {
@@ -6354,6 +6382,8 @@ const startRun = async () => {
     manualStyleBaseline = deckStyleMetrics(slides)
     manualContentBaseline = deckContentDigest()
     upsertClientToolCall({ id: 'project-save', name: '项目与页面保存', status: 'completed', detail: '课件已写入项目' })
+    // 生成全链路成功：回写服务端任务终态 completed，管理端看板据此统计真实成功率（会话无关联任务时静默忽略）
+    void completeAiRun(sessionId.value, response?.presentation_id ?? response?.data?.presentation_id).catch(() => {})
     finishTrackedRun()
   } catch (error) {
     generationError.value = failTrackedRun(error)
@@ -6363,14 +6393,29 @@ const startRun = async () => {
   }
 }
 const retryPresentationGeneration = () => { void startRun() }
-const pageInsertionIndex = (instruction = '') => {
+const CN_PAGE_DIGITS = { 一: 1, 二: 2, 两: 2, 三: 3, 四: 4, 五: 5, 六: 6, 七: 7, 八: 8, 九: 9, 十: 10 }
+const pageNumberFromText = (raw) => {
+  const text = String(raw || '').trim()
+  if (!text) return NaN
+  if (/^\d+$/.test(text)) return Number(text)
+  if (text === '十') return 10
+  if (/^十[一二两三四五六七八九]$/.test(text)) return 10 + CN_PAGE_DIGITS[text.slice(1)]
+  if (/^[一二两三四五六七八九]十$/.test(text)) return CN_PAGE_DIGITS[text.slice(0, 1)] * 10
+  return CN_PAGE_DIGITS[text] ?? NaN
+}
+const pageInsertionIndex = (instruction = '', fallbackIndex = selectedSlide.value + 1) => {
   const value = String(instruction).trim().replace(/\s+/g, '')
+  const betweenMatch = value.match(/第\s*(\d{1,3}|[一二两三四五六七八九十]{1,3})\s*页\s*(?:和|与|、|及|跟)\s*(?:第)?\s*(\d{1,3}|[一二两三四五六七八九十]{1,3})\s*页之间/)
+  if (betweenMatch) {
+    const anchor = Math.min(pageNumberFromText(betweenMatch[1]), pageNumberFromText(betweenMatch[2]))
+    if (Number.isFinite(anchor)) return Math.max(0, Math.min(slides.length, anchor))
+  }
   const afterMatch = value.match(/第\s*(\d{1,3})\s*页(?:后|之后)/)
   if (afterMatch) return Math.max(0, Math.min(slides.length, Number(afterMatch[1])))
   const beforeMatch = value.match(/第\s*(\d{1,3})\s*页(?:前|之前)/)
   if (beforeMatch) return Math.max(0, Math.min(slides.length, Number(beforeMatch[1]) - 1))
   if (/(末尾|最后|结尾)/.test(value)) return slides.length
-  return Math.max(0, Math.min(slides.length, selectedSlide.value + 1))
+  return Math.max(0, Math.min(slides.length, Number(fallbackIndex) || 0))
 }
 const addedPageTitle = (instruction = '') => {
   const value = String(instruction).trim()
@@ -6452,6 +6497,148 @@ const executeAddPageInstruction = async (instruction) => {
   return { title: slide.title, generated: Boolean(generatedSlide) }
 }
 const isDeckRevisionInstruction = (instruction = '') => /(?:整套|全套|所有页|全部页面|每一页|全局|整体).{0,18}(?:课件|幻灯片|页面|字体|配色|风格|版式)|统一.{0,18}(?:课件|幻灯片|页面|字体|配色|风格|版式)/.test(String(instruction).replace(/\s+/g, ''))
+/**
+ * 编辑范围下拉（“整套课件 / 当前页 / 当前组件 / 自行判断”）显式选择优先于文本推断：
+ * - 选“整套课件”时不再要求指令里出现“整套”等关键词；
+ * - 选“当前页 / 当前组件”时即使指令命中整套关键词也不升级，避免误改全部页面；
+ * - “自行判断”保持原有正则兜底行为。
+ */
+const shouldApplyDeckRevision = (instruction = '') => {
+  const scope = assistantTargetScope.value
+  if (scope === 'deck') return true
+  if (scope === 'page' || scope === 'component') return false
+  return isDeckRevisionInstruction(instruction)
+}
+/** 换风格类指令必须同时放弃 keep_style，否则“保持原风格”的提示会压过教师的换风格要求。 */
+const isRestyleInstruction = (instruction = '') => {
+  const value = String(instruction).replace(/\s+/g, '')
+  if (!value) return false
+  if (/(不要|不必|无需|别)(保留|沿用|保持)/.test(value)) return true
+  const styleTarget = /(风格|配色|字体|版式|排版|主题|模板|母版|视觉|色调|色系|样式)/.test(value)
+  const styleAction = /(换|改成|改为|变成|统一|替换|重做|套用|重新设计)/.test(value)
+  if (styleTarget && styleAction) return true
+  // “换成科技风 / 改成中国风”这类以“风”结尾的风格名同样属于换风格。
+  return /(换成|改成|改为|变成)[^，。；！？]{0,12}风/.test(value)
+}
+const pageTextNumberMatches = (value = '') => [
+  String(value).match(/第\s*(\d{1,3})\s*页/),
+  String(value).match(/第\s*([一二两三四五六七八九十]{1,3})\s*页/),
+].filter(Boolean).sort((left, right) => (left.index ?? 0) - (right.index ?? 0))
+// 拆分源页取指令中最先出现的“第 N 页”；没有页码时退回当前选中页。
+const splitSourceIndex = (instruction = '') => {
+  const value = String(instruction).trim().replace(/\s+/g, '')
+  const pageNo = pageNumberFromText(pageTextNumberMatches(value)[0]?.[1] || '')
+  if (Number.isFinite(pageNo) && pageNo >= 1 && pageNo <= slides.length) return pageNo - 1
+  return Math.max(0, Math.min(Math.max(0, slides.length - 1), selectedSlide.value))
+}
+// 拆分出的第二页默认紧跟源页；用户显式写明“第 X 页和第 Y 页之间/第 N 页后”等位置时优先服从。
+const splitSecondPageInsertIndex = (instruction = '', sourceIndex = selectedSlide.value) => {
+  const value = String(instruction).trim().replace(/\s+/g, '')
+  const hasExplicitPosition = /第\s*\d{1,3}\s*页(?:后|之后|前|之前)/.test(value)
+    || /第\s*(\d{1,3}|[一二两三四五六七八九十]{1,3})\s*页\s*(?:和|与|、|及|跟)\s*(?:第)?\s*(\d{1,3}|[一二两三四五六七八九十]{1,3})\s*页之间/.test(value)
+    || /(末尾|最后|结尾)/.test(value)
+  return pageInsertionIndex(hasExplicitPosition ? instruction : '', sourceIndex + 1)
+}
+const splitSecondPageTitle = (sourceTitle = '') => {
+  const base = String(sourceTitle || '').trim() || '拆分页面'
+  return /（续）$/.test(base) ? base : `${base}（续）`.slice(0, 60)
+}
+const extractGeneratedHtml = (response) => {
+  const payload = getGeneratedPagePayload(response)
+  return payload?.content?.html ?? payload?.candidate?.html ?? payload?.content?.page_html ?? payload?.candidate?.page_html ?? ''
+}
+const executeSplitPageInstruction = async (instruction) => {
+  const sourceIndex = splitSourceIndex(instruction)
+  const sourceSlide = slides[sourceIndex]
+  if (!sourceSlide) throw new Error('未找到要拆分的页面，请先选中要拆分的页面后重试')
+  const sourceHtml = slideHtmlSource(sourceSlide)
+  if (!String(sourceHtml || '').trim()) throw new Error('当前页面没有可拆分的 HTML 内容')
+  const sourceTitle = String(sourceSlide.title || `第 ${sourceIndex + 1} 页`).trim() || `第 ${sourceIndex + 1} 页`
+  const insertAt = splitSecondPageInsertIndex(instruction, sourceIndex)
+  const theme = String(routeQueryValue(route.query.pptTheme) || presentationMetadata.value?.theme || sourceSlide.theme || '').trim() || undefined
+  const slidePayload = {
+    ...(presentationId.value ? { presentation_id: presentationId.value } : {}),
+    slide_no: sourceIndex + 1,
+    current_html: sourceHtml,
+    theme,
+    keep_style: true,
+  }
+  const outlineContext = {
+    deck_title: String(project.value?.project_name || route.query.templateTitle || sourceTitle || 'A12 教学课件'),
+    current_slide_title: sourceTitle,
+    current_slide_no: sourceIndex + 1,
+    selected_element: null,
+    conversation_context: workspaceConversationTranscript() || null,
+    workspace_context: workspaceContextPayload(),
+  }
+
+  // 单页修改接口一次只返回一份 HTML。拆分必须拆成两次请求：第一次保留原页
+  // 前半部分，第二次生成承接内容的新页，避免模型把两页并列塞进同一份 HTML。
+  revisionStage.value = '正在生成拆分后的第一页…'
+  const firstResponse = unwrapResponse(await modifyPresentationSlide({
+    ...slidePayload,
+    instruction: [
+      '这是一个“把一页 PPT 拆成两页”的请求，不是普通修改。',
+      '请只生成拆分后的「第一页」：保留原页面的前半部分内容，并保证这一页自身完整、可独立渲染。',
+      `拆分要求：${instruction}`,
+      '只输出这一页的完整 HTML；不要输出第二页，也不要在同一份 HTML 中并列放置多页内容。',
+    ].join('\n'),
+    outline_context: { ...outlineContext, split_role: 'first_page' },
+  }))
+  const firstHtml = String(extractGeneratedHtml(firstResponse) || '').trim()
+  if (!firstHtml) throw new Error('AI 未能返回拆分后的第一页，请重试')
+
+  revisionStage.value = '正在生成拆分后的第二页…'
+  const secondResponse = unwrapResponse(await modifyPresentationSlide({
+    ...slidePayload,
+    instruction: [
+      '这是一个“把一页 PPT 拆成两页”请求中的新增页生成步骤，不是对原页面的修改。',
+      '请生成拆分后的「第二页」：承接第一页没有覆盖的剩余内容，不要与第一页重复。',
+      `拆分要求：${instruction}`,
+      '第一页已完成（其完整 HTML 见上下文 first_page_html），请保持与第一页一致的课件视觉风格。',
+      '只返回这张新增页面的完整 HTML；不要输出第一页，也不要在同一份 HTML 中并列放置多页内容。',
+    ].join('\n'),
+    outline_context: {
+      ...outlineContext,
+      split_role: 'second_page',
+      first_page_title: sourceTitle,
+      first_page_html: firstHtml.slice(0, 16000),
+    },
+  }))
+  const secondHtml = String(extractGeneratedHtml(secondResponse) || '').trim()
+  if (!secondHtml) throw new Error('AI 未能返回拆分后的第二页，请重试')
+
+  await validateGeneratedSlides([{ html: firstHtml }, { html: secondHtml }], '页面拆分结果')
+
+  // 先就地更新源页，再把第二页插到指定位置；新建页由 addSlide → persistSlideOrder 落库。
+  selectedSlide.value = sourceIndex
+  const applied = applyGeneratedPage({ html: firstHtml })
+  if (!applied) throw new Error('拆分后的第一页无法应用到当前页面')
+  const secondSlide = normalizePresentationSlides({
+    slides: [{
+      ...sourceSlide,
+      title: splitSecondPageTitle(sourceTitle),
+      slide_no: insertAt + 1,
+      html: secondHtml,
+      elements: [],
+      pageId: null,
+      componentId: null,
+      pageVersion: 1,
+      pageOrder: insertAt + 1,
+      page_order: insertAt + 1,
+      clientVersion: workspaceClientVersion,
+      dirty: true,
+      metadata: {
+        ...(sourceSlide.metadata || {}),
+        added_by_ai: true,
+        split_from_page_id: sourceSlide.pageId || null,
+      },
+    }],
+  })[0]
+  if (!secondSlide) throw new Error('拆分后的第二页内容无效')
+  const slide = await addSlide({ insertAt, title: secondSlide.title, slideData: secondSlide })
+  return { sourceTitle, secondTitle: slide.title, insertedAt: Math.max(1, slides.indexOf(slide) + 1) }
+}
 const cloneRevisionSlides = (value) => {
   try { return JSON.parse(JSON.stringify(Array.isArray(value) ? value : [])) } catch { return [] }
 }
@@ -6557,7 +6744,7 @@ const revisionChangeSummary = (data = {}, operations = [], before = [], after = 
   ].filter(Boolean)
   return parts.length ? parts.join('，') : `页面数量由 ${before.length} 页调整为 ${after.length} 页`
 }
-const applyDeckRevision = async (instruction, conversationTranscript) => {
+const applyDeckRevision = async (instruction, conversationTranscript, rawInstruction = '') => {
   if (!slides.length) throw new Error('当前课件没有可修改的页面')
   revisionStage.value = '正在规划整套课件修改…'
   const localOutlineDraft = sessionId.value ? readOutlineDraft(sessionId.value) : null
@@ -6582,7 +6769,8 @@ const applyDeckRevision = async (instruction, conversationTranscript) => {
       ...(conversationTranscript ? { conversation_context: conversationTranscript } : {}),
     },
     theme: String(routeQueryValue(route.query.pptTheme) || presentationMetadata.value?.theme || current.value?.theme || '').trim() || undefined,
-    keep_style: true,
+    // 换风格类指令（“换成科技风”“不要保留原配色”）必须放弃 keep_style，否则模型只做轻微调整。
+    keep_style: !isRestyleInstruction(rawInstruction || instruction),
   }))
   const data = getPresentationPayload(response)
   const nextSlides = normalizePresentationSlides(data)
@@ -6828,6 +7016,29 @@ const submitRevision = async ({ operation = 'modify_page' } = {}) => {
   let revisionFailed = false
   revisionStage.value = '正在理解修改指令…'
   try {
+    if (isSplitPageInstruction(instruction) && !isDeckRevisionInstruction(instruction)) {
+      revisionStage.value = '正在拆分页面…'
+      try {
+        const result = await executeSplitPageInstruction(instruction)
+        closeDiscussionContext()
+        messages.push({
+          role: 'assistant',
+          text: `已将“${result.sourceTitle}”拆分为两页，拆分出的“${result.secondTitle}”位于第 ${result.insertedAt} 页。`,
+          includeInContext: false,
+          kind: 'revision-result',
+        })
+        WorkspaceMessage.success('页面已拆分')
+      } catch (error) {
+        messages.push({
+          role: 'assistant',
+          text: `页面拆分未完成：${error?.message || '请稍后重试'}`,
+          includeInContext: false,
+          kind: 'revision-error',
+        })
+        WorkspaceMessage.error(error?.message || '页面拆分失败')
+      }
+      return
+    }
     // Deck revisions are snapshotted separately when the preview is accepted.
     if (!isDeckRevisionInstruction(instruction)) {
       await saveAiRevisionSnapshot(`AI 修改前 · 第 ${selectedSlide.value + 1} 页`)
@@ -6848,8 +7059,8 @@ const submitRevision = async ({ operation = 'modify_page' } = {}) => {
       WorkspaceMessage.success('页面已添加')
       return
     }
-    if (isDeckRevisionInstruction(instruction)) {
-      await applyDeckRevision(revisionInstruction, conversationTranscript)
+    if (shouldApplyDeckRevision(instruction)) {
+      await applyDeckRevision(revisionInstruction, conversationTranscript, instruction)
       messages.push({
         role: 'assistant',
         text: 'AI 已生成整套课件修改预览，请检查修改清单和前后页面后选择“接受并应用”或“拒绝修改”。',
@@ -6903,7 +7114,7 @@ const submitRevision = async ({ operation = 'modify_page' } = {}) => {
           workspace_context: workspaceContextPayload(),
         },
         theme: String(routeQueryValue(route.query.pptTheme) || presentationMetadata.value?.theme || current.value.theme || '').trim() || undefined,
-        keep_style: true,
+        keep_style: !isRestyleInstruction(instruction),
       }))
       if (showClarificationForResponse(response, projectId.value ? 'project' : 'session')) return
       revisionStage.value = '正在应用 AI 返回的页面…'
@@ -9203,7 +9414,7 @@ const selectSlide = (index) => { selectedSlide.value = index; selectedElementId.
   .version-list{display:grid;gap:10px}.version-list article{display:flex;align-items:center;justify-content:space-between;gap:16px;padding:12px;border:1px solid var(--zh-line-border);border-radius:var(--zh-radius8);background:var(--zh-background-light)}.version-list strong{font-size:13px}.version-list p{margin:4px 0 0;color:var(--zh-text-caption);font-size:12px}.version-diff{margin:0;padding:12px;border-radius:var(--zh-radius8);color:var(--zh-text-secondary);background:var(--zh-background-weaken);font-size:12px;line-height:1.6;white-space:pre-wrap}.dialog-hint{margin:0 0 12px;color:var(--zh-text-secondary);font-size:13px}
 .quality-report-panel{display:grid;gap:14px}.quality-report-heading{display:flex;align-items:center;justify-content:space-between;gap:16px;padding:14px 16px;border:1px solid var(--zh-line-theme20);border-radius:var(--zh-radius10);background:var(--zh-background-weaken)}.quality-report-heading div{display:grid;gap:4px}.quality-report-heading span:first-child{color:var(--zh-text-caption);font-size:10px}.quality-report-heading strong{color:var(--zh-text-primary);font-size:14px}.quality-score{color:var(--zh-text-theme);font:700 28px var(--zh-font-number)}.quality-score small{margin-left:2px;color:var(--zh-text-caption);font-size:11px}.quality-summary{margin:0;color:var(--zh-text-secondary);font-size:13px;line-height:1.7}.quality-report-section{padding:12px 14px;border:1px solid var(--zh-line-border);border-radius:var(--zh-radius8);background:var(--zh-background-light)}.quality-report-section>strong,.quality-section-heading strong{color:var(--zh-text-primary);font-size:12px}.quality-report-section ul{display:grid;gap:6px;margin:8px 0 0;padding-left:18px;color:var(--zh-text-secondary);font-size:12px;line-height:1.55}.quality-report-risk{border-color:color-mix(in srgb,var(--el-color-warning) 35%,var(--zh-line-border))}.quality-report-suggestions{display:grid;gap:8px}.quality-section-heading{display:flex;align-items:baseline;justify-content:space-between;gap:12px}.quality-section-heading span,.quality-retry-hint{color:var(--zh-text-caption);font-size:10px}.quality-report-suggestions article{display:flex;align-items:center;justify-content:space-between;gap:12px;padding:9px 10px;border-radius:var(--zh-radius8);background:var(--zh-background-weaken)}.quality-report-suggestions article span{min-width:0;color:var(--zh-text-secondary);font-size:12px;line-height:1.5}.quality-report-suggestions article :deep(.el-button){flex:none;margin:0}.quality-retry-hint{margin:0}
 .project-manager-current{display:grid;gap:10px;padding:14px;border:1px solid var(--zh-line-theme20);border-radius:var(--zh-radius10);background:var(--zh-background-weaken)}.project-manager-current>label{color:var(--zh-text-secondary);font-size:12px;font-weight:600}.project-manager-current>div:first-of-type{display:flex;gap:8px}.project-manager-actions{display:flex;flex-wrap:wrap;gap:8px}.project-manager-list{display:grid;gap:8px;margin-top:18px;min-height:100px}.project-manager-list-heading{display:flex;align-items:center;justify-content:space-between}.project-manager-list article{display:flex;align-items:center;justify-content:space-between;gap:16px;padding:11px 12px;border:1px solid var(--zh-line-border);border-radius:var(--zh-radius8);background:var(--zh-background-light)}.project-manager-list article>div:first-child{display:grid;gap:4px;min-width:0}.project-manager-list strong{overflow:hidden;color:var(--zh-text-primary);font-size:13px;text-overflow:ellipsis;white-space:nowrap}.project-manager-list span{color:var(--zh-text-caption);font-size:11px}.project-manager-item-actions{display:flex;align-items:center;flex:none;gap:2px}
-.permission-manager{display:grid;gap:14px}.permission-search-card,.permission-list-card{display:grid;gap:10px;padding:14px;border:1px solid var(--zh-line-border);border-radius:var(--zh-radius10);background:var(--zh-background-light)}.permission-section-heading{display:flex;align-items:baseline;justify-content:space-between;gap:12px}.permission-section-heading strong{color:var(--zh-text-primary);font-size:13px}.permission-section-heading span{color:var(--zh-text-caption);font-size:11px}.permission-search-row{display:grid;grid-template-columns:112px minmax(0,1fr) auto;gap:8px}.permission-search-row :deep(.el-button){margin:0}.permission-search-result{display:flex;align-items:center;justify-content:space-between;gap:12px;padding:10px 12px;border-radius:var(--zh-radius8);background:var(--zh-background-weaken)}.permission-search-result div{display:grid;gap:3px;min-width:0}.permission-search-result strong{overflow:hidden;color:var(--zh-text-primary);font-size:12px;text-overflow:ellipsis;white-space:nowrap}.permission-search-result span{overflow:hidden;color:var(--zh-text-caption);font-size:10px;text-overflow:ellipsis;white-space:nowrap}.permission-list{display:grid;gap:7px;max-height:220px;overflow:auto}.permission-list-item{display:flex;align-items:center;justify-content:space-between;gap:12px;padding:9px 10px;border:1px solid var(--zh-line-border);border-radius:var(--zh-radius8);background:var(--zh-background-primary)}.permission-list-item>div{display:flex;align-items:center;gap:9px;min-width:0}.permission-user-avatar{display:grid;place-items:center;flex:none;width:30px;height:30px;border-radius:50%;color:var(--zh-text-theme);background:var(--zh-background-weaken);font:700 10px var(--zh-font-number)}.permission-list-item>div>div{display:grid;gap:3px;min-width:0}.permission-list-item strong{color:var(--zh-text-primary);font-size:12px}.permission-list-item small{color:var(--zh-text-caption);font-size:10px}.permission-note{margin:0}.community-publish-form{display:grid;gap:2px}.community-form-grid{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:12px}.community-form-grid:first-child{grid-template-columns:repeat(2,minmax(0,1fr))}.community-publish-form :deep(.el-form-item){margin-bottom:12px}.community-publish-form :deep(.el-form-item__label){padding-bottom:5px;color:var(--zh-text-secondary);font-size:11px}.presentation-dialog :deep(.el-dialog){max-width:none;background:#0d1117}.presentation-dialog :deep(.el-dialog__header){background:#0d1117}.presentation-dialog :deep(.el-dialog__title),.presentation-dialog :deep(.el-dialog__headerbtn){color:#f8fafc}.presentation-dialog :deep(.el-dialog__body){padding:0}.presentation-stage.is-presenting{position:relative;max-height:none;min-height:min(78vh,820px);padding:18px;background:#080b10}.presentation-stage:fullscreen{display:grid;place-items:center;max-height:none;padding:24px;background:#080b10}.presentation-stage:fullscreen .preview-deck{width:min(1200px,100%)}.presentation-stage:fullscreen .preview-toolbar{position:fixed;right:24px;left:24px;width:auto;margin:0}.preview-toolbar-actions{display:flex;align-items:center;gap:2px;margin-left:auto}.preview-toolbar-actions :deep(.el-button){margin:0}.presentation-stage.is-presenting .preview-page:not(.is-current){display:none}.presentation-stage.is-presenting .preview-page.is-current .preview-page-heading{display:none}.presentation-stage.is-presenting .preview-page.is-current .preview-slide,.presentation-stage.is-presenting .preview-page.is-current .html-preview-shell{width:min(1120px,100%);margin:0 auto}.presentation-stage.is-presenting .preview-deck{display:block;width:min(1120px,100%);margin:auto}.presentation-stage.is-presenting .preview-html-frame{min-height:min(70vh,720px)}.presentation-laser-pointer{position:absolute;z-index:8;width:18px;height:18px;border:3px solid #fff;border-radius:50%;background:#ef4444;box-shadow:0 0 0 5px rgb(239 68 68 / 25%),0 0 22px rgb(239 68 68 / 85%);pointer-events:none;transform:translate(-50%,-50%)}.presentation-notes{position:absolute;z-index:7;right:24px;bottom:24px;width:min(290px,calc(100% - 48px));padding:12px 14px;border:1px solid rgb(255 255 255 / 18%);border-radius:var(--zh-radius10);color:#e5e7eb;background:rgb(15 23 42 / 92%);box-shadow:0 12px 32px rgb(0 0 0 / 25%)}.presentation-notes strong{font-size:12px}.presentation-notes p{margin:6px 0 0;color:#cbd5e1;font-size:11px;line-height:1.6}
+.permission-manager{display:grid;gap:14px}.permission-search-card,.permission-list-card{display:grid;gap:10px;padding:14px;border:1px solid var(--zh-line-border);border-radius:var(--zh-radius10);background:var(--zh-background-light)}.permission-section-heading{display:flex;align-items:baseline;justify-content:space-between;gap:12px}.permission-section-heading strong{color:var(--zh-text-primary);font-size:13px}.permission-section-heading span{color:var(--zh-text-caption);font-size:11px}.permission-search-row{display:grid;grid-template-columns:112px minmax(0,1fr) auto;gap:8px}.permission-search-row :deep(.el-button){margin:0}.permission-search-result{display:flex;align-items:center;justify-content:space-between;gap:12px;padding:10px 12px;border-radius:var(--zh-radius8);background:var(--zh-background-weaken)}.permission-search-result div{display:grid;gap:3px;min-width:0}.permission-search-result strong{overflow:hidden;color:var(--zh-text-primary);font-size:12px;text-overflow:ellipsis;white-space:nowrap}.permission-search-result span{overflow:hidden;color:var(--zh-text-caption);font-size:10px;text-overflow:ellipsis;white-space:nowrap}.permission-list{display:grid;gap:7px;max-height:220px;overflow:auto}.permission-list-item{display:flex;align-items:center;justify-content:space-between;gap:12px;padding:9px 10px;border:1px solid var(--zh-line-border);border-radius:var(--zh-radius8);background:var(--zh-background-primary)}.permission-list-item>div{display:flex;align-items:center;gap:9px;min-width:0}.permission-user-avatar{display:grid;place-items:center;flex:none;width:30px;height:30px;border-radius:50%;color:var(--zh-text-theme);background:var(--zh-background-weaken);font:700 10px var(--zh-font-number)}.permission-list-item>div>div{display:grid;gap:3px;min-width:0}.permission-list-item strong{color:var(--zh-text-primary);font-size:12px}.permission-list-item small{color:var(--zh-text-caption);font-size:10px}.permission-note{margin:0}.community-publish-form{display:grid;gap:2px}.community-form-grid{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:12px}.community-form-grid:first-child{grid-template-columns:repeat(2,minmax(0,1fr))}.community-publish-form :deep(.el-form-item){margin-bottom:12px}.community-publish-form :deep(.el-form-item__label){padding-bottom:5px;color:var(--zh-text-secondary);font-size:11px}.presentation-dialog :deep(.el-dialog){max-width:none;background:#0d1117}.presentation-dialog :deep(.el-dialog__header){background:#0d1117}.presentation-dialog :deep(.el-dialog__title),.presentation-dialog :deep(.el-dialog__headerbtn){color:#f8fafc}.presentation-dialog :deep(.el-dialog__body){padding:0}.presentation-stage.is-presenting{position:relative;display:flex;flex-direction:column;width:100%;height:100dvh;max-height:none;min-height:0;padding:0;overflow:hidden;background:#080b10}.presentation-stage.is-presenting .preview-toolbar{position:static;flex:none;width:100%;margin:0;border-width:0 0 1px;border-radius:0}.preview-toolbar-actions{display:flex;align-items:center;gap:2px;margin-left:auto}.preview-toolbar-actions :deep(.el-button){margin:0}.presentation-stage.is-presenting .preview-deck{display:block;flex:1 1 auto;min-height:0;width:100%;margin:0;overflow:hidden}.presentation-stage.is-presenting .preview-page:not(.is-current){display:none}.presentation-stage.is-presenting .preview-page.is-current{display:grid;height:100%;min-height:0;gap:0}.presentation-stage.is-presenting .preview-page.is-current .preview-page-heading{display:none}.presentation-stage.is-presenting .preview-page.is-current .preview-slide{width:min(1120px,100%);margin:0 auto}.presentation-stage.is-presenting .preview-page.is-current .html-preview-shell{width:100%;height:100%;max-width:100%;max-height:100%;margin:0;background:transparent;box-shadow:none}.presentation-stage.is-presenting .preview-html-frame{min-height:0}.presentation-laser-pointer{position:absolute;z-index:8;width:18px;height:18px;border:3px solid #fff;border-radius:50%;background:#ef4444;box-shadow:0 0 0 5px rgb(239 68 68 / 25%),0 0 22px rgb(239 68 68 / 85%);pointer-events:none;transform:translate(-50%,-50%)}.presentation-notes{position:absolute;z-index:7;right:24px;bottom:24px;width:min(290px,calc(100% - 48px));padding:12px 14px;border:1px solid rgb(255 255 255 / 18%);border-radius:var(--zh-radius10);color:#e5e7eb;background:rgb(15 23 42 / 92%);box-shadow:0 12px 32px rgb(0 0 0 / 25%)}.presentation-notes strong{font-size:12px}.presentation-notes p{margin:6px 0 0;color:#cbd5e1;font-size:11px;line-height:1.6}
 .generic-visual{grid-column:1/-1;display:flex;align-items:center;justify-content:center;gap:14px;padding:24px;border:1px solid color-mix(in srgb,var(--accent) 24%,transparent);border-radius:var(--zh-radius12);background:color-mix(in srgb,var(--accent) 8%,white)}.generic-visual span{color:var(--accent);font-size:clamp(15px,2vw,22px);font-weight:600}.generic-visual em{color:#8a98aa;font-style:normal}
 
 /* PPT 缩略图：阻止长标题撑开网格，并在固定画布内最多展示两行。 */
@@ -10282,6 +10493,13 @@ const selectSlide = (index) => { selectedSlide.value = index; selectedElementId.
   .preview-toolbar nav {
     justify-content: flex-start;
   }
+}
+
+/* 阻断 .editor-stage 的 content-based 最小高度：左侧页面列表（.slide-rail）随页数增高，
+   会把 .workspace-grid 的隐式行一并撑高，使同行的 AI 面板与属性面板被拉伸到视口之外，
+   溢出部分被 .workspace 的 overflow:hidden 裁掉且无滚动条可恢复。 */
+.editor-stage {
+  min-height: 0;
 }
 
 .canvas-area {

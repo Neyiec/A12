@@ -1069,6 +1069,8 @@ h1 { margin: 0; font-size: clamp(36px, 4vw, 48px); line-height: 1.15; letter-spa
   .composer-tool-label { display: none; }
   .composer-hint { margin-top: 7px; font-size: 11px; text-align: left; }
   .composer-shortcut-hint { display: none; }
+  .temp-resource-name { font-size: 13px; }
+  .temp-resource-status { font-size: 12px; }
 
   .session-fields { grid-template-columns:1fr; }
   .knowledge-picker-header { grid-template-columns:1fr; }
