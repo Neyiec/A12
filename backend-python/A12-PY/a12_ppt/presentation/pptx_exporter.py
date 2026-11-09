@@ -235,7 +235,7 @@ async def _export_editable_elements(title: str, slides: list[dict[str, Any]], fi
                 await page.evaluate("document.body.style.margin='0';document.documentElement.style.margin='0';")
                 manifest = await page.evaluate(_DOM_EXPORT_SCRIPT)
 
-                ppt_slide = prs.slides.add_slide(prs.slide_layouts[6])
+                ppt_slide = _add_blank_slide(prs)
 
                 # 先把所有文字和媒体透明化，截图只保留渐变、阴影、卡片、伪元素等装饰。
                 await page.add_style_tag(content="""
@@ -337,6 +337,22 @@ _DOM_EXPORT_SCRIPT = r"""() => {
 }"""
 
 
+def _add_blank_slide(prs):
+    """追加一页空白版式幻灯片。
+
+    dom_editable 路径的 PPTX 由 LandPPT/PptxGenJS 直接产出，其母版通常只带一个空白版式，
+    沿用 `slide_layouts[6]` 会抛 IndexError（导出接口 500）。这里优先按名称挑空白版式，
+    再按可用数量兜底，兼容 python-pptx 默认模板与外部管线两种来源。
+    """
+    layouts = list(prs.slide_layouts)
+    if not layouts:
+        raise RuntimeError("PPTX 缺少幻灯片版式（slide layout），无法追加幻灯片")
+    for layout in layouts:
+        if str(getattr(layout, "name", "") or "").strip().lower() in {"blank", "空白"}:
+            return prs.slides.add_slide(layout)
+    return prs.slides.add_slide(layouts[min(6, len(layouts) - 1)])
+
+
 def _ppt_bounds(item: dict[str, Any]):
     from pptx.util import Inches
 
@@ -402,7 +418,7 @@ def _export_editable_text(title: str, slides: list[dict[str, Any]], filename: st
     for index, slide_data in enumerate(slides, 1):
         html = str(slide_data.get("html") or slide_data.get("html_content") or "")
         slide_title, bullets = extract_slide_text(html, slide_data, index)
-        slide = prs.slides.add_slide(prs.slide_layouts[6])
+        slide = _add_blank_slide(prs)
 
         title_box = slide.shapes.add_textbox(Inches(0.6), Inches(0.35), Inches(12.1), Inches(0.8))
         title_tf = title_box.text_frame
@@ -445,7 +461,7 @@ async def _export_high_fidelity(title: str, slides: list[dict[str, Any]], filena
         prs.slide_width = Inches(13.333333)
         prs.slide_height = Inches(7.5)
         for image_path in image_paths:
-            slide = prs.slides.add_slide(prs.slide_layouts[6])
+            slide = _add_blank_slide(prs)
             slide.shapes.add_picture(str(image_path), 0, 0, width=prs.slide_width, height=prs.slide_height)
         safe_name = _safe_filename(filename or f"{title}_{uuid.uuid4().hex[:8]}_high_fidelity.pptx")
         if not safe_name.lower().endswith(".pptx"):
@@ -633,7 +649,7 @@ def _append_asset_reference_slides(pptx_path: Path, assets: list[dict[str, Any]]
 
     prs = Presentation(str(pptx_path))
     for asset in assets:
-        slide = prs.slides.add_slide(prs.slide_layouts[6])
+        slide = _add_blank_slide(prs)
         title_box = slide.shapes.add_textbox(Inches(0.6), Inches(0.4), Inches(12.0), Inches(0.7))
         title_tf = title_box.text_frame
         title_tf.text = str(asset.get("title") or "Interactive resource")
