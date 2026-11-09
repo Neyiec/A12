@@ -29,6 +29,7 @@ from ..llm import LLMClient
 from ..models import InteractiveModuleGenerateRequest, OutlineGenerateRequest, OutlineUpdateRequest, PresentationGenerateRequest, PresentationModifyRequest, SlideModifyRequest
 from ..tools.rag import conversation_material_context
 from ..teaching_policy import teaching_model_guidance, teaching_policy, teaching_style_guidance
+from .subject_tools import normalize_subject_tool_markup, subject_tools_preserve_note, subject_tools_prompt_section
 from .template_store import DEFAULT_THEME, get_template
 from .generation_cache import generation_cache, generation_key
 
@@ -524,6 +525,7 @@ scaffolding, feedback_strategy。
 主题: {req.theme or ""}
 是否尽量保持原风格: {req.keep_style}
 最多修改页数: {req.max_modified_slides or "不限"}
+工作台编辑范围: {self._assistant_target_scope(req) or "auto"}
 
 大纲:
 {json.dumps(req.outline or {}, ensure_ascii=False, default=str)[:8000]}
@@ -556,10 +558,11 @@ JSON 格式:
 
 规则:
 1. 全局风格、统一字体、减少文字、整体更活泼等要求应生成多个 modify 操作。
-2. “增加/补充一页”用 add，并给出 after_slide_no 和 slide_outline。
-3. “删除第 N 页”用 delete。
-4. “把第 A 页移到第 B 页前/后”用 reorder。
-5. 不确定具体页时，优先修改所有页面，但不要超过最多修改页数。
+2. 当编辑范围为 deck 且要求涉及风格、配色、字体、版式或整体视觉时，必须为每一页生成 modify 操作，不得只挑部分页面。
+3. “增加/补充一页”用 add，并给出 after_slide_no 和 slide_outline。
+4. “删除第 N 页”用 delete。
+5. “把第 A 页移到第 B 页前/后”用 reorder。
+6. 不确定具体页时，优先修改所有页面，但不要超过最多修改页数。
 """.strip()
         try:
             raw = await self.llm.complete("你是 PPT 课件迭代修改调度器，只输出可解析 JSON。", prompt, 0.2)
@@ -723,11 +726,33 @@ JSON 格式:
 {json.dumps(slide_outline, ensure_ascii=False, default=str)}
 整套大纲:
 {json.dumps(req.outline or {}, ensure_ascii=False, default=str)[:8000]}
+
+{subject_tools_prompt_section()}
 """.strip()
             html_markup = await self._complete_html_with_retry(prompt, self._html_system_prompt(), slide_outline, slide_no, total)
             if html_markup:
                 return html_markup
         return self._fallback_slide_html(req.title, slide_outline, slide_no, total, req.theme or DEFAULT_THEME)
+
+    def _assistant_target_scope(self, req: PresentationModifyRequest) -> str:
+        """读取工作台“编辑范围”下拉的显式选择（auto/deck/page/component）。"""
+        outline = req.outline if isinstance(req.outline, dict) else {}
+        context = outline.get("workspace_context")
+        if not isinstance(context, dict):
+            return ""
+        target = context.get("assistant_target")
+        if not isinstance(target, dict):
+            return ""
+        return str(target.get("scope") or "").strip().lower()
+
+    def _wants_global_deck_modify(self, req: PresentationModifyRequest) -> bool:
+        """教师显式选择“整套课件”且指令属于全局/风格类要求时，规划器不得漏页。"""
+        if self._assistant_target_scope(req) != "deck":
+            return False
+        instruction = str(req.instruction or "").replace(" ", "")
+        global_words = ("整套", "全套", "所有页", "全部页", "每一页", "全局", "整体", "统一", "每页", "全册", "通篇")
+        style_words = ("风格", "配色", "字体", "版式", "排版", "主题", "模板", "母版", "视觉", "色调", "色系", "样式")
+        return any(word in instruction for word in global_words) or any(word in instruction for word in style_words)
 
     def _selected_modify_operations(self, req: PresentationModifyRequest, slides: list[dict[str, Any]], operations: list[dict[str, Any]]) -> list[dict[str, Any]]:
         modify_ops = [op for op in operations if op.get("type") == "modify"]
@@ -744,6 +769,13 @@ JSON 格式:
             if 1 <= slide_no <= len(slides) and slide_no not in seen:
                 seen.add(slide_no)
                 selected.append(operation)
+        # 显式“整套课件”+ 全局/风格类指令：补齐规划器漏掉的页面，避免整册需求退化成只改一页。
+        if self._wants_global_deck_modify(req):
+            representative = str((selected[0].get("instruction") if selected else "") or req.instruction)
+            for slide_no in range(1, len(slides) + 1):
+                if slide_no not in seen:
+                    seen.add(slide_no)
+                    selected.append({"type": "modify", "slide_no": slide_no, "instruction": representative})
         return selected
 
     def _renumber_slide_results(self, slides: list[dict[str, Any]]) -> list[dict[str, Any]]:
@@ -934,6 +966,9 @@ JSON 格式:
                 continue
             with timing_stage("html.validate", slide_no=slide_no, attempt=attempt + 1):
                 slide_markup = auto_close_basic_tags(clean_html_response(raw))
+                # 规范化学科工具容器（data-subject-*）：修复模型写坏的属性引号/JSON，补齐默认 data 与唯一 id，
+                # 保证前端 subjectComponentsFromHtml 能把它们还原成可编辑的学科工具组件。
+                slide_markup = normalize_subject_tool_markup(slide_markup)
                 validation = validate_html(slide_markup, strict=True)
             logger.info("PPT页面校验 run_id=%s slide_no=%d attempt=%d valid=%s error_count=%d",
                         current_runtime().run_id or "-", slide_no, attempt + 1, validation["valid"], len(validation.get("errors") or []))
@@ -1139,6 +1174,8 @@ preferred_format(html5|gif|mp4)、integration(ppt_video|static_link)、descripti
         return f"""
 请按修改要求更新下面这页 PPT HTML，并只返回完整 HTML。
 必须保持 1280x720 固定画布、overflow:hidden、完整 <!DOCTYPE html> 文档结构。
+
+{subject_tools_preserve_note()}
 
 页码：{req.slide_no}
 修改要求：{req.instruction}

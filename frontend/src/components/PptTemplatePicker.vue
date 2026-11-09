@@ -91,7 +91,7 @@ const apply = () => { if (selectedTemplate.value?.theme) emit('apply', selectedT
     </div>
     <template #footer>
       <el-button @click="close">取消</el-button>
-      <el-button type="primary" :loading="applying" :disabled="!selectedTemplate" @click="apply">按此模板重构课件</el-button>
+      <el-button type="primary" :loading="applying" :disabled="!selectedTemplate" @click="apply">确定</el-button>
     </template>
   </el-dialog>
 </template>

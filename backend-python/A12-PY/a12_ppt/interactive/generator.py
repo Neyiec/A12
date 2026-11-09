@@ -1,11 +1,22 @@
+import asyncio
 import html
 import json
+import logging
 import uuid
 from typing import Any
 
 from ..llm import LLMClient
 from ..models import InteractiveModuleGenerateRequest
 from ..presentation.html_utils import auto_close_basic_tags, clean_html_response, validate_html
+
+logger = logging.getLogger("a12_ppt.interactive")
+
+# 三处超时必须协同，任何一层先超时都会让前端把请求中断成「已取消」：
+# - MODEL_GENERATION_TIMEOUT_SECONDS：服务端等待模型的上限（6 分钟），超时回退本地模板；
+# - MODEL_REQUEST_TIMEOUT_SECONDS：模型 HTTP 超时，略小于等待上限，保证先由模型层报错并记录日志；
+# - teacher.js 的 INTERACTIVE_MODULE_GENERATION_TIMEOUT：前端 axios 上限（6.5 分钟，留网络余量）。
+MODEL_GENERATION_TIMEOUT_SECONDS = 360.0
+MODEL_REQUEST_TIMEOUT_SECONDS = 350.0
 
 
 class InteractiveModuleGenerator:
@@ -14,9 +25,26 @@ class InteractiveModuleGenerator:
 
     async def generate(self, request: InteractiveModuleGenerateRequest) -> dict[str, Any]:
         markup = ""
+        degraded_reason = ""
         if self.llm.available:
-            markup = await self._generate_with_model(request)
+            try:
+                markup = await asyncio.wait_for(
+                    self._generate_with_model(request), timeout=MODEL_GENERATION_TIMEOUT_SECONDS
+                )
+            except asyncio.TimeoutError:
+                degraded_reason = "model_timeout"
+                logger.warning(
+                    "H5 模块生成超过 %.0f 秒，回退本地模板：title=%s",
+                    MODEL_GENERATION_TIMEOUT_SECONDS,
+                    request.title,
+                )
+            except Exception as exc:  # noqa: BLE001 - 任何模型异常都不应阻塞教师使用降级模板
+                degraded_reason = "model_failed"
+                logger.warning("H5 模块模型生成失败，回退本地模板：%s", str(exc)[:200])
+        model_used = self.llm.available and bool(markup)
         if not markup:
+            if self.llm.available and not degraded_reason:
+                degraded_reason = "model_empty"
             markup = self._fallback_html(request)
         return {
             "module_id": f"interactive_{uuid.uuid4().hex[:12]}",
@@ -27,9 +55,10 @@ class InteractiveModuleGenerator:
             "embed_mode": request.embed_mode,
             "usage_suggestions": self._usage_suggestions(request),
             "metadata": {
-                "model_used": self.llm.available and bool(markup),
+                "model_used": model_used,
                 "theme": request.theme,
                 "standalone": request.embed_mode == "standalone",
+                "degraded_reason": degraded_reason or None,
             },
         }
 
@@ -49,14 +78,16 @@ class InteractiveModuleGenerator:
 请求:
 {json.dumps(request.model_dump(), ensure_ascii=False, indent=2, default=str)}
 """.strip()
-        try:
-            raw = await self.llm.complete("你是教学 HTML5 动画和小游戏开发专家，只输出完整 HTML。", prompt, 0.45)
-            markup = auto_close_basic_tags(clean_html_response(raw))
-            if validate_html(markup, strict=False)["valid"]:
-                return markup
-        except Exception:
-            return ""
-        return ""
+        # 模型异常向上冒泡，由 generate() 统一标记 model_failed；
+        # 只有「模型返回了内容但 HTML 校验不通过」才在这里返回空串（标记 model_empty）。
+        raw = await self.llm.complete(
+            "你是教学 HTML5 动画和小游戏开发专家，只输出完整 HTML。",
+            prompt,
+            0.45,
+            timeout_seconds=MODEL_REQUEST_TIMEOUT_SECONDS,
+        )
+        markup = auto_close_basic_tags(clean_html_response(raw))
+        return markup if validate_html(markup, strict=False)["valid"] else ""
 
     def _fallback_html(self, request: InteractiveModuleGenerateRequest) -> str:
         if request.module_type in {"quiz_game", "matching_game", "timeline_game"}:

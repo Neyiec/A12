@@ -24,5 +24,6 @@ public interface AIService {
     void confirmPlan(String id, PlanConfirmationDTO dto);
     TaskVO createRun(String id);
     TaskVO getRun(String runId);
+    TaskVO completeRun(String conversationId, String presentationId);
 }
 

@@ -80,8 +80,10 @@ def create_embedding_model(
         # text-embedding-v4 accepts at most 10 input strings per request.
         "chunk_size": 10,
     }
-    if dimensions:
-        kwargs["dimensions"] = dimensions
+    # `dimensions` 保留为缓存键但不透传给 API：百炼专属端点与硅基流动对 OpenAI
+    # 风格的 dimensions 均返回 400/20015。存储对齐依赖模型原生输出维度
+    # （当前 1024，与 EMBEDDING_DIMENSIONS / pgvector 列一致）；更换模型时
+    # 必须核对其原生维度并重建向量表。
     return OpenAIEmbeddings(**kwargs)
 
 

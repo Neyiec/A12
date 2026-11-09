@@ -2,6 +2,7 @@ package edu.zstu.controller;
 
 import edu.zstu.dto.ConversationDTO;
 import edu.zstu.dto.PlanConfirmationDTO;
+import edu.zstu.dto.RunCompleteDTO;
 import edu.zstu.dto.TaskCreateDTO;
 import edu.zstu.service.AIService;
 import edu.zstu.utils.Result;
@@ -189,6 +190,24 @@ public class AIController {
             emitter.completeWithError(e);
         }
         return emitter;
+    }
+
+    /**
+     * API-17 回写执行任务完成状态
+     *
+     * <p>前端在演示文稿生成并保存成功后调用：任务置为 completed 并记录 Python 产物 ID。
+     * 此前任务状态机在 executing 后无终态落点，管理端看板的 AI 任务成功率因此恒为 0。</p>
+     *
+     * @param id  会话ID
+     * @param dto 完成回写参数（presentation_id 选填）
+     * @return 更新后的任务 {@link TaskVO}
+     */
+    @PostMapping("/sessions/{id}/run-completions")
+    public Result<TaskVO> completeRun(@PathVariable String id,
+                                      @RequestBody(required = false) RunCompleteDTO dto) {
+        try {
+            return Result.success(aiService.completeRun(id, dto == null ? null : dto.getPresentation_id()));
+        } catch (RuntimeException e) { return Result.error(400, e.getMessage()); }
     }
 
 }

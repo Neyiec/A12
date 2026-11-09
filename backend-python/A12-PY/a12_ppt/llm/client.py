@@ -25,11 +25,12 @@ class LLMClient:
     def available(self) -> bool:
         return bool(self.settings.openai_api_key)
 
-    async def complete(self, system_prompt: str, user_prompt: str, temperature: float = 0.45) -> str:
+    async def complete(self, system_prompt: str, user_prompt: str, temperature: float = 0.45,
+                       timeout_seconds: float | None = None) -> str:
         return await self.complete_messages([
             SystemMessage(content=system_prompt),
             HumanMessage(content=user_prompt),
-        ], temperature=temperature)
+        ], temperature=temperature, timeout_seconds=timeout_seconds)
 
     @timed("llm.total")
     async def complete_messages(self, messages: list[BaseMessage], temperature: float = 0.45) -> str:
@@ -42,6 +43,9 @@ class LLMClient:
         runtime = current_runtime()
         model_name = routed_model()
         started = time.perf_counter()
+        # timeout_seconds 允许调用方覆盖全局 REQUEST_TIMEOUT_SECONDS：
+        # H5 互动模块这类长产物需要独立预算，避免被默认 120 秒提前掐断。
+        request_timeout = float(timeout_seconds or self.settings.request_timeout_seconds)
         try:
             request_options = {"max_retries": runtime.max_retries} if runtime.max_retries is not None else {}
             model = create_chat_model(model_name, self.settings.openai_api_key, self.settings.openai_base_url,

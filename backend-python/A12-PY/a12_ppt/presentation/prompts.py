@@ -2,6 +2,8 @@ import json
 import re
 from typing import Any
 
+from .subject_tools import subject_tools_preserve_note, subject_tools_prompt_section
+
 
 def compact_template_html(template_html: str, limit: int = 12000) -> str:
     value = (template_html or "").strip()
@@ -203,6 +205,8 @@ def slide_html_prompt(
 - 若当前页包含 subject_components，右侧 64px 起、顶部 270px 起的 440×230 区域要留空；系统随后会把同一份学科 DSL 注入该区域，避免和正文重叠。不要在 HTML 中自行重复渲染该组件。
 - 对无法保证 PowerPoint 原生可编辑的复杂化学结构/公式，须把解释文字与图形分层，保留可修改的标题、标注和数值；不得声称栅格图片本身可编辑。
 
+{subject_tools_prompt_section()}
+
 模板 HTML 参考：
 {compact_template_html(template_html, 5000)}
 """.strip()
@@ -211,6 +215,8 @@ def slide_html_prompt(
 def repair_html_prompt(original_prompt: str, broken_html: str, errors: list[str], warnings: list[str]) -> str:
     return f"""
 上一次生成的 HTML 未通过校验，请在保留原设计意图的前提下修复。只输出修复后的完整 HTML。
+
+{subject_tools_preserve_note()}
 
 校验错误：
 {json.dumps(errors, ensure_ascii=False)}
