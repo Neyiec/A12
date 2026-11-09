@@ -22,6 +22,7 @@ const service = axios.create({
 // 请求拦截器
 service.interceptors.request.use(
   config => {
+    // Python AI 服务接口由浏览器直连 FastAPI（生产环境配置 VITE_PYTHON_API_BASE_URL；开发环境空串走 Vite 代理）
     startRequestLog(config)
     if (config.url?.startsWith('/api/v1/python/')) {
       config.baseURL = import.meta.env.VITE_PYTHON_API_BASE_URL || ''
