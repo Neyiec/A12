@@ -18,9 +18,34 @@
         <result column="updated_at" property="updated_at"/>
     </resultMap>
 
+    <!--
+      列表查询专用 resultMap：不映射 snapshots / edit_history 大 JSON 列。
+      列表接口仅展示名称/类型/状态/时间等轻量字段，若排序时把大 JSON 列带入
+      sort buffer，会触发 ERROR 1038 (Out of sort memory)。
+    -->
+    <resultMap id="ListResultMap" type="edu.zstu.entity.Ws_Project">
+        <id column="id" property="id"/>
+        <result column="user_id" property="user_id"/>
+        <result column="task_id" property="task_id"/>
+        <result column="project_name" property="project_name"/>
+        <result column="project_type" property="project_type"/>
+        <result column="status" property="status"/>
+        <result column="current_version" property="current_version"/>
+        <result column="permissions" property="permissions"/>
+        <result column="deleted_at" property="deleted_at"/>
+        <result column="created_at" property="created_at"/>
+        <result column="updated_at" property="updated_at"/>
+    </resultMap>
+
     <sql id="Base_Columns">
         id, user_id, task_id, project_name, project_type, status,
         current_version, snapshots, edit_history, permissions, deleted_at, created_at, updated_at
+    </sql>
+
+    <!-- 列表查询列：刻意排除 snapshots / edit_history，避免大字段进入 ORDER BY 的排序缓冲区。 -->
+    <sql id="List_Columns">
+        id, user_id, task_id, project_name, project_type, status,
+        current_version, permissions, deleted_at, created_at, updated_at
     </sql>
 
     <select id="findById" resultMap="BaseResultMap">
@@ -111,8 +136,14 @@
     <delete id="deleteById">
         DELETE FROM ws_project WHERE id = #{id}
     </delete>
-    <select id="findByQuery" resultMap="BaseResultMap" parameterType="edu.zstu.dto.ProjectQueryDTO">
-        SELECT <include refid="Base_Columns"/> FROM ws_project
+    <!--
+      列表分页查询：只取 List_Columns（不含 snapshots / edit_history）。
+      配合索引 idx_user_deleted_updated (user_id, deleted_at, updated_at)，
+      让 deleted_at IS NULL + user_id = ? 的等值过滤后直接按 updated_at 有序扫描；
+      即使退化 filesort，也因行变小而不再触发 ERROR 1038。
+    -->
+    <select id="findByQuery" resultMap="ListResultMap" parameterType="edu.zstu.dto.ProjectQueryDTO">
+        SELECT <include refid="List_Columns"/> FROM ws_project
         <where>
             deleted_at IS NULL
             <if test="user_id != null">AND user_id = #{user_id}</if>
