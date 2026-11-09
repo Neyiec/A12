@@ -1,10 +1,10 @@
 .zcode
 .zcodeignore
+.BearWhite
 .claude
 AGENTS.md
 doc/
 .trae/
-.commit-policy.md
 .ui-workflow/
 *-service.out.log
 *-service.err.log
