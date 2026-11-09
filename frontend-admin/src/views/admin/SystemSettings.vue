@@ -8,8 +8,8 @@
       MagicStick, Cpu, Edit, ArrowDown, Top, CopyDocument, InfoFilled
     - `ref`, `reactive`, `computed`, `onMounted`, `onBeforeUnmount`, `watch` from Vue
   - 依赖:
-    - `../apis/export`: 导入 `getExportTemplates`（API-98，分页查询导出模板）、
-      `createExportTemplate`（API-95，创建导出模板）、`replaceExportTemplate`（API-100，替换模板）
+    - `../apis/export`: 导入 `getExportTemplates`（API-134，查询 Python 全部导出模板）、
+      `createExportTemplate`（创建导出模板）、`replaceExportTemplate`（替换模板）
     - `../apis/config`: 导入 `getSystemLogs`（API-106，分页查询系统日志）
   - 输入: 无 props，导出模板数据来自 API-98，系统日志数据来自 API-106
   - 输出: 渲染系统配置视图（Tab 切换 + AI参数表单 + 导出模板表格 + 系统日志表格 + 上传对话框 + 日志详情对话框）
@@ -504,35 +504,22 @@ const normalizeLog = (vo) => ({
 // ===================================================================
 
 /**
- * 将 ISO 时间字符串格式化为 "YYYY-MM-DD HH:mm"
- * @param {string|undefined} value - 后端返回的时间（ISO 格式）
- * @returns {string} 格式化后的时间文本
- */
-const formatTemplateTime = (value) => {
-  if (!value) return '—'
-  const date = new Date(value)
-  if (Number.isNaN(date.getTime())) return value
-  const pad = (n) => String(n).padStart(2, '0')
-  return `${date.getFullYear()}-${pad(date.getMonth() + 1)}-${pad(date.getDate())} ${pad(date.getHours())}:${pad(date.getMinutes())}`
-}
-
-/**
- * 将后端模板 VO 归一化为表格所需结构
- * 兼容 export_type/type、published/unpublished ↔ enabled/disabled 等字段差异
- * @param {Object} t - 后端返回的模板对象
+ * 将 Python 模板 VO（theme/template_name/aliases/is_default/size）归一化为表格所需结构
+ * Python 侧不提供 export_type/version/status/时间字段：固定 pptx/v1/published
+ * @param {Object} t - Python 返回的模板对象
  * @returns {Object} 归一化后的模板对象
  */
 const normalizeTemplate = (t) => ({
-  id: t.id,
-  name: t.name,
-  type: t.export_type === 'word' ? 'docx' : t.export_type,
-  version: `v${t.version}`,
+  id: t.theme,
+  name: t.template_name || t.theme,
+  type: 'pptx',
+  version: 'v1',
   size: t.size || '—',
   isDefault: !!t.is_default,
-  status: t.status === 'published' ? 'enabled' : 'disabled',
-  updatedAt: formatTemplateTime(t.updated_at),
-  uploader: t.uploader || '管理员',
-  downloadCount: t.download_count || 0,
+  status: 'enabled',
+  updatedAt: '—',
+  uploader: '管理员',
+  downloadCount: 0,
 })
 
 // ===================================================================
@@ -540,23 +527,25 @@ const normalizeTemplate = (t) => ({
 // ===================================================================
 
 /**
- * 获取模板列表数据（API-98）
- * 将前端筛选条件映射为后端查询参数，请求成功后归一化列表并记录总数
+ * 获取模板列表数据（API-134，Python 全量返回）
+ * Python 不支持筛选/分页参数：前端按类型/状态/关键词过滤后分页切片
  */
 const fetchTemplates = async () => {
   isTableLoading.value = true
   try {
-    // 组装查询参数：只传有效的筛选条件
-    const params = { page: templatePagination.currentPage, size: templatePagination.pageSize }
-    if (templateFilters.type) params.export_type = templateFilters.type === 'docx' ? 'word' : templateFilters.type
-    if (templateFilters.status) params.status = templateFilters.status === 'enabled' ? 'published' : 'unpublished'
-    if (templateFilters.keyword.trim()) params.keyword = templateFilters.keyword.trim()
-
-    const res = await getExportTemplates(params)
+    const res = await getExportTemplates()
     const data = res?.data
-    const rows = data?.records || data?.list || data?.items || []
-    templateList.value = rows.map(normalizeTemplate)
-    templatePagination.total = Number(data?.total ?? rows.length)
+    const all = data?.templates || []
+    const keyword = templateFilters.keyword.trim().toLowerCase()
+    const filtered = all.filter((t) => {
+      if (templateFilters.type && templateFilters.type !== 'pptx') return false
+      if (templateFilters.status && templateFilters.status !== 'enabled') return false
+      if (keyword && !`${t.template_name || ''}${t.theme || ''}`.toLowerCase().includes(keyword)) return false
+      return true
+    })
+    templatePagination.total = filtered.length
+    const start = (templatePagination.currentPage - 1) * templatePagination.pageSize
+    templateList.value = filtered.slice(start, start + templatePagination.pageSize).map(normalizeTemplate)
   } finally {
     isTableLoading.value = false
   }
@@ -976,7 +965,6 @@ const handleTemplateUpload = async () => {
   try {
     const payload = {
       name: templateUploadForm.name.trim(),
-      export_type: 'pptx',
       template_data: item.content,
       description: templateUploadForm.description || undefined,
     }
