@@ -2243,6 +2243,7 @@ async function restoreSession() {
             </div>
           </div>
           <el-button
+            class="resource-generate"
             type="primary"
             size="small"
             :disabled="!selectedPptTemplateTheme"
@@ -2813,7 +2814,9 @@ async function restoreSession() {
   .chat-container {
     padding: 0 12px;
     height: 100%;
+    min-width: 0;
     min-height: 0;
+    overflow-wrap: anywhere;
   }
   .chat-messages {
     min-height: 0;
@@ -2835,11 +2838,27 @@ async function restoreSession() {
     width: 100%;
     margin-left: 0;
   }
+  .retrieval-suggestions > :is(.el-button, .el-link) {
+    min-width: 0;
+    max-width: 100%;
+  }
+  .retrieval-suggestions > :is(.el-button, .el-link) > :deep(span) {
+    min-width: 0;
+  }
+  .resource-cards-area {
+    grid-template-columns: minmax(0, 1fr);
+  }
   .resource-card {
+    display: grid;
+    grid-template-columns: auto minmax(0, 1fr);
     align-items: flex-start;
   }
-  .resource-card > .el-button {
-    flex-shrink: 0;
+  .resource-info strong {
+    white-space: normal;
+  }
+  .resource-generate {
+    grid-column: 1 / -1;
+    width: 100%;
   }
 }
 

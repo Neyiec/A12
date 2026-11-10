@@ -80,7 +80,7 @@ onMounted(async () => { try { templates.value = (await listPptTemplates()).data 
           <el-checkbox :model-value="selected.includes(item.id)" :disabled="busy" @change="checked => selected = checked ? [...selected, item.id] : selected.filter(id => id !== item.id)">{{ String(index + 1).padStart(2,'0') }}</el-checkbox>
           <div class="chapter-body"><el-input v-model="item.title" :disabled="busy" aria-label="章节标题" /><el-input v-model="item.hours" :disabled="busy" placeholder="学时 / 课时（可选，如2课时）" aria-label="学时或课时" /><el-input v-model="item.objectives" :disabled="busy" placeholder="教学要求与重点" type="textarea" :rows="2" /><div class="chapter-range"><span>预估页数</span><input v-model.number="item.min_pages" type="number" min="1" max="30" :disabled="busy" aria-label="最少页数" />至<input v-model.number="item.max_pages" type="number" min="1" max="30" :disabled="busy" aria-label="最多页数" /><span>{{ item.image_count || 0 }} 张原文插图</span><el-button v-if="item.source_node_ids?.length" size="small" :disabled="busy" @click="perform(async () => update(await splitBatchPlan(plan.id,{revision:plan.revision,item_id:item.id})))">按小节拆分</el-button></div></div>
         </div>
-        <label v-if="draft.basis === 'suggested'"><el-checkbox v-model="acceptSuggested" :disabled="busy">我已核对并接受此建议目录，后续仍需校核具体教学内容</el-checkbox></label>
+        <el-checkbox v-if="draft.basis === 'suggested'" v-model="acceptSuggested" :disabled="busy" class="batch-consent">我已核对并接受此建议目录，后续仍需校核具体教学内容</el-checkbox>
         <div class="batch-actions"><el-select v-model="theme" :disabled="busy" placeholder="课件主题"><el-option v-for="template in templates" :key="template.theme" :value="template.theme" :label="template.name || template.theme" /><el-option v-if="!templates.length" value="素白风" label="素白风" /></el-select><el-button :loading="busy" @click="perform(saveChoices)">保存计划</el-button><el-button type="primary" :loading="busy" @click="confirm">确认并生成所选课件</el-button></div>
       </template>
       <details :open="draft.needs_input"><summary>补充目录或让 AI 调整方案</summary><el-input v-model="sourceText" type="textarea" :rows="4" :disabled="busy" placeholder="粘贴教学计划或章节目录；不需要重复填写已有内容" /><el-input v-model="instruction" :disabled="busy" placeholder="如：第二章拆成两份，每份6到8页" /><div class="batch-actions"><el-button :loading="busy" @click="revise(false)">根据补充内容更新方案</el-button><el-button v-if="draft.needs_input" :loading="busy" @click="revise(true)">先用 AI 建议目录规划</el-button></div></details>
@@ -97,4 +97,15 @@ onMounted(async () => { try { templates.value = (await listPptTemplates()).data 
 .batch-chapter { display:flex; align-items:flex-start; gap:12px; border-top:1px solid #e8eef8; padding:16px 0; }.chapter-body { flex:1; min-width:0; display:grid; gap:8px; }.chapter-range input[type="number"] { width:78px; padding:8px 10px; border:1px solid #d5e3ff; border-radius:8px; background:#f7faff; color:#223653; box-sizing:border-box; }.chapter-range input[type="number"]:focus { outline:none; border-color:#2861d8; }.chapter-range { font-size:12px; color:#62728a; margin:0; }
 details { margin:14px 0; }summary { cursor:pointer; color:#2861d8; margin-bottom:12px; }p { line-height:1.7; }.batch-plan :deep(.el-alert) { margin:10px 0; }
 @media(max-width:600px) { .batch-plan { padding:16px; }.batch-fields { grid-template-columns:1fr; }.batch-heading { align-items:flex-start; }.batch-chapter { gap:6px; } }
+@media (max-width: 600px) {
+  .batch-consent {
+    max-width: 100%;
+    min-height: 44px;
+    height: auto;
+    white-space: normal;
+  }
+  .batch-consent :deep(.el-checkbox__label) {
+    line-height: 1.5;
+  }
+}
 </style>

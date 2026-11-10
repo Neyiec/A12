@@ -24,8 +24,10 @@ function changeType(type) { emit('update:modelValue', { ...value.value, question
     <el-form-item label="题干 *"><el-input type="textarea" :rows="4" :model-value="value.stem" maxlength="10000" show-word-limit placeholder="完整描述题目与作答要求" @update:model-value="set('stem',$event)" /></el-form-item>
     <template v-if="choices">
       <el-form-item v-for="(option,index) in value.options" :key="index" :label="`选项 ${String.fromCharCode(65+index)} *`"><el-input :model-value="option" maxlength="2000" @update:model-value="set('options',value.options.map((s,i)=>i===index?$event:s))" /></el-form-item>
-      <el-button :disabled="value.options.length>=8" @click="set('options',[...value.options,''])">添加选项</el-button>
-      <el-button :disabled="value.options.length<=2" @click="set('options',value.options.slice(0,-1))">移除末项</el-button>
+      <div class="option-actions">
+        <el-button :disabled="value.options.length>=8" @click="set('options',[...value.options,''])">添加选项</el-button>
+        <el-button :disabled="value.options.length<=2" @click="set('options',value.options.slice(0,-1))">移除末项</el-button>
+      </div>
     </template>
     <el-form-item label="参考答案 *" style="margin-top:20px">
       <el-select v-if="value.question_type==='judgment'" :model-value="value.answer" @update:model-value="set('answer',$event)"><el-option value="正确" /><el-option value="错误" /></el-select>
@@ -41,3 +43,22 @@ function changeType(type) { emit('update:modelValue', { ...value.value, question
 </template>
 <style scoped>.editor-hint{color:#617895;line-height:1.6}.fields{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:0 20px}.question-editor :deep(.el-select){width:100%}@media(max-width:600px){.fields{grid-template-columns:1fr}}</style>
 <style>.question-edit-dialog{margin-top:5dvh!important}.question-edit-dialog .el-dialog__body{max-height:calc(90dvh - 140px);overflow-y:auto;padding-right:12px}.question-edit-dialog .el-dialog__footer{border-top:1px solid #edf2fa;padding-top:16px}</style>
+<style>
+.question-edit-dialog.is-mobile-question-dialog { margin-top: max(12px, var(--zh-safe-top)) !important; }
+.question-edit-dialog.is-mobile-question-dialog .el-dialog__body {
+  max-height: none;
+  overflow: visible;
+  padding-right: 0;
+}
+.question-edit-dialog.is-mobile-question-dialog .el-dialog__footer { border-color: var(--zh-line-parting); }
+.is-mobile-question-dialog .question-editor .editor-hint { color: var(--zh-text-secondary); }
+.is-mobile-question-dialog .question-editor .option-actions { display: flex; flex-wrap: wrap; gap: 8px; }
+.is-mobile-question-dialog .question-editor .option-actions .el-button { margin: 0; }
+.is-mobile-question-dialog .question-editor .el-collapse-item__header {
+  min-height: 48px;
+  height: auto;
+  padding-block: 10px;
+  font-size: 16px;
+  line-height: 1.5;
+}
+</style>
