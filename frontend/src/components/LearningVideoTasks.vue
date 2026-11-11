@@ -1,4 +1,5 @@
 <script setup>
+import MobileSection from './MobileSection.vue'
 import { onMounted, onBeforeUnmount, ref } from 'vue'
 import { ElMessage } from 'element-plus'
 import { listLearningVideos, downloadLearningVideo, retryLearningVideo, cancelLearningVideo, uploadResource } from '../apis/teacher'
@@ -47,10 +48,12 @@ async function action(job, type) {
 }
 </script>
 <template>
-  <section class="video-tasks"><header><h2>学习视频任务</h2><small>课件静态画面 + TTS 旁白 · 完成后24小时内下载或转存资源库</small></header>
+  <section class="video-tasks"><header><h2>学习视频任务</h2><small><span class="video-production-note">课件静态画面 + TTS 旁白 · </span>完成后24小时内下载或转存资源库</small></header>
     <el-alert v-if="error" :title="error" type="warning" :closable="false" />
     <el-empty v-else-if="!jobs.length" description="在课程双图谱页面生成课件后，可提交学习视频任务" :image-size="50" />
-    <article v-for="job in jobs" :key="job.job_id"><div><strong>{{ job.title }}</strong><p>{{ labels[job.status] }} · 已尝试 {{ job.attempts }} 次<span v-if="job.error"> · {{ job.error }}</span></p><el-progress :percentage="job.progress" :status="job.status === 'failed' ? 'exception' : job.status === 'ready' ? 'success' : undefined" /></div>
+    <article v-for="job in jobs" :key="job.job_id"><div><strong>{{ job.title }}</strong><p>{{ labels[job.status] }}<span class="video-attempts"> · 已尝试 {{ job.attempts }} 次</span></p>
+      <MobileSection v-if="job.error" title="错误详情" class="video-error"><p>{{ job.error }}</p></MobileSection>
+      <el-progress :percentage="job.progress" :status="job.status === 'failed' ? 'exception' : job.status === 'ready' ? 'success' : undefined" /></div>
       <div class="actions"><el-button v-if="job.status === 'ready'" :disabled="!!busy" @click="action(job,'download')">下载MP4</el-button><el-button v-if="job.status === 'ready'" :disabled="!!busy" @click="action(job,'save')">转存资源库</el-button><el-button v-if="job.status === 'failed' && job.attempts < 2" :disabled="!!busy" @click="action(job,'retry')">重试</el-button><el-button v-if="['queued','running'].includes(job.status)" :disabled="!!busy" @click="action(job,'cancel')">取消</el-button></div></article>
   </section>
 </template>

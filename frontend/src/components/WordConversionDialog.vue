@@ -113,12 +113,12 @@ onBeforeUnmount(() => { disposed = true })
 </script>
 
 <template>
-  <el-dialog v-model="visible" title="格式转换" width="min(560px, 92vw)" align-center
+  <el-dialog v-model="visible" class="word-conversion-dialog" title="格式转换" width="min(560px, 92vw)" align-center
     :close-on-click-modal="!working" :close-on-press-escape="!working" :show-close="!working">
     <p><strong>Word 教案 → 可编辑 PPTX</strong></p>
     <p class="conversion-hint">提取 Word 章节、表格与插图，先确认拆分计划，再生成可编辑课件。整套课程和单份讲义使用同一条流程。</p>
-    <el-radio-group v-model="splitMode" :disabled="working"><el-radio value="chapters">按章节生成多份</el-radio><el-radio value="single">整份生成一个 PPT</el-radio></el-radio-group>
-    <el-radio-group v-model="sourceMode" :disabled="working" @change="sourceMode === 'library' && loadResources()">
+    <el-radio-group v-model="splitMode" class="conversion-mode-options" :disabled="working"><el-radio value="chapters">按章节生成多份</el-radio><el-radio value="single">整份生成一个 PPT</el-radio></el-radio-group>
+    <el-radio-group v-model="sourceMode" class="conversion-source-tabs" :disabled="working" @change="sourceMode === 'library' && loadResources()">
       <el-radio-button value="local">上传本地文件</el-radio-button>
       <el-radio-button value="library">从个人资源库选择</el-radio-button>
     </el-radio-group>

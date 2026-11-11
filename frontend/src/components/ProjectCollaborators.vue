@@ -81,7 +81,7 @@ const remove = id => perform(async () => {
 </script>
 
 <template>
-  <el-dialog v-model="visible" title="协作授权" width="min(480px, 92vw)" :close-on-click-modal="false" :show-close="!busy" :close-on-press-escape="!busy">
+  <el-dialog v-model="visible" class="project-collaborators-dialog" title="协作授权" width="min(480px, 92vw)" :close-on-click-modal="false" :show-close="!busy" :close-on-press-escape="!busy">
     <div v-loading="busy" class="collaborators">
       <el-alert v-if="error" :title="error" type="error" :closable="false" show-icon />
       <template v-if="project">
