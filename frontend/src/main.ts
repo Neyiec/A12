@@ -44,7 +44,7 @@ async function bootstrap() {
   app.use(pinia)
 
   // 预览页需要先在 MSW 中建立 mock 会话，再挂载路由和发起页面请求。
-  if (mockApiEnabled && window.location.hash.includes('preview=1')) {
+  if (mockApiEnabled && (import.meta.env.MODE === 'mock' || window.location.hash.includes('preview=1'))) {
     const { ensureDevelopmentPreviewSession } = await import('./utils/previewSession.js')
     await ensureDevelopmentPreviewSession()
   }

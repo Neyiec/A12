@@ -4,6 +4,7 @@ import { ElMessage, ElMessageBox } from 'element-plus'
 import { listPresentationBatches, readPresentationBatch, listBatchPlans, retryBatchItem, saveBatchItem,
   cancelPresentationBatch, requestBatchZip, downloadBatchZip, saveBatchDownload } from '../apis/batchPresentations'
 import BatchPlanCard from './BatchPlanCard.vue'
+import MobileSection from './MobileSection.vue'
 const props = defineProps({ batchId: { type:String, default:'' } })
 const batches = ref([]), plans = ref([]), selectedPlan = ref(null), loading = ref(false), error = ref(''), busy = ref('')
 let active = true, timer = null, failures = 0, fetching = false
@@ -82,9 +83,12 @@ onBeforeUnmount(() => { active = false; clearTimeout(timer) })
     <article v-for="batch in batches" :key="batch.id" class="batch-task">
       <div class="task-heading"><h3>{{ batch.title }}</h3><el-tag>{{ label(batch.status) }}</el-tag></div>
       <el-progress :percentage="batch.progress" />
-      <p>{{ batch.items.length }} 份课件 · {{ batch.theme }} · 每章独立保存</p><p>批次 ZIP 使用本次生成的版本；在工作台修改后，可从项目或导出中心导出最新版本。</p>
+      <p>{{ batch.items.length }} 份课件 · {{ batch.theme }} · 每章独立保存</p>
+      <MobileSection title="批次说明"><p>批次 ZIP 使用本次生成的版本；在工作台修改后，可从项目或导出中心导出最新版本。</p></MobileSection>
       <div v-for="item in batch.items" :key="item.id" class="task-item">
-        <div><strong>{{ String(item.item_order).padStart(2,'0') }} · {{ item.title }}</strong><p>{{ item.stage }} <span v-if="item.status === 'running'">{{ item.progress }}%</span></p><p v-if="item.error" class="task-error">{{ item.error }}</p></div>
+        <div><strong>{{ String(item.item_order).padStart(2,'0') }} · {{ item.title }}</strong><p>{{ item.stage }} <span v-if="item.status === 'running'">{{ item.progress }}%</span></p>
+          <MobileSection v-if="item.error" title="错误详情" class="task-error"><p>{{ item.error }}</p></MobileSection>
+        </div>
         <router-link v-if="item.project_id" :to="{path:'/main/workspace',query:{projectId:item.project_id}}">进入工作台</router-link>
         <el-button v-else-if="item.status === 'failed' && item.attempts < 3" :loading="busy === item.id" @click="perform(item.id,() => retryBatchItem(batch.id,item.id))">重试本章</el-button>
         <el-button v-else-if="item.status === 'ready'" :loading="busy === item.id" @click="perform(item.id,() => saveBatchItem(batch.id,item.id))">同步到个人项目</el-button>
@@ -94,11 +98,12 @@ onBeforeUnmount(() => { active = false; clearTimeout(timer) })
         <el-button v-if="batch.zip_status === 'ready'" type="primary" :loading="busy === batch.id" @click="perform(batch.id,async () => saveBatchDownload(await downloadBatchZip(batch.id),'课程课件批次.zip'))">下载整批 ZIP</el-button>
         <template v-else-if="!['queued','running'].includes(batch.zip_status)"><el-button type="primary" :disabled="Boolean(busy) || !batch.items.every(item => ['ready','completed'].includes(item.status))" @click="zip(batch)">生成整批 PPTX / ZIP</el-button><el-button v-if="batch.items.some(item => ['failed','cancelled'].includes(item.status)) && batch.items.some(item => ['ready','completed'].includes(item.status))" :disabled="Boolean(busy)" @click="zip(batch,true)">只打包已完成章节</el-button></template>
         <span v-else>正在将各章导出为可编辑 PPTX 并打包…</span>
-      </div><p v-if="batch.zip_error" class="task-error">{{ batch.zip_error }}</p>
+      </div><MobileSection v-if="batch.zip_error" title="打包错误详情" class="task-error"><p>{{ batch.zip_error }}</p></MobileSection>
     </article>
   </section>
 </template>
 
 <style scoped>
 .batch-tasks { width:100%; max-width:1120px; margin:0 auto; padding:24px; box-sizing:border-box; color:#223653; }header,.task-heading { display:flex; justify-content:space-between; align-items:center; gap:16px; }header span { color:#2861d8; font-size:13px; }h2 { margin:8px 0; }p { color:#697b94; line-height:1.7; font-size:13px; }.batch-task { margin:20px 0; padding:24px; background:#fff; border:1px solid #dce7fb; border-radius:18px; }.task-item { padding:16px 0; border-top:1px solid #edf1f8; display:flex; justify-content:space-between; gap:16px; align-items:center; }.task-item p { margin:6px 0; }.task-actions { display:flex; gap:10px; align-items:center; flex-wrap:wrap; margin:16px 0; }.task-actions :deep(.el-button) { margin-left:0; }a { color:#2861d8; white-space:nowrap; }.task-error { color:#b94747; }@media(max-width:600px) { .batch-tasks { padding:12px; }.batch-task { padding:16px; }header { align-items:flex-start; } }
+.task-error p { color: inherit; }
 </style>

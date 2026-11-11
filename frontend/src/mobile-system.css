@@ -213,4 +213,83 @@
   :root .learning-graph-panel .learning-graph-header h3{font-size:20px}
   :root .learning-graph-panel .learning-support,:root .learning-graph-panel .learning-graph-note,:root .learning-graph-panel .learning-graph-confirm span{font-size:14px;line-height:1.7}
   :root .learning-graph-panel button{min-height:44px;font-size:16px}
+
+  /* Task lists keep long titles and errors inside their cards. */
+  :root .teacher-shell .batch-tasks { padding: 16px; color: var(--zh-text-primary); overflow-wrap: anywhere; }
+  :root .teacher-shell .batch-tasks > header { align-items: flex-start; gap: 12px; }
+  :root .teacher-shell .batch-tasks > header > div { flex: 1; min-width: 0; }
+  :root .teacher-shell .batch-tasks > header > div > :is(span, p) { display: none; }
+  :root .teacher-shell .batch-tasks > header > .el-button { flex: none; }
+  :root .teacher-shell .batch-tasks h2 { margin: 0; font-size: 20px; }
+  :root .teacher-shell .batch-tasks .batch-task {
+    margin: 16px 0;
+    padding: 16px;
+    border-color: var(--zh-line-parting);
+    border-radius: 14px;
+    background: var(--zh-background-primary);
+  }
+  :root .teacher-shell .batch-tasks .task-heading { flex-wrap: wrap; align-items: flex-start; gap: 8px; }
+  :root .teacher-shell .batch-tasks .task-heading h3 { flex: 1 1 160px; min-width: 0; margin: 0; font-size: 18px; line-height: 1.5; }
+  :root .teacher-shell .batch-tasks .task-heading .el-tag { max-width: 100%; white-space: normal; }
+  :root .teacher-shell .batch-tasks p { color: var(--zh-text-secondary); font-size: 16px; line-height: 1.7; }
+  :root .teacher-shell .batch-tasks .task-item { flex-direction: column; align-items: stretch; gap: 8px; border-color: var(--zh-line-parting); }
+  :root .teacher-shell .batch-tasks .task-item > div { min-width: 0; }
+  :root .teacher-shell .batch-tasks .task-item strong { font-size: 18px; line-height: 1.5; }
+  :root .teacher-shell .batch-tasks .task-item > a { display: flex; align-items: center; min-height: 48px; font-size: 16px; white-space: normal; }
+  :root .teacher-shell .batch-tasks .task-actions { display: grid; grid-template-columns: minmax(0, 1fr); gap: 8px; }
+  :root .teacher-shell .batch-tasks :is(.task-actions, .task-item) > .el-button { margin: 0; height: auto; padding: 12px; white-space: normal; }
+  :root .teacher-shell .batch-tasks .task-actions > .el-button > span { min-width: 0; }
+  :root .teacher-shell .batch-tasks .task-error { color: var(--el-color-danger); }
+  :root .teacher-shell .batch-tasks .task-error > summary,
+  :root .teacher-shell .batch-tasks .task-error p { color: inherit; }
+
+  :root .teacher-shell .video-tasks { padding: 16px; border-color: var(--zh-line-parting); background: var(--zh-background-primary); overflow-wrap: anywhere; }
+  :root .teacher-shell .video-tasks :is(.video-production-note, .video-attempts) { display: none; }
+  :root .teacher-shell .video-tasks small { color: var(--zh-text-secondary); font-size: 14px; line-height: 1.6; }
+  :root .teacher-shell .video-tasks article { flex-direction: column; gap: 12px; border-color: var(--zh-line-parting); }
+  :root .teacher-shell .video-tasks article strong { font-size: 18px; line-height: 1.5; }
+  :root .teacher-shell .video-tasks article p { color: var(--zh-text-secondary); font-size: 16px; line-height: 1.7; }
+  :root .teacher-shell .video-tasks .actions { display: grid; grid-template-columns: repeat(auto-fit, minmax(110px, 1fr)); gap: 8px; }
+  :root .teacher-shell .video-tasks .actions > .el-button { margin: 0; height: auto; padding: 12px 8px; white-space: normal; }
+
+  /* Formula controls also appear in the mobile question editor. */
+  :root :is(.subject-formula-editor, .chemical-formula-editor) { min-width: 0; overflow-wrap: anywhere; }
+  :root .subject-formula-editor .formula-mode-tabs { display: flex; flex-wrap: wrap; }
+  :root .subject-formula-editor .formula-mode-tabs button { min-height: 44px; padding: 8px 12px; font-size: 16px; }
+  :root .subject-formula-editor .formula-group-toggle,
+  :root .chemical-formula-editor .chemical-group-toggle { min-height: 44px; padding: 8px; font-size: 16px; }
+  :root .subject-formula-editor .formula-group-items,
+  :root .chemical-formula-editor .chemical-group-items { gap: 8px; padding: 4px; }
+  :root .subject-formula-editor .formula-tool-button,
+  :root .chemical-formula-editor .chemical-tool-button { min-width: 44px; min-height: 44px; padding: 8px 10px; border-radius: 8px; font-size: 16px; line-height: 1.4; }
+  :root .subject-formula-editor .formula-group-meta small,
+  :root .chemical-formula-editor .chemical-group-meta small { display: none; }
+  :root .subject-formula-editor :is(.formula-history-empty, .formula-editor-error, .formula-visual-footer),
+  :root .chemical-formula-editor :is(.chemical-input-footer, .chemical-composer-label, .chemical-formula-empty, .chemical-editor-help, .chemical-editor-error),
+  :root .chemical-formula-editor .chemical-input-panel > label { font-size: 14px; line-height: 1.6; }
+  :root .subject-formula-editor .formula-visual-footer > span:first-child,
+  :root .chemical-formula-editor .chemical-input-footer > span:first-child { min-width: 0; }
+
+  :root .word-conversion-dialog .conversion-mode-options { display: grid; gap: 4px; margin-bottom: 12px; }
+  :root .word-conversion-dialog .conversion-mode-options .el-radio { margin: 0; }
+  :root .word-conversion-dialog .conversion-source-tabs,
+  :root .project-collaborators-dialog .el-radio-group { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); align-items: stretch; width: 100%; }
+  :root :is(.word-conversion-dialog, .project-collaborators-dialog) .el-radio-button { min-width: 0; }
+  :root :is(.word-conversion-dialog, .project-collaborators-dialog) .el-radio-button__inner {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    width: 100%;
+    min-height: 48px;
+    height: 100%;
+    padding: 10px 8px;
+    font-size: 16px;
+    line-height: 1.5;
+    white-space: normal;
+    overflow-wrap: anywhere;
+  }
+  :root .word-conversion-dialog #conversion-docx { width: 100%; min-width: 0; font-size: 16px; }
+  :root .word-conversion-dialog #conversion-docx::file-selector-button { min-height: 48px; padding: 10px 12px; border: 1px solid var(--zh-line-border); border-radius: 8px; color: var(--zh-text-primary); background: var(--zh-background-primary); font: inherit; }
+  :root .project-collaborators-dialog .collaborator-row > span { flex: 1; min-width: 0; }
+  :root .project-collaborators-dialog .collaborator-row > .el-button { flex: none; }
 }

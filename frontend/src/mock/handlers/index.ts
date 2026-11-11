@@ -15,6 +15,9 @@ import { exportHandlers } from './export'
 import { communityHandlers } from './community'
 import { adminHandlers } from './admin'
 import { pythonPptHandlers } from './python-ppt'
+import { previewHandlers } from './preview'
+import { http, HttpResponse } from 'msw'
+import { error } from '../data/common'
 
 const useRealAiApi = import.meta.env.VITE_USE_REAL_AI_API === 'true'
 // 真实 AI 联调需要 Java 颁发的 JWT；同时放行教师端会话、项目和资源接口，避免 mock token 被真实网关拒绝。
@@ -38,4 +41,8 @@ export const handlers = [
   ...communityHandlers,
   ...adminHandlers,
   ...pythonPptHandlers,
+  ...(import.meta.env.MODE === 'mock' ? [
+    ...previewHandlers,
+    http.all('/api/v1/*', () => HttpResponse.json(error(501, '演示预览仅展示界面，此操作需要连接后端。'), { status: 501 })),
+  ] : []),
 ]

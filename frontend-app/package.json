@@ -10,6 +10,7 @@
     "sync": "npm run web:build && cap sync",
     "sync:android": "npm run web:build && cap sync android",
     "sync:android:emulator": "npm run web:build:android-emulator && cap sync android",
+    "sync:android:mock": "npm --prefix ../frontend run build -- --mode mock && cap sync android",
     "run:android:emulator": "npm run sync:android:emulator && cap run android --no-sync",
     "open:android": "cap open android",
     "run:android": "cap run android",
